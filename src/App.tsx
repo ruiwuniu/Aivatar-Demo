@@ -77,6 +77,7 @@ import type {
 const SAVE_KEY = "aivatar.save.v1";
 const DEFAULT_LAYOUT_KEY = "aivatar.defaultLayout.v1";
 const TASK_CABINET_STORAGE_KEY = "aivatar.taskCabinet.v1";
+const UI_THEME_KEY = "aivatar.uiTheme.v1";
 const SAVE_LAYOUT_VERSION = 2;
 const SLEEP_INTERACTION_SECONDS = 12;
 const SLEEP_RECOVERY_PER_TICK = 4;
@@ -177,6 +178,19 @@ type ShopCategoryId =
 type DecorSurfaceCategoryId = "wallpaper" | "flooring";
 
 type LauncherAgentId = "codex" | "claude-code";
+type UiThemeId = "classic" | "terminal" | "terminal-amber";
+
+const UI_THEME_OPTIONS: Array<{ id: UiThemeId; label: string }> = [
+  { id: "classic", label: "Classic" },
+  { id: "terminal", label: "Terminal" },
+  { id: "terminal-amber", label: "Amber" },
+];
+
+const loadInitialUiTheme = (): UiThemeId => {
+  const saved = localStorage.getItem(UI_THEME_KEY);
+  if (saved === "terminal-amber") return "terminal-amber";
+  return saved === "terminal" ? "terminal" : "classic";
+};
 
 const TASK_CABINET_STATUSES: TaskCabinetStatus[] = [
   "ready",
@@ -2015,6 +2029,8 @@ export const App = () => {
   const [save, setSave] = useState<AivatarSaveState>(() => loadInitialSave());
   const saveRef = useRef(save);
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
+  const [uiTheme, setUiTheme] = useState<UiThemeId>(() => loadInitialUiTheme());
+  const uiThemeRef = useRef(uiTheme);
   const {
     status,
     sessions,
@@ -2623,6 +2639,7 @@ export const App = () => {
           (entry) => entry.status === "ready" || entry.status === "failed",
         ).length,
         taskCabinetEntries.filter((entry) => entry.status === "failed").length,
+        uiTheme,
       );
     }
   }, [
@@ -2642,6 +2659,7 @@ export const App = () => {
     movingFurniture,
     save.memory,
     taskCabinetEntries,
+    uiTheme,
   ]);
 
   useEffect(() => {
@@ -2687,6 +2705,11 @@ export const App = () => {
   useEffect(() => {
     localStorage.setItem(LOCALE_KEY, locale);
   }, [locale]);
+
+  useEffect(() => {
+    localStorage.setItem(UI_THEME_KEY, uiTheme);
+    uiThemeRef.current = uiTheme;
+  }, [uiTheme]);
 
   useEffect(() => {
     if (!bridgeStartMessage) return;
@@ -3458,6 +3481,7 @@ export const App = () => {
             taskCabinetEntriesRef.current.filter(
               (entry) => entry.status === "failed",
             ).length,
+            uiThemeRef.current,
           );
       }
 
@@ -5944,7 +5968,9 @@ export const App = () => {
 
   return (
     <main
-      className={`app-shell${sidePanelOpen ? "" : " side-panel-collapsed"}${
+      className={`app-shell ${
+        uiTheme === "terminal-amber" ? "theme-terminal theme-terminal-amber" : `theme-${uiTheme}`
+      }${sidePanelOpen ? "" : " side-panel-collapsed"}${
         sidePanelAnimating ? " side-panel-animating" : ""
       }`}
       style={
@@ -6066,6 +6092,19 @@ export const App = () => {
               type="button"
               className={`language-button${locale === option.locale ? " active" : ""}`}
               onClick={() => setLocale(option.locale)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="theme-switch" aria-label="UI skin">
+          {UI_THEME_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`theme-button${uiTheme === option.id ? " active" : ""}`}
+              onClick={() => setUiTheme(option.id)}
             >
               {option.label}
             </button>
