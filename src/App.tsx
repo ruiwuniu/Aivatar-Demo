@@ -140,6 +140,9 @@ const TASK_CABINET_FURNITURE_ID = "file-cabinet";
 const TASK_CABINET_UNLOCK_LEVEL = 25;
 const TASK_CABINET_SCHEDULE_INTERVAL_MS = 5000;
 const TASK_CABINET_DEFAULT_REPEAT_MINUTES = 60;
+const TASK_CABINET_ENTRY_LIMIT = 100;
+const NAV_MEMORY_CELL_COUNT_LIMIT = 9999;
+const NAV_LEARNING_RECORD_INTERVAL_SECONDS = 2.5;
 const DEMO_BEHAVIORS: BehaviorName[] = [
   "idle",
   "phone",
@@ -539,7 +542,10 @@ const normalizeCountMap = (value: unknown): Record<string, number> => {
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
       .filter((entry): entry is [string, number] => typeof entry[1] === "number")
-      .map(([key, count]) => [key, Math.max(0, Math.round(count))]),
+      .map(([key, count]) => [
+        key,
+        Math.min(NAV_MEMORY_CELL_COUNT_LIMIT, Math.max(0, Math.round(count))),
+      ]),
   );
 };
 
@@ -568,7 +574,10 @@ const recordExploredCell = (
     ...normalized,
     exploredCells: {
       ...normalized.exploredCells,
-      [cellKey]: (normalized.exploredCells[cellKey] ?? 0) + 1,
+      [cellKey]: Math.min(
+        NAV_MEMORY_CELL_COUNT_LIMIT,
+        (normalized.exploredCells[cellKey] ?? 0) + 1,
+      ),
     },
     lastExploredAt: new Date().toISOString(),
   };
@@ -588,7 +597,10 @@ const recordExploreResult = (
       result === "failure"
         ? {
             ...normalized.trickySpots,
-            [cellKey]: (normalized.trickySpots[cellKey] ?? 0) + 1,
+            [cellKey]: Math.min(
+              NAV_MEMORY_CELL_COUNT_LIMIT,
+              (normalized.trickySpots[cellKey] ?? 0) + 1,
+            ),
           }
         : normalized.trickySpots,
   };
@@ -1696,7 +1708,11 @@ const loadSave = (content: AivatarContent): AivatarSaveState => {
 };
 
 const persistSave = (save: AivatarSaveState) => {
-  localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+  } catch (error) {
+    console.warn("Could not persist Aivatar save.", error);
+  }
 };
 
 const isTaskCabinetStatus = (value: unknown): value is TaskCabinetStatus =>
@@ -1894,7 +1910,11 @@ const loadTaskCabinetEntries = (): TaskCabinetEntry[] => {
 };
 
 const persistTaskCabinetEntries = (entries: TaskCabinetEntry[]) => {
-  localStorage.setItem(TASK_CABINET_STORAGE_KEY, JSON.stringify(entries));
+  try {
+    localStorage.setItem(TASK_CABINET_STORAGE_KEY, JSON.stringify(entries));
+  } catch (error) {
+    console.warn("Could not persist Task Cabinet entries.", error);
+  }
 };
 
 const taskCabinetFileName = (path: string) =>
@@ -2698,6 +2718,12 @@ export const App = () => {
     let exploreAccumulator = 0;
     let exploreStuckAccumulator = 0;
     let lastExploreDistance = Number.POSITIVE_INFINITY;
+    let navLearningAccumulator = 0;
+    let navLearningStuckAccumulator = 0;
+    let lastNavLearningDistance = Number.POSITIVE_INFINITY;
+    let lastNavLearningTargetKey = "";
+    let lastNavLearningSuccessKey = "";
+    let lastNavLearningFailureKey = "";
     let stopped = false;
 
     const loop = (now: number) => {
@@ -2789,6 +2815,77 @@ export const App = () => {
           navMemory: saveRef.current.navMemory,
         },
       );
+
+      const navLearningTargetKey = [
+        runtimeRef.current.behavior,
+        Math.round(runtimeRef.current.targetX),
+        Math.round(runtimeRef.current.targetY),
+      ].join(":");
+      const navLearningDistance = Math.hypot(
+        runtimeRef.current.x - runtimeRef.current.targetX,
+        runtimeRef.current.y - runtimeRef.current.targetY,
+      );
+      const navLearningBehaviorActive =
+        runtimeRef.current.behavior !== "idle" &&
+        runtimeRef.current.behavior !== "explore";
+      const recordNavLearningResult = (
+        result: "success" | "failure",
+        cellKey = explorationCellKey(runtimeRef.current),
+      ) => {
+        const resultKey = `${navLearningTargetKey}:${cellKey}`;
+        if (result === "success") {
+          if (resultKey === lastNavLearningSuccessKey) return;
+          lastNavLearningSuccessKey = resultKey;
+        } else {
+          if (resultKey === lastNavLearningFailureKey) return;
+          lastNavLearningFailureKey = resultKey;
+        }
+
+        setSave((current) => ({
+          ...current,
+          navMemory: recordExploreResult(current.navMemory, result, cellKey),
+        }));
+      };
+
+      if (navLearningTargetKey !== lastNavLearningTargetKey) {
+        navLearningAccumulator = 0;
+        navLearningStuckAccumulator = 0;
+        lastNavLearningDistance = Number.POSITIVE_INFINITY;
+        lastNavLearningTargetKey = navLearningTargetKey;
+        lastNavLearningSuccessKey = "";
+        lastNavLearningFailureKey = "";
+      }
+
+      if (navLearningBehaviorActive) {
+        navLearningAccumulator += elapsedSeconds;
+        navLearningStuckAccumulator =
+          navLearningDistance < lastNavLearningDistance - 0.2
+            ? 0
+            : navLearningStuckAccumulator + elapsedSeconds;
+        lastNavLearningDistance = navLearningDistance;
+
+        if (navLearningAccumulator >= NAV_LEARNING_RECORD_INTERVAL_SECONDS) {
+          navLearningAccumulator = 0;
+          const cellKey = explorationCellKey(runtimeRef.current);
+          setSave((current) => ({
+            ...current,
+            navMemory: recordExploredCell(current.navMemory, cellKey),
+          }));
+        }
+
+        if (navLearningStuckAccumulator >= 2.8) {
+          recordNavLearningResult("failure");
+          navLearningStuckAccumulator = 0;
+        }
+
+        if (navLearningDistance <= INTERACTION_ARRIVAL_DISTANCE) {
+          recordNavLearningResult("success");
+        }
+      } else {
+        navLearningAccumulator = 0;
+        navLearningStuckAccumulator = 0;
+        lastNavLearningDistance = Number.POSITIVE_INFINITY;
+      }
 
       if (runtimeRef.current.behavior === "explore") {
         const exploreDistance = Math.hypot(
@@ -2902,6 +2999,7 @@ export const App = () => {
                 );
 
           if (arrived) {
+            recordNavLearningResult("success");
             pendingWorldInteractionRef.current = null;
 
             if (pendingWorldInteraction.target === "furniture") {
@@ -3168,6 +3266,7 @@ export const App = () => {
             currentContent,
           )
         ) {
+          recordNavLearningResult("success");
           startFeedInteraction(targetFurniture);
         }
       }
@@ -3190,6 +3289,7 @@ export const App = () => {
           isNearPlacedItemInteractionTarget(runtimeRef.current, coffeeMachine, currentContent);
 
         if (coffeeMachine && nearCoffeeMachine && activeInteractionRef.current?.kind !== "brew") {
+          recordNavLearningResult("success");
           const now = performance.now();
           updateActiveInteraction({
             kind: "brew",
@@ -3682,19 +3782,32 @@ export const App = () => {
     }
 
     const now = new Date().toISOString();
-    setTaskCabinetEntries((current) => [
-      {
-        id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        path,
-        status: "ready",
-        createdAt: now,
-        updatedAt: now,
-        runProfile: "default",
-      },
-      ...current,
-    ]);
-    setTaskCabinetPathInput("");
-    setTaskCabinetMessage("Task path saved locally.");
+    let added = false;
+    setTaskCabinetEntries((current) => {
+      if (current.length >= TASK_CABINET_ENTRY_LIMIT) {
+        return current;
+      }
+      added = true;
+      return [
+        {
+          id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          path,
+          status: "ready",
+          createdAt: now,
+          updatedAt: now,
+          runProfile: "default",
+        },
+        ...current,
+      ];
+    });
+    if (added) {
+      setTaskCabinetPathInput("");
+      setTaskCabinetMessage("Task path saved locally.");
+    } else {
+      setTaskCabinetMessage(
+        `Task Cabinet is limited to ${TASK_CABINET_ENTRY_LIMIT} tasks.`,
+      );
+    }
   };
 
   const browseTaskCabinetPath = async () => {

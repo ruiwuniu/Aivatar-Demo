@@ -12,6 +12,7 @@ const staleSessionsPath = "/agent-sessions/stale";
 const presencePath = "/agent-presence";
 const healthPath = "/health";
 const sessionStaleMs = Number(process.env.AIVATAR_SESSION_STALE_MS ?? 60000);
+const maxSessions = Number(process.env.AIVATAR_MAX_SESSIONS ?? 80);
 
 const allowedStatuses = new Set([
   "idle",
@@ -124,6 +125,33 @@ const pruneStaleSessions = () => {
 
   return deletedSessions;
 };
+
+const pruneSessionOverflow = () => {
+  if (!Number.isFinite(maxSessions) || maxSessions <= 0) return 0;
+  if (sessions.size <= maxSessions) return 0;
+
+  let deletedSessions = 0;
+  const removable = [...sessions.entries()]
+    .filter(([key]) => key !== activeSessionKey)
+    .sort(([, left], [, right]) => {
+      const leftTime = Date.parse(left.presenceTimestamp ?? left.timestamp);
+      const rightTime = Date.parse(right.presenceTimestamp ?? right.timestamp);
+      return (
+        (Number.isNaN(leftTime) ? 0 : leftTime) -
+        (Number.isNaN(rightTime) ? 0 : rightTime)
+      );
+    });
+
+  for (const [key] of removable) {
+    if (sessions.size <= maxSessions) break;
+    sessions.delete(key);
+    deletedSessions += 1;
+  }
+
+  return deletedSessions;
+};
+
+const pruneSessions = () => pruneStaleSessions() + pruneSessionOverflow();
 
 const normalizeUsage = (value) => {
   if (!value || typeof value !== "object") return undefined;
@@ -431,6 +459,7 @@ const httpServer = http.createServer(async (request, response) => {
         }),
         presenceTimestamp: presence.timestamp,
       });
+      pruneSessionOverflow();
       const snapshot = makeSnapshot();
       broadcast(snapshot);
       sendJson(response, 202, snapshot);
@@ -452,10 +481,12 @@ const httpServer = http.createServer(async (request, response) => {
       const existing = sessions.get(sessionKey(nextStatus));
       currentStatus = {
         ...nextStatus,
+        usage: nextStatus.usage ?? existing?.usage,
         idleBubbleCandidates:
           nextStatus.idleBubbleCandidates ?? existing?.idleBubbleCandidates,
       };
       sessions.set(sessionKey(currentStatus), currentStatus);
+      pruneSessionOverflow();
       const snapshot = makeSnapshot();
       broadcast(snapshot);
       sendJson(response, 202, snapshot);
@@ -483,6 +514,10 @@ httpServer.listen(httpPort, "127.0.0.1", () => {
   console.log(`Aivatar presence: http://127.0.0.1:${httpPort}${presencePath}`);
   console.log(`Aivatar health: http://127.0.0.1:${httpPort}${healthPath}`);
 });
+
+setInterval(() => {
+  pruneSessions();
+}, Math.max(10_000, sessionStaleMs));
 
 const shutdown = () => {
   httpServer.close();
