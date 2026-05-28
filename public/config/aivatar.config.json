@@ -1,0 +1,776 @@
+{
+  "avatar": {
+    "name": "Codex",
+    "sprite": "assets/avatar/default.png"
+  },
+  "room": {
+    "theme": "pixel-cabin",
+    "zones": ["bedroom", "office", "kitchen"],
+    "floorSurfaceId": "honey-plank",
+    "wallSurfaceId": "hermes-green-paint",
+    "windowId": "city-night-window",
+    "floorSurfaces": [
+      {
+        "id": "honey-plank",
+        "name": "Honey Plank Floor",
+        "palette": {
+          "border": "#2a160c",
+          "base": "#925324",
+          "plankA": "#a7612b",
+          "plankB": "#b66f34",
+          "plankC": "#965526",
+          "plankD": "#c17a38",
+          "seam": "#6c3719",
+          "highlight": "#dc944a",
+          "grainDark": "#7b421d",
+          "grainLight": "#cf8840"
+        }
+      },
+      {
+        "id": "dark-plank",
+        "name": "Dark Plank Floor",
+        "palette": {
+          "border": "#1c100b",
+          "base": "#432719",
+          "plankA": "#4d2f1d",
+          "plankB": "#5a3823",
+          "plankC": "#3d2618",
+          "plankD": "#684127",
+          "seam": "#24140d",
+          "highlight": "#8f5a32",
+          "grainDark": "#2b180f",
+          "grainLight": "#754927"
+        }
+      },
+      {
+        "id": "checker-tile-floor",
+        "name": "Checker Tile Floor",
+        "palette": {
+          "border": "#111111",
+          "base": "#d8d6cf",
+          "plankA": "#f4f1e8",
+          "plankB": "#1b1b20",
+          "plankC": "#c6c2b8",
+          "plankD": "#34343a",
+          "seam": "#77736a",
+          "highlight": "#ffffff",
+          "grainDark": "#0d0d11",
+          "grainLight": "#ece8dc"
+        }
+      },
+      {
+        "id": "polished-cement-floor",
+        "name": "Polished Cement Floor",
+        "palette": {
+          "border": "#2c3034",
+          "base": "#8f969b",
+          "plankA": "#a7adb1",
+          "plankB": "#8d9498",
+          "plankC": "#737a7f",
+          "plankD": "#b9bec1",
+          "seam": "#60676c",
+          "highlight": "#d7dbdd",
+          "grainDark": "#555b60",
+          "grainLight": "#c4c8ca"
+        }
+      },
+      {
+        "id": "industrial-metal-floor",
+        "name": "Industrial Metal Floor",
+        "palette": {
+          "border": "#161a1f",
+          "base": "#4f5963",
+          "plankA": "#65717b",
+          "plankB": "#3f4851",
+          "plankC": "#2d343c",
+          "plankD": "#87929b",
+          "seam": "#20262d",
+          "highlight": "#c1ccd3",
+          "grainDark": "#252b32",
+          "grainLight": "#9aa6ae"
+        }
+      },
+      {
+        "id": "tatami-mat-floor",
+        "name": "Tatami Mat Floor",
+        "palette": {
+          "border": "#403522",
+          "base": "#b8ad72",
+          "plankA": "#c8bc7a",
+          "plankB": "#aca164",
+          "plankC": "#8f854f",
+          "plankD": "#d8cb8a",
+          "seam": "#5e5432",
+          "highlight": "#efe3a1",
+          "grainDark": "#756b40",
+          "grainLight": "#ded28b"
+        }
+      }
+    ],
+    "wallSurfaces": [
+      {
+        "id": "hermes-green-paint",
+        "name": "Hermes Green Latex Wall",
+        "palette": {
+          "border": "#10241e",
+          "base": "#1f5c45",
+          "plankA": "#1f5c45",
+          "plankB": "#24684f",
+          "plankC": "#194b39",
+          "plankD": "#2a7358",
+          "seam": "#16382d",
+          "highlight": "#4e9477",
+          "grainDark": "#174233",
+          "grainLight": "#3f8167"
+        }
+      },
+      {
+        "id": "honey-panel",
+        "name": "Honey Wood Wall",
+        "palette": {
+          "border": "#2a160c",
+          "base": "#b86c2f",
+          "plankA": "#b86c2f",
+          "plankB": "#c87936",
+          "plankC": "#a85e29",
+          "plankD": "#d58a42",
+          "seam": "#8e4b22",
+          "highlight": "#df9148",
+          "grainDark": "#85451f",
+          "grainLight": "#dc9148"
+        }
+      },
+      {
+        "id": "dark-panel",
+        "name": "Dark Wood Wall",
+        "palette": {
+          "border": "#1c100b",
+          "base": "#654025",
+          "plankA": "#654025",
+          "plankB": "#71482a",
+          "plankC": "#55361f",
+          "plankD": "#7f5130",
+          "seam": "#352015",
+          "highlight": "#9a6338",
+          "grainDark": "#2a180f",
+          "grainLight": "#875632"
+        }
+      },
+      {
+        "id": "purple-bubble-wallpaper",
+        "name": "Purple Bubble Wallpaper",
+        "palette": {
+          "border": "#20112f",
+          "base": "#5f3a8f",
+          "plankA": "#6842a0",
+          "plankB": "#7650b8",
+          "plankC": "#4d2c78",
+          "plankD": "#8c63cf",
+          "seam": "#3b215e",
+          "highlight": "#b999ff",
+          "grainDark": "#402466",
+          "grainLight": "#9d78df"
+        }
+      },
+      {
+        "id": "pink-sakura-wallpaper",
+        "name": "Pink Sakura Wallpaper",
+        "palette": {
+          "border": "#4a2135",
+          "base": "#f6b7cf",
+          "plankA": "#ffd6e4",
+          "plankB": "#f49abc",
+          "plankC": "#d96f9a",
+          "plankD": "#fff0f6",
+          "seam": "#b95682",
+          "highlight": "#fff7fb",
+          "grainDark": "#9f466d",
+          "grainLight": "#ffddea"
+        }
+      },
+      {
+        "id": "warm-ivory-wallpaper",
+        "name": "Warm Ivory Wallpaper",
+        "palette": {
+          "border": "#6c5f4a",
+          "base": "#f3ead8",
+          "plankA": "#fbf4e7",
+          "plankB": "#eadfc9",
+          "plankC": "#d7cbb5",
+          "plankD": "#fffaf0",
+          "seam": "#b9aa8f",
+          "highlight": "#fffdf7",
+          "grainDark": "#c8b99d",
+          "grainLight": "#f8f0df"
+        }
+      }
+    ],
+    "windows": [
+      {
+        "id": "cozy-window",
+        "name": "Cozy Window",
+        "kind": "cozy-window",
+        "x": 178,
+        "y": 36,
+        "width": 72,
+        "height": 48
+      },
+      {
+        "id": "city-night-window",
+        "name": "City Night Window",
+        "kind": "city-night-window",
+        "x": 146,
+        "y": 28,
+        "width": 188,
+        "height": 78
+      },
+      {
+        "id": "ocean-window",
+        "name": "Ocean Window",
+        "kind": "ocean-window",
+        "x": 146,
+        "y": 30,
+        "width": 188,
+        "height": 96
+      }
+    ],
+    "furniture": [
+      {
+        "id": "bed",
+        "name": "Bed",
+        "tags": ["furniture", "bed"],
+        "placementSurfaces": ["floor"],
+        "zone": "bedroom",
+        "x": 87,
+        "y": 102,
+        "width": 70,
+        "height": 98,
+        "color": "#7e5ca8",
+        "interaction": "sleep"
+      },
+      {
+        "id": "desk",
+        "name": "Desk",
+        "tags": ["furniture", "desk"],
+        "placementSurfaces": ["floor"],
+        "zone": "office",
+        "x": 174,
+        "y": 100,
+        "width": 94,
+        "height": 42,
+        "color": "#8a5a38",
+        "interaction": "interact",
+        "collision": { "x": 170, "y": 130, "width": 102, "height": 41 }
+      },
+      {
+        "id": "fridge",
+        "name": "Fridge",
+        "tags": ["furniture", "fridge"],
+        "placementSurfaces": ["floor"],
+        "zone": "kitchen",
+        "x": 344,
+        "y": 96,
+        "width": 42,
+        "height": 74,
+        "color": "#8fc7c0",
+        "interaction": "interact",
+        "collision": { "x": 346, "y": 143, "width": 38, "height": 31 }
+      },
+      {
+        "id": "table",
+        "name": "Table",
+        "tags": ["furniture", "table", "coffee-storage"],
+        "placementSurfaces": ["floor"],
+        "zone": "kitchen",
+        "x": 304,
+        "y": 224,
+        "width": 94,
+        "height": 40,
+        "color": "#c48650",
+        "interaction": "interact",
+        "collision": { "x": 306, "y": 256, "width": 90, "height": 27 }
+      }
+    ]
+  },
+  "inventory": [
+    { "itemId": "coffee", "quantity": 2 },
+    { "itemId": "bento", "quantity": 1 },
+    { "itemId": "repair-kit", "quantity": 1 }
+  ],
+  "placedItems": [
+    {
+      "id": "builtin-terminal",
+      "itemId": "terminal-monitor",
+      "x": 217,
+      "y": 104,
+      "surfaceFurnitureId": "desk",
+      "surfaceOffsetX": 43,
+      "surfaceOffsetY": 4
+    },
+    {
+      "id": "default-desk-lamp",
+      "itemId": "desk-lamp",
+      "x": 186,
+      "y": 104,
+      "surfaceFurnitureId": "desk",
+      "surfaceOffsetX": 12,
+      "surfaceOffsetY": 4
+    },
+    {
+      "id": "default-coffee-cup",
+      "itemId": "coffee-cup",
+      "x": 330,
+      "y": 228,
+      "surfaceFurnitureId": "table",
+      "surfaceOffsetX": 26,
+      "surfaceOffsetY": 4
+    }
+  ],
+  "itemDefinitions": [
+    {
+      "id": "coffee",
+      "name": "Coffee",
+      "kind": "drink",
+      "tags": ["consumable"],
+      "price": 8,
+      "effect": { "energy": 18, "mood": 4, "hunger": 4 }
+    },
+    {
+      "id": "bento",
+      "name": "Bento",
+      "kind": "food",
+      "tags": ["consumable"],
+      "price": 14,
+      "effect": { "energy": 10, "mood": 8, "hunger": 24 }
+    },
+    {
+      "id": "cola",
+      "name": "Cola",
+      "kind": "drink",
+      "tags": ["consumable"],
+      "price": 10,
+      "effect": { "energy": 8, "mood": 8, "hunger": 6 }
+    },
+    {
+      "id": "repair-kit",
+      "name": "Repair Kit",
+      "kind": "tool",
+      "tags": ["consumable"],
+      "price": 20,
+      "effect": { "mood": 12 }
+    },
+    {
+      "id": "tiny-plant",
+      "name": "Tiny Plant",
+      "kind": "decor",
+      "tags": ["item", "plant"],
+      "price": 26,
+      "placementSurfaces": ["floor", "furnitureTop"],
+      "placement": "floor",
+      "effect": { "mood": 6 }
+    },
+    {
+      "id": "cozy-rug",
+      "name": "Cozy Rug",
+      "kind": "decor",
+      "tags": ["item", "rug"],
+      "price": 180,
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 4 }
+    },
+    {
+      "id": "morph-blob-rug",
+      "name": "Morph Blob Rug",
+      "kind": "decor",
+      "tags": ["item", "rug"],
+      "price": 360,
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 7 }
+    },
+    {
+      "id": "desk-lamp",
+      "name": "Desk Lamp",
+      "kind": "decor",
+      "tags": ["item", "lamp"],
+      "price": 22,
+      "placementSurfaces": ["floor", "furnitureTop"],
+      "placement": "desktop",
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
+      "id": "coffee-cup",
+      "name": "Coffee Cup",
+      "kind": "decor",
+      "tags": ["item", "coffee-cup", "coffee-storage"],
+      "price": 8,
+      "placementSurfaces": ["furnitureTop"],
+      "placement": "desktop",
+      "effect": { "mood": 1 }
+    },
+    {
+      "id": "poster",
+      "name": "Poster",
+      "kind": "decor",
+      "tags": ["hanging"],
+      "price": 16,
+      "placementSurfaces": ["wall"],
+      "placement": "wall",
+      "effect": { "mood": 4 }
+    },
+    {
+      "id": "digital-wall-clock",
+      "name": "Digital Wall Clock",
+      "kind": "decor",
+      "tags": ["hanging"],
+      "price": 28,
+      "placementSurfaces": ["wall"],
+      "placement": "wall",
+      "effect": { "mood": 3 }
+    },
+    {
+      "id": "game-console",
+      "name": "Game Console",
+      "kind": "decor",
+      "tags": ["item", "game-console"],
+      "price": 3000,
+      "placementSurfaces": ["floor", "furnitureTop"],
+      "placement": "floor",
+      "effect": { "mood": 10 }
+    },
+    {
+      "id": "oil-easel",
+      "name": "Oil Easel",
+      "kind": "decor",
+      "tags": ["furniture", "easel"],
+      "price": 640,
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 8 }
+    },
+    {
+      "id": "terminal-monitor",
+      "name": "Terminal Monitor",
+      "kind": "decor",
+      "tags": ["item", "computer"],
+      "price": 34,
+      "placementSurfaces": ["floor", "furnitureTop"],
+      "placement": "desktop",
+      "effect": { "mood": 4, "energy": 2 }
+    },
+    {
+      "id": "coffee-machine",
+      "name": "Coffee Machine",
+      "kind": "decor",
+      "tags": ["item", "coffee-machine"],
+      "price": 5600,
+      "placementSurfaces": ["floor", "furnitureTop"],
+      "placement": "desktop",
+      "effect": { "energy": 8, "mood": 3 }
+    },
+    {
+      "id": "file-cabinet",
+      "name": "File Cabinet",
+      "kind": "furniture",
+      "tags": ["furniture", "file-cabinet"],
+      "price": 1200,
+      "unlockLevel": 25,
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 4, "energy": 2 }
+    },
+    {
+      "id": "city-night-window",
+      "name": "City Night Window",
+      "kind": "window",
+      "tags": ["window"],
+      "price": 72,
+      "effect": { "mood": 8 }
+    },
+    {
+      "id": "ocean-window",
+      "name": "Ocean Window",
+      "kind": "window",
+      "tags": ["window"],
+      "price": 8888,
+      "effect": { "mood": 10 }
+    },
+    {
+      "id": "purple-bubble-wallpaper",
+      "name": "Purple Bubble Wallpaper",
+      "kind": "decor",
+      "tags": ["wall-surface"],
+      "price": 42,
+      "effect": { "mood": 6 }
+    },
+    {
+      "id": "checker-tile-floor",
+      "name": "Checker Tile Floor",
+      "kind": "decor",
+      "tags": ["floor-surface"],
+      "price": 48,
+      "effect": { "mood": 5 }
+    },
+    {
+      "id": "pink-sakura-wallpaper",
+      "name": "Pink Sakura Wallpaper",
+      "kind": "decor",
+      "tags": ["wall-surface"],
+      "price": 54,
+      "effect": { "mood": 7 }
+    },
+    {
+      "id": "warm-ivory-wallpaper",
+      "name": "Warm Ivory Wallpaper",
+      "kind": "decor",
+      "tags": ["wall-surface"],
+      "price": 46,
+      "effect": { "mood": 5 }
+    },
+    {
+      "id": "polished-cement-floor",
+      "name": "Polished Cement Floor",
+      "kind": "decor",
+      "tags": ["floor-surface"],
+      "price": 52,
+      "effect": { "mood": 4 }
+    },
+    {
+      "id": "industrial-metal-floor",
+      "name": "Industrial Metal Floor",
+      "kind": "decor",
+      "tags": ["floor-surface"],
+      "price": 68,
+      "effect": { "mood": 3, "energy": 2 }
+    },
+    {
+      "id": "tatami-mat-floor",
+      "name": "Tatami Mat Floor",
+      "kind": "decor",
+      "tags": ["floor-surface"],
+      "price": 58,
+      "effect": { "mood": 7 }
+    }
+  ],
+  "shop": {
+    "currency": "bits",
+    "items": [
+      {
+        "id": "coffee",
+        "name": "Coffee",
+        "kind": "drink",
+        "tags": ["consumable"],
+        "price": 8,
+        "effect": { "energy": 18, "mood": 4, "hunger": 4 }
+      },
+      {
+        "id": "bento",
+        "name": "Bento",
+        "kind": "food",
+        "tags": ["consumable"],
+        "price": 14,
+        "effect": { "energy": 10, "mood": 8, "hunger": 24 }
+      },
+      {
+        "id": "cola",
+        "name": "Cola",
+        "kind": "drink",
+        "tags": ["consumable"],
+        "price": 10,
+        "effect": { "energy": 8, "mood": 8, "hunger": 6 }
+      },
+      {
+        "id": "tiny-plant",
+        "name": "Tiny Plant",
+        "kind": "decor",
+        "tags": ["item", "plant"],
+        "price": 26,
+        "placementSurfaces": ["floor", "furnitureTop"],
+        "placement": "floor",
+        "effect": { "mood": 6 }
+      },
+      {
+        "id": "cozy-rug",
+        "name": "Cozy Rug",
+        "kind": "decor",
+        "tags": ["item", "rug"],
+        "price": 180,
+        "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 4 }
+    },
+    {
+      "id": "morph-blob-rug",
+      "name": "Morph Blob Rug",
+      "kind": "decor",
+      "tags": ["item", "rug"],
+      "price": 360,
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 7 }
+    },
+    {
+      "id": "desk-lamp",
+      "name": "Desk Lamp",
+        "kind": "decor",
+        "tags": ["item", "lamp"],
+        "price": 22,
+        "placementSurfaces": ["floor", "furnitureTop"],
+        "placement": "desktop",
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "coffee-cup",
+        "name": "Coffee Cup",
+        "kind": "decor",
+        "tags": ["item", "coffee-cup", "coffee-storage"],
+        "price": 8,
+        "placementSurfaces": ["furnitureTop"],
+        "placement": "desktop",
+        "effect": { "mood": 1 }
+      },
+      {
+        "id": "poster",
+        "name": "Poster",
+        "kind": "decor",
+        "tags": ["hanging"],
+        "price": 16,
+        "placementSurfaces": ["wall"],
+      "placement": "wall",
+      "effect": { "mood": 4 }
+    },
+    {
+      "id": "digital-wall-clock",
+      "name": "Digital Wall Clock",
+      "kind": "decor",
+      "tags": ["hanging"],
+      "price": 28,
+      "placementSurfaces": ["wall"],
+      "placement": "wall",
+      "effect": { "mood": 3 }
+    },
+    {
+      "id": "game-console",
+      "name": "Game Console",
+      "kind": "decor",
+      "tags": ["item", "game-console"],
+      "price": 3000,
+      "placementSurfaces": ["floor", "furnitureTop"],
+      "placement": "floor",
+      "effect": { "mood": 10 }
+    },
+    {
+      "id": "oil-easel",
+      "name": "Oil Easel",
+      "kind": "decor",
+      "tags": ["furniture", "easel"],
+      "price": 640,
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 8 }
+    },
+    {
+        "id": "coffee-machine",
+        "name": "Coffee Machine",
+        "kind": "decor",
+        "tags": ["item", "coffee-machine"],
+        "price": 5600,
+        "placementSurfaces": ["floor", "furnitureTop"],
+        "placement": "desktop",
+        "effect": { "energy": 8, "mood": 3 }
+      },
+      {
+        "id": "file-cabinet",
+        "name": "File Cabinet",
+        "kind": "furniture",
+        "tags": ["furniture", "file-cabinet"],
+        "price": 1200,
+        "unlockLevel": 25,
+        "placementSurfaces": ["floor"],
+        "placement": "floor",
+        "effect": { "mood": 4, "energy": 2 }
+      },
+      {
+        "id": "city-night-window",
+        "name": "City Night Window",
+        "kind": "window",
+        "tags": ["window"],
+        "price": 72,
+        "effect": { "mood": 8 }
+      },
+      {
+        "id": "ocean-window",
+        "name": "Ocean Window",
+        "kind": "window",
+        "tags": ["window"],
+        "price": 8888,
+        "effect": { "mood": 10 }
+      },
+      {
+        "id": "purple-bubble-wallpaper",
+        "name": "Purple Bubble Wallpaper",
+        "kind": "decor",
+        "tags": ["wall-surface"],
+        "price": 42,
+        "effect": { "mood": 6 }
+      },
+      {
+        "id": "checker-tile-floor",
+        "name": "Checker Tile Floor",
+        "kind": "decor",
+        "tags": ["floor-surface"],
+        "price": 48,
+        "effect": { "mood": 5 }
+      },
+      {
+        "id": "pink-sakura-wallpaper",
+        "name": "Pink Sakura Wallpaper",
+        "kind": "decor",
+        "tags": ["wall-surface"],
+        "price": 54,
+        "effect": { "mood": 7 }
+      },
+      {
+        "id": "warm-ivory-wallpaper",
+        "name": "Warm Ivory Wallpaper",
+        "kind": "decor",
+        "tags": ["wall-surface"],
+        "price": 46,
+        "effect": { "mood": 5 }
+      },
+      {
+        "id": "polished-cement-floor",
+        "name": "Polished Cement Floor",
+        "kind": "decor",
+        "tags": ["floor-surface"],
+        "price": 52,
+        "effect": { "mood": 4 }
+      },
+      {
+        "id": "industrial-metal-floor",
+        "name": "Industrial Metal Floor",
+        "kind": "decor",
+        "tags": ["floor-surface"],
+        "price": 68,
+        "effect": { "mood": 3, "energy": 2 }
+      },
+      {
+        "id": "tatami-mat-floor",
+        "name": "Tatami Mat Floor",
+        "kind": "decor",
+        "tags": ["floor-surface"],
+        "price": 58,
+        "effect": { "mood": 7 }
+      }
+    ]
+  },
+  "petStats": {
+    "energy": 80,
+    "mood": 70,
+    "hunger": 40
+  },
+  "wallet": {
+    "bits": 32
+  }
+}

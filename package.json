@@ -1,0 +1,40 @@
+{
+  "name": "aivatar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "aivatar:run": "node scripts/aivatar-run.mjs",
+    "aivatar:session:setup": "node scripts/aivatar-session-plugin.mjs setup",
+    "aivatar:connect": "node scripts/aivatar-session-plugin.mjs connect",
+    "aivatar:disconnect": "node scripts/aivatar-session-plugin.mjs disconnect",
+    "aivatar:cli:connect": "node scripts/aivatar-cli-connect.mjs",
+    "aivatar:cli:disconnect": "node scripts/aivatar-cli-disconnect.mjs",
+    "agent:run": "node scripts/aivatar-run.mjs",
+    "agent:send": "node scripts/send-codex-status.mjs",
+    "codex:run": "node scripts/aivatar-run.mjs --agent codex -- codex",
+    "codex:connected": "node scripts/aivatar-connected-run.mjs --agent codex -- codex",
+    "claude:run": "node scripts/aivatar-run.mjs --agent claude-code -- claude",
+    "status:bridge": "node scripts/codex-status-bridge.mjs",
+    "status:mock": "node scripts/mock-codex-status.mjs",
+    "status:send": "node scripts/send-codex-status.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "ws": "^8.18.0"
+  }
+}
