@@ -58,6 +58,72 @@ type PlacedItemRenderLayer = "all" | "behind-avatar" | "in-front-of-avatar";
 
 type DominantTrait = keyof AivatarMemory["growth"]["traits"];
 type MoodBand = "high" | "normal" | "low" | "depleted";
+type UiThemeId = "classic" | "terminal" | "terminal-amber";
+
+interface BubblePalette {
+  shadow: string;
+  border: string;
+  fill: string;
+  tail: string;
+  infoText: string;
+  warningText: string;
+  errorText: string;
+  progressTrack: string;
+  progressFill: string;
+}
+
+const bubblePalettes: Record<UiThemeId, BubblePalette> = {
+  classic: {
+    shadow: "#101421",
+    border: "#f4ead2",
+    fill: "#1b2335",
+    tail: "#f4ead2",
+    infoText: "#9ee6ff",
+    warningText: "#f2a65a",
+    errorText: "#ff8fa3",
+    progressTrack: "#0f1422",
+    progressFill: "#8df7c4",
+  },
+  terminal: {
+    shadow: "#010804",
+    border: "#67ff72",
+    fill: "#041108",
+    tail: "#67ff72",
+    infoText: "#d8ffd0",
+    warningText: "#d9ff5f",
+    errorText: "#b6ff4a",
+    progressTrack: "#020804",
+    progressFill: "#67ff72",
+  },
+  "terminal-amber": {
+    shadow: "#080300",
+    border: "#ffbf4d",
+    fill: "#160c03",
+    tail: "#ffbf4d",
+    infoText: "#ffe4a3",
+    warningText: "#ffd166",
+    errorText: "#ff8f3d",
+    progressTrack: "#090500",
+    progressFill: "#ffb02e",
+  },
+};
+
+const bubblePaletteForTheme = (uiTheme: UiThemeId): BubblePalette =>
+  bubblePalettes[uiTheme] ?? bubblePalettes.classic;
+
+const isTerminalTheme = (uiTheme: UiThemeId) => uiTheme !== "classic";
+
+const terminalScanlineForTheme = (uiTheme: UiThemeId) =>
+  uiTheme === "terminal-amber" ? "#7a3d08" : "#145c22";
+
+const terminalRoomBackdropForTheme = (uiTheme: UiThemeId) =>
+  uiTheme === "terminal-amber" ? "#090500" : "#020804";
+
+const terminalStatusPanelForTheme = (uiTheme: UiThemeId) =>
+  uiTheme === "terminal-amber" ? "#160c03" : "#031207";
+
+const terminalStatusTextForTheme = (uiTheme: UiThemeId) =>
+  uiTheme === "terminal-amber" ? "#ffe4a3" : "#d8ffd0";
 
 interface TraitVisualTheme {
   body: string;
@@ -2012,6 +2078,7 @@ const drawAvatarBubble = (
   ctx: CanvasRenderingContext2D,
   avatar: AvatarRuntime,
   interaction?: FurnitureInteractionState | null,
+  uiTheme: UiThemeId = "classic",
 ) => {
   if (!interaction?.bubbleText) return;
 
@@ -2030,19 +2097,37 @@ const drawAvatarBubble = (
   const width = Math.max(38, Math.ceil(measurePixelText(ctx, text)) + 14);
   const x = Math.round(Math.min(sceneSize.width - width - 8, Math.max(8, avatar.x - width / 2)));
   const y = Math.round(Math.max(18, avatar.y - 64));
+  const palette = bubblePaletteForTheme(uiTheme);
 
-  drawPixelRect(ctx, x + 3, y + 4, width, hasDuration ? 25 : 18, "#101421");
-  drawPixelRect(ctx, x, y, width, hasDuration ? 25 : 18, "#f4ead2");
-  drawPixelRect(ctx, x + 2, y + 2, width - 4, hasDuration ? 21 : 14, "#1b2335");
-  drawPixelRect(ctx, x + Math.floor(width / 2) - 3, y + (hasDuration ? 25 : 18), 6, 5, "#f4ead2");
+  drawPixelRect(ctx, x + 3, y + 4, width, hasDuration ? 25 : 18, palette.shadow);
+  drawPixelRect(ctx, x, y, width, hasDuration ? 25 : 18, palette.border);
+  drawPixelRect(ctx, x + 2, y + 2, width - 4, hasDuration ? 21 : 14, palette.fill);
+  if (isTerminalTheme(uiTheme)) {
+    drawPixelRect(ctx, x + 4, y + 4, width - 8, 1, terminalScanlineForTheme(uiTheme));
+  }
+  drawPixelRect(
+    ctx,
+    x + Math.floor(width / 2) - 3,
+    y + (hasDuration ? 25 : 18),
+    6,
+    5,
+    palette.tail,
+  );
 
-  const textColor = interaction.kind === "blocked" ? "#ff8fa3" : "#ffe66d";
+  const textColor = interaction.kind === "blocked" ? palette.errorText : palette.warningText;
   drawPixelText(ctx, text, x + 6, y + 4, textColor);
 
   if (typeof progress === "number") {
     const barWidth = width - 12;
-    drawPixelRect(ctx, x + 6, y + 17, barWidth, 4, "#0f1422");
-    drawPixelRect(ctx, x + 6, y + 17, barWidth * Math.min(1, Math.max(0, progress)), 4, "#8df7c4");
+    drawPixelRect(ctx, x + 6, y + 17, barWidth, 4, palette.progressTrack);
+    drawPixelRect(
+      ctx,
+      x + 6,
+      y + 17,
+      barWidth * Math.min(1, Math.max(0, progress)),
+      4,
+      palette.progressFill,
+    );
   }
 };
 
@@ -2054,6 +2139,7 @@ const drawPixelBubble = (
   tone: "info" | "warning" | "error" = "info",
   shape: "pixel" | "rounded" = "pixel",
   options: { maxLines?: number } = {},
+  uiTheme: UiThemeId = "classic",
 ) => {
   const maxLines = options.maxLines ?? 1;
   ctx.font = "8px monospace";
@@ -2066,28 +2152,36 @@ const drawPixelBubble = (
   const height = lines.length > 1 ? 28 : 18;
   const x = Math.round(Math.min(sceneSize.width - width - 8, Math.max(8, anchorX - width / 2)));
   const y = Math.round(Math.max(12, anchorY));
+  const palette = bubblePaletteForTheme(uiTheme);
   const textColor =
-    tone === "error" ? "#ff8fa3" : tone === "warning" ? "#f2a65a" : "#9ee6ff";
+    tone === "error"
+      ? palette.errorText
+      : tone === "warning"
+        ? palette.warningText
+        : palette.infoText;
 
   if (shape === "rounded") {
-    ctx.fillStyle = "#101421";
+    ctx.fillStyle = palette.shadow;
     ctx.beginPath();
     ctx.roundRect(x + 3, y + 4, width, height, 7);
     ctx.fill();
-    ctx.fillStyle = "#f4ead2";
+    ctx.fillStyle = palette.border;
     ctx.beginPath();
     ctx.roundRect(x, y, width, height, 7);
     ctx.fill();
-    ctx.fillStyle = "#1b2335";
+    ctx.fillStyle = palette.fill;
     ctx.beginPath();
     ctx.roundRect(x + 2, y + 2, width - 4, height - 4, 5);
     ctx.fill();
   } else {
-    drawPixelRect(ctx, x + 3, y + 4, width, height, "#101421");
-    drawPixelRect(ctx, x, y, width, height, "#f4ead2");
-    drawPixelRect(ctx, x + 2, y + 2, width - 4, height - 4, "#1b2335");
+    drawPixelRect(ctx, x + 3, y + 4, width, height, palette.shadow);
+    drawPixelRect(ctx, x, y, width, height, palette.border);
+    drawPixelRect(ctx, x + 2, y + 2, width - 4, height - 4, palette.fill);
   }
-  drawPixelRect(ctx, x + Math.floor(width / 2) - 3, y + height, 6, 5, "#f4ead2");
+  if (isTerminalTheme(uiTheme)) {
+    drawPixelRect(ctx, x + 4, y + 4, width - 8, 1, terminalScanlineForTheme(uiTheme));
+  }
+  drawPixelRect(ctx, x + Math.floor(width / 2) - 3, y + height, 6, 5, palette.tail);
 
   ctx.fillStyle = textColor;
   lines.forEach((line, index) => {
@@ -2099,6 +2193,7 @@ const drawComputerStatusBubble = (
   ctx: CanvasRenderingContext2D,
   content: AivatarContent,
   status: CodexStatusMessage,
+  uiTheme: UiThemeId = "classic",
 ) => {
   if (status.agent !== "codex") return;
   if (status.status === "idle" || status.status === "thinking") return;
@@ -2125,6 +2220,7 @@ const drawComputerStatusBubble = (
     tone,
     "pixel",
     { maxLines: 2 },
+    uiTheme,
   );
 };
 
@@ -2133,6 +2229,7 @@ const drawCodexThinkingBubble = (
   avatar: AvatarRuntime,
   status: CodexStatusMessage,
   memory?: AivatarMemory,
+  uiTheme: UiThemeId = "classic",
 ) => {
   if (status.status !== "thinking") return;
   if (!isStatusBubbleVisible(status)) return;
@@ -2147,6 +2244,7 @@ const drawCodexThinkingBubble = (
     "info",
     "rounded",
     { maxLines: 2 },
+    uiTheme,
   );
 };
 
@@ -2154,6 +2252,7 @@ const drawActivityBubble = (
   ctx: CanvasRenderingContext2D,
   avatar: AvatarRuntime,
   memory?: AivatarMemory,
+  uiTheme: UiThemeId = "classic",
 ) => {
   if (["coding", "thinking", "waiting"].includes(avatar.behavior)) {
     return;
@@ -2175,7 +2274,7 @@ const drawActivityBubble = (
     message: text,
     startedAt: performance.now(),
     bubbleText: text,
-  });
+  }, uiTheme);
 };
 
 const drawTinyPlant = (
@@ -4530,8 +4629,11 @@ const drawRoom = (
   windowTimeMs = Date.now(),
   taskCabinetFileCount = 0,
   failedTaskCabinetFileCount = 0,
+  uiTheme: UiThemeId = "classic",
 ) => {
-  ctx.fillStyle = "#151523";
+  ctx.fillStyle = isTerminalTheme(uiTheme)
+    ? terminalRoomBackdropForTheme(uiTheme)
+    : "#151523";
   ctx.fillRect(0, 0, sceneSize.width, sceneSize.height);
 
   const floorSurface = resolveSurface(
@@ -4625,6 +4727,7 @@ const drawRoom = (
 const drawStatusLights = (
   ctx: CanvasRenderingContext2D,
   status: CodexStatusMessage,
+  uiTheme: UiThemeId = "classic",
 ) => {
   const colors: Record<CodexStatusMessage["status"], string> = {
     idle: "#8df7c4",
@@ -4635,9 +4738,23 @@ const drawStatusLights = (
     complete: "#b4f56c",
   };
 
-  drawPixelRect(ctx, 22, 22, 82, 24, "#171b26");
+  const panel = isTerminalTheme(uiTheme)
+    ? terminalStatusPanelForTheme(uiTheme)
+    : "#171b26";
+  const text = isTerminalTheme(uiTheme)
+    ? terminalStatusTextForTheme(uiTheme)
+    : "#e9e3c7";
+  const accent = isTerminalTheme(uiTheme)
+    ? terminalScanlineForTheme(uiTheme)
+    : "#171b26";
+
+  drawPixelRect(ctx, 22, 22, 82, 24, panel);
+  if (isTerminalTheme(uiTheme)) {
+    drawPixelRect(ctx, 24, 24, 78, 2, accent);
+    drawPixelRect(ctx, 24, 42, 78, 2, accent);
+  }
   drawPixelRect(ctx, 30, 30, 8, 8, colors[status.status]);
-  drawPixelText(ctx, status.status.replace("_for_user", ""), 44, 31, "#e9e3c7");
+  drawPixelText(ctx, status.status.replace("_for_user", ""), 44, 31, text);
 };
 
 const visibleRoomStatus = (status: CodexStatusMessage): CodexStatusMessage => {
@@ -4666,6 +4783,7 @@ export const renderScene = (
   windowTimeMs = Date.now(),
   taskCabinetFileCount = 0,
   failedTaskCabinetFileCount = 0,
+  uiTheme: UiThemeId = "classic",
 ) => {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -4699,6 +4817,7 @@ export const renderScene = (
     windowTimeMs,
     taskCabinetFileCount,
     failedTaskCabinetFileCount,
+    uiTheme,
   );
   drawPlacedItems(
     ctx,
@@ -4774,11 +4893,11 @@ export const renderScene = (
   });
   drawSleepBlanketOverlay(ctx, content, avatar);
   if (status.status === "thinking") {
-    drawCodexThinkingBubble(ctx, avatar, status, memory);
+    drawCodexThinkingBubble(ctx, avatar, status, memory, uiTheme);
   } else if (activeInteraction?.bubbleText) {
-    drawAvatarBubble(ctx, avatar, activeInteraction);
+    drawAvatarBubble(ctx, avatar, activeInteraction, uiTheme);
   } else {
-    drawActivityBubble(ctx, avatar, memory);
+    drawActivityBubble(ctx, avatar, memory, uiTheme);
   }
   drawSelectedInteractionPoints(
     ctx,
@@ -4786,6 +4905,6 @@ export const renderScene = (
     selectedFurnitureId,
     selectedPlacedItemId,
   );
-  drawComputerStatusBubble(ctx, content, status);
-  drawStatusLights(ctx, visibleRoomStatus(status));
+  drawComputerStatusBubble(ctx, content, status, uiTheme);
+  drawStatusLights(ctx, visibleRoomStatus(status), uiTheme);
 };
