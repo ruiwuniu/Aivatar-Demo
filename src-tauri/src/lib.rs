@@ -59,18 +59,10 @@ fn is_status_bridge_running() -> bool {
     .is_ok()
 }
 
-fn start_status_bridge_inner() -> Result<BridgeStartResult, String> {
-    if is_status_bridge_running() {
-        return Ok(BridgeStartResult {
-            status: "already-running".to_string(),
-            message: "Bridge already running.".to_string(),
-        });
-    }
-
-    let root = project_root()?;
+fn spawn_hidden_npm_script(root: &std::path::Path, script: &str) -> Result<(), String> {
     let mut command = std::process::Command::new("npm.cmd");
     command
-        .args(["run", "status:bridge"])
+        .args(["run", script])
         .current_dir(root)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -84,7 +76,22 @@ fn start_status_bridge_inner() -> Result<BridgeStartResult, String> {
 
     command
         .spawn()
-        .map_err(|error| format!("Could not start bridge: {error}"))?;
+        .map(|_| ())
+        .map_err(|error| format!("Could not start {script}: {error}"))
+}
+
+fn start_status_bridge_inner() -> Result<BridgeStartResult, String> {
+    let root = project_root()?;
+    if is_status_bridge_running() {
+        let _ = spawn_hidden_npm_script(&root, "status:discover");
+        return Ok(BridgeStartResult {
+            status: "already-running".to_string(),
+            message: "Bridge already running.".to_string(),
+        });
+    }
+
+    spawn_hidden_npm_script(&root, "status:bridge")?;
+    let _ = spawn_hidden_npm_script(&root, "status:discover");
 
     Ok(BridgeStartResult {
         status: "started".to_string(),

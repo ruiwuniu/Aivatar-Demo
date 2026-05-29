@@ -77,7 +77,7 @@ $env:CARGO_TARGET_DIR = "$env:TEMP\aivatar-cargo-target"
 cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && npm.cmd run tauri dev'
 ```
 
-The Tauri desktop app attempts to start the local status bridge automatically during app setup. The Debug panel also includes a `Start bridge` button for manually starting it from the app.
+The Tauri desktop app attempts to start the local status bridge automatically during app setup. The Debug panel also includes a `Start bridge` button for manually starting it from the app. Starting the bridge from Tauri also attempts to start Codex Desktop session discovery.
 
 Run real local status bridge:
 
@@ -85,7 +85,13 @@ Run real local status bridge:
 npm.cmd run status:bridge
 ```
 
-Manual bridge startup is still useful for web-only previews, bridge debugging, or when running the React dev server without the Tauri shell.
+Run Codex Desktop session discovery:
+
+```powershell
+npm.cmd run status:discover
+```
+
+Manual bridge startup is still useful for web-only previews, bridge debugging, or when running the React dev server without the Tauri shell. For web-only previews that should auto-detect Codex Desktop sessions, run both `status:bridge` and `status:discover`.
 
 Send a generic agent status manually:
 
@@ -128,7 +134,7 @@ The Agent Sessions panel displays these two commands as the recommended manual c
 
 The local session plugin can also read Codex Desktop token usage from the current session's local rollout JSONL. For Codex Desktop sessions, `thinking` creates or resets a token baseline, `executing` and `waiting_for_user` preserve or create the baseline, `complete` and `error` send token delta usage and clear the baseline, and `idle` or `--clear-active` clears the baseline without reward usage. Baselines expire after `AIVATAR_USAGE_BASELINE_TTL_MS`, defaulting to six hours.
 
-The plugin now separates presence from turn state. The heartbeat keeps the chosen session connected, while the rollout watcher tails the current Codex Desktop JSONL from the connect-time end of file and streams ordinary turn activity into Aivatar.
+The plugin now separates presence from turn state. The heartbeat keeps sessions connected through presence without repeatedly stealing active/follow state, while the rollout watcher tails the current Codex Desktop JSONL from the connect-time end of file and streams ordinary turn activity into Aivatar. Multiple Codex worktree/Desktop sessions can remain connected at the same time; the single followed/active session is changed by an explicit connect/Follow action rather than by every heartbeat tick.
 
 Connect a CLI-launched session through the repo-local Aivatar CLI connector:
 
@@ -241,6 +247,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 |   |-- aivatar-connected-run.mjs
 |   |-- aivatar-run.mjs
 |   |-- aivatar-session-plugin.mjs
+|   |-- codex-session-discovery.mjs
 |   |-- codex-status-bridge.mjs
 |   |-- mock-codex-status.mjs
 |   `-- send-codex-status.mjs
@@ -279,7 +286,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Main React app.
   - Owns loaded content, save state, Canvas events, categorized shop UI, inventory/shop interactions, the Decor panel for wall/floor surfaces, furniture/window interactions, placement mode, Room Edit mode, Debug controls, custom avatar name, agent status display, and the right-side Agent Sessions panel.
   - Shows a locked/disabled `Asset Studio` entry in the right side panel below the shop, with the Pixel Asset Editor kept in code but hidden from the runtime UI while the workflow is still in development.
-  - Includes a saved UI skin switcher stored under `aivatar.uiTheme.v1`. Current choices are `Classic` and `Terminal`; the Terminal skin is a neon-green retro CRT theme for the app shell and side-panel UI.
+  - Includes a saved UI skin switcher stored under `aivatar.uiTheme.v1`. Current choices are `Classic`, `Terminal`, and `Amber`; the Terminal skins are retro CRT-style themes for the app shell, side-panel UI, and canvas presentation pass.
   - Applies save-state overrides for placed items, base furniture placement, active/moved windows, active wall/floor surfaces, wallet, inventory, table coffee storage, stats, work boost, avatar runtime, stable avatar id, avatar name, lightweight memory/growth state, and navigation-learning state.
   - Manages `aivatar.save.v1`, `aivatar.defaultLayout.v1`, and `layoutVersion: 2` layout migration. New saves get a stable `avatarId`; older saves missing `avatarId` are normalized with a generated id, while clearing the save creates a new avatar id.
   - Persists `aivatar.save.v1` whenever save state changes and flushes the latest save ref on `pagehide`, `beforeunload`, hidden `visibilitychange`, and the Tauri `aivatar://save-before-close` event, so confirmed furniture/item layout, inventory, wallet, pet stats, avatar runtime, active wall/floor surfaces, window/furniture placements, furniture storage, and memory/growth state survive closing the app.
@@ -305,6 +312,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Codex `complete`, `error`, and `waiting_for_user` statuses now update lightweight memory/growth state, including XP, recent memory events, and trait changes.
   - Life events such as sleeping, playing, using Coffee/Cola/Bento, brewing Coffee, and buying items also write compact recent memory entries and small trait/preference changes.
   - Agent Sessions cards display model context window usage when `usage.contextTokens` and `usage.modelContextWindow` are present, and display token reward context as `tokens -> bits (weighted)` when a session includes reward usage. Context-only usage with `scope: "context-window"` is not shown as a reward summary.
+  - Agent Sessions preserves a session's latest known usage/context payload when a later status update omits `usage`, so terminal `complete`/`final_answer` events do not erase context-window meters.
   - Busy recovery allows the avatar to briefly leave high-priority agent work to drink coffee, eat food, or play games when stats are low, then return to the current agent state. If no recovery item is available, the avatar keeps working and is visually depleted instead of sleeping.
   - `thinking` does not trigger busy recovery, so the avatar keeps its focused thinking behavior instead of immediately switching to snacks or play while the agent is thinking.
   - Consumable use now routes Coffee, Cola, and Bento into distinct avatar behaviors when those specific items are consumed.
@@ -320,9 +328,10 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Game Console play sets the avatar facing toward the placed console after arrival instead of forcing a generic front-facing pose. Mood recovery now uses a near-active-play-target check so recovery can tick while the avatar is actively playing near the placed Game Console even if recalculated interaction standpoints differ slightly.
   - When multiple placed copies of the same autonomous interactive item exist, automatic target selection uses a `70%` nearest / `30%` random rule. This currently covers Game Console play, Coffee Machine brewing, Oil Easel painting, Terminal/coding targets, and busy-recovery Game Console selection. Manual right-click interactions still use the exact clicked object.
   - Oil Easel is a buyable Furniture-category placed object implemented as `kind: "decor"` with `tags: ["furniture", "easel"]`. Right-clicking it opens a context action that queues an arrive-then-`paint` interaction; painting restores mood over time and records compact memory with `creativity +1`.
-  - Idle/autonomous life can choose an `explore` behavior when stats are healthy. Exploration walks toward sampled room/object-near targets, records visited nav-grid cells, tracks success/failure, and stores tricky spots in `navMemory` for future local navigation policy work.
+  - Idle/autonomous life can choose an `explore` behavior when stats are healthy. Exploration walks toward sampled room/object-near targets, records visited nav-grid cells, tracks success/failure, and stores tricky spots in `navMemory`.
+  - Navigation learning now also records all real non-idle/non-explore movement: traversed cells, stuck/failure cells, and successful arrivals for ordinary movement, pending world interactions, snack targets, and autonomous brewing. Learned `navMemory` influences local action scoring for `sidestep-left`, `sidestep-right`, `backoff`, `force-replan`, and `switch-interaction-point`. Per-cell counters are capped at `9999`, and ordinary movement recording is throttled to reduce `localStorage` churn.
   - Growth is now collapsed behind a compact side-panel button by default. The button shows `Growth`, current level, XP progress, and a `+`/`-` affordance; expanding it reveals a six-axis personality hex chart, recent memory, and idle bubble controls.
-  - Growth traits are now six-dimensional: `focus`, `resilience`, `curiosity`, `efficiency`, `creativity`, and `warmth`. Raw trait points can grow to a large cap, while the enlarged, centered hex chart uses an S-curve normalized display value; hovering the small hex node at each chart corner shows that trait name and raw point count in a larger center label.
+  - Growth traits are now six-dimensional: `focus`, `resilience`, `curiosity`, `efficiency`, `creativity`, and `warmth`. Raw trait points are capped at `1_000_000` per axis, while the enlarged, centered hex chart uses `log10(points + 1)` normalized against that cap for display; hovering the small hex node at each chart corner shows that trait name and raw point count in a larger center label.
   - Growth idle bubble controls show saved phrases, session-derived suggestions, memory-derived suggestions, and a language preference (`auto`, `zh`, `en`, `mixed`). Users can add suggested short phrases into `memory.preferences.idleBubblePhrases`, with saved phrase slots capped by the current avatar level, and can remove saved phrases from the same panel.
   - Idle bubble suggestions shown in Growth use an explicit source mix: target 3 memory-derived candidates and 3 session-derived candidates, with either source filling remaining slots when the other has fewer available candidates.
   - The whole right-side menu can collapse into the room window through a narrow right-edge triangle handle. Collapsing locks the current room scene width, resizes the Tauri desktop window down to the room width, and keeps lightweight room HUD overlays visible over the room.
@@ -338,6 +347,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Task Cabinet uses the current CLI Launcher agent, cwd, and args when starting tasks. Running tasks record `agent`, `cwd`, `sessionId`, timestamps, and error text when startup or agent status fails. If a scheduled task is due but the CLI Launcher folder is missing, the task remains `Ready` and records a visible diagnostic rather than silently doing nothing.
   - Task Cabinet maps bridge sessions back to tasks by `agent + sessionId`: `complete` marks a running task `Completed`, `error` marks it `Failed`, and an `idle` disconnect without completion marks it failed with `Agent exited before reporting completion.`
   - Task Cabinet has desktop Browse buttons for selecting `.md` task files and the CLI Launcher folder through Tauri commands, avoiding manual path entry.
+  - Task Cabinet entries are capped at 100 saved task paths to keep `aivatar.taskCabinet.v1` bounded.
   - Task Cabinet `Profile` currently supports `Default` and `Fast`. `Fast` appends `--bare` for Claude Code. Codex `Fast` is a reserved UI entry until a verified MCP-skip flag is available, so it does not pass unknown Codex CLI flags.
   - Debug is collapsed behind a compact side-panel button by default. The button shows `Debug`, the current source, Live/Override state, and a `+`/`-` affordance; expanding it reveals local status overrides, trait training, Tauri-only Start bridge, Add supplies, Demo actions, Window preview, Save layout, Clear save, bridge endpoint, boost status, and table coffee storage.
   - Debug controls include a Tauri-only Start bridge button, an Add supplies test button that grants bits/Coffee/Bento/Cola and fills currently available table Coffee Cup storage for recovery testing, six trait training buttons, and a `Demo actions` behavior cycle for inspecting every avatar behavior state, including the idle-only phone animation and task-file fetch/carry/read poses.
@@ -363,6 +373,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 
 - `src/game/renderScene.ts`
   - Draws the pixel room, configurable floor/wall surfaces, configurable windows, furniture, four-direction octopus avatar, placed decor/furniture, placement previews, Room Edit highlights, avatar bubbles/progress, and status light.
+  - Accepts the current UI theme so the canvas presentation can harmonize with Classic, Terminal, and Amber app-shell skins.
   - Renders the current programmatic pixel art pass, including the Stardew-inspired bed, retro drawer desk, placed CRT-style Terminal with animated keyboard, metal reflective dining table, retro green two-door fridge with deeper top clutter, buyable File Cabinet, premium black/gray Coffee Machine, Coffee Cup, Switch-style Game Console, Oil Easel, Digital Wall Clock, rainbow Cozy Rug, purple morph-blob rug, fridge door open/hold/close animation, and blanket overlay used when the avatar sleeps under the covers.
   - Renders the File Cabinet as a narrower front-facing metal cabinet with a deeper top plane, right-side shading, front drawers, and visible stacked task-file papers. Visible papers are driven by the real Task Cabinet queue: `Ready + Failed` tasks appear in the cabinet, `Running` tasks are treated as taken out, and `Completed` tasks disappear.
   - Failed Task Cabinet papers render with a small red `X` and remain visible until the task is successfully rerun or removed. Papers are drawn behind the drawer front so the drawer lip occludes them like real files.
@@ -476,15 +487,36 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Supports `DELETE /agent-sessions/stale` for manually pruning stale session history while preserving the current active session.
   - Maintains one latest status per `agent + sessionId` and broadcasts snapshots containing `currentStatus`, `sessions[]`, `activeSessionKey`, `connectedSessionKey`, `currentSessionKey`, and a snapshot timestamp.
   - Normalizes and preserves optional `usage` fields, including `contextTokens` and `modelContextWindow`, so token usage can flow from status clients into the Agent Sessions panel, context window meters, and Codex reward logic.
+  - When a newer status update for the same session omits `usage`, the bridge preserves the previous usage payload so final/terminal status events do not erase context-window meters.
   - Normalizes and preserves optional `idleBubbleCandidates` arrays in status payloads so session-derived short phrase suggestions can flow into the Growth panel. These suggestions are bridge-memory only and are not persisted by the bridge. The bridge filters candidates outside the 2-28 character range instead of truncating overlong text into partial phrases.
   - When a newer status update for the same session omits `idleBubbleCandidates`, the bridge preserves the previous candidates so tool-use/executing updates do not erase suggestions generated from user or final agent messages.
   - Selects `currentStatus` by preferring a fresh active session, then fresh high-priority sessions, then fresh non-idle sessions, then bridge idle. Presence heartbeats keep a session visibly connected but do not keep stale high-priority statuses such as `executing` driving the main avatar.
   - Treats sessions as stale after `AIVATAR_SESSION_STALE_MS` milliseconds, defaulting to `60000`; stale sessions stay visible in the list but no longer block interaction or drive the main avatar state.
+  - Prunes stale sessions and caps the in-memory session map with `AIVATAR_MAX_SESSIONS`, defaulting to `80`, so long-running bridge processes do not grow unbounded.
+
+- `scripts/codex-session-discovery.mjs`
+  - Aivatar-side Codex Desktop session discovery service.
+  - Runs as a single background process recorded under `%TEMP%\aivatar-session-discovery\discovery.json`.
+  - Read-only scans `CODEX_HOME\sessions\**\*.jsonl`, defaulting to `%USERPROFILE%\.codex\sessions`, and parses `session_meta.payload.id`, `cwd`, `originator`, and `source` from recent rollout files.
+  - Only considers rollout files modified within `AIVATAR_DISCOVERY_ACTIVE_MS`, defaulting to 30 minutes, so old chat history is not eagerly connected.
+  - Posts `/agent-presence` for detected Codex sessions, starts the external plugin `aivatar-heartbeat.mjs` and `aivatar-watch.mjs` when helpers are missing or dead, and records helper pids under `%TEMP%\aivatar-session-discovery\helpers`.
+  - Passes `CODEX_ROLLOUT_PATH` to each watcher so it tails the exact discovered rollout JSONL instead of searching by session id.
+  - Defaults token reward baselines to `%TEMP%\aivatar-usage-baselines.json` to avoid restricted `.codex\tmp` write contexts.
+  - Sends a one-time `thinking` / `discovered` status when it first starts helpers for a session, then leaves real turn state to the watcher. Discovery does not repeatedly overwrite active turn status.
+  - Does not modify, rename, delete, migrate, or hide Codex Desktop session/chat files.
+  - Does not set `/agent-active` by default; manual `aivatar-connect`, Agent Sessions Follow, and launcher flows remain the explicit ways to choose the followed session.
+
+- `C:\Users\rniu\plugins\aivatar-session-bridge`
+  - External local session plugin, currently outside this repo.
+  - `aivatar-connect` now stops only the same session's previous heartbeat/watcher rather than stopping all Aivatar session background processes.
+  - `aivatar-heartbeat` defaults to presence-only updates; it does not repeatedly post active/follow state unless explicitly launched with `--active`.
+  - `aivatar-watch` falls back to context-window usage for `complete`/`error` events when token-delta usage is unavailable, so worktree sessions can continue showing context after final answers.
 
 - `src-tauri/src/lib.rs`
   - Owns the Tauri command that starts the Node status bridge from the desktop app.
-  - Attempts to start the bridge automatically during Tauri app setup.
-  - Exposes the same bridge start flow to the React Debug panel through `start_status_bridge`.
+  - Attempts to start the bridge automatically during Tauri app setup and also starts `status:discover` for Aivatar-side Codex Desktop session discovery.
+  - Exposes the same bridge/discovery start flow to the React Debug panel through `start_status_bridge`.
+  - If the bridge is already running, `start_status_bridge` still attempts to start discovery; the discovery script exits when another discovery instance is already alive.
   - Exposes `start_agent_cli`, used by the CLI Launcher. It validates the selected working directory, starts the status bridge if needed, opens PowerShell in that folder, and runs `scripts/aivatar-connected-run.mjs --agent <agent> -- <codex|claude> <args>` so launcher-started CLIs auto-connect to Aivatar and disconnect on exit.
   - Exposes `start_task_agent`, used by Task Cabinet automation. It validates the selected working directory, validates that the task path is an existing `.md` file, reads the source `.md` file without modifying it, rejects prompts over 24,000 characters, writes a derived prompt copy under `%TEMP%\aivatar-task-prompts\`, starts the bridge if needed, and launches Codex/Claude through `scripts/aivatar-connected-run.mjs --prompt-file <tempPrompt>`.
   - Exposes `pick_markdown_task_file` and `pick_launcher_directory`, used by desktop Browse buttons for Task Cabinet and CLI Launcher path selection.
@@ -977,7 +1009,7 @@ High-priority agent states should not be interrupted by right-click context-menu
 
 - The app is early MVP code; keep changes small and behavior-focused.
 - Avoid over-abstracting until there are at least two real content packs or more complex interactions.
-- Tauri desktop builds attempt to auto-start the bridge; web-only previews still need `npm.cmd run status:bridge` or another manually started bridge process.
+- Tauri desktop builds attempt to auto-start the bridge and Codex session discovery; web-only previews still need `npm.cmd run status:bridge` or another manually started bridge process, plus `npm.cmd run status:discover` when automatic Codex Desktop session discovery is desired.
 - The current pixel art is still programmatic, but has received a first-pass unified pixel style and octopus avatar polish. It is not final spritesheet/atlas art.
 - The Pixel Asset Editor is currently an authoring MVP only and its UI entry is locked/disabled. The component can draw, preview, animate, and save draft pixel assets locally, but edited assets are not yet used by `renderScene.ts` to replace avatar or furniture rendering.
 - Pixel Asset Editor drafts are localStorage-origin scoped under `aivatar.assetEditor.v1`, just like other browser-local development state.
@@ -996,7 +1028,7 @@ High-priority agent states should not be interrupted by right-click context-menu
 - Session-derived idle bubble suggestions are generated by local rules from the current Codex session's user/final-agent messages. The current watcher uses a bilingual theme/template approach, including a `daily` life category, so suggestions feel more like pet thoughts than transcript snippets. Suggestions are not automatically used: users must add them in the Growth panel, and saved phrase slots are capped by avatar level. The bridge preserves existing suggestions across same-session status updates that omit candidates.
 - Growth also generates memory-derived idle bubble suggestions locally from current traits, recent memory events, and favorite recovery/activity preferences. The Growth panel aims for 3 memory-derived and 3 session-derived visible candidates, with fallback fill if one source has too few candidates.
 - The idle bubble suggestion pipeline requires the updated bridge and watcher to be running. Existing old `scripts/codex-status-bridge.mjs` or `aivatar-watch.mjs` processes will drop or omit `idleBubbleCandidates` until the bridge/watcher are restarted or `aivatar-connect` is rerun.
-- Growth traits affect visuals and small behavior probabilities, but they are not yet a full personality/strategy engine. The Growth hex chart is a normalized S-curve visualization of raw trait points; it should not be treated as the underlying trait storage.
+- Growth traits affect visuals and small behavior probabilities, but they are not yet a full personality/strategy engine. The Growth hex chart is a normalized `log10(points + 1)` visualization of raw trait points capped at `1_000_000`; it should not be treated as the underlying trait storage.
 - Wall/floor surface shop entries are Decor panel options, not backpack items. Older test saves may still contain surface ids in `inventory`; the UI filters those entries out while preserving `purchasedItemIds` so they remain available in the Decor panel.
 - Window shop entries are also not backpack items. Their purchase state is stored in `purchasedItemIds`, active selection is stored in `activeWindowId`, and per-window placement is stored in `windowPlacements`. Selling a selected window removes its purchased state and placement and falls back to another available window.
 - `aivatar.defaultLayout.v1` stores the default layout used for new/no-save sessions and Room Edit `Reset default`.
@@ -1029,23 +1061,26 @@ High-priority agent states should not be interrupted by right-click context-menu
 - Token reward baselines are stored outside the repo. The session plugin stores them under the Codex home temp area by default; the repo-local CLI connector defaults to `%TEMP%\aivatar-usage-baselines.json` to avoid `.codex\tmp` write-permission issues when launched from restricted contexts. Baselines are cleared by `complete`, `error`, `idle`, or `--clear-active`, and expire after the configured TTL.
 - Test sessions such as usage smoke tests live in the bridge's in-memory sessions map. Restarting the bridge clears them, and the Agent Sessions panel can manually clear stale entries through `Clear Stale`.
 - Busy recovery depends on available inventory, table coffee storage, or placed entertainment; without recovery resources the avatar remains busy and visually depletes rather than sleeping. Recovery effects still require arrival at the chosen table/fridge/placed item target.
-- Avatar movement now uses a lightweight 8px nav-grid A* route toward generated interaction standpoints, caches full route waypoints, then falls back to waypoint avoidance and collision sliding when no grid route is found. It includes edge-epsilon collision checks, path/waypoint caching, diagonal corner-cut prevention, object-main-target preference for queued interactions, collision backoff/replanning, no-facing-change on ineffective movement, and foot-rectangle-touch arrival checks, but still needs more robust learned local policy and visual QA around dense layouts.
+- Avatar movement now uses a lightweight 8px nav-grid A* route toward generated interaction standpoints, caches full route waypoints, then falls back to learned local action scoring when movement is blocked or ineffective. Local policy candidates include `sidestep-left`, `sidestep-right`, `backoff`, `force-replan`, and `switch-interaction-point`; scoring uses progress toward the target, collision/path reachability, and `navMemory` penalties for tricky or heavily visited cells.
+- `navMemory` is now learned from all real non-idle/non-explore movement, not only explicit `explore`: the app records traversed cells, marks stuck cells as failures/tricky spots, and records successful arrivals for ordinary movement, pending world interactions, snack targets, and autonomous brewing. Per-cell counts are capped at `9999`, and ordinary movement recording is throttled to reduce `localStorage` churn.
+- `navMemory` still does not decay or reset automatically when furniture layouts change, so old tricky-cell penalties may remain conservative after room edits until future layout-aware decay is added.
 - Terminal/desktop placed-item interaction near the desk is still being tuned. Pending approach now ignores the host desk/table collision, Terminal interactions are launched from the right-click context menu, Terminal standpoints are constrained to front points, and arrival can complete when the avatar's foot rectangle touches the target marker. Post-arrival stability should still be watched in visual QA.
 - The Agent Sessions panel displays recent sessions but the room still has one avatar driven by `currentStatus`.
 - `Demo actions` is a Debug-only visual QA helper. It cycles runtime avatar behaviors and displays demo bubbles, but it does not represent real agent status or grant rewards. If a Debug status override is active, use the highlighted `Live` button to return the avatar to real bridge status.
 - The `phone` behavior is intentionally not an agent status and should not trigger bridge sends, memory rewards, task summaries, or status replies. It is only an idle-life animation.
 - Interactive Codex/Claude TUI automatic waiting detection is still limited. The generic bridge supports external status posts, but desktop app automatic status requires a client-side hook, plugin, wrapper, or API.
-- Current Codex Desktop conversations are best connected through the local Aivatar session plugin, which now combines heartbeat presence with rollout watching. Explicit status posts remain useful for smoke tests and older clients. For command lifecycle tracking, use `codex:run`, `claude:run`, or `agent:run`; for the smoother launcher/CLI flow, use the desktop CLI Launcher or `codex:connected`.
+- Current Codex Desktop conversations can be discovered automatically by Aivatar when the desktop app or `status:discover` is running. The local Aivatar session plugin remains useful for explicitly following/activating a specific session, reconnecting a session, or manual recovery. Explicit status posts remain useful for smoke tests and older clients. For command lifecycle tracking, use `codex:run`, `claude:run`, or `agent:run`; for the smoother launcher/CLI flow, use the desktop CLI Launcher or `codex:connected`.
 - Chat/session safety depends on keeping the Aivatar integration read-oriented toward Codex data. Scripts may read rollout JSONL, inspect `thread/list`, and clear Aivatar bridge state, but should not remove or rewrite Codex session files or Desktop chat metadata.
 - If Codex chats appear to disappear, preserve the current `%TEMP%` Aivatar recovery logs, check whether old `aivatar-connect`/watcher/heartbeat processes are still running, verify which plugin command directory is first on PATH, and confirm whether the action used `codex resume <session-id>` or explicit `--new-session`.
+- If automatic Codex session discovery does not show a session, check `%TEMP%\aivatar-session-discovery\discovery.json`, `%TEMP%\aivatar-session-discovery\helpers\*.json`, whether `CODEX_HOME\sessions` contains a recent rollout JSONL with `session_meta`, whether the external plugin path exists, and whether the bridge is reachable on `127.0.0.1:38988`.
 - If a desktop CLI Launcher Codex session does not stream real-time updates, first check whether a new rollout JSONL was created under `.codex\sessions` and whether `aivatar-connected-run.mjs` switched from the provisional session to that real Codex session id.
 - If a Launcher-started session remains connected after the CLI window is closed, check `%TEMP%\aivatar-cli-session\*.json` and the recorded heartbeat/watcher/watchdog pids before changing bridge priority logic.
 - Current git state may show the whole repository as untracked in this workspace, so `git diff`/`git diff --stat` can be empty even after file edits. Use targeted file reads or `rg` to verify edits when needed.
 - If a browser preview does not show recent worktree changes, check which checkout owns the port. In the current workflow, the OneDrive checkout may own `localhost:1420`, while the Codex worktree preview runs at `http://127.0.0.1:1421/`.
 - Save state is written on every confirmed state change and flushed on page hide/unload and Tauri close. In-progress placement or movement previews are UI-only and are not saved until the item, furniture, or window move is confirmed.
 - The local Aivatar session plugin currently lives under `C:\Users\rniu\plugins\aivatar-session-bridge` rather than inside this repo. The repo now documents and wraps the plugin workflow; future work should decide whether to vendor the plugin source.
-- The current session plugin connection uses explicit connect/disconnect, heartbeat presence, and the rollout watcher for real-time Codex Desktop turn tracking.
-- If multiple sessions appear in the Agent Sessions panel again, first check for stale watcher or heartbeat Node processes from older sessions before changing bridge priority logic.
+- The current session plugin connection uses explicit connect/disconnect, presence-only heartbeat, and the rollout watcher for real-time Codex Desktop turn tracking.
+- Multiple worktree sessions can stay connected simultaneously. If one session stops showing context, first check whether its watcher is still running, whether the rollout JSONL contains `token_count` events, and whether the bridge preserved the last `usage` payload after final status updates.
 - `furnitureStorage` currently only implements dining-table coffee storage; its capacity is derived from Coffee Cups placed on the dining table.
 - Project is under OneDrive; Rust builds should use `$env:CARGO_TARGET_DIR = "$env:TEMP\aivatar-cargo-target"` to avoid target directory write issues.
 - Avoid `cmd.exe` `set CARGO_TARGET_DIR=... && ...` with a trailing space before `&&`; it can create a bad path such as `aivatar-cargo-target `.
@@ -1073,18 +1108,18 @@ For this project, prefer:
 
 ## Recommended Next Steps
 
-1. Continue regression-testing Codex chat/session safety with `codex resume <session-id>`, explicit `--new-session`, the desktop CLI Launcher, disconnect cleanup, stale-process cleanup, PATH/plugin shadowing checks, and recovery-log inspection.
-2. Continue validating the real-time Codex Desktop rollout watcher over ordinary chat turns, especially repeated `final_answer` events, token-based rewards, context-window updates, and the session-inspired idle bubble candidate flow.
+1. Continue regression-testing Codex chat/session safety with `codex resume <session-id>`, explicit `--new-session`, automatic discovery, the desktop CLI Launcher, disconnect cleanup, stale-process cleanup, PATH/plugin shadowing checks, and recovery-log inspection.
+2. Continue validating automatic Codex Desktop session discovery and the real-time rollout watcher over ordinary chat turns, especially multiple projects/worktrees, app restart, already-running bridge, repeated `final_answer` events, token-based rewards, context-window updates, and the session-inspired idle bubble candidate flow.
 3. After the watcher and session-safety flow prove stable, decide whether to vendor `C:\Users\rniu\plugins\aivatar-session-bridge` into this repo now that the workflow is documented and wrapped by npm scripts.
 4. Validate and polish the desktop CLI Launcher connected path over real Codex CLI turns, including provisional-to-real session switching, watchdog cleanup when users close terminal windows, repeated launcher starts, stale pid cleanup, token reward baselines, and Agent Sessions display behavior.
-5. Visually QA the recent Ocean Window, Growth, Oil Easel, bed layering, table collision, and exploration-learning changes in the running app: slow subpixel ship movement, distant ship scale, night ship lights, breathing wave sparkles, softened horizon, Coffee Cup slow steam, Growth hex chart hover/normalization behavior, Oil Easel scale/perspective, avatar beret/brush/palette paint pose, bed body/footboard occlusion, and idle `explore` route collection.
-6. Add focused UI/runtime tests or screenshot regression checks for sleep recovery, token-based complete rewards, context window meters, Memory/Growth updates, `navMemory` save/load normalization, Growth hex chart S-curve normalization and hover labels, whole-side-panel collapse/expand and Tauri window resize behavior, collapsed HUD overlay positioning, Agent Sessions mini context meter, Growth/Agent Sessions/Debug submenu collapse/expand behavior, Terminal skin coverage across collapsed/expanded cards and canvas bubbles, idle bubble language filtering, memory/session suggestion balance, accepted phrase display, trait-driven avatar visuals, the `Demo actions` behavior cycle, placement, Room Edit, shop/inventory/Decor/window thumbnails, collision and interaction-point overlays, autonomous activity, idle exploration, agent status, work/fridge/table/coffee/cola/bento/paint/phone animation flows, unified arrive-then-interact behavior for furniture/placed items/consumables, autonomous and manual Coffee Machine brew animation, transparent Coffee Cup empty/full rendering, Game Console play-screen animation and mood recovery, Oil Easel painting and creativity growth, dynamic City Night Window and Ocean Window day/night preview states, Digital Wall Clock rendering, Decor panel collapse/tabs, and rug-underlay layering.
-7. Continue hardening avatar pathfinding after the nav-grid/interaction-standpoint pass, especially post-arrival desktop-item stability around the Terminal/desk, stuck detection, learned local policy from `navMemory`, perpendicular probe escape, route memory, placed-item collision for Oil Easel, and regression cases around dense bed/desk/table/fridge/Coffee Machine/Game Console/Oil Easel layouts.
+5. Visually QA the recent Ocean Window, Growth, Oil Easel, bed layering, table collision, and exploration-learning changes in the running app: slow subpixel ship movement, distant ship scale, night ship lights, breathing wave sparkles, softened horizon, Coffee Cup slow steam, Growth hex chart hover/log-scale normalization behavior, Oil Easel scale/perspective, avatar beret/brush/palette paint pose, bed body/footboard occlusion, and idle `explore` route collection.
+6. Add focused UI/runtime tests or screenshot regression checks for sleep recovery, token-based complete rewards, context window meters, Memory/Growth updates, `navMemory` save/load normalization, Growth hex chart `log10(points + 1)` normalization and hover labels, whole-side-panel collapse/expand and Tauri window resize behavior, collapsed HUD overlay positioning, Agent Sessions mini context meter, Growth/Agent Sessions/Debug submenu collapse/expand behavior, Terminal skin coverage across collapsed/expanded cards and canvas bubbles, idle bubble language filtering, memory/session suggestion balance, accepted phrase display, trait-driven avatar visuals, the `Demo actions` behavior cycle, placement, Room Edit, shop/inventory/Decor/window thumbnails, collision and interaction-point overlays, autonomous activity, idle exploration, agent status, work/fridge/table/coffee/cola/bento/paint/phone animation flows, unified arrive-then-interact behavior for furniture/placed items/consumables, autonomous and manual Coffee Machine brew animation, transparent Coffee Cup empty/full rendering, Game Console play-screen animation and mood recovery, Oil Easel painting and creativity growth, dynamic City Night Window and Ocean Window day/night preview states, Digital Wall Clock rendering, Decor panel collapse/tabs, and rug-underlay layering.
+7. Continue hardening avatar pathfinding after the nav-grid/interaction-standpoint/action-scoring pass, especially post-arrival desktop-item stability around the Terminal/desk, layout-change decay for old `trickySpots`, per-action outcome memory, placed-item collision for Oil Easel, and regression cases around dense bed/desk/table/fridge/Coffee Machine/Game Console/Oil Easel layouts.
 8. Polish busy recovery UX with clearer recovery-source feedback, no-supply warnings, and balanced depletion/recovery rates.
 9. Expand Memory/Growth beyond v1 with richer milestones, preference-driven behavior, memory reset/export controls, and better UI explanations for how traits are learned.
-10. Connect `navMemory` to the local avoidance policy so accumulated exploration experience can influence `backoff`, `sidestep-left`, `sidestep-right`, `force-replan`, and `switch-interaction-point` choices instead of only being recorded.
+10. Add layout-aware `navMemory` decay or fingerprinting so old tricky spots are discounted when furniture/item placement changes.
 11. Add robust overlap prevention and snapping for non-rug floor items, furniture-top items, wall items, windows, moved base furniture, and the locked built-in Terminal, while preserving intentional underlay rug overlap behavior.
-12. Continue Agent Sessions UX polish with filtering, pinning, stale-clear feedback, context/reward usage explanations, and clearer priority controls for `currentStatus`.
+12. Continue Agent Sessions UX polish with filtering, pinning, stale-clear feedback, context/reward usage explanations, multi-worktree connection diagnostics, and clearer priority controls for `currentStatus`.
 13. Continue refining the UI skin system toward reusable theme tokens so future panels inherit Classic/Terminal colors without one-off selector patches.
 14. Finish the unified content model for furniture, items, hangings, consumables, windows, wall surfaces, and floor surfaces.
 15. Add a simple layering editor so wall-overlap furniture, desktop objects, non-rug floor items, rugs, avatar occlusion, and open furniture doors can be controlled predictably beyond the current fixed rug-underlay layer.

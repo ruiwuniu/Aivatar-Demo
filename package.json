@@ -20,6 +20,7 @@
     "codex:connected": "node scripts/aivatar-connected-run.mjs --agent codex -- codex",
     "claude:run": "node scripts/aivatar-run.mjs --agent claude-code -- claude",
     "status:bridge": "node scripts/codex-status-bridge.mjs",
+    "status:discover": "node scripts/codex-session-discovery.mjs",
     "status:mock": "node scripts/mock-codex-status.mjs",
     "status:send": "node scripts/send-codex-status.mjs"
   },

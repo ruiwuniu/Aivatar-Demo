@@ -482,18 +482,15 @@ const memoryIdleBubbleCandidates = (memory: AivatarMemory): string[] => {
 };
 
 const MAX_TRAIT_POINTS = 1_000_000;
-const TRAIT_CHART_MIDPOINT = 80;
-const TRAIT_CHART_CURVE = 24;
 
 const clampTrait = (value: number) =>
   Math.max(0, Math.min(MAX_TRAIT_POINTS, Math.round(value)));
 
-const sigmoidTraitValue = (value: number) =>
-  1 / (1 + Math.exp(-(Math.max(0, value) - TRAIT_CHART_MIDPOINT) / TRAIT_CHART_CURVE));
-
 const normalizedTraitChartValue = (value: number) => {
-  const min = sigmoidTraitValue(0);
-  return Math.max(0, Math.min(1, (sigmoidTraitValue(value) - min) / (1 - min)));
+  const clampedValue = Math.max(0, Math.min(MAX_TRAIT_POINTS, value));
+  const logValue = Math.log10(clampedValue + 1);
+  const logMax = Math.log10(MAX_TRAIT_POINTS + 1);
+  return Math.max(0, Math.min(1, logValue / logMax));
 };
 
 const applyTraitChanges = (
