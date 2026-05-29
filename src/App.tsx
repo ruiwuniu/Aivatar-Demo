@@ -430,6 +430,10 @@ const memoryIdleBubbleCandidates = (memory: AivatarMemory): string[] => {
     add("这里有新东西", "让我探个头", "想看看里面", "Tiny curiosity ping");
   } else if (dominantTrait === "efficiency") {
     add("路线短一点", "省点力气", "快快收好", "Clean and quick");
+  } else if (dominantTrait === "creativity") {
+    add("颜色在脑袋里转", "试一笔新的", "这个角落有灵感", "Tiny spark forming");
+  } else if (dominantTrait === "warmth") {
+    add("房间暖暖的", "陪你慢慢来", "今天也照顾好自己", "Soft light, steady heart");
   }
 
   if (memory.preferences.favoriteRecovery === "coffee") {
@@ -442,6 +446,8 @@ const memoryIdleBubbleCandidates = (memory: AivatarMemory): string[] => {
     add("刚睡醒软软的", "Soft after sleep");
   } else if (memory.preferences.favoriteRecovery === "play") {
     add("手柄还在发光", "Game glow lingers");
+  } else if (memory.preferences.favoriteRecovery === "paint") {
+    add("画布还亮着", "Paint still drying");
   }
 
   for (const event of memory.recentEvents.slice(0, 6)) {
@@ -465,6 +471,8 @@ const memoryIdleBubbleCandidates = (memory: AivatarMemory): string[] => {
       add("刚睡醒软软的", "Rest counts too");
     } else if (event.behavior === "play") {
       add("手柄还在发光", "Game glow lingers");
+    } else if (event.behavior === "paint") {
+      add("画布还亮着", "Color stayed with me");
     } else if (event.behavior === "admire") {
       add("房间变好看了", "Room feels brighter");
     }

@@ -1716,6 +1716,46 @@ const drawTaskFilePose = (
   }
 };
 
+const drawAdmirePose = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  frame: number,
+  facing: AvatarRuntime["facing"],
+  body: string,
+  bodyLight: string,
+  ink: string,
+  accent: string,
+) => {
+  if (facing === "back") return;
+
+  const pulse = Math.round(Math.sin(frame / 5) * 2);
+  const sparkle = Math.floor(frame / 10) % 3;
+  const sideDirection = facing === "left" ? -1 : 1;
+  const front = facing === "front";
+  const gazeX = front ? x + 18 : x + sideDirection * 22;
+  const gazeY = y - 29;
+
+  if (front) {
+    drawPixelRect(ctx, x - 20, y - 10 - pulse, 12, 5, body);
+    drawPixelRect(ctx, x + 9, y - 10 + pulse, 12, 5, body);
+    drawPixelRect(ctx, x - 17, y - 8 - pulse, 6, 2, bodyLight);
+    drawPixelRect(ctx, x + 11, y - 8 + pulse, 6, 2, bodyLight);
+  } else {
+    drawPixelRect(ctx, x + sideDirection * 9, y - 11 - pulse, 13, 5, body);
+    drawPixelRect(ctx, x + sideDirection * 13, y - 9 - pulse, 6, 2, bodyLight);
+    drawPixelRect(ctx, x - sideDirection * 17, y - 4 + pulse, 9, 4, body);
+  }
+
+  drawPixelRect(ctx, gazeX - 1, gazeY - 1, 3, 3, accent);
+  drawPixelRect(ctx, gazeX, gazeY - 4 - sparkle, 1, 2, "#fff7d8");
+  drawPixelRect(ctx, gazeX, gazeY + 3 + sparkle, 1, 2, "#fff7d8");
+  drawPixelRect(ctx, gazeX - 4 - sparkle, gazeY, 2, 1, "#fff7d8");
+  drawPixelRect(ctx, gazeX + 3 + sparkle, gazeY, 2, 1, "#fff7d8");
+  drawPixelRect(ctx, gazeX + sideDirection * 7, gazeY + 7, 2, 2, ink);
+  drawPixelRect(ctx, gazeX + sideDirection * 10, gazeY + 5, 1, 1, accent);
+};
+
 const drawPaintPose = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -2023,6 +2063,10 @@ const drawAvatar = (
     drawPhonePose(ctx, x, y, frame, facing, body, bodyLight, ink, theme.screenGlow);
   }
 
+  if (avatar.behavior === "admire") {
+    drawAdmirePose(ctx, x, y, frame, facing, body, bodyLight, ink, theme.accent);
+  }
+
   if (avatar.behavior === "paint") {
     drawPaintPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
@@ -2260,7 +2304,9 @@ const drawActivityBubble = (
   const trait = dominantTraitFromMemory(memory);
   const customPhrases = memory?.preferences.idleBubblePhrases ?? [];
   const text =
-    idleBubbleText(trait, avatar.behavior, customPhrases) ??
+    (avatar.behavior === "admire" && avatar.activityLabel
+      ? traitBubbleText(trait, avatar.behavior, avatar.activityLabel)
+      : idleBubbleText(trait, avatar.behavior, customPhrases)) ??
     (avatar.activityLabel && avatar.behaviorTimer >= 2.2
       ? traitBubbleText(trait, avatar.behavior, avatar.activityLabel)
       : null);
@@ -2659,12 +2705,15 @@ const drawOilEasel = (
   const woodLight = ghost === "invalid" ? "#ffd1dc" : "#d58a42";
   const woodDark = ghost === "invalid" ? "#d95575" : "#5b2a10";
   const woodDeep = "#2d1a12";
+  const brass = ghost === "invalid" ? "#ffd1dc" : "#d6a94f";
+  const paintTray = ghost === "invalid" ? "#ff8fa3" : "#3a2430";
   const canvas = ghost === "invalid" ? "#ffd1dc" : "#fff8df";
   const canvasShade = ghost === "invalid" ? "#ff8fa3" : "#dfd7c4";
   const canvasShadow = ghost === "invalid" ? "#d95575" : "#c6baa2";
   const paintPulse = Math.floor(frame / 8) % 4;
 
   drawPixelRect(ctx, baseX - 26, baseY + 4, 54, 5, "rgba(17, 22, 36, 0.34)");
+  drawPixelRect(ctx, baseX - 17, baseY + 7, 37, 2, "rgba(17, 22, 36, 0.18)");
 
   const strokeBeam = (
     x1: number,
@@ -2706,9 +2755,12 @@ const drawOilEasel = (
   drawPixelRect(ctx, baseX - 4, baseY - 64, 8, 7, woodDeep);
   drawPixelRect(ctx, baseX - 2, baseY - 66, 6, 11, wood);
   drawPixelRect(ctx, baseX - 1, baseY - 65, 2, 9, woodLight);
+  drawPixelRect(ctx, baseX + 2, baseY - 63, 2, 5, woodDark);
   drawPixelRect(ctx, baseX - 15, baseY - 54, 31, 5, woodDeep);
   drawPixelRect(ctx, baseX - 13, baseY - 55, 28, 3, wood);
   drawPixelRect(ctx, baseX - 10, baseY - 55, 12, 2, woodLight);
+  drawPixelRect(ctx, baseX - 1, baseY - 56, 4, 4, brass);
+  drawPixelRect(ctx, baseX, baseY - 55, 2, 2, "#fff2a8");
 
   drawPixelRect(ctx, baseX - 9, baseY - 48, 21, 4, woodDeep);
   drawPixelRect(ctx, baseX - 8, baseY - 49, 20, 2, woodLight);
@@ -2719,32 +2771,49 @@ const drawOilEasel = (
   drawPixelRect(ctx, canvasX, canvasY, 37, 41, canvasShadow);
   drawPixelRect(ctx, canvasX + 1, canvasY + 1, 35, 39, canvas);
   drawPixelRect(ctx, canvasX + 3, canvasY + 3, 30, 35, "#fffdf0");
+  drawPixelRect(ctx, canvasX + 4, canvasY + 4, 28, 1, "#fff7cf");
+  drawPixelRect(ctx, canvasX + 4, canvasY + 5, 1, 31, "#ffffff");
   drawPixelRect(ctx, canvasX + 34, canvasY + 3, 3, 37, canvasShade);
   drawPixelRect(ctx, canvasX + 4, canvasY + 37, 31, 3, canvasShade);
   drawPixelRect(ctx, canvasX + 2, canvasY + 1, 4, 39, "#ffffff");
   drawPixelRect(ctx, canvasX + 7, canvasY + 7, 11, 4, "#bfeaff");
-  drawPixelRect(ctx, canvasX + 20, canvasY + 8, 9, 3, "#c9f0ff");
+  drawPixelRect(ctx, canvasX + 19, canvasY + 7, 11, 2, "#e7f7ff");
+  drawPixelRect(ctx, canvasX + 20, canvasY + 9, 9, 3, "#c9f0ff");
   drawPixelRect(ctx, canvasX + 5, canvasY + 22, 27, 8, "#b9d987");
+  drawPixelRect(ctx, canvasX + 6, canvasY + 25, 26, 3, "#8fbe74");
   drawPixelRect(ctx, canvasX + 8, canvasY + 18, 9, 6, "#78a76d");
   drawPixelRect(ctx, canvasX + 18, canvasY + 16, 10, 9, "#8dc07a");
+  drawPixelRect(ctx, canvasX + 21, canvasY + 18, 6, 5, "#679a63");
   drawPixelRect(ctx, canvasX + 10, canvasY + 12, 3, 3, "#ffe66d");
   drawPixelRect(ctx, canvasX + 13, canvasY + 13, 2, 2, "#ffd16a");
+  drawPixelRect(ctx, canvasX + 9, canvasY + 11, 7, 1, "#fff2a8");
   drawPixelRect(ctx, canvasX + 6, canvasY + 31, 24, 2, "#7b8f65");
+  drawPixelRect(ctx, canvasX + 8, canvasY + 34, 18, 2, "#6b7e5e");
   drawPixelRect(ctx, canvasX + 7, canvasY + 8, 10, 1, "#f0eadc");
   drawPixelRect(ctx, canvasX + 10, canvasY + 15, 7, 1, "#8a7f76");
   drawPixelRect(ctx, canvasX + 23, canvasY + 10, 8, 1, "#eee5d4");
   drawPixelRect(ctx, canvasX + 25, canvasY + 25, 7, 1, "#7e9b6a");
   drawPixelRect(ctx, canvasX + 14, canvasY + 27, 4, 2, "#fffdf0");
   drawPixelRect(ctx, canvasX + 22, canvasY + 29, 5, 2, "#fffdf0");
+  drawPixelRect(ctx, canvasX + 2, canvasY + 2, 2, 2, brass);
+  drawPixelRect(ctx, canvasX + 32, canvasY + 2, 2, 2, brass);
+  drawPixelRect(ctx, canvasX + 2, canvasY + 36, 2, 2, brass);
+  drawPixelRect(ctx, canvasX + 32, canvasY + 36, 2, 2, brass);
   if (painting) {
     drawPixelRect(ctx, canvasX + 8 + paintPulse * 3, canvasY + 8 + paintPulse, 5, 3, "#5ce1e6");
     drawPixelRect(ctx, canvasX + 15 + paintPulse, canvasY + 16, 4, 3, "#d95d75");
     drawPixelRect(ctx, canvasX + 24, canvasY + 25 - paintPulse, 5, 3, "#ffe66d");
+    drawPixelRect(ctx, canvasX + 18 + paintPulse, canvasY + 30 - paintPulse, 3, 2, "#ff8fa3");
   }
 
   drawPixelRect(ctx, baseX - 3, baseY - 9, 6, 13, woodDeep);
   drawPixelRect(ctx, baseX - 1, baseY - 10, 3, 14, wood);
   drawPixelRect(ctx, baseX, baseY - 9, 1, 11, woodLight);
+  drawPixelRect(ctx, baseX - 14, baseY - 10, 29, 5, paintTray);
+  drawPixelRect(ctx, baseX - 12, baseY - 11, 25, 2, woodLight);
+  drawPixelRect(ctx, baseX - 9, baseY - 8, 4, 2, "#5ce1e6");
+  drawPixelRect(ctx, baseX - 2, baseY - 8, 4, 2, "#d95d75");
+  drawPixelRect(ctx, baseX + 5, baseY - 8, 4, 2, "#ffe66d");
   drawPixelRect(ctx, baseX - 25, baseY + 4, 9, 4, woodDark);
   drawPixelRect(ctx, baseX + 18, baseY + 4, 9, 4, woodDark);
 

@@ -3561,15 +3561,19 @@ meter::-webkit-meter-optimum-value {
   height: 10px;
   background: #f4ead2;
   border: 2px solid #5b2a10;
-  box-shadow: inset 0 3px 0 #9ee6ff;
+  box-shadow:
+    inset 0 3px 0 #9ee6ff,
+    inset 2px 6px 0 #b9d987,
+    1px 1px 0 #2d1a12;
 }
 
 .item-thumb-oil-easel .item-thumb-accent {
-  left: 4px;
+  left: 3px;
   top: 13px;
-  width: 12px;
+  width: 14px;
   height: 2px;
   background: #8a5428;
+  box-shadow: 1px -12px 0 #d6a94f;
 }
 
 .item-thumb-oil-easel .item-thumb-detail {
@@ -3587,7 +3591,11 @@ meter::-webkit-meter-optimum-value {
   width: 2px;
   height: 3px;
   background: #8a5428;
-  box-shadow: 8px 0 0 #8a5428, 4px -1px 0 #5b2a10;
+  box-shadow:
+    8px 0 0 #8a5428,
+    4px -1px 0 #5b2a10,
+    2px -4px 0 #5ce1e6,
+    6px -4px 0 #ffe66d;
 }
 
 .item-thumb-coffee-machine .item-thumb-shape {
