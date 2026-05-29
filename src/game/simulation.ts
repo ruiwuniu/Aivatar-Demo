@@ -9,6 +9,7 @@ import type {
   PlacedItem,
   PetStats,
 } from "../types";
+import { getPlacedItemPlacementFootBounds } from "./interactions";
 
 const BUILTIN_TERMINAL_PLACED_ITEM_ID = "builtin-terminal";
 const TERMINAL_MONITOR_ITEM_ID = "terminal-monitor";
@@ -743,6 +744,23 @@ const shouldFaceFrontAtTarget = (behavior: BehaviorName) =>
     "sleep",
   ].includes(behavior);
 
+const collisionRectsForContent = (
+  content: AivatarContent,
+  ignoredId?: string,
+): Rect[] => [
+  ...content.room.furniture
+    .filter((item) => item.id !== ignoredId && item.collision)
+    .map((item) => item.collision!),
+  ...(content.placedItems ?? [])
+    .filter(
+      (item) =>
+        item.id !== ignoredId &&
+        item.itemId === EASEL_ITEM_ID &&
+        !item.surfaceFurnitureId,
+    )
+    .map(getPlacedItemPlacementFootBounds),
+];
+
 const pointHitsCollision = (
   x: number,
   y: number,
@@ -752,11 +770,7 @@ const pointHitsCollision = (
 ) => {
   const nextFootprint = avatarFootprintBounds(x, y);
 
-  return content.room.furniture.some((item) => {
-    if (item.id === ignoredFurnitureId) return false;
-    const collision = item.collision;
-    if (!collision) return false;
-
+  return collisionRectsForContent(content, ignoredFurnitureId).some((collision) => {
     const hitsNext = rectsOverlap(nextFootprint, collision);
     if (!hitsNext) return false;
     if (!from) return true;
@@ -831,9 +845,7 @@ const findBlockingCollision = (
   content: AivatarContent,
   ignoredFurnitureId?: string,
 ) =>
-  content.room.furniture
-    .filter((item) => item.id !== ignoredFurnitureId && item.collision)
-    .map((item) => item.collision!)
+  collisionRectsForContent(content, ignoredFurnitureId)
     .filter((collision) =>
       pathHitsCollision(
         from,
@@ -1089,7 +1101,6 @@ const findNavGridWaypoint = (
   navMemory?: AivatarNavMemory,
 ) => {
   const targetPoint = { x: target.targetX, y: target.targetY };
-  if (!pathHitsCollision(from, targetPoint, content, ignoredFurnitureId)) return null;
   const path = findNavGridPath(
     from,
     targetPoint,
@@ -1113,18 +1124,6 @@ const findStableNavWaypoint = (
   ignoredFurnitureId?: string,
   navMemory?: AivatarNavMemory,
 ) => {
-  if (
-    !pathHitsCollision(
-      from,
-      { x: target.targetX, y: target.targetY },
-      content,
-      ignoredFurnitureId,
-    )
-  ) {
-    cachedNavWaypoint = null;
-    return null;
-  }
-
   if (
     cachedNavWaypoint &&
     sameNavigationTarget(cachedNavWaypoint, behavior, target, ignoredFurnitureId) &&
