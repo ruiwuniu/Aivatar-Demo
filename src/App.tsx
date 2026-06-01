@@ -711,6 +711,7 @@ const recordTaskCompleteMemory = (
   rewardBits: number,
 ) => {
   const normalized = normalizeMemory(memory);
+  const agentName = agentDisplayName(status);
   const weightedTokens = weightedTokensForUsage(status.usage);
   const recoveredFromError = previousStatus === "error";
   const completedAfterWait = previousStatus === "waiting_for_user";
@@ -742,7 +743,7 @@ const recordTaskCompleteMemory = (
     type: recoveredFromError ? "error_recovered" : "task_complete",
     timestamp: status.timestamp,
     summary: recoveredFromError
-      ? "Recovered from a failed Codex turn"
+      ? `Recovered from a failed ${agentName} turn`
       : `Completed a ${formatTokenCount(weightedTokens)} weighted-token turn`,
     agent: status.agent,
     sessionId: status.sessionId,
@@ -771,6 +772,7 @@ const recordStatusMemory = (
   status: CodexStatusMessage,
 ) => {
   const normalized = normalizeMemory(memory);
+  const agentName = agentDisplayName(status);
   if (status.status !== "error" && status.status !== "waiting_for_user") {
     return normalized;
   }
@@ -810,8 +812,8 @@ const recordStatusMemory = (
     timestamp: status.timestamp,
     summary:
       status.status === "error"
-        ? "Hit an error during a Codex turn"
-        : "Waited for user input during a Codex turn",
+        ? `Hit an error during a ${agentName} turn`
+        : `Waited for user input during a ${agentName} turn`,
     agent: status.agent,
     sessionId: status.sessionId,
     status: status.status,
@@ -968,8 +970,14 @@ const traitChangesForPurchase = (
     ? { efficiency: 1 }
     : { curiosity: 1, creativity: 1 };
 
-const agentDisplayName = (status: Pick<CodexStatusMessage, "agent">) =>
-  status.agent?.trim() || "agent";
+const agentDisplayName = (status: Pick<CodexStatusMessage, "agent">) => {
+  if (status.agent === "codex") return "Codex";
+  if (status.agent === "claude-code") return "Claude Code";
+  return status.agent?.trim() || "agent";
+};
+
+const isRewardAgent = (status: Pick<CodexStatusMessage, "agent">) =>
+  status.agent === "codex" || status.agent === "claude-code";
 
 type BusyRecoveryNeed =
   | { behavior: "snack"; targetFurnitureId: string }
@@ -3292,6 +3300,32 @@ export const App = () => {
             ),
           }));
         }
+      } else if (
+        currentInteraction?.kind === "brew" &&
+        currentInteraction.endsAt &&
+        now >= currentInteraction.endsAt
+      ) {
+        coffeeAccumulator = 0;
+        if (runtimeActionBehavior(runtimeRef.current) === "brew") {
+          runtimeRef.current = {
+            ...runtimeRef.current,
+            behavior: "idle",
+            behaviorTimer: 2,
+            expression: "calm",
+            activityLabel: "Idle",
+            actionIntent: undefined,
+            actionActivityLabel: undefined,
+            interactionTargetAlternates: undefined,
+          };
+          setAvatar(runtimeRef.current);
+        }
+        updateActiveInteraction({
+          ...currentInteraction,
+          kind: "none",
+          startedAt: now,
+          endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
+          progress: 1,
+        });
       } else if (currentInteraction?.endsAt && now >= currentInteraction.endsAt) {
         updateActiveInteraction(null);
       } else if (
@@ -3629,7 +3663,7 @@ export const App = () => {
     previousSessionStatusRef.current.set(sessionKey, effectiveStatus.status);
 
     if (
-      effectiveStatus.agent === "codex" &&
+      isRewardAgent(effectiveStatus) &&
       (effectiveStatus.status === "error" ||
         effectiveStatus.status === "waiting_for_user")
     ) {
@@ -3640,7 +3674,7 @@ export const App = () => {
     }
 
     if (effectiveStatus.status !== "complete") return;
-    if (effectiveStatus.agent !== "codex") return;
+    if (!isRewardAgent(effectiveStatus)) return;
     const completedAt = Date.parse(effectiveStatus.timestamp);
     const freshComplete =
       !Number.isNaN(completedAt) &&
@@ -3676,14 +3710,14 @@ export const App = () => {
       ),
     }));
     const now = performance.now();
+    const rewardAgentName = agentDisplayName(effectiveStatus);
     updateActiveInteraction({
       kind: "none",
-      furnitureId: "codex",
-      furnitureName: "Codex",
-      message: ui("message.codexComplete", {
-        bits: rewardBits,
-        boost: rewardBits > 4 ? ui("message.withBoost") : "",
-      }),
+      furnitureId: effectiveStatus.agent ?? "agent",
+      furnitureName: rewardAgentName,
+      message: `${rewardAgentName} complete: +${rewardBits} ${ui("currency.bits")}${
+        rewardBits > 4 ? ui("message.withBoost") : ""
+      }.`,
       startedAt: now,
       endsAt: now + REWARD_BUBBLE_SECONDS * 1000,
       bubbleText: `+${rewardBits} ${ui("currency.bits")}`,

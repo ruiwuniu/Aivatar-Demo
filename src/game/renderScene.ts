@@ -2377,7 +2377,7 @@ const drawComputerStatusBubble = (
   status: CodexStatusMessage,
   uiTheme: UiThemeId = "classic",
 ) => {
-  if (status.agent !== "codex") return;
+  if (status.agent !== "codex" && status.agent !== "claude-code") return;
   if (status.status === "idle" || status.status === "thinking") return;
   if (!isStatusBubbleVisible(status)) return;
   const terminal = content.placedItems?.find(

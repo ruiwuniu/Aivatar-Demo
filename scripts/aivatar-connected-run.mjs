@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import process from "node:process";
@@ -377,11 +377,123 @@ const shouldDiscoverCodexSession = (options, commandArgs) =>
   !options.hasExplicitSessionId &&
   commandName(commandArgs) === "codex";
 
+const hasCommandFlag = (commandArgs, flag) =>
+  commandArgs.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
+
+const quoteForShellCommand = (value) =>
+  `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+const powershellPath = (value) => String(value).replace(/\\/g, "/");
+
+const powershellSingleQuote = (value) => `'${String(value).replace(/'/g, "''")}'`;
+
+const createClaudeStatusLineWrapper = async (options, hookScript) => {
+  const settingsDir = join(tmpdir(), "aivatar-claude-code-settings");
+  await mkdir(settingsDir, { recursive: true });
+  const wrapperPath = join(
+    settingsDir,
+    `${options.sessionId.replace(/[^a-zA-Z0-9_.-]/g, "_")}.statusline.ps1`,
+  );
+  const wrapper = [
+    "$ErrorActionPreference = 'Stop'",
+    "$inputText = [Console]::In.ReadToEnd()",
+    `$inputText | & ${powershellSingleQuote(process.execPath)} ${powershellSingleQuote(
+      hookScript,
+    )} --status-line`,
+    "",
+  ].join("\r\n");
+  await writeFile(wrapperPath, wrapper, "utf8");
+  return wrapperPath;
+};
+
+const createClaudeAivatarSettings = async (options) => {
+  const hookScript = join(scriptDir, "claude-code-aivatar-hook.mjs");
+  const statusLineWrapper = await createClaudeStatusLineWrapper(options, hookScript);
+  const hookHandler = {
+    type: "command",
+    command: process.execPath,
+    args: [hookScript],
+    timeout: 10,
+  };
+  const toolHook = {
+    matcher: "*",
+    hooks: [hookHandler],
+  };
+  const ordinaryHook = {
+    hooks: [hookHandler],
+  };
+  const settings = {
+    hooks: {
+      SessionStart: [ordinaryHook],
+      UserPromptSubmit: [ordinaryHook],
+      PreToolUse: [toolHook],
+      PermissionRequest: [toolHook],
+      PermissionDenied: [toolHook],
+      Notification: [ordinaryHook],
+      PostToolUse: [toolHook],
+      PostToolUseFailure: [toolHook],
+      PostToolBatch: [ordinaryHook],
+      Stop: [ordinaryHook],
+      StopFailure: [ordinaryHook],
+      SessionEnd: [ordinaryHook],
+    },
+    statusLine: {
+      type: "command",
+      command: `powershell -NoProfile -ExecutionPolicy Bypass -File ${quoteForShellCommand(
+        powershellPath(statusLineWrapper),
+      )}`,
+      refreshInterval: 5,
+    },
+  };
+  const settingsDir = join(tmpdir(), "aivatar-claude-code-settings");
+  await mkdir(settingsDir, { recursive: true });
+  const settingsPath = join(
+    settingsDir,
+    `${options.sessionId.replace(/[^a-zA-Z0-9_.-]/g, "_")}.json`,
+  );
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf8");
+  console.log(`[aivatar-connected-run] Claude Code Aivatar settings: ${settingsPath}`);
+  return settingsPath;
+};
+
+const commandWithClaudeAivatarSettings = async (options, commandArgs) => {
+  if (options.agent !== "claude-code" || commandName(commandArgs) !== "claude") {
+    return commandArgs;
+  }
+
+  if (hasCommandFlag(commandArgs, "--settings")) {
+    console.warn(
+      "[aivatar-connected-run] Claude Code was launched with --settings; skipping automatic Aivatar hook injection.",
+    );
+    return commandArgs;
+  }
+
+  if (hasCommandFlag(commandArgs, "--bare")) {
+    console.warn(
+      "[aivatar-connected-run] Claude Code --bare may disable hooks; Aivatar will still track launcher lifecycle.",
+    );
+  }
+
+  const settingsPath = await createClaudeAivatarSettings(options);
+  return [
+    commandArgs[0],
+    "--settings",
+    settingsPath,
+    ...commandArgs.slice(1),
+  ];
+};
+
 const commandEnv = (options) => {
   const env = {
     ...process.env,
     AIVATAR_AGENT: options.agent,
     AIVATAR_SESSION_ID: options.sessionId,
+    AIVATAR_HTTP_ENDPOINT:
+      process.env.AIVATAR_HTTP_ENDPOINT ?? "http://127.0.0.1:38988/agent-status",
+    AIVATAR_ACTIVE_ENDPOINT:
+      process.env.AIVATAR_ACTIVE_ENDPOINT ?? "http://127.0.0.1:38988/agent-active",
+    AIVATAR_PRESENCE_ENDPOINT:
+      process.env.AIVATAR_PRESENCE_ENDPOINT ?? "http://127.0.0.1:38988/agent-presence",
   };
 
   if (options.allowNewSession && !options.hasExplicitSessionId) {
@@ -436,6 +548,12 @@ const runNodeScript = async (script, options, message, overrides = {}) => {
   if (script.endsWith("aivatar-cli-connect.mjs") && overrides.watchParentPid) {
     args.push("--watch-parent-pid", String(overrides.watchParentPid));
   }
+  if (script.endsWith("aivatar-cli-connect.mjs") && overrides.watchDisabledReason) {
+    args.push("--watch-disabled-reason", overrides.watchDisabledReason);
+  }
+  if (script.endsWith("aivatar-cli-connect.mjs") && overrides.initialStatus) {
+    args.push("--initial-status", overrides.initialStatus);
+  }
   if (message) args.push(message);
   return run(args, {
     ...process.env,
@@ -488,6 +606,7 @@ if (
 }
 
 options.sessionId = options.sessionId ?? createSessionId(options.agent);
+const launchCommandArgs = await commandWithClaudeAivatarSettings(options, commandArgs);
 
 let childExitCode = 1;
 let disconnecting = false;
@@ -511,7 +630,7 @@ process.on("SIGTERM", () => {
   void disconnect().finally(() => process.exit(143));
 });
 
-const discoverCodexSession = shouldDiscoverCodexSession(options, commandArgs);
+const discoverCodexSession = shouldDiscoverCodexSession(options, launchCommandArgs);
 const knownRollouts = discoverCodexSession
   ? await snapshotRolloutFiles()
   : new Set();
@@ -520,9 +639,16 @@ const startedAtMs = Date.now();
 const connectCode = await runNodeScript(
   "scripts/aivatar-cli-connect.mjs",
   options,
-  `Running ${commandArgs.join(" ")}`,
+  `Running ${launchCommandArgs.join(" ")}`,
   {
     noWatch: discoverCodexSession || options.agent !== "codex",
+    watchDisabledReason:
+      options.agent !== "codex"
+        ? "Claude Code uses hooks/statusLine"
+        : discoverCodexSession
+          ? "Codex watcher attaches after session discovery"
+          : undefined,
+    initialStatus: options.agent === "claude-code" ? "idle" : undefined,
     watchParentPid: process.pid,
   },
 );
@@ -532,7 +658,7 @@ if (connectCode !== 0) {
 }
 
 try {
-  const child = spawnCommand(commandArgs, commandEnv(options));
+  const child = spawnCommand(launchCommandArgs, commandEnv(options));
   const childResult = waitForChild(child);
 
   if (discoverCodexSession) {
@@ -546,7 +672,13 @@ try {
 
     if (!discovered) {
       const logPath = await writeRecoveryLog(
-        buildRecoveryDetails({ options, commandArgs, discovered, rolloutMetadata, checks }),
+        buildRecoveryDetails({
+          options,
+          commandArgs: launchCommandArgs,
+          discovered,
+          rolloutMetadata,
+          checks,
+        }),
       );
       console.error(
         `[aivatar-connected-run] Codex started, but no new rollout JSONL was detected. Recovery log: ${logPath}`,
@@ -564,7 +696,13 @@ try {
         checks.cwdMatched = samePath(rolloutMetadata?.cwd, options.expectedCwd);
         if (!checks.cwdMatched) {
           const logPath = await writeRecoveryLog(
-            buildRecoveryDetails({ options, commandArgs, discovered, rolloutMetadata, checks }),
+            buildRecoveryDetails({
+              options,
+              commandArgs: launchCommandArgs,
+              discovered,
+              rolloutMetadata,
+              checks,
+            }),
           );
           console.error(
             `[aivatar-connected-run] New Codex rollout cwd did not match launcher cwd. Expected ${options.expectedCwd}; found ${rolloutMetadata?.cwd ?? "unknown"}. Not switching Aivatar to the suspicious session. Recovery log: ${logPath}`,
@@ -581,7 +719,13 @@ try {
             });
             if (!checks.desktopListingVerified.ok) {
               const logPath = await writeRecoveryLog(
-                buildRecoveryDetails({ options, commandArgs, discovered, rolloutMetadata, checks }),
+                buildRecoveryDetails({
+                  options,
+                  commandArgs: launchCommandArgs,
+                  discovered,
+                  rolloutMetadata,
+                  checks,
+                }),
               );
               console.warn(
                 `[aivatar-connected-run] New Codex session was detected, but Desktop listing did not return it for ${options.expectedCwd}. Aivatar will still follow ${discovered.sessionId}. Recovery log: ${logPath}`,
@@ -593,7 +737,13 @@ try {
               error: error instanceof Error ? error.message : String(error),
             };
             const logPath = await writeRecoveryLog(
-              buildRecoveryDetails({ options, commandArgs, discovered, rolloutMetadata, checks }),
+              buildRecoveryDetails({
+                options,
+                commandArgs: launchCommandArgs,
+                discovered,
+                rolloutMetadata,
+                checks,
+              }),
             );
             console.warn(
               `[aivatar-connected-run] Could not verify Desktop listing for ${discovered.sessionId}. Aivatar will still follow it. Recovery log: ${logPath}`,
@@ -610,7 +760,7 @@ try {
         await runNodeScript(
           "scripts/aivatar-cli-connect.mjs",
           { ...options, sessionId: connectedSessionId },
-          `Running ${commandArgs.join(" ")}`,
+          `Running ${launchCommandArgs.join(" ")}`,
           { watchParentPid: process.pid },
         );
         console.log(

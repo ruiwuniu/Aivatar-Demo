@@ -33,6 +33,8 @@ const parseArgs = (argv) => {
     message: "CLI connected to Aivatar",
     watch: true,
     watchParentPid: undefined,
+    watchDisabledReason: undefined,
+    initialStatus: "thinking",
   };
   const rest = [];
 
@@ -55,6 +57,16 @@ const parseArgs = (argv) => {
     if (value === "--watch-parent-pid") {
       const pid = Number(argv[index + 1]);
       options.watchParentPid = Number.isInteger(pid) ? pid : undefined;
+      index += 1;
+      continue;
+    }
+    if (value === "--watch-disabled-reason") {
+      options.watchDisabledReason = argv[index + 1] ?? options.watchDisabledReason;
+      index += 1;
+      continue;
+    }
+    if (value === "--initial-status") {
+      options.initialStatus = argv[index + 1] ?? options.initialStatus;
       index += 1;
       continue;
     }
@@ -197,7 +209,7 @@ if (!scriptExists(heartbeatScript)) {
   process.exit(1);
 }
 
-await postJson(endpoint, statusPayload(options, "thinking", options.message));
+await postJson(endpoint, statusPayload(options, options.initialStatus, options.message));
 await sendHeartbeat(options);
 
 const env = childEnv(options);
@@ -253,8 +265,16 @@ await writeFile(
   ),
 );
 
+const watcherSummary = watcher
+  ? `; watcher pid ${watcher.pid}`
+  : options.watch
+    ? "; watcher unavailable"
+    : `; watcher disabled${
+        options.watchDisabledReason ? ` (${options.watchDisabledReason})` : ""
+      }`;
+
 console.log(
-  `[aivatar-cli-connect] ${options.agent}/${options.sessionId} connected; heartbeat pid ${heartbeat.pid}${
-    watcher ? `; watcher pid ${watcher.pid}` : "; watcher unavailable"
-  }${watchdog ? `; watchdog pid ${watchdog.pid}` : ""}; baseline ${usageBaselinePath}`,
+  `[aivatar-cli-connect] ${options.agent}/${options.sessionId} connected; heartbeat pid ${heartbeat.pid}${watcherSummary}${
+    watchdog ? `; watchdog pid ${watchdog.pid}` : ""
+  }; baseline ${usageBaselinePath}`,
 );
