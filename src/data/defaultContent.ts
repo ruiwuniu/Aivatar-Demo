@@ -262,7 +262,7 @@ export const defaultContent: AivatarContent = {
         height: 42,
         color: "#8a5a38",
         interaction: "interact",
-        collision: { x: 170, y: 130, width: 102, height: 41 },
+        collision: { x: 178, y: 138, width: 86, height: 25 },
       },
       {
         id: "fridge",
@@ -290,7 +290,7 @@ export const defaultContent: AivatarContent = {
         height: 40,
         color: "#c48650",
         interaction: "interact",
-        collision: { x: 306, y: 256, width: 90, height: 27 },
+        collision: { x: 310, y: 258, width: 82, height: 28 },
       },
     ],
   },

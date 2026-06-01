@@ -25,13 +25,12 @@ const AVATAR_FOOTPRINT_HALF_WIDTH = 6;
 const AVATAR_FOOTPRINT_TOP_OFFSET = 6;
 const AVATAR_FOOTPRINT_HEIGHT = 8;
 const INTERACTION_STANDPOINT_DISTANCE = 22;
-const DESK_CLOSE_STANDPOINT_DISTANCE = 6;
-const DESK_FRONT_STANDPOINT_DISTANCE = 6;
-const FURNITURE_CLOSE_STANDPOINT_DISTANCE = 6;
-const SURFACE_ITEM_CLOSE_STANDPOINT_DISTANCE = 3;
+const ACTION_EXECUTION_DISTANCE = 8;
 const COLLISION_EDGE_EPSILON = 0.5;
 const NAV_WAYPOINT_REACHED_DISTANCE = 7;
-const MIN_VISIBLE_MOVE_DISTANCE = 0.15;
+const MIN_VISIBLE_MOVE_DISTANCE = 1.25;
+const REPLAN_PAUSE_SECONDS = 0.35;
+const BLOCKED_TARGET_ABANDON_SECONDS = 2.4;
 const COMPLETE_VISUAL_SECONDS = 2.2;
 const EXPLORE_MIN_ENERGY = 35;
 const EXPLORE_MIN_MOOD = 30;
@@ -39,21 +38,40 @@ const EXPLORE_MIN_HUNGER = 25;
 const EXPLORE_CHANCE = 0.12;
 const NAV_TRICKY_CELL_PENALTY = 2.2;
 const NAV_VISITED_CELL_PENALTY = 0.08;
+const NAV_PLANNING_CLEARANCE = 4;
+const NAV_CORRIDOR_CLEARANCE = NAV_PLANNING_CLEARANCE;
+const INTERACTION_SAFE_GAP = AVATAR_FOOTPRINT_HALF_WIDTH + NAV_PLANNING_CLEARANCE + 4;
+const TERMINAL_SURFACE_STANDPOINT_DISTANCE =
+  Math.max(0, AVATAR_FOOTPRINT_HALF_WIDTH + NAV_PLANNING_CLEARANCE + 1 - NAV_GRID_SIZE);
+const DESK_CLOSE_STANDPOINT_DISTANCE = INTERACTION_SAFE_GAP;
+const DESK_FRONT_STANDPOINT_DISTANCE = INTERACTION_SAFE_GAP;
+const FURNITURE_CLOSE_STANDPOINT_DISTANCE = INTERACTION_SAFE_GAP;
+const SURFACE_ITEM_CLOSE_STANDPOINT_DISTANCE = INTERACTION_SAFE_GAP;
+const SOFT_COLLISION_BACKOFF_DISTANCE = 5;
+const SOFT_COLLISION_REPLAN_PAUSE_SECONDS = 0.28;
+const NAV_STALL_SECONDS = BLOCKED_TARGET_ABANDON_SECONDS;
+const NAV_STALL_MIN_PROGRESS = 0.8;
+const ARRIVAL_GATED_BEHAVIORS: BehaviorName[] = [
+  "sleep",
+  "interact",
+  "coffee",
+  "cola",
+  "bento",
+  "brew",
+  "relax",
+  "admire",
+  "snack",
+  "paint",
+  "play",
+  "thinking",
+  "coding",
+  "fetch_task_file",
+  "carry_task_file",
+  "read_task_file",
+];
 
 type Point = { x: number; y: number };
 type Rect = { x: number; y: number; width: number; height: number };
-type LocalNavActionName =
-  | "sidestep-left"
-  | "sidestep-right"
-  | "backoff"
-  | "force-replan"
-  | "switch-interaction-point";
-type LocalNavAction = {
-  action: LocalNavActionName;
-  score: number;
-  point?: Point;
-  target?: Point;
-};
 
 const rectsOverlap = (left: Rect, right: Rect) =>
   left.x < right.x + right.width - COLLISION_EDGE_EPSILON &&
@@ -72,6 +90,37 @@ let cachedNavWaypoint:
     }
   | null = null;
 
+let cachedReplanPause:
+  | {
+      behavior: BehaviorName;
+      targetX: number;
+      targetY: number;
+      ignoredFurnitureId?: string;
+      remainingSeconds: number;
+    }
+  | null = null;
+
+let cachedBlockedTarget:
+  | {
+      behavior: BehaviorName;
+      targetX: number;
+      targetY: number;
+      ignoredFurnitureId?: string;
+      elapsedSeconds: number;
+    }
+  | null = null;
+
+let cachedNavigationProgress:
+  | {
+      behavior: BehaviorName;
+      targetX: number;
+      targetY: number;
+      ignoredFurnitureId?: string;
+      bestDistance: number;
+      stalledSeconds: number;
+    }
+  | null = null;
+
 const sameNavigationTarget = (
   cache: NonNullable<typeof cachedNavWaypoint>,
   behavior: BehaviorName,
@@ -83,12 +132,159 @@ const sameNavigationTarget = (
   Math.abs(cache.targetX - target.targetX) <= 1 &&
   Math.abs(cache.targetY - target.targetY) <= 1;
 
-const avatarFootprintBounds = (x: number, y: number): Rect => ({
-  x: x - AVATAR_FOOTPRINT_HALF_WIDTH,
-  y: y + AVATAR_FOOTPRINT_TOP_OFFSET,
-  width: AVATAR_FOOTPRINT_HALF_WIDTH * 2,
-  height: AVATAR_FOOTPRINT_HEIGHT,
+const sameReplanPauseTarget = (
+  cache: NonNullable<typeof cachedReplanPause>,
+  behavior: BehaviorName,
+  target: Pick<AvatarRuntime, "targetX" | "targetY">,
+  ignoredFurnitureId?: string,
+) =>
+  cache.behavior === behavior &&
+  cache.ignoredFurnitureId === ignoredFurnitureId &&
+  Math.abs(cache.targetX - target.targetX) <= 1 &&
+  Math.abs(cache.targetY - target.targetY) <= 1;
+
+const sameBlockedTarget = (
+  cache: NonNullable<typeof cachedBlockedTarget>,
+  behavior: BehaviorName,
+  target: Pick<AvatarRuntime, "targetX" | "targetY">,
+  ignoredFurnitureId?: string,
+) =>
+  cache.behavior === behavior &&
+  cache.ignoredFurnitureId === ignoredFurnitureId &&
+  Math.abs(cache.targetX - target.targetX) <= 1 &&
+  Math.abs(cache.targetY - target.targetY) <= 1;
+
+const recordBlockedTarget = (
+  behavior: BehaviorName,
+  target: Pick<AvatarRuntime, "targetX" | "targetY">,
+  ignoredFurnitureId: string | undefined,
+  elapsedSeconds: number,
+) => {
+  if (
+    cachedBlockedTarget &&
+    sameBlockedTarget(cachedBlockedTarget, behavior, target, ignoredFurnitureId)
+  ) {
+    cachedBlockedTarget.elapsedSeconds += elapsedSeconds;
+  } else {
+    cachedBlockedTarget = {
+      behavior,
+      targetX: target.targetX,
+      targetY: target.targetY,
+      ignoredFurnitureId,
+      elapsedSeconds,
+    };
+  }
+
+  return cachedBlockedTarget.elapsedSeconds >= BLOCKED_TARGET_ABANDON_SECONDS;
+};
+
+const clearBlockedTarget = () => {
+  cachedBlockedTarget = null;
+};
+
+const clearNavigationProgress = () => {
+  cachedNavigationProgress = null;
+};
+
+const pauseForNavigationReplan = (
+  avatar: AvatarRuntime,
+  behavior: BehaviorName,
+  ignoredFurnitureId: string | undefined,
+  elapsedSeconds: number,
+): AvatarRuntime => {
+  cachedNavWaypoint = null;
+  cachedReplanPause = {
+    behavior,
+    targetX: avatar.targetX,
+    targetY: avatar.targetY,
+    ignoredFurnitureId,
+    remainingSeconds: SOFT_COLLISION_REPLAN_PAUSE_SECONDS,
+  };
+
+  return {
+    ...avatar,
+    expression: "focused",
+    activityLabel: "Planning route",
+    behaviorTimer: avatar.actionIntent
+      ? avatar.behaviorTimer
+      : avatar.behaviorTimer - elapsedSeconds,
+  };
+};
+
+const fallbackBehaviorAfterBlockedTarget = (behavior: BehaviorName): BehaviorName =>
+  behavior === "wander" ? "phone" : "wander";
+
+const activeBehaviorForRuntime = (avatar: AvatarRuntime): BehaviorName =>
+  avatar.actionIntent ?? avatar.behavior;
+
+const behaviorWaitsForArrival = (behavior: BehaviorName) =>
+  ARRIVAL_GATED_BEHAVIORS.includes(behavior);
+
+const clearNavigationFailure = (avatar: AvatarRuntime): AvatarRuntime => ({
+  ...avatar,
+  navigationFailure: undefined,
 });
+
+const recordNavigationProgress = (
+  behavior: BehaviorName,
+  target: Point,
+  current: Point,
+  ignoredFurnitureId: string | undefined,
+  elapsedSeconds: number,
+) => {
+  const distance = Math.hypot(target.x - current.x, target.y - current.y);
+  const progress = cachedNavigationProgress;
+  const sameTarget =
+    progress &&
+    progress.behavior === behavior &&
+    progress.ignoredFurnitureId === ignoredFurnitureId &&
+    Math.abs(progress.targetX - target.x) <= 1 &&
+    Math.abs(progress.targetY - target.y) <= 1;
+
+  if (!sameTarget || !progress) {
+    cachedNavigationProgress = {
+      behavior,
+      targetX: target.x,
+      targetY: target.y,
+      ignoredFurnitureId,
+      bestDistance: distance,
+      stalledSeconds: 0,
+    };
+    return false;
+  }
+
+  if (distance < progress.bestDistance - NAV_STALL_MIN_PROGRESS) {
+    progress.bestDistance = distance;
+    progress.stalledSeconds = 0;
+    return false;
+  }
+
+  progress.stalledSeconds += elapsedSeconds;
+  return progress.stalledSeconds >= NAV_STALL_SECONDS;
+};
+
+const avatarCollisionPoint = (x: number, y: number): Point => ({
+  x,
+  y: y + AVATAR_FOOTPRINT_TOP_OFFSET + AVATAR_FOOTPRINT_HEIGHT / 2,
+});
+
+const inflatedCollisionRect = (rect: Rect, clearance = 0): Rect => {
+  const insetX = AVATAR_FOOTPRINT_HALF_WIDTH + clearance;
+  const insetY = AVATAR_FOOTPRINT_HEIGHT / 2 + clearance;
+
+  return {
+    x: rect.x - insetX,
+    y: rect.y - insetY,
+    width: rect.width + insetX * 2,
+    height: rect.height + insetY * 2,
+  };
+};
+
+const pointInsideRect = (point: Point, rect: Rect) =>
+  point.x > rect.x + COLLISION_EDGE_EPSILON &&
+  point.x < rect.x + rect.width - COLLISION_EDGE_EPSILON &&
+  point.y > rect.y + COLLISION_EDGE_EPSILON &&
+  point.y < rect.y + rect.height - COLLISION_EDGE_EPSILON;
 
 const clamp = (value: number, min = 0, max = 100) =>
   Math.min(max, Math.max(min, value));
@@ -157,6 +353,28 @@ export const explorationCellKey = (point: Point) => {
   return `${cell.col}:${cell.row}`;
 };
 
+export const navigationLayoutFingerprint = (content: AivatarContent) =>
+  JSON.stringify({
+    furniture: content.room.furniture
+      .map((item) => ({
+        id: item.id,
+        collision: item.collision,
+        x: item.x,
+        y: item.y,
+        width: item.width,
+        height: item.height,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    blockers: (content.placedItems ?? [])
+      .filter((item) => item.itemId === EASEL_ITEM_ID && !item.surfaceFurnitureId)
+      .map((item) => ({
+        id: item.id,
+        itemId: item.itemId,
+        bounds: getPlacedItemPlacementFootBounds(item),
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  });
+
 export const explorationTargetReached = (avatar: AvatarRuntime) =>
   Math.hypot(avatar.x - avatar.targetX, avatar.y - avatar.targetY) <= 10;
 
@@ -213,6 +431,7 @@ const validStandpoints = (
   points: Point[],
   content: AivatarContent,
   ignoredFurnitureId?: string,
+  clearance = 0,
 ) =>
   uniquePoints(points)
     .map((point) => ({
@@ -222,7 +441,7 @@ const validStandpoints = (
     .filter(
       (point) =>
         isPointInsideRoomFloor(point) &&
-        !pointHitsCollision(point.x, point.y, content, ignoredFurnitureId),
+        !pointHitsCollision(point.x, point.y, content, ignoredFurnitureId, clearance),
     );
 
 export const getFurnitureInteractionStandpoints = (
@@ -230,11 +449,10 @@ export const getFurnitureInteractionStandpoints = (
   content: AivatarContent,
   behavior: BehaviorName | string = furniture.interaction,
 ): Point[] => {
-  if (furniture.id === "bed" && behavior === "sleep") {
+  if (furniture.id === "bed" && (behavior === "sleep" || behavior === "relax")) {
     return validStandpoints(
       [
         { x: furniture.x + furniture.width / 2, y: furniture.y + 50 },
-        { x: furniture.x + furniture.width / 2, y: furniture.y + furniture.height + 14 },
       ],
       content,
       "bed",
@@ -303,8 +521,8 @@ export const getPlacedItemInteractionStandpoints = (
         item.itemId === GAME_CONSOLE_ITEM_ID;
       const itemDistance =
         item.itemId === TERMINAL_MONITOR_ITEM_ID
-          ? SURFACE_ITEM_CLOSE_STANDPOINT_DISTANCE
-          : INTERACTION_STANDPOINT_DISTANCE;
+          ? TERMINAL_SURFACE_STANDPOINT_DISTANCE
+          : Math.max(SURFACE_ITEM_CLOSE_STANDPOINT_DISTANCE, INTERACTION_SAFE_GAP);
       const surfaceStandpoints =
         usesItemOnlySurfaceStandpoints
           ? []
@@ -312,12 +530,13 @@ export const getPlacedItemInteractionStandpoints = (
       return validStandpoints(
         [
           { x: itemX, y: bounds.y + bounds.height + itemDistance },
-          { x: itemX - 18, y: bounds.y + bounds.height + itemDistance },
-          { x: itemX + 18, y: bounds.y + bounds.height + itemDistance },
+          { x: itemX - 22, y: bounds.y + bounds.height + itemDistance },
+          { x: itemX + 22, y: bounds.y + bounds.height + itemDistance },
+          { x: bounds.x - itemDistance, y: bounds.y + bounds.height * 0.72 },
+          { x: bounds.x + bounds.width + itemDistance, y: bounds.y + bounds.height * 0.72 },
           ...surfaceStandpoints,
         ],
         content,
-        surface.id,
       );
     }
   }
@@ -534,6 +753,10 @@ export const targetForBehavior = (
   content: AivatarContent,
   from: Point = { x: 210, y: 185 },
 ): Pick<AvatarRuntime, "targetX" | "targetY"> => {
+  if (behavior === "success") {
+    return { targetX: from.x, targetY: from.y };
+  }
+
   if (behavior === "coding" || behavior === "thinking") {
     const terminal = chooseNearestOrRandom(
       from,
@@ -744,6 +967,98 @@ const shouldFaceFrontAtTarget = (behavior: BehaviorName) =>
     "sleep",
   ].includes(behavior);
 
+const failNavigationTarget = (
+  avatar: AvatarRuntime,
+  content: AivatarContent,
+  behavior: BehaviorName,
+  forcedBehavior: BehaviorName | null,
+  reason: "blocked" | "stalled",
+): AvatarRuntime => {
+  cachedNavWaypoint = null;
+  cachedReplanPause = null;
+  clearNavigationProgress();
+  clearBlockedTarget();
+
+  const failure = {
+    behavior,
+    targetX: avatar.targetX,
+    targetY: avatar.targetY,
+    reason,
+  };
+
+  if (forcedBehavior) {
+    return {
+      ...avatar,
+      targetX: avatar.x,
+      targetY: avatar.y,
+      behavior: forcedBehavior,
+      behaviorTimer: Math.max(avatar.behaviorTimer, 4),
+      facing:
+        forcedBehavior === "coding" || forcedBehavior === "thinking"
+          ? "back"
+          : avatar.facing,
+      expression: expressionForBehavior(forcedBehavior),
+      activityLabel: activityLabelForBehavior(forcedBehavior),
+      actionIntent: undefined,
+      actionActivityLabel: undefined,
+      interactionTargetAlternates: undefined,
+      navigationFailure: failure,
+    };
+  }
+
+  return {
+    ...setBehavior(
+      avatar,
+      fallbackBehaviorAfterBlockedTarget(avatar.behavior),
+      content,
+      4,
+      "Trying something else",
+    ),
+    navigationFailure: failure,
+  };
+};
+
+const interactionStopDistanceForBehavior = (behavior: BehaviorName) => {
+  if (
+    [
+      "interact",
+      "coffee",
+      "cola",
+      "bento",
+      "snack",
+      "brew",
+      "paint",
+      "play",
+      "relax",
+      "sleep",
+      "admire",
+      "fetch_task_file",
+      "carry_task_file",
+      "read_task_file",
+    ].includes(behavior)
+  ) {
+    return ACTION_EXECUTION_DISTANCE;
+  }
+
+  if (behavior === "coding" || behavior === "thinking") return 8;
+  return 0;
+};
+
+const isAtInteractionRange = (avatar: AvatarRuntime) => {
+  const stopDistance = interactionStopDistanceForBehavior(activeBehaviorForRuntime(avatar));
+  if (stopDistance <= 0) return false;
+
+  if (Math.hypot(avatar.x - avatar.targetX, avatar.y - avatar.targetY) <= stopDistance) {
+    return true;
+  }
+
+  return (
+    avatar.interactionTargetAlternates?.some(
+      (point) => Math.hypot(avatar.x - point.x, avatar.y - point.y) <= stopDistance,
+    ) ?? false
+  );
+};
+
 const collisionRectsForContent = (
   content: AivatarContent,
   ignoredId?: string,
@@ -766,25 +1081,129 @@ const pointHitsCollision = (
   y: number,
   content: AivatarContent,
   ignoredFurnitureId?: string,
-  from?: Pick<AvatarRuntime, "x" | "y">,
+  clearance = 0,
 ) => {
-  const nextFootprint = avatarFootprintBounds(x, y);
+  const point = avatarCollisionPoint(x, y);
 
-  return collisionRectsForContent(content, ignoredFurnitureId).some((collision) => {
-    const hitsNext = rectsOverlap(nextFootprint, collision);
+  return collisionRectsForContent(content, ignoredFurnitureId).some((collision) =>
+    pointInsideRect(point, inflatedCollisionRect(collision, clearance)),
+  );
+};
+
+const pointCanEscapeCollision = (
+  x: number,
+  y: number,
+  content: AivatarContent,
+  ignoredFurnitureId: string | undefined,
+  from: Pick<AvatarRuntime, "x" | "y">,
+) => {
+  const nextPoint = avatarCollisionPoint(x, y);
+  const currentPoint = avatarCollisionPoint(from.x, from.y);
+
+  return !collisionRectsForContent(content, ignoredFurnitureId).some((collision) => {
+    const inflated = inflatedCollisionRect(collision);
+    const hitsNext = pointInsideRect(nextPoint, inflated);
     if (!hitsNext) return false;
-    if (!from) return true;
 
-    const hitsCurrent = rectsOverlap(avatarFootprintBounds(from.x, from.y), collision);
+    const hitsCurrent = pointInsideRect(currentPoint, inflated);
     if (!hitsCurrent) return true;
 
     const centerX = collision.x + collision.width / 2;
     const centerY = collision.y + collision.height / 2;
-    const currentDistance = Math.hypot(from.x - centerX, from.y - centerY);
-    const nextDistance = Math.hypot(x - centerX, y - centerY);
+    const currentDistance = Math.hypot(currentPoint.x - centerX, currentPoint.y - centerY);
+    const nextDistance = Math.hypot(nextPoint.x - centerX, nextPoint.y - centerY);
 
     return nextDistance <= currentDistance;
   });
+};
+
+const collisionPenetrationDepth = (
+  x: number,
+  y: number,
+  content: AivatarContent,
+  ignoredFurnitureId?: string,
+) => {
+  const point = avatarCollisionPoint(x, y);
+
+  return collisionRectsForContent(content, ignoredFurnitureId).reduce(
+    (deepest, collision) => {
+      const inflated = inflatedCollisionRect(collision);
+      if (!pointInsideRect(point, inflated)) return deepest;
+
+      const depth = Math.min(
+        point.x - inflated.x,
+        inflated.x + inflated.width - point.x,
+        point.y - inflated.y,
+        inflated.y + inflated.height - point.y,
+      );
+
+      return Math.max(deepest, depth);
+    },
+    0,
+  );
+};
+
+const pointCanSlideAlongCollisionEdge = (
+  from: Point,
+  to: Point,
+  content: AivatarContent,
+  ignoredFurnitureId?: string,
+) => {
+  if (!isPointInsideRoomFloor(to)) return false;
+
+  const currentDepth = collisionPenetrationDepth(
+    from.x,
+    from.y,
+    content,
+    ignoredFurnitureId,
+  );
+  const nextDepth = collisionPenetrationDepth(
+    to.x,
+    to.y,
+    content,
+    ignoredFurnitureId,
+  );
+
+  if (currentDepth <= 0) {
+    return !pointHitsCollision(to.x, to.y, content, ignoredFurnitureId);
+  }
+
+  return nextDepth <= currentDepth + 0.75;
+};
+
+const softCollisionBackoffPoint = (
+  from: Point,
+  movement: Point,
+  content: AivatarContent,
+  ignoredFurnitureId?: string,
+) => {
+  const distance = Math.hypot(movement.x, movement.y);
+  if (distance <= 0.001) return null;
+
+  const unitX = movement.x / distance;
+  const unitY = movement.y / distance;
+  const candidates = [
+    {
+      x: from.x - unitX * SOFT_COLLISION_BACKOFF_DISTANCE,
+      y: from.y - unitY * SOFT_COLLISION_BACKOFF_DISTANCE,
+    },
+    {
+      x: from.x - unitX * SOFT_COLLISION_BACKOFF_DISTANCE - unitY * 3,
+      y: from.y - unitY * SOFT_COLLISION_BACKOFF_DISTANCE + unitX * 3,
+    },
+    {
+      x: from.x - unitX * SOFT_COLLISION_BACKOFF_DISTANCE + unitY * 3,
+      y: from.y - unitY * SOFT_COLLISION_BACKOFF_DISTANCE - unitX * 3,
+    },
+  ];
+
+  return (
+    candidates.find(
+      (point) =>
+        isPointInsideRoomFloor(point) &&
+        !pointHitsCollision(point.x, point.y, content, ignoredFurnitureId),
+    ) ?? null
+  );
 };
 
 const isInsideRoomFloor = (point: Pick<AvatarRuntime, "x" | "y">) =>
@@ -823,6 +1242,7 @@ const pathHitsCollision = (
   to: Pick<AvatarRuntime, "x" | "y">,
   content: AivatarContent,
   ignoredFurnitureId?: string,
+  clearance = 0,
 ) => {
   const steps = Math.max(
     8,
@@ -833,7 +1253,7 @@ const pathHitsCollision = (
     const progress = index / steps;
     const x = from.x + (to.x - from.x) * progress;
     const y = from.y + (to.y - from.y) * progress;
-    if (pointHitsCollision(x, y, content, ignoredFurnitureId, from)) return true;
+    if (pointHitsCollision(x, y, content, ignoredFurnitureId, clearance)) return true;
   }
 
   return false;
@@ -887,7 +1307,13 @@ const findPathWaypoint = (
     (point) =>
       isInsideRoomFloor(point) &&
       !pointHitsCollision(point.x, point.y, content, ignoredFurnitureId) &&
-      !pathHitsCollision(from, point, content, ignoredFurnitureId),
+      !pathHitsCollision(
+        from,
+        point,
+        content,
+        ignoredFurnitureId,
+        NAV_CORRIDOR_CLEARANCE,
+      ),
   );
 
   return candidatePoints.sort(
@@ -917,19 +1343,25 @@ const pointToCell = (point: Point) => ({
 
 const cellKey = (cell: { col: number; row: number }) => `${cell.col}:${cell.row}`;
 
+const learnedCellValue = (
+  cell: { col: number; row: number },
+  content: AivatarContent,
+  navMemory?: AivatarNavMemory,
+) => {
+  if (!navMemory?.walkableCells) return undefined;
+  if (navMemory.layoutFingerprint !== navigationLayoutFingerprint(content)) return undefined;
+  return navMemory.walkableCells[cellKey(cell)];
+};
+
 const navMemoryPointPenalty = (
   point: Point,
   navMemory?: AivatarNavMemory,
   includeVisited = false,
 ) => {
-  if (!navMemory) return 0;
-  const key = cellKey(pointToCell(point));
-  return (
-    Math.min(8, navMemory.trickySpots[key] ?? 0) * NAV_TRICKY_CELL_PENALTY +
-    (includeVisited
-      ? Math.min(20, navMemory.exploredCells[key] ?? 0) * NAV_VISITED_CELL_PENALTY
-      : 0)
-  );
+  void point;
+  void navMemory;
+  void includeVisited;
+  return 0;
 };
 
 const cellToPoint = (cell: { col: number; row: number }): Point => ({
@@ -941,6 +1373,9 @@ const isWalkableCell = (
   cell: { col: number; row: number },
   content: AivatarContent,
   ignoredFurnitureId?: string,
+  clearance = 0,
+  navMemory?: AivatarNavMemory,
+  ignoreLearnedGrid = false,
 ) => {
   if (
     cell.col < 0 ||
@@ -952,9 +1387,13 @@ const isWalkableCell = (
   }
 
   const point = cellToPoint(cell);
+  if (!ignoreLearnedGrid && learnedCellValue(cell, content, navMemory) === 1) {
+    return false;
+  }
+
   return (
     isPointInsideRoomFloor(point) &&
-    !pointHitsCollision(point.x, point.y, content, ignoredFurnitureId)
+    !pointHitsCollision(point.x, point.y, content, ignoredFurnitureId, clearance)
   );
 };
 
@@ -962,9 +1401,23 @@ const nearestWalkableCell = (
   point: Point,
   content: AivatarContent,
   ignoredFurnitureId?: string,
+  clearance = 0,
+  navMemory?: AivatarNavMemory,
+  ignoreLearnedGrid = false,
 ) => {
   const origin = pointToCell(point);
-  if (isWalkableCell(origin, content, ignoredFurnitureId)) return origin;
+  if (
+    isWalkableCell(
+      origin,
+      content,
+      ignoredFurnitureId,
+      clearance,
+      navMemory,
+      ignoreLearnedGrid,
+    )
+  ) {
+    return origin;
+  }
 
   for (let radius = 1; radius <= 8; radius += 1) {
     const candidates: Array<{ col: number; row: number }> = [];
@@ -978,7 +1431,16 @@ const nearestWalkableCell = (
     }
 
     const walkable = candidates
-      .filter((cell) => isWalkableCell(cell, content, ignoredFurnitureId))
+      .filter((cell) =>
+        isWalkableCell(
+          cell,
+          content,
+          ignoredFurnitureId,
+          clearance,
+          navMemory,
+          ignoreLearnedGrid,
+        ),
+      )
       .sort(
         (left, right) =>
           Math.hypot(cellToPoint(left).x - point.x, cellToPoint(left).y - point.y) -
@@ -990,15 +1452,39 @@ const nearestWalkableCell = (
   return null;
 };
 
+const nearestWalkablePoint = (
+  point: Point,
+  content: AivatarContent,
+  ignoredFurnitureId?: string,
+) => {
+  const cell = nearestWalkableCell(point, content, ignoredFurnitureId);
+  return cell ? cellToPoint(cell) : null;
+};
+
 const findNavGridPath = (
   from: Point,
   to: Point,
   content: AivatarContent,
   ignoredFurnitureId?: string,
   navMemory?: AivatarNavMemory,
+  ignoreLearnedGrid = false,
 ) => {
-  const start = nearestWalkableCell(from, content, ignoredFurnitureId);
-  const goal = nearestWalkableCell(to, content, ignoredFurnitureId);
+  const start = nearestWalkableCell(
+    from,
+    content,
+    ignoredFurnitureId,
+    NAV_PLANNING_CLEARANCE,
+    navMemory,
+    ignoreLearnedGrid,
+  );
+  const goal = nearestWalkableCell(
+    to,
+    content,
+    ignoredFurnitureId,
+    NAV_PLANNING_CLEARANCE,
+    navMemory,
+    ignoreLearnedGrid,
+  );
   if (!start || !goal) return null;
 
   const goalKey = cellKey(goal);
@@ -1048,7 +1534,16 @@ const findNavGridPath = (
         col: current.col + neighborOffset.col,
         row: current.row + neighborOffset.row,
       };
-      if (!isWalkableCell(neighbor, content, ignoredFurnitureId)) continue;
+      if (
+        !isWalkableCell(
+          neighbor,
+          content,
+          ignoredFurnitureId,
+          NAV_PLANNING_CLEARANCE,
+          navMemory,
+          ignoreLearnedGrid,
+        )
+      ) continue;
       const neighborKey = cellKey(neighbor);
       if (closed.has(neighborKey)) continue;
       if (
@@ -1058,12 +1553,29 @@ const findNavGridPath = (
           { col: current.col + neighborOffset.col, row: current.row },
           content,
           ignoredFurnitureId,
+          NAV_PLANNING_CLEARANCE,
+          navMemory,
+          ignoreLearnedGrid,
         ) ||
           !isWalkableCell(
             { col: current.col, row: current.row + neighborOffset.row },
             content,
             ignoredFurnitureId,
+            NAV_PLANNING_CLEARANCE,
+            navMemory,
+            ignoreLearnedGrid,
           ))
+      ) {
+        continue;
+      }
+      if (
+        pathHitsCollision(
+          cellToPoint(current),
+          cellToPoint(neighbor),
+          content,
+          ignoredFurnitureId,
+          NAV_PLANNING_CLEARANCE,
+        )
       ) {
         continue;
       }
@@ -1071,8 +1583,7 @@ const findNavGridPath = (
       const currentScore = gScore.get(currentKey) ?? Number.POSITIVE_INFINITY;
       const tentativeScore =
         currentScore +
-        neighborOffset.cost +
-        navMemoryPointPenalty(cellToPoint(neighbor), navMemory);
+        neighborOffset.cost;
       if (tentativeScore >= (gScore.get(neighborKey) ?? Number.POSITIVE_INFINITY)) {
         continue;
       }
@@ -1093,12 +1604,25 @@ const findNavGridPath = (
   return null;
 };
 
+export const getNavigationDebugPath = (
+  avatar: AvatarRuntime,
+  content: AivatarContent,
+  ignoredFurnitureId?: string,
+) =>
+  findNavGridPath(
+    { x: avatar.x, y: avatar.y },
+    { x: avatar.targetX, y: avatar.targetY },
+    content,
+    ignoredFurnitureId ?? (activeBehaviorForRuntime(avatar) === "sleep" ? "bed" : undefined),
+  ) ?? [];
+
 const findNavGridWaypoint = (
   from: Point,
   target: Pick<AvatarRuntime, "targetX" | "targetY">,
   content: AivatarContent,
   ignoredFurnitureId?: string,
   navMemory?: AivatarNavMemory,
+  ignoreLearnedGrid = false,
 ) => {
   const targetPoint = { x: target.targetX, y: target.targetY };
   const path = findNavGridPath(
@@ -1107,14 +1631,37 @@ const findNavGridWaypoint = (
     content,
     ignoredFurnitureId,
     navMemory,
+    ignoreLearnedGrid,
   );
   if (!path || path.length < 2) return null;
 
   return path.find((point) => Math.hypot(point.x - from.x, point.y - from.y) > 5) ?? path[1];
 };
 
-const nextPathPoint = (from: Point, path: Point[]) =>
-  path.find((point) => Math.hypot(point.x - from.x, point.y - from.y) > 5) ?? null;
+const nextPathPoint = (from: Point, path: Point[]) => {
+  if (path.length === 0) return null;
+
+  const nearestIndex = path.reduce((bestIndex, point, index) => {
+    const bestPoint = path[bestIndex];
+    return Math.hypot(point.x - from.x, point.y - from.y) <
+      Math.hypot(bestPoint.x - from.x, bestPoint.y - from.y)
+      ? index
+      : bestIndex;
+  }, 0);
+
+  for (let index = nearestIndex + 1; index < path.length; index += 1) {
+    const point = path[index];
+    if (Math.hypot(point.x - from.x, point.y - from.y) > NAV_WAYPOINT_REACHED_DISTANCE) {
+      return point;
+    }
+  }
+
+  const finalPoint = path[path.length - 1];
+  return Math.hypot(finalPoint.x - from.x, finalPoint.y - from.y) >
+    NAV_WAYPOINT_REACHED_DISTANCE
+    ? finalPoint
+    : null;
+};
 
 const findStableNavWaypoint = (
   from: Point,
@@ -1124,6 +1671,21 @@ const findStableNavWaypoint = (
   ignoredFurnitureId?: string,
   navMemory?: AivatarNavMemory,
 ) => {
+  const ignoreLearnedGrid = behavior === "explore";
+  const targetPoint = { x: target.targetX, y: target.targetY };
+  if (
+    !pathHitsCollision(
+      from,
+      targetPoint,
+      content,
+      ignoredFurnitureId,
+      NAV_CORRIDOR_CLEARANCE,
+    )
+  ) {
+    cachedNavWaypoint = null;
+    return null;
+  }
+
   if (
     cachedNavWaypoint &&
     sameNavigationTarget(cachedNavWaypoint, behavior, target, ignoredFurnitureId) &&
@@ -1133,7 +1695,13 @@ const findStableNavWaypoint = (
     if (
       point &&
       Math.hypot(point.x - from.x, point.y - from.y) > NAV_WAYPOINT_REACHED_DISTANCE &&
-      !pathHitsCollision(from, point, content, ignoredFurnitureId)
+      !pathHitsCollision(
+        from,
+        point,
+        content,
+        ignoredFurnitureId,
+        NAV_CORRIDOR_CLEARANCE,
+      )
     ) {
       return point;
     }
@@ -1145,18 +1713,24 @@ const findStableNavWaypoint = (
     sameNavigationTarget(cachedNavWaypoint, behavior, target, ignoredFurnitureId) &&
     Math.hypot(cachedNavWaypoint.point.x - from.x, cachedNavWaypoint.point.y - from.y) >
       NAV_WAYPOINT_REACHED_DISTANCE &&
-    !pathHitsCollision(from, cachedNavWaypoint.point, content, ignoredFurnitureId)
+    !pathHitsCollision(
+      from,
+      cachedNavWaypoint.point,
+      content,
+      ignoredFurnitureId,
+      NAV_CORRIDOR_CLEARANCE,
+    )
   ) {
     return cachedNavWaypoint.point;
   }
 
-  const targetPoint = { x: target.targetX, y: target.targetY };
   const path = findNavGridPath(
     from,
     targetPoint,
     content,
     ignoredFurnitureId,
     navMemory,
+    ignoreLearnedGrid,
   );
   if (path && path.length >= 2) {
     const point = nextPathPoint(from, path) ?? path[1];
@@ -1172,7 +1746,14 @@ const findStableNavWaypoint = (
   }
 
   const point =
-    findNavGridWaypoint(from, target, content, ignoredFurnitureId, navMemory) ??
+    findNavGridWaypoint(
+      from,
+      target,
+      content,
+      ignoredFurnitureId,
+      navMemory,
+      ignoreLearnedGrid,
+    ) ??
     findPathWaypoint(from, target, content, ignoredFurnitureId);
 
   cachedNavWaypoint = point
@@ -1187,149 +1768,6 @@ const findStableNavWaypoint = (
     : null;
 
   return point;
-};
-
-const scoreLocalPoint = (
-  from: Point,
-  point: Point,
-  target: Point,
-  content: AivatarContent,
-  ignoredFurnitureId?: string,
-  navMemory?: AivatarNavMemory,
-  actionBias = 0,
-) => {
-  const currentDistance = Math.hypot(target.x - from.x, target.y - from.y);
-  const nextDistance = Math.hypot(target.x - point.x, target.y - point.y);
-  const progress = currentDistance - nextDistance;
-  const directPathBlocked = pathHitsCollision(point, target, content, ignoredFurnitureId);
-
-  return (
-    progress * 1.8 +
-    actionBias +
-    (directPathBlocked ? -3 : 2) -
-    navMemoryPointPenalty(point, navMemory, true)
-  );
-};
-
-const chooseLocalNavAction = (
-  from: Point,
-  movement: Point,
-  target: Pick<AvatarRuntime, "targetX" | "targetY">,
-  alternates: Point[] | undefined,
-  content: AivatarContent,
-  ignoredFurnitureId?: string,
-  navMemory?: AivatarNavMemory,
-): LocalNavAction | null => {
-  const length = Math.hypot(movement.x, movement.y);
-  if (length <= 0.001) return null;
-
-  const unitX = movement.x / length;
-  const unitY = movement.y / length;
-  const targetPoint = { x: target.targetX, y: target.targetY };
-  const candidates: LocalNavAction[] = [];
-
-  const addPointAction = (
-    action: LocalNavActionName,
-    point: Point,
-    actionBias = 0,
-  ) => {
-    if (
-      !isPointInsideRoomFloor(point) ||
-      pointHitsCollision(point.x, point.y, content, ignoredFurnitureId)
-    ) {
-      return;
-    }
-
-    candidates.push({
-      action,
-      point,
-      score: scoreLocalPoint(
-        from,
-        point,
-        targetPoint,
-        content,
-        ignoredFurnitureId,
-        navMemory,
-        actionBias,
-      ),
-    });
-  };
-
-  for (const distance of [6, 10, 14]) {
-    addPointAction(
-      "sidestep-left",
-      {
-        x: from.x - unitY * distance,
-        y: from.y + unitX * distance,
-      },
-      0.5,
-    );
-    addPointAction(
-      "sidestep-right",
-      {
-        x: from.x + unitY * distance,
-        y: from.y - unitX * distance,
-      },
-      0.5,
-    );
-  }
-
-  for (const distance of [8, 12, 16]) {
-    addPointAction(
-      "backoff",
-      {
-        x: from.x - unitX * distance,
-        y: from.y - unitY * distance,
-      },
-      -0.4,
-    );
-  }
-
-  const replanPoint =
-    findNavGridWaypoint(from, target, content, ignoredFurnitureId, navMemory) ??
-    findPathWaypoint(from, target, content, ignoredFurnitureId);
-  if (replanPoint) {
-    candidates.push({
-      action: "force-replan",
-      point: replanPoint,
-      score: scoreLocalPoint(
-        from,
-        replanPoint,
-        targetPoint,
-        content,
-        ignoredFurnitureId,
-        navMemory,
-        3,
-      ),
-    });
-  }
-
-  const alternativeTarget = chooseAlternativeInteractionTarget(
-    from,
-    target,
-    alternates,
-    content,
-    ignoredFurnitureId,
-    navMemory,
-  );
-  if (alternativeTarget) {
-    candidates.push({
-      action: "switch-interaction-point",
-      target: alternativeTarget,
-      score:
-        4 +
-        scoreLocalPoint(
-          from,
-          alternativeTarget,
-          alternativeTarget,
-          content,
-          ignoredFurnitureId,
-          navMemory,
-        ),
-    });
-  }
-
-  return candidates.sort((left, right) => right.score - left.score)[0] ?? null;
 };
 
 const chooseAlternativeInteractionTarget = (
@@ -1351,7 +1789,13 @@ const chooseAlternativeInteractionTarget = (
 
   const scored = candidates
     .map((point) => {
-      const directPathBlocked = pathHitsCollision(from, point, content, ignoredFurnitureId);
+      const directPathBlocked = pathHitsCollision(
+        from,
+        point,
+        content,
+        ignoredFurnitureId,
+        NAV_CORRIDOR_CLEARANCE,
+      );
       const hasWaypoint =
         !directPathBlocked ||
         Boolean(
@@ -1396,20 +1840,28 @@ export const setBehavior = (
   content: AivatarContent,
   timer = 5,
   activityLabel?: string,
+  options?: {
+    startImmediately?: boolean;
+  },
 ): AvatarRuntime => {
   const from = { x: avatar.x, y: avatar.y };
   const target = targetForBehavior(behavior, content, from);
   const alternates = behaviorInteractionAlternates(behavior, content, from);
+  const shouldWaitForArrival =
+    behaviorWaitsForArrival(behavior) && !options?.startImmediately;
+  const runtimeBehavior = shouldWaitForArrival ? "wander" : behavior;
 
   return {
-    ...avatar,
+    ...clearNavigationFailure(avatar),
     ...target,
-    behavior,
+    behavior: runtimeBehavior,
     behaviorTimer: timer,
-    facing: shouldFaceFrontAtTarget(behavior) ? "front" : avatar.facing,
-    expression: expressionForBehavior(behavior),
+    facing: !shouldWaitForArrival && shouldFaceFrontAtTarget(behavior) ? "front" : avatar.facing,
+    expression: expressionForBehavior(runtimeBehavior),
     activityLabel,
     interactionTargetAlternates: alternates && alternates.length > 1 ? alternates : undefined,
+    actionIntent: shouldWaitForArrival ? behavior : undefined,
+    actionActivityLabel: shouldWaitForArrival ? activityLabel : undefined,
   };
 };
 
@@ -1421,6 +1873,7 @@ export const setFurnitureBehavior = (
     behavior?: BehaviorName;
     facing?: AvatarRuntime["facing"];
     content?: AivatarContent;
+    startImmediately?: boolean;
   },
 ): AvatarRuntime => {
   const behavior = options?.behavior ?? furniture.interaction;
@@ -1430,22 +1883,27 @@ export const setFurnitureBehavior = (
     : [];
   const point = options?.content
     ? chooseNearestPoint(
-        { x: fallback.targetX, y: fallback.targetY },
+        { x: avatar.x, y: avatar.y },
         standpoints,
         { x: fallback.targetX, y: fallback.targetY },
       )
     : { x: fallback.targetX, y: fallback.targetY };
+  const shouldWaitForArrival =
+    behaviorWaitsForArrival(behavior) && !options?.startImmediately;
+  const runtimeBehavior = shouldWaitForArrival ? "wander" : behavior;
 
   return {
-    ...avatar,
+    ...clearNavigationFailure(avatar),
     targetX: point.x,
     targetY: point.y,
     facing: options?.facing ?? "front",
-    behavior,
+    behavior: runtimeBehavior,
     behaviorTimer: timer,
-    expression: expressionForBehavior(behavior),
+    expression: expressionForBehavior(runtimeBehavior),
     activityLabel: undefined,
     interactionTargetAlternates: standpoints.length > 1 ? standpoints : undefined,
+    actionIntent: shouldWaitForArrival ? behavior : undefined,
+    actionActivityLabel: undefined,
   };
 };
 
@@ -1547,10 +2005,11 @@ export const tickAvatar = (
 ): AvatarRuntime => {
   const forcedBehavior = deriveBehaviorFromCodex(codexStatus);
   let next = avatar;
+  const activeBehavior = activeBehaviorForRuntime(avatar);
 
   if (
     forcedBehavior &&
-    (avatar.behavior !== forcedBehavior ||
+    (activeBehavior !== forcedBehavior ||
       (forcedBehavior === "wander" && avatar.behaviorTimer <= 0))
   ) {
     next = setBehavior(
@@ -1560,7 +2019,7 @@ export const tickAvatar = (
       forcedBehavior === "success" ? 3 : 8,
       undefined,
     );
-  } else if (!forcedBehavior && avatar.behaviorTimer <= 0) {
+  } else if (!forcedBehavior && !avatar.actionIntent && avatar.behaviorTimer <= 0) {
     const autonomous = chooseAutonomousBehavior(content, memory);
     next = setBehavior(
       avatar,
@@ -1571,13 +2030,53 @@ export const tickAvatar = (
     );
   }
 
+  const movementBehavior = activeBehaviorForRuntime(next);
   const ignoredFurnitureId =
-    options?.ignoredFurnitureId ?? (next.behavior === "sleep" ? "bed" : undefined);
+    options?.ignoredFurnitureId ?? (movementBehavior === "sleep" ? "bed" : undefined);
+
+  if (isAtInteractionRange(next)) {
+    cachedNavWaypoint = null;
+    cachedReplanPause = null;
+    clearNavigationProgress();
+    clearBlockedTarget();
+    if (next.actionIntent) {
+      const intent = next.actionIntent;
+      const snapToTarget = intent === "sleep" || intent === "relax";
+      return {
+        ...next,
+        x: snapToTarget ? next.targetX : next.x,
+        y: snapToTarget ? next.targetY : next.y,
+        behavior: intent,
+        facing:
+          intent === "coding" || intent === "thinking"
+            ? "back"
+            : shouldFaceFrontAtTarget(intent)
+              ? "front"
+              : next.facing,
+        expression: expressionForBehavior(intent),
+        activityLabel: next.actionActivityLabel ?? activityLabelForBehavior(intent),
+        actionIntent: undefined,
+        actionActivityLabel: undefined,
+        interactionTargetAlternates: undefined,
+      };
+    }
+    return {
+      ...next,
+      facing:
+        movementBehavior === "coding" || movementBehavior === "thinking"
+          ? "back"
+          : shouldFaceFrontAtTarget(movementBehavior)
+            ? "front"
+            : next.facing,
+      behaviorTimer: next.behaviorTimer - elapsedSeconds,
+    };
+  }
+
   const waypoint = findStableNavWaypoint(
     { x: next.x, y: next.y },
     { targetX: next.targetX, targetY: next.targetY },
     content,
-    next.behavior,
+    movementBehavior,
     ignoredFurnitureId,
     options?.navMemory,
   );
@@ -1588,109 +2087,230 @@ export const tickAvatar = (
   const dy = movementTarget.targetY - next.y;
   const distance = Math.hypot(dx, dy);
   const speed =
-    next.behavior === "sleep" || next.behavior === "coding" || next.behavior === "admire"
+    movementBehavior === "sleep" || movementBehavior === "coding" || movementBehavior === "admire"
       ? 28
       : 48;
   const step = Math.min(distance, speed * elapsedSeconds);
+  const navigationTarget = { targetX: next.targetX, targetY: next.targetY };
+
+  if (cachedReplanPause) {
+    if (
+      sameReplanPauseTarget(
+        cachedReplanPause,
+        movementBehavior,
+        navigationTarget,
+        ignoredFurnitureId,
+      )
+    ) {
+      cachedReplanPause.remainingSeconds -= elapsedSeconds;
+      if (cachedReplanPause.remainingSeconds > 0) {
+        return {
+          ...next,
+          behaviorTimer: next.actionIntent ? next.behaviorTimer : next.behaviorTimer - elapsedSeconds,
+        };
+      }
+    }
+
+    cachedReplanPause = null;
+  }
 
   if (distance > 0.5) {
     const nextX = next.x + (dx / distance) * step;
     const nextY = next.y + (dy / distance) * step;
-    const canMoveDirectly = !pointHitsCollision(
-      nextX,
-      nextY,
-      content,
-      ignoredFurnitureId,
-      next,
-    );
-    const canSlideX = !pointHitsCollision(
-      nextX,
+    const currentInsideCollision = pointHitsCollision(
+      next.x,
       next.y,
       content,
       ignoredFurnitureId,
-      next,
     );
-    const canSlideY = !pointHitsCollision(
-      next.x,
-      nextY,
-      content,
-      ignoredFurnitureId,
-      next,
-    );
-    const movedX = canMoveDirectly || canSlideX ? nextX : next.x;
-    const movedY = canMoveDirectly || (!canSlideX && canSlideY) ? nextY : next.y;
-    const actualMoveDistance = Math.hypot(movedX - next.x, movedY - next.y);
-    const ineffectiveMove = distance > 4 && actualMoveDistance < step * 0.25;
-    const localAction =
-      !canMoveDirectly || ineffectiveMove
-        ? chooseLocalNavAction(
+
+    if (currentInsideCollision) {
+      const edgeSlidePoint = [
+        { x: nextX, y: next.y },
+        { x: next.x, y: nextY },
+      ]
+        .filter((point) =>
+          pointCanSlideAlongCollisionEdge(
             { x: next.x, y: next.y },
-            { x: dx, y: dy },
-            { targetX: next.targetX, targetY: next.targetY },
-            next.interactionTargetAlternates,
+            point,
             content,
             ignoredFurnitureId,
-            options?.navMemory,
-          )
-        : null;
+          ),
+        )
+        .sort(
+          (left, right) =>
+            Math.hypot(left.x - movementTarget.targetX, left.y - movementTarget.targetY) -
+            Math.hypot(right.x - movementTarget.targetX, right.y - movementTarget.targetY),
+        )[0];
 
-    if (localAction?.action === "switch-interaction-point" && localAction.target) {
-      cachedNavWaypoint = null;
-      const failedTarget = { x: next.targetX, y: next.targetY };
-      next = {
-        ...next,
-        targetX: localAction.target.x,
-        targetY: localAction.target.y,
-        facing: facingForMovement(dx, dy),
-        interactionTargetAlternates: next.interactionTargetAlternates?.filter(
-          (point) => !samePoint(point, failedTarget),
-        ),
-      };
-    } else if (localAction?.action === "force-replan" && localAction.point) {
-      cachedNavWaypoint = {
-        behavior: next.behavior,
-        targetX: next.targetX,
-        targetY: next.targetY,
-        ignoredFurnitureId,
-        point: localAction.point,
-      };
-      next = {
-        ...next,
-        facing: facingForMovement(dx, dy),
-      };
-    } else if (localAction?.point) {
-      cachedNavWaypoint = null;
-      next = {
-        ...next,
-        x: localAction.point.x,
-        y: localAction.point.y,
-        facing: facingForMovement(
-          localAction.point.x - next.x,
-          localAction.point.y - next.y,
-        ),
-      };
+      if (edgeSlidePoint) {
+        const edgeSlideDistance = Math.hypot(
+          edgeSlidePoint.x - next.x,
+          edgeSlidePoint.y - next.y,
+        );
+        next = {
+          ...next,
+          x: edgeSlidePoint.x,
+          y: edgeSlidePoint.y,
+          facing:
+            edgeSlideDistance >= MIN_VISIBLE_MOVE_DISTANCE
+              ? facingForMovement(edgeSlidePoint.x - next.x, edgeSlidePoint.y - next.y)
+              : next.facing,
+        };
+      } else {
+        const escapePoint = nearestWalkablePoint(
+          { x: next.x, y: next.y },
+          content,
+          ignoredFurnitureId,
+        );
+
+        if (escapePoint) {
+          const escapeDx = escapePoint.x - next.x;
+          const escapeDy = escapePoint.y - next.y;
+          const escapeDistance = Math.hypot(escapeDx, escapeDy);
+          const escapeStep = Math.min(escapeDistance, speed * elapsedSeconds);
+          const escapeX =
+            escapeDistance > 0
+              ? next.x + (escapeDx / escapeDistance) * escapeStep
+              : next.x;
+          const escapeY =
+            escapeDistance > 0
+              ? next.y + (escapeDy / escapeDistance) * escapeStep
+              : next.y;
+          const canEscape = pointCanEscapeCollision(
+            escapeX,
+            escapeY,
+            content,
+            ignoredFurnitureId,
+            next,
+          );
+
+          cachedNavWaypoint = {
+            behavior: movementBehavior,
+            targetX: next.targetX,
+            targetY: next.targetY,
+            ignoredFurnitureId,
+            point: escapePoint,
+          };
+
+          if (canEscape) {
+            const escapeMoveDistance = Math.hypot(escapeX - next.x, escapeY - next.y);
+            next = {
+              ...next,
+              x: escapeX,
+              y: escapeY,
+              facing:
+                escapeMoveDistance >= MIN_VISIBLE_MOVE_DISTANCE
+                  ? facingForMovement(escapeX - next.x, escapeY - next.y)
+                  : next.facing,
+            };
+          }
+        } else {
+          cachedNavWaypoint = null;
+          cachedReplanPause = null;
+        }
+      }
     } else {
-      const movedEnoughToFace = actualMoveDistance >= MIN_VISIBLE_MOVE_DISTANCE;
-      next = {
-        ...next,
-        x: movedX,
-        y: movedY,
-        facing: movedEnoughToFace
-          ? facingForMovement(movedX - next.x, movedY - next.y)
-          : next.facing,
-      };
+      const currentPoint = { x: next.x, y: next.y };
+      const directPoint = { x: nextX, y: nextY };
+      const slideXPoint = { x: nextX, y: next.y };
+      const slideYPoint = { x: next.x, y: nextY };
+      const canMoveDirectly =
+        !pointHitsCollision(nextX, nextY, content, ignoredFurnitureId) &&
+        !pathHitsCollision(currentPoint, directPoint, content, ignoredFurnitureId);
+      const canSlideX =
+        !pointHitsCollision(nextX, next.y, content, ignoredFurnitureId) &&
+        !pathHitsCollision(currentPoint, slideXPoint, content, ignoredFurnitureId);
+      const canSlideY =
+        !pointHitsCollision(next.x, nextY, content, ignoredFurnitureId) &&
+        !pathHitsCollision(currentPoint, slideYPoint, content, ignoredFurnitureId);
+      const movedX = canMoveDirectly || canSlideX ? nextX : next.x;
+      const movedY = canMoveDirectly || (!canSlideX && canSlideY) ? nextY : next.y;
+      const actualMoveDistance = Math.hypot(movedX - next.x, movedY - next.y);
+      const ineffectiveMove = distance > 4 && actualMoveDistance < step * 0.25;
+      const slidAlongCollision = !canMoveDirectly && actualMoveDistance >= step * 0.25;
+      const blockedOrIneffective = ineffectiveMove;
+
+      if (blockedOrIneffective) {
+        const shouldAbandonTarget = recordBlockedTarget(
+          movementBehavior,
+          { targetX: next.targetX, targetY: next.targetY },
+          ignoredFurnitureId,
+          elapsedSeconds,
+        );
+
+        if (shouldAbandonTarget) {
+          next = failNavigationTarget(
+            next,
+            content,
+            movementBehavior,
+            forcedBehavior,
+            "blocked",
+          );
+        } else {
+          return pauseForNavigationReplan(
+            next,
+            movementBehavior,
+            ignoredFurnitureId,
+            elapsedSeconds,
+          );
+        }
+      } else {
+        clearBlockedTarget();
+        if (slidAlongCollision) {
+          cachedNavWaypoint = null;
+          cachedReplanPause = null;
+        }
+        const movedEnoughToFace = actualMoveDistance >= MIN_VISIBLE_MOVE_DISTANCE;
+        next = {
+          ...next,
+          x: movedX,
+          y: movedY,
+          facing: movedEnoughToFace
+            ? facingForMovement(movedX - next.x, movedY - next.y)
+            : next.facing,
+        };
+      }
+    }
+
+    const stillFollowingSameTarget =
+      activeBehaviorForRuntime(next) === movementBehavior &&
+      Math.abs(next.targetX - navigationTarget.targetX) <= 1 &&
+      Math.abs(next.targetY - navigationTarget.targetY) <= 1;
+
+    if (stillFollowingSameTarget) {
+      const stalled = recordNavigationProgress(
+        movementBehavior,
+        { x: navigationTarget.targetX, y: navigationTarget.targetY },
+        { x: next.x, y: next.y },
+        ignoredFurnitureId,
+        elapsedSeconds,
+      );
+
+      if (stalled) {
+        clearNavigationProgress();
+        clearBlockedTarget();
+        return pauseForNavigationReplan(
+          next,
+          movementBehavior,
+          ignoredFurnitureId,
+          elapsedSeconds,
+        );
+      }
+    } else {
+      clearNavigationProgress();
     }
   }
 
   return {
     ...next,
     facing:
-      distance <= 8 && next.behavior === "coding"
+      distance <= 8 && movementBehavior === "coding"
         ? "back"
-        : distance <= 1 && shouldFaceFrontAtTarget(next.behavior)
+        : distance <= 1 && shouldFaceFrontAtTarget(movementBehavior)
           ? "front"
           : next.facing,
-    behaviorTimer: next.behaviorTimer - elapsedSeconds,
+    behaviorTimer: next.actionIntent ? next.behaviorTimer : next.behaviorTimer - elapsedSeconds,
   };
 };
 

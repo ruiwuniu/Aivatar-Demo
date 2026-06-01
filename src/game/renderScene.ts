@@ -23,6 +23,7 @@ import {
 import {
   deriveBehaviorFromCodex,
   getFurnitureInteractionStandpoints,
+  getNavigationDebugPath,
   getPlacedItemInteractionStandpoints,
 } from "./simulation";
 
@@ -1030,6 +1031,143 @@ const drawFootProjectionRange = (
     Math.round(bounds.width),
     Math.round(bounds.height),
   );
+  ctx.restore();
+};
+
+const NAV_DEBUG_GRID_SIZE = 8;
+const NAV_DEBUG_MIN_X = 84;
+const NAV_DEBUG_MAX_X = 396;
+const NAV_DEBUG_MIN_Y = 136;
+const NAV_DEBUG_MAX_Y = 292;
+const NAV_DEBUG_FOOT_HALF_WIDTH = 6;
+const NAV_DEBUG_FOOT_TOP_OFFSET = 6;
+const NAV_DEBUG_FOOT_HEIGHT = 8;
+const NAV_DEBUG_PLANNING_CLEARANCE = 4;
+
+const navDebugFootBounds = (x: number, y: number) => ({
+  x: x - NAV_DEBUG_FOOT_HALF_WIDTH,
+  y: y + NAV_DEBUG_FOOT_TOP_OFFSET,
+  width: NAV_DEBUG_FOOT_HALF_WIDTH * 2,
+  height: NAV_DEBUG_FOOT_HEIGHT,
+});
+
+const navDebugCollisionPoint = (x: number, y: number) => ({
+  x,
+  y: y + NAV_DEBUG_FOOT_TOP_OFFSET + NAV_DEBUG_FOOT_HEIGHT / 2,
+});
+
+const navDebugInflatedRect = (
+  rect: { x: number; y: number; width: number; height: number },
+  clearance = 0,
+) => {
+  const insetX = NAV_DEBUG_FOOT_HALF_WIDTH + clearance;
+  const insetY = NAV_DEBUG_FOOT_HEIGHT / 2 + clearance;
+
+  return {
+    x: rect.x - insetX,
+    y: rect.y - insetY,
+    width: rect.width + insetX * 2,
+    height: rect.height + insetY * 2,
+  };
+};
+
+const navDebugPointInsideRect = (
+  point: { x: number; y: number },
+  rect: { x: number; y: number; width: number; height: number },
+) =>
+  point.x > rect.x + 0.5 &&
+  point.x < rect.x + rect.width - 0.5 &&
+  point.y > rect.y + 0.5 &&
+  point.y < rect.y + rect.height - 0.5;
+
+const navDebugCollisionRects = (content: AivatarContent) => [
+  ...content.room.furniture
+    .filter((item) => item.collision)
+    .map((item) => item.collision!),
+  ...(content.placedItems ?? [])
+    .filter((item) => item.itemId === "oil-easel" && !item.surfaceFurnitureId)
+    .map(getPlacedItemPlacementFootBounds),
+];
+
+const drawNavigationDebugOverlay = (
+  ctx: CanvasRenderingContext2D,
+  content: AivatarContent,
+  avatar: AvatarRuntime,
+) => {
+  const collisionRects = navDebugCollisionRects(content);
+
+  ctx.save();
+  for (let y = NAV_DEBUG_MIN_Y; y <= NAV_DEBUG_MAX_Y; y += NAV_DEBUG_GRID_SIZE) {
+    for (let x = NAV_DEBUG_MIN_X; x <= NAV_DEBUG_MAX_X; x += NAV_DEBUG_GRID_SIZE) {
+      const point = navDebugCollisionPoint(x, y);
+      const blocked = collisionRects.some((rect) =>
+        navDebugPointInsideRect(
+          point,
+          navDebugInflatedRect(rect, NAV_DEBUG_PLANNING_CLEARANCE),
+        ),
+      );
+      ctx.fillStyle = blocked ? "rgba(255, 64, 64, 0.34)" : "rgba(64, 255, 150, 0.18)";
+      ctx.fillRect(x - 2, y - 2, 4, 4);
+    }
+  }
+
+  collisionRects.forEach((rect) => {
+    const inflated = navDebugInflatedRect(rect, NAV_DEBUG_PLANNING_CLEARANCE);
+    ctx.fillStyle = "rgba(255, 64, 64, 0.08)";
+    ctx.fillRect(inflated.x, inflated.y, inflated.width, inflated.height);
+    ctx.fillStyle = "rgba(255, 64, 64, 0.16)";
+    ctx.strokeStyle = "#ff4040";
+    ctx.lineWidth = 1;
+    ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+    ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  });
+
+  const foot = navDebugFootBounds(avatar.x, avatar.y);
+  ctx.fillStyle = "rgba(90, 170, 255, 0.24)";
+  ctx.strokeStyle = "#5aaaff";
+  ctx.beginPath();
+  ctx.ellipse(
+    foot.x + foot.width / 2,
+    foot.y + foot.height / 2,
+    foot.width / 2,
+    foot.height / 2,
+    0,
+    0,
+    Math.PI * 2,
+  );
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = "#66e8ff";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(avatar.x, avatar.y);
+  ctx.lineTo(avatar.targetX, avatar.targetY);
+  ctx.stroke();
+  drawPixelRect(ctx, avatar.targetX - 3, avatar.targetY - 3, 6, 6, "#66e8ff");
+
+  const path = getNavigationDebugPath(avatar, content);
+  if (path.length > 1) {
+    ctx.strokeStyle = "#00ffd5";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(path[0].x, path[0].y);
+    path.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+    ctx.stroke();
+    path.forEach((point) => {
+      drawPixelRect(ctx, point.x - 1, point.y - 1, 3, 3, "#00ffd5");
+    });
+  }
+
+  (avatar.interactionTargetAlternates ?? []).forEach((point) => {
+    drawPixelRect(ctx, point.x - 2, point.y - 2, 4, 4, "#ffe66d");
+  });
+
+  ctx.fillStyle = "rgba(15, 20, 30, 0.86)";
+  ctx.fillRect(82, 28, 174, 46);
+  drawPixelText(ctx, "Nav: green walk / red blocked", 88, 34, "#d8ffd0");
+  drawPixelText(ctx, "blue target, yellow points", 88, 48, "#d8ffd0");
+  drawPixelText(ctx, "cyan path = A* plan", 88, 62, "#d8ffd0");
   ctx.restore();
 };
 
@@ -4853,6 +4991,7 @@ export const renderScene = (
   taskCabinetFileCount = 0,
   failedTaskCabinetFileCount = 0,
   uiTheme: UiThemeId = "classic",
+  showNavigationDebug = false,
 ) => {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -4974,6 +5113,9 @@ export const renderScene = (
     selectedFurnitureId,
     selectedPlacedItemId,
   );
+  if (showNavigationDebug) {
+    drawNavigationDebugOverlay(ctx, content, avatar);
+  }
   drawComputerStatusBubble(ctx, content, status, uiTheme);
   drawStatusLights(ctx, visibleRoomStatus(status), uiTheme);
 };

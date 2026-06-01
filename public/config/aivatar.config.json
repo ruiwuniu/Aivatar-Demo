@@ -288,7 +288,7 @@
         "height": 40,
         "color": "#c48650",
         "interaction": "interact",
-        "collision": { "x": 306, "y": 256, "width": 90, "height": 27 }
+        "collision": { "x": 310, "y": 258, "width": 82, "height": 28 }
       }
     ]
   },

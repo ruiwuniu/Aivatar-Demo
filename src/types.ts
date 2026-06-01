@@ -33,6 +33,7 @@ export interface CodexStatusMessage {
   severity?: StatusSeverity;
   timestamp: string;
   presenceTimestamp?: string;
+  expiresAt?: string;
   connected?: boolean;
   usage?: TokenUsage;
   idleBubbleCandidates?: string[];
@@ -356,11 +357,21 @@ export interface AvatarRuntime {
   expression: "calm" | "focused" | "happy" | "sleepy" | "worried";
   activityLabel?: string;
   interactionTargetAlternates?: { x: number; y: number }[];
+  actionIntent?: BehaviorName;
+  actionActivityLabel?: string;
+  navigationFailure?: {
+    behavior: BehaviorName;
+    targetX: number;
+    targetY: number;
+    reason: "blocked" | "stalled";
+  };
 }
 
 export interface AivatarNavMemory {
   exploredCells: Record<string, number>;
   trickySpots: Record<string, number>;
+  walkableCells: Record<string, 0 | 1>;
+  layoutFingerprint?: string;
   successes: number;
   failures: number;
   lastExploredAt?: string;

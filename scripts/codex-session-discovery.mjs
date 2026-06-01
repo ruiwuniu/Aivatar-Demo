@@ -25,7 +25,7 @@ const discoveryIntervalMs = Math.max(
 );
 const activeWindowMs = Math.max(
   discoveryIntervalMs,
-  Number(process.env.AIVATAR_DISCOVERY_ACTIVE_MS ?? 30 * 60 * 1000),
+  Number(process.env.AIVATAR_DISCOVERY_ACTIVE_MS ?? 48 * 60 * 60 * 1000),
 );
 const pidDir = join(tmpdir(), "aivatar-session-discovery");
 const pidFile = join(pidDir, "discovery.json");

@@ -11,7 +11,9 @@ const activeSessionPath = "/agent-active";
 const staleSessionsPath = "/agent-sessions/stale";
 const presencePath = "/agent-presence";
 const healthPath = "/health";
-const sessionStaleMs = Number(process.env.AIVATAR_SESSION_STALE_MS ?? 60000);
+const sessionStaleMs = Number(
+  process.env.AIVATAR_SESSION_STALE_MS ?? 48 * 60 * 60 * 1000,
+);
 const maxSessions = Number(process.env.AIVATAR_MAX_SESSIONS ?? 80);
 
 const allowedStatuses = new Set([
@@ -60,11 +62,27 @@ const sessions = new Map();
 const sessionKey = (status) =>
   `${status.agent ?? "codex"}:${status.sessionId ?? "default"}`;
 
+const sessionExpiresAt = () =>
+  new Date(Date.now() + sessionStaleMs).toISOString();
+
+const withSessionExpiry = (status) => ({
+  ...status,
+  expiresAt: sessionExpiresAt(),
+});
+
+const isSessionExpired = (status) => {
+  const expiresAt = Date.parse(
+    status.expiresAt ?? status.presenceTimestamp ?? status.timestamp,
+  );
+  if (Number.isNaN(expiresAt)) return false;
+  return Date.now() > expiresAt;
+};
+
 const sortedSessions = () =>
   [...sessions.values()]
     .map((status) => ({
       ...status,
-      connected: !isPresenceStale(status),
+      connected: !isSessionExpired(status),
     }))
     .sort(
       (a, b) =>
@@ -73,12 +91,14 @@ const sortedSessions = () =>
     );
 
 const isSessionStale = (status) => {
+  if (isSessionExpired(status)) return true;
   const updatedAt = Date.parse(status.timestamp);
   if (Number.isNaN(updatedAt)) return false;
   return Date.now() - updatedAt > sessionStaleMs;
 };
 
 const isPresenceStale = (status) => {
+  if (isSessionExpired(status)) return true;
   const updatedAt = Date.parse(status.presenceTimestamp ?? status.timestamp);
   if (Number.isNaN(updatedAt)) return false;
   return Date.now() - updatedAt > sessionStaleMs;
@@ -118,8 +138,9 @@ const pruneStaleSessions = () => {
   let deletedSessions = 0;
 
   for (const [key, status] of sessions) {
-    if (key === activeSessionKey || !isPresenceStale(status)) continue;
+    if (!isSessionExpired(status)) continue;
     sessions.delete(key);
+    if (key === activeSessionKey) activeSessionKey = null;
     deletedSessions += 1;
   }
 
@@ -444,7 +465,7 @@ const httpServer = http.createServer(async (request, response) => {
       const presence = await readPresenceBody(request);
       const key = `${presence.agent}:${presence.sessionId}`;
       const existing = sessions.get(key);
-      sessions.set(key, {
+      sessions.set(key, withSessionExpiry({
         ...(existing ?? {
           agent: presence.agent,
           sessionId: presence.sessionId,
@@ -458,7 +479,7 @@ const httpServer = http.createServer(async (request, response) => {
           timestamp: presence.timestamp,
         }),
         presenceTimestamp: presence.timestamp,
-      });
+      }));
       pruneSessionOverflow();
       const snapshot = makeSnapshot();
       broadcast(snapshot);
@@ -481,10 +502,12 @@ const httpServer = http.createServer(async (request, response) => {
       const existing = sessions.get(sessionKey(nextStatus));
       currentStatus = {
         ...nextStatus,
+        presenceTimestamp: nextStatus.presenceTimestamp ?? existing?.presenceTimestamp,
         usage: nextStatus.usage ?? existing?.usage,
         idleBubbleCandidates:
           nextStatus.idleBubbleCandidates ?? existing?.idleBubbleCandidates,
       };
+      currentStatus = withSessionExpiry(currentStatus);
       sessions.set(sessionKey(currentStatus), currentStatus);
       pruneSessionOverflow();
       const snapshot = makeSnapshot();
@@ -516,7 +539,9 @@ httpServer.listen(httpPort, "127.0.0.1", () => {
 });
 
 setInterval(() => {
-  pruneSessions();
+  if (pruneSessions() > 0) {
+    broadcast(makeSnapshot());
+  }
 }, Math.max(10_000, sessionStaleMs));
 
 const shutdown = () => {

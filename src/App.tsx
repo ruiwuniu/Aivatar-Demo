@@ -26,6 +26,7 @@ import {
   getFurnitureInteractionStandpoints,
   getPlacedItemInteractionStandpoints,
   initialAvatarRuntime,
+  navigationLayoutFingerprint,
   setBehavior,
   setFurnitureBehavior,
   tickAvatar,
@@ -115,7 +116,7 @@ const INTERACTION_POINT_TOUCH_PADDING = 1;
 const BUILTIN_TERMINAL_PLACED_ITEM_ID = "builtin-terminal";
 const TERMINAL_MONITOR_ITEM_ID = "terminal-monitor";
 const LEGACY_TERMINAL_FURNITURE_ID = "computer";
-const SESSION_STALE_MS = 60000;
+const SESSION_STALE_MS = 48 * 60 * 60 * 1000;
 const IDLE_BUBBLE_PHRASE_MAX_LENGTH = 28;
 const IDLE_BUBBLE_CANDIDATE_LIMIT = 6;
 const IDLE_BUBBLE_MEMORY_CANDIDATE_TARGET = 3;
@@ -262,15 +263,15 @@ const clampQuantity = (entry: InventoryEntry): InventoryEntry => ({
 });
 
 const isStatusStale = (status: CodexStatusMessage, now = Date.now()) => {
-  const updatedAt = Date.parse(status.timestamp);
+  const updatedAt = Date.parse(status.expiresAt ?? status.timestamp);
   if (Number.isNaN(updatedAt)) return false;
-  return now - updatedAt > SESSION_STALE_MS;
+  return status.expiresAt ? now > updatedAt : now - updatedAt > SESSION_STALE_MS;
 };
 
 const isPresenceStale = (status: CodexStatusMessage, now = Date.now()) => {
-  const updatedAt = Date.parse(status.presenceTimestamp ?? status.timestamp);
+  const updatedAt = Date.parse(status.expiresAt ?? status.presenceTimestamp ?? status.timestamp);
   if (Number.isNaN(updatedAt)) return false;
-  return now - updatedAt > SESSION_STALE_MS;
+  return status.expiresAt ? now > updatedAt : now - updatedAt > SESSION_STALE_MS;
 };
 
 const isHighPriorityStatus = (status: CodexStatusMessage, now = Date.now()) =>
@@ -552,6 +553,7 @@ const normalizeMemory = (memory?: Partial<AivatarMemory>): AivatarMemory => {
 const defaultNavMemory = (): AivatarNavMemory => ({
   exploredCells: {},
   trickySpots: {},
+  walkableCells: {},
   successes: 0,
   failures: 0,
 });
@@ -568,6 +570,15 @@ const normalizeCountMap = (value: unknown): Record<string, number> => {
   );
 };
 
+const normalizeWalkableCellMap = (value: unknown): Record<string, 0 | 1> => {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      (entry): entry is [string, 0 | 1] => entry[1] === 0 || entry[1] === 1,
+    ),
+  );
+};
+
 const normalizeNavMemory = (
   navMemory?: Partial<AivatarNavMemory>,
 ): AivatarNavMemory => {
@@ -575,6 +586,11 @@ const normalizeNavMemory = (
   return {
     exploredCells: normalizeCountMap(navMemory?.exploredCells),
     trickySpots: normalizeCountMap(navMemory?.trickySpots),
+    walkableCells: normalizeWalkableCellMap(navMemory?.walkableCells),
+    layoutFingerprint:
+      typeof navMemory?.layoutFingerprint === "string"
+        ? navMemory.layoutFingerprint
+        : fallback.layoutFingerprint,
     successes: Math.max(0, Math.round(navMemory?.successes ?? fallback.successes)),
     failures: Math.max(0, Math.round(navMemory?.failures ?? fallback.failures)),
     lastExploredAt:
@@ -587,10 +603,22 @@ const normalizeNavMemory = (
 const recordExploredCell = (
   navMemory: AivatarNavMemory | undefined,
   cellKey: string,
+  layoutFingerprint?: string,
 ): AivatarNavMemory => {
   const normalized = normalizeNavMemory(navMemory);
+  const walkableCells =
+    layoutFingerprint &&
+    normalized.layoutFingerprint &&
+    normalized.layoutFingerprint !== layoutFingerprint
+      ? {}
+      : normalized.walkableCells;
   return {
     ...normalized,
+    layoutFingerprint: layoutFingerprint ?? normalized.layoutFingerprint,
+    walkableCells: {
+      ...walkableCells,
+      [cellKey]: 0,
+    },
     exploredCells: {
       ...normalized.exploredCells,
       [cellKey]: Math.min(
@@ -606,10 +634,15 @@ const recordExploreResult = (
   navMemory: AivatarNavMemory | undefined,
   result: "success" | "failure",
   cellKey: string,
+  layoutFingerprint?: string,
 ): AivatarNavMemory => {
-  const normalized = recordExploredCell(navMemory, cellKey);
+  const normalized = recordExploredCell(navMemory, cellKey, layoutFingerprint);
   return {
     ...normalized,
+    walkableCells: {
+      ...normalized.walkableCells,
+      [cellKey]: result === "failure" ? 1 : 0,
+    },
     successes: normalized.successes + (result === "success" ? 1 : 0),
     failures: normalized.failures + (result === "failure" ? 1 : 0),
     trickySpots:
@@ -1216,7 +1249,7 @@ const isNearPlacedItemInteractionTarget = (
   content: AivatarContent,
 ) => {
   const standpoints = getPlacedItemInteractionStandpoints(item, content);
-  const reach = item.itemId === COFFEE_MACHINE_ITEM_ID ? 18 : INTERACTION_ARRIVAL_DISTANCE;
+  const reach = INTERACTION_ARRIVAL_DISTANCE;
   if (standpoints.length > 0) {
     return standpoints.some(
       (point) =>
@@ -1285,19 +1318,20 @@ const isNearFurnitureInteractionTarget = (
     furniture,
     content,
   );
+  const arrivalDistance = INTERACTION_ARRIVAL_DISTANCE;
   if (standpoints.length > 0) {
     return standpoints.some(
       (point) =>
         avatarFootprintTouchesPoint(avatar, point) ||
         Math.hypot(avatar.x - point.x, avatar.y - point.y) <=
-        INTERACTION_ARRIVAL_DISTANCE,
+          arrivalDistance,
     );
   }
 
   const { targetX, targetY } = getFurnitureInteractionTarget(furniture);
   return (
     avatarFootprintTouchesPoint(avatar, { x: targetX, y: targetY }) ||
-    Math.hypot(avatar.x - targetX, avatar.y - targetY) <= INTERACTION_ARRIVAL_DISTANCE
+    Math.hypot(avatar.x - targetX, avatar.y - targetY) <= arrivalDistance
   );
 };
 
@@ -1305,8 +1339,22 @@ const ignoredFurnitureIdForPendingInteraction = (
   interaction: PendingWorldInteraction | null,
 ) => {
   if (!interaction) return undefined;
-  if (interaction.target === "furniture") return interaction.furniture.id;
-  return interaction.placedItem.surfaceFurnitureId;
+  if (interaction.target === "furniture") {
+    return interaction.kind === "sleep" ? interaction.furniture.id : undefined;
+  }
+  return undefined;
+};
+
+const ignoredFurnitureIdForRuntimeInteraction = (
+  avatar: AvatarRuntime,
+  content: AivatarContent,
+  pendingInteraction: PendingWorldInteraction | null,
+) => {
+  const pendingIgnoredId = ignoredFurnitureIdForPendingInteraction(pendingInteraction);
+  if (pendingIgnoredId) return pendingIgnoredId;
+  void avatar;
+  void content;
+  return undefined;
 };
 
 const facingTowardPlacedItem = (
@@ -1403,6 +1451,9 @@ type PendingWorldInteraction =
       item: ItemDefinition;
       kind: "brew" | "paint" | "play" | "interact";
     };
+
+const runtimeActionBehavior = (avatar: AvatarRuntime): BehaviorName =>
+  avatar.actionIntent ?? avatar.behavior;
 
 type SceneContextMenuState = {
   x: number;
@@ -2026,6 +2077,7 @@ export const App = () => {
   const [taskCabinetPanelOpen, setTaskCabinetPanelOpen] = useState(false);
   const [launcherPanelOpen, setLauncherPanelOpen] = useState(false);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
+  const [navDebugOverlay, setNavDebugOverlay] = useState(false);
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
   const [sidePanelAnimating, setSidePanelAnimating] = useState(false);
   const [scenePanelWidth, setScenePanelWidth] = useState<number | null>(null);
@@ -2051,6 +2103,7 @@ export const App = () => {
   const [debugStatus, setDebugStatus] = useState<CodexStatusMessage | null>(null);
   const [windowTimePreview, setWindowTimePreview] = useState(false);
   const windowTimePreviewRef = useRef(false);
+  const navDebugOverlayRef = useRef(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [bridgeStartMessage, setBridgeStartMessage] = useState("");
   const [taskCabinetEntries, setTaskCabinetEntries] = useState<TaskCabinetEntry[]>(
@@ -2387,28 +2440,32 @@ export const App = () => {
     };
     const standpoints = getPlacedItemInteractionStandpoints(placedItem, contentRef.current);
     const target = getPlacedItemInteractionTarget(placedItem, contentRef.current);
+    const behavior =
+      kind === "brew"
+        ? "brew"
+        : kind === "paint"
+          ? "paint"
+          : kind === "play"
+            ? "play"
+            : "interact";
+    const activity =
+      kind === "brew"
+        ? "Brewing coffee"
+        : kind === "paint"
+          ? "Painting"
+          : kind === "play"
+            ? "Playing games"
+            : "Heading over";
     runtimeRef.current = {
       ...runtimeRef.current,
       ...target,
-      behavior:
-        kind === "brew"
-          ? "brew"
-          : kind === "paint"
-            ? "paint"
-            : kind === "play"
-              ? "play"
-              : "interact",
+      behavior: "wander",
       behaviorTimer: 20,
-      expression: kind === "play" || kind === "paint" ? "happy" : "focused",
-      activityLabel:
-        kind === "brew"
-          ? "Brewing coffee"
-          : kind === "paint"
-            ? "Painting"
-          : kind === "play"
-            ? "Playing games"
-            : "Heading over",
+      expression: "calm",
+      activityLabel: activity,
       interactionTargetAlternates: standpoints.length > 1 ? standpoints : undefined,
+      actionIntent: behavior,
+      actionActivityLabel: activity,
     };
     setAvatar(runtimeRef.current);
     updateActiveInteraction({
@@ -2600,6 +2657,10 @@ export const App = () => {
   }, [windowTimePreview]);
 
   useEffect(() => {
+    navDebugOverlayRef.current = navDebugOverlay;
+  }, [navDebugOverlay]);
+
+  useEffect(() => {
     persistTaskCabinetEntries(taskCabinetEntries);
     taskCabinetEntriesRef.current = taskCabinetEntries;
   }, [taskCabinetEntries]);
@@ -2645,6 +2706,7 @@ export const App = () => {
         ).length,
         taskCabinetEntries.filter((entry) => entry.status === "failed").length,
         uiTheme,
+        navDebugOverlay,
       );
     }
   }, [
@@ -2665,6 +2727,7 @@ export const App = () => {
     save.memory,
     taskCabinetEntries,
     uiTheme,
+    navDebugOverlay,
   ]);
 
   useEffect(() => {
@@ -2762,6 +2825,7 @@ export const App = () => {
       statAccumulator += elapsedSeconds;
       uiAccumulator += elapsedSeconds;
       const currentContent = contentRef.current;
+      const navLayoutFingerprint = navigationLayoutFingerprint(currentContent);
       const currentStatus = statusRef.current.status;
       const currentInteraction = activeInteractionRef.current;
       const pendingWorldInteraction = pendingWorldInteractionRef.current;
@@ -2778,6 +2842,7 @@ export const App = () => {
           )
         : null;
       const busyRecoveryActive = Boolean(busyRecoveryNeed);
+      const currentRuntimeAction = runtimeActionBehavior(runtimeRef.current);
       const avatarStatus =
         busyRecoveryActive ||
         (furnitureInteractionActive && !isHighPriorityStatus(currentStatus))
@@ -2789,7 +2854,7 @@ export const App = () => {
 
       if (
         busyRecoveryNeed &&
-        runtimeRef.current.behavior !== busyRecoveryNeed.behavior
+        currentRuntimeAction !== busyRecoveryNeed.behavior
       ) {
         if (busyRecoveryNeed.behavior === "snack") {
           const targetFurniture = currentContent.room.furniture.find(
@@ -2820,12 +2885,14 @@ export const App = () => {
                 ...runtimeRef.current,
                 targetX: gameConsoleTarget?.targetX ?? gameConsole.x + 18,
                 targetY: gameConsoleTarget?.targetY ?? gameConsole.y + 14,
-                behavior: "play",
+                behavior: "wander",
                 behaviorTimer: 6,
-                expression: "happy",
+                expression: "calm",
                 activityLabel: "Playing games",
                 interactionTargetAlternates:
                   gameConsoleStandpoints.length > 1 ? gameConsoleStandpoints : undefined,
+                actionIntent: "play",
+                actionActivityLabel: "Playing games",
               }
             : setBehavior(runtimeRef.current, "play", currentContent, 6, "Playing games");
         }
@@ -2839,13 +2906,45 @@ export const App = () => {
         saveRef.current.memory,
         {
           ignoredFurnitureId:
-            ignoredFurnitureIdForPendingInteraction(pendingWorldInteraction),
+            ignoredFurnitureIdForRuntimeInteraction(
+              runtimeRef.current,
+              currentContent,
+              pendingWorldInteraction,
+            ),
           navMemory: saveRef.current.navMemory,
         },
       );
 
+      if (runtimeRef.current.navigationFailure) {
+        const failedInteraction = pendingWorldInteractionRef.current;
+        if (failedInteraction) {
+          pendingWorldInteractionRef.current = null;
+          const failedId =
+            failedInteraction.target === "furniture"
+              ? failedInteraction.furniture.id
+              : failedInteraction.placedItem.id;
+          const failedName =
+            failedInteraction.target === "furniture"
+              ? failedInteraction.furniture.name
+              : failedInteraction.item.name;
+          updateActiveInteraction({
+            kind: "blocked",
+            furnitureId: failedId,
+            furnitureName: failedName,
+            message: ui("message.unreachable", { name: failedName }),
+            startedAt: performance.now(),
+            bubbleText: ui("bubble.busy"),
+          });
+        }
+
+        runtimeRef.current = {
+          ...runtimeRef.current,
+          navigationFailure: undefined,
+        };
+      }
+
       const navLearningTargetKey = [
-        runtimeRef.current.behavior,
+        runtimeActionBehavior(runtimeRef.current),
         Math.round(runtimeRef.current.targetX),
         Math.round(runtimeRef.current.targetY),
       ].join(":");
@@ -2854,8 +2953,8 @@ export const App = () => {
         runtimeRef.current.y - runtimeRef.current.targetY,
       );
       const navLearningBehaviorActive =
-        runtimeRef.current.behavior !== "idle" &&
-        runtimeRef.current.behavior !== "explore";
+        runtimeActionBehavior(runtimeRef.current) !== "idle" &&
+        runtimeActionBehavior(runtimeRef.current) !== "explore";
       const recordNavLearningResult = (
         result: "success" | "failure",
         cellKey = explorationCellKey(runtimeRef.current),
@@ -2871,7 +2970,12 @@ export const App = () => {
 
         setSave((current) => ({
           ...current,
-          navMemory: recordExploreResult(current.navMemory, result, cellKey),
+          navMemory: recordExploreResult(
+            current.navMemory,
+            result,
+            cellKey,
+            navLayoutFingerprint,
+          ),
         }));
       };
 
@@ -2897,7 +3001,11 @@ export const App = () => {
           const cellKey = explorationCellKey(runtimeRef.current);
           setSave((current) => ({
             ...current,
-            navMemory: recordExploredCell(current.navMemory, cellKey),
+            navMemory: recordExploredCell(
+              current.navMemory,
+              cellKey,
+              navLayoutFingerprint,
+            ),
           }));
         }
 
@@ -2932,7 +3040,11 @@ export const App = () => {
           const cellKey = explorationCellKey(runtimeRef.current);
           setSave((current) => ({
             ...current,
-            navMemory: recordExploredCell(current.navMemory, cellKey),
+            navMemory: recordExploredCell(
+              current.navMemory,
+              cellKey,
+              navLayoutFingerprint,
+            ),
           }));
         }
 
@@ -2940,7 +3052,12 @@ export const App = () => {
           const cellKey = explorationCellKey(runtimeRef.current);
           setSave((current) => ({
             ...current,
-            navMemory: recordExploreResult(current.navMemory, "success", cellKey),
+            navMemory: recordExploreResult(
+              current.navMemory,
+              "success",
+              cellKey,
+              navLayoutFingerprint,
+            ),
             memory: recordLifeMemory(
               current.memory,
               {
@@ -2963,7 +3080,12 @@ export const App = () => {
           const cellKey = explorationCellKey(runtimeRef.current);
           setSave((current) => ({
             ...current,
-            navMemory: recordExploreResult(current.navMemory, "failure", cellKey),
+            navMemory: recordExploreResult(
+              current.navMemory,
+              "failure",
+              cellKey,
+              navLayoutFingerprint,
+            ),
           }));
           exploreStuckAccumulator = 0;
           runtimeRef.current = {
@@ -3266,7 +3388,7 @@ export const App = () => {
       }
 
       if (
-        runtimeRef.current.behavior === "snack" &&
+        runtimeActionBehavior(runtimeRef.current) === "snack" &&
         (!isHighPriorityStatus(currentStatus) || busyRecoveryNeed?.behavior === "snack") &&
         !isBlockingInteraction(activeInteractionRef.current) &&
         !pendingWorldInteractionRef.current
@@ -3300,7 +3422,7 @@ export const App = () => {
       }
 
       if (
-        runtimeRef.current.behavior === "brew" &&
+        runtimeActionBehavior(runtimeRef.current) === "brew" &&
         !isHighPriorityStatus(currentStatus) &&
         currentContent.placedItems?.some((item) => item.itemId === COFFEE_MACHINE_ITEM_ID)
       ) {
@@ -3487,6 +3609,7 @@ export const App = () => {
               (entry) => entry.status === "failed",
             ).length,
             uiThemeRef.current,
+            navDebugOverlayRef.current,
           );
       }
 
@@ -5169,6 +5292,7 @@ export const App = () => {
     const now = performance.now();
     runtimeRef.current = setFurnitureBehavior(runtimeRef.current, furniture, SLEEP_INTERACTION_SECONDS, {
       content: contentRef.current,
+      startImmediately: true,
     });
     setAvatar(runtimeRef.current);
     updateActiveInteraction({
@@ -5223,6 +5347,7 @@ export const App = () => {
       runtimeRef.current = setFurnitureBehavior(runtimeRef.current, furniture, 4, {
         behavior: "coffee",
         content: contentRef.current,
+        startImmediately: true,
       });
       setAvatar(runtimeRef.current);
       updateActiveInteraction({
@@ -5321,6 +5446,7 @@ export const App = () => {
               ? "bento"
               : "interact",
       content: contentRef.current,
+      startImmediately: true,
     });
     setAvatar(runtimeRef.current);
     updateActiveInteraction({
@@ -5349,7 +5475,9 @@ export const App = () => {
       workBoostUntil: boostUntil,
     }));
 
-    runtimeRef.current = setBehavior(runtimeRef.current, behavior, contentRef.current, 6);
+    runtimeRef.current = setBehavior(runtimeRef.current, behavior, contentRef.current, 6, undefined, {
+      startImmediately: true,
+    });
     setAvatar(runtimeRef.current);
     const now = performance.now();
     updateActiveInteraction({
@@ -5448,6 +5576,7 @@ export const App = () => {
       contentRef.current,
       COFFEE_BREW_SECONDS,
       "Brewing coffee",
+      { startImmediately: true },
     );
     setAvatar(runtimeRef.current);
     const now = performance.now();
@@ -6831,6 +6960,13 @@ export const App = () => {
                   onClick={() => setWindowTimePreview((current) => !current)}
                 >
                   {ui("debug.windowPreview")}
+                </button>
+                <button
+                  type="button"
+                  className={`pixel-button${navDebugOverlay ? " debug-live-active" : ""}`}
+                  onClick={() => setNavDebugOverlay((current) => !current)}
+                >
+                  Nav grid
                 </button>
                 <button type="button" className="pixel-button" onClick={saveCurrentLayoutAsDefault}>
                   {ui("debug.saveLayout")}
