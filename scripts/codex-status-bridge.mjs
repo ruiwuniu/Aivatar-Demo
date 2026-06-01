@@ -14,6 +14,9 @@ const healthPath = "/health";
 const sessionStaleMs = Number(
   process.env.AIVATAR_SESSION_STALE_MS ?? 48 * 60 * 60 * 1000,
 );
+const activityStaleMs = Number(
+  process.env.AIVATAR_ACTIVITY_STALE_MS ?? 5 * 60 * 1000,
+);
 const maxSessions = Number(process.env.AIVATAR_MAX_SESSIONS ?? 80);
 
 const allowedStatuses = new Set([
@@ -78,6 +81,11 @@ const isSessionExpired = (status) => {
   return Date.now() > expiresAt;
 };
 
+const parsedTime = (value) => {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
 const sortedSessions = () =>
   [...sessions.values()]
     .map((status) => ({
@@ -86,15 +94,16 @@ const sortedSessions = () =>
     }))
     .sort(
       (a, b) =>
-        Date.parse(b.presenceTimestamp ?? b.timestamp) -
-        Date.parse(a.presenceTimestamp ?? a.timestamp),
+        parsedTime(b.timestamp) - parsedTime(a.timestamp) ||
+        parsedTime(b.presenceTimestamp ?? b.timestamp) -
+          parsedTime(a.presenceTimestamp ?? a.timestamp),
     );
 
-const isSessionStale = (status) => {
+const isActivityStale = (status) => {
   if (isSessionExpired(status)) return true;
   const updatedAt = Date.parse(status.timestamp);
   if (Number.isNaN(updatedAt)) return false;
-  return Date.now() - updatedAt > sessionStaleMs;
+  return Date.now() - updatedAt > activityStaleMs;
 };
 
 const isPresenceStale = (status) => {
@@ -107,18 +116,19 @@ const isPresenceStale = (status) => {
 const chooseCurrentStatus = () => {
   const candidates = sortedSessions();
   const activeSession = activeSessionKey ? sessions.get(activeSessionKey) : null;
+  const activeCandidate =
+    activeSession && !isActivityStale(activeSession) ? activeSession : null;
+  const highPriorityCandidate = candidates.find(
+    (status) =>
+      highPriorityStatuses.has(status.status) && !isActivityStale(status),
+  );
 
-  if (activeSession && !isSessionStale(activeSession)) {
-    return activeSession;
-  }
+  if (highPriorityCandidate) return highPriorityCandidate;
+  if (activeCandidate && activeCandidate.status !== "idle") return activeCandidate;
 
   return (
     candidates.find(
-      (status) =>
-        highPriorityStatuses.has(status.status) && !isSessionStale(status),
-    ) ??
-    candidates.find(
-      (status) => status.status !== "idle" && !isSessionStale(status),
+      (status) => status.status !== "idle" && !isActivityStale(status),
     ) ??
     bridgeIdleStatus()
   );
@@ -414,6 +424,7 @@ const httpServer = http.createServer(async (request, response) => {
       connectedSessionKey: snapshot.connectedSessionKey,
       currentSessionKey: snapshot.currentSessionKey,
       sessionStaleMs,
+      activityStaleMs,
     });
     return;
   }

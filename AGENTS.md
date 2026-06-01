@@ -162,6 +162,13 @@ npm.cmd run codex:run -- --help
 npm.cmd run claude:run
 ```
 
+Run Claude Code through the connected wrapper:
+
+```powershell
+npm.cmd run claude:connected
+npm.cmd run claude:connected -- --help
+```
+
 `codex:run` is the older generic lifecycle wrapper. It can still be useful for
 simple command status tracking, but it is not the preferred Codex Desktop
 session connection path because it does not perform explicit Codex session
@@ -202,9 +209,20 @@ app, choose a folder, choose Codex or Claude Code, optionally add args, and clic
 folder, connects the session, and cleans up on CLI exit. For Codex, the launcher
 checkbox is labeled `Create and follow new Codex session`; only that explicit
 choice requests a new Codex session and enables cwd/Desktop listing
-verification. Claude Code currently gets launcher lifecycle/heartbeat
-connection; fine-grained watcher/token usage still needs a Claude-specific
-source or hook.
+verification. For Claude Code, `scripts/aivatar-connected-run.mjs` now injects a
+temporary `%TEMP%\aivatar-claude-code-settings\<session>.json` settings file
+with Aivatar hooks and a statusLine command. Claude hook handlers use Claude
+Code's exec-form command configuration (`command: node.exe`, `args:
+[hookScript]`) so turn events bypass Git Bash on Windows. The statusLine command
+uses a generated PowerShell wrapper under the same temp settings directory,
+which forwards stdin JSON to the Node hook in `--status-line` mode and avoids
+Git Bash hangs. The hook script maps Claude Code events such as
+`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop`,
+`StopFailure`, and `SessionEnd` into Aivatar statuses, while statusLine updates
+context-window usage and can fall back to a terminal `complete` event when output
+tokens appear but a `Stop` hook was not observed. Launcher-started Claude Code
+sessions connect with an initial `idle` status; real prompt/tool events drive
+later `thinking`, `executing`, `waiting_for_user`, `complete`, or `error` states.
 
 Run old mock status cycler:
 
@@ -247,6 +265,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 |   |-- aivatar-connected-run.mjs
 |   |-- aivatar-run.mjs
 |   |-- aivatar-session-plugin.mjs
+|   |-- claude-code-aivatar-hook.mjs
 |   |-- codex-session-discovery.mjs
 |   |-- codex-status-bridge.mjs
 |   |-- mock-codex-status.mjs
@@ -307,9 +326,9 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Consumes bridge snapshots with `currentStatus`, `sessions[]`, `activeSessionKey`, `connectedSessionKey`, and `currentSessionKey`; the main avatar follows `currentStatus`, while the side panel shows recent sessions, Follow/Clear controls, and Active/Connected/Current/Idle/Stale markers.
   - Agent Sessions is collapsed behind a compact side-panel button by default. The button shows live/total session count, Current/source context, and a `+`/`-` affordance; expanding it reveals Follow/Clear controls, CLI hints, session cards, context window meters, reward summaries, and Active/Connected/Current/Idle/Stale markers.
   - Agent Sessions includes a `Clear Stale` button that calls the bridge to manually remove stale session history while preserving the current followed/active session.
-  - Complete rewards are transition-gated for `agent: "codex"` sessions moving from `thinking`, `executing`, `waiting_for_user`, or `error` into `complete`, and also tolerate a fresh active/connected `complete` snapshot so rewards are not missed when the first UI-visible status is already complete. Repeated Live reads of the same complete event do not reward again.
+  - Complete rewards are transition-gated for `agent: "codex"` and `agent: "claude-code"` sessions moving from `thinking`, `executing`, `waiting_for_user`, or `error` into `complete`, and also tolerate a fresh active/connected `complete` snapshot so rewards are not missed when the first UI-visible status is already complete. Repeated Live reads of the same complete event do not reward again.
   - Complete rewards can use token usage from the status payload. When usage is present, bits are based on weighted tokens: uncached input, output, and reasoning tokens count fully, cached input counts at 10%, and the reward is capped at 40 bits before any work boost bonus. Without usage, rewards fall back to the fixed 4-bit base.
-  - Codex `complete`, `error`, and `waiting_for_user` statuses now update lightweight memory/growth state, including XP, recent memory events, and trait changes.
+  - Codex and Claude Code `complete`, `error`, and `waiting_for_user` statuses now update lightweight memory/growth state, including XP, recent memory events, and trait changes.
   - Life events such as sleeping, playing, using Coffee/Cola/Bento, brewing Coffee, and buying items also write compact recent memory entries and small trait/preference changes.
   - Agent Sessions cards display model context window usage when `usage.contextTokens` and `usage.modelContextWindow` are present, and display token reward context as `tokens -> bits (weighted)` when a session includes reward usage. Context-only usage with `scope: "context-window"` is not shown as a reward summary.
   - Agent Sessions preserves a session's latest known usage/context payload when a later status update omits `usage`, so terminal `complete`/`final_answer` events do not erase context-window meters.
@@ -322,6 +341,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Coffee Machine brewing costs `1 bit` for both manual and autonomous brewing; if bits are insufficient, brewing is blocked and no Coffee is produced.
   - Coffee Machine production fills available table Coffee Cup slots first, then falls back to inventory capacity.
   - Autonomous Coffee Machine brewing sets a `brew` active interaction against the actual placed Coffee Machine instance id, so the machine's brewing lights, stream, fill, and steam animation can trigger while the avatar brews.
+  - Expired Coffee Machine `brew` interactions explicitly reset the avatar out of `brew`, clear the coffee accumulator, and convert the interaction to a short non-brewing feedback state so autonomous brewing cannot immediately re-open an endless brewing animation loop.
   - Real avatar interactions now follow a unified "arrive first, then interact" flow for furniture, placed items, and backpack consumables. Coffee Machine brewing, Game Console play, Oil Easel painting, and consumable effects are queued as world interactions and only apply after the avatar reaches the target. Room editing, ordinary left-click selection, right-click context menu opening, and Decor surface/window application remain immediate UI operations.
   - Avatar runtime now separates movement intent from action playback with `actionIntent` and `actionActivityLabel`. Arrival-gated behaviors such as sleep, relax, brew, snack, coffee/cola/bento, play, paint, coding/thinking, task-file actions, and placed-item interactions first move as an approach/wander state, then switch into the real action only after reaching the interaction point.
   - Action execution ranges are intentionally narrow around interaction points. Most actions require the avatar to reach within `8px` of a generated standpoint; the dining table keeps its broader rectangular trigger for ergonomic eating/drinking, while bed sleep and relax use a single bed-top point so the avatar settles under the blanket/at the bed position before the action plays.
@@ -548,12 +568,24 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Runs `aivatar-cli-connect -> target CLI -> aivatar-cli-disconnect`, forwarding the target CLI exit code.
   - Uses absolute paths to repo scripts so it works when launched from any selected project folder.
   - For Codex without an explicit session id, it avoids inheriting stale `CODEX_THREAD_ID`/`CODEX_SESSION_ID`, snapshots existing rollout JSONL files, launches Codex, detects the new rollout file, extracts the real Codex session id, disconnects the provisional session, and reconnects Aivatar to the real session.
+  - For Claude Code, writes a temporary settings file under `%TEMP%\aivatar-claude-code-settings\`, passes it via `claude --settings <file>`, and registers Aivatar command hooks plus statusLine for the current launched session. Hook handlers use exec form (`command` plus `args`) so Windows Git Bash is bypassed for turn events. StatusLine uses a generated PowerShell wrapper `<session>.statusline.ps1` that forwards stdin to the Node hook script. If the user explicitly passes `--settings`, automatic injection is skipped so user settings are not overwritten.
+  - Passes `AIVATAR_HTTP_ENDPOINT`, `AIVATAR_ACTIVE_ENDPOINT`, and `AIVATAR_PRESENCE_ENDPOINT` into launched agent environments so hook/statusLine subprocesses post to the same bridge endpoints as the launcher.
   - Passes a wrapper parent pid to the CLI connector so a watchdog can clean up heartbeat/watcher helpers if the user directly closes the terminal window.
   - Supports `--prompt-file <path>` for Task Cabinet automation. The wrapper reads the prompt file with Node and appends the file contents as a single prompt argument. On Windows, Codex launches through the npm-installed `@openai/codex/bin/codex.js` with `node` so the full `.md` prompt is passed as an argv argument without `cmd.exe` string re-parsing or the broken `codex -- <prompt>` form that made leading words look like subcommands.
 
+- `scripts/claude-code-aivatar-hook.mjs`
+  - Claude Code hook/statusLine bridge used by `claude:connected` and launcher-started Claude Code sessions.
+  - Reads Claude Code hook JSON from stdin and posts generic `claude-code` status updates to the Aivatar bridge.
+  - Maps `SessionStart` and empty statusLine updates to `idle`, `UserPromptSubmit` and response display events to `thinking`, `PreToolUse` to `executing`, `PostToolUse` / `PostToolBatch` back to `thinking`, permission prompts to `waiting_for_user`, `Stop` / `TaskCompleted` to `complete`, `StopFailure` / failed tools to `error`, and `SessionEnd` to `idle`.
+  - Reads statusLine `context_window` payloads to populate `usage.contextTokens`, `usage.modelContextWindow`, token totals, and reward/context scope. When statusLine sees output tokens after an active turn but no terminal hook has been observed, it emits a fallback `complete` status so the avatar does not stay stuck in `thinking`.
+  - Stores lightweight per-session state under `%TEMP%\aivatar-claude-code-state\` and diagnostic event logs under `%TEMP%\aivatar-claude-code-events\*.jsonl`. If Claude Code reports `hook_cancelled` in its transcript, inspect these files first; missing event logs usually mean the hook command did not finish or was not invoked.
+  - The hook avoids blocking Claude Code by settling stdin after a short idle delay and using short HTTP timeouts when posting to the bridge.
+
 - `scripts/aivatar-cli-connect.mjs`
   - Repo-local CLI session connector.
-  - Sends an initial `thinking` status, sets the session active, posts presence, starts the external plugin heartbeat, starts the external plugin watcher when available, and records helper pids under `%TEMP%\aivatar-cli-session`.
+  - Sends an initial status, sets the session active, posts presence, starts the external plugin heartbeat, starts the external plugin watcher when available, and records helper pids under `%TEMP%\aivatar-cli-session`.
+  - Supports `--initial-status`, allowing Claude Code sessions to connect as `idle` until a real hook event arrives, while Codex and generic wrappers can still default to `thinking`.
+  - Supports `--watch-disabled-reason`, so Claude Code sessions report `watcher disabled (Claude Code uses hooks/statusLine)` instead of the misleading `watcher unavailable`; Codex rollout watching remains the watcher path.
   - Defaults `AIVATAR_USAGE_BASELINE_PATH` to `%TEMP%\aivatar-usage-baselines.json`, preserving token reward support without requiring write access to `.codex\tmp`.
   - Supports `--no-watch` for non-Codex or provisional sessions and `--watch-parent-pid` to start watchdog cleanup.
 
@@ -1068,9 +1100,9 @@ High-priority agent states should not be interrupted by right-click context-menu
 - `thinking` intentionally does not trigger busy recovery, so focused thought remains visually clear even when stats are low. Busy recovery still applies to other high-priority states when resources are available.
 - High-priority stale sessions stop blocking interactions after the configured bridge stale timeout.
 - A connected stale active session can remain visibly linked in the Agent Sessions panel, but stale statuses do not keep driving `currentStatus` merely because presence remains fresh.
-- Complete rewards are intentionally limited to `agent: "codex"` sessions.
-- Token usage rewards and context window meters currently work for Codex sessions that can be matched to local Codex rollout JSONL files, including the Codex Desktop session plugin path and the desktop CLI Launcher connected path after it discovers the real Codex rollout session id.
-- Claude Code launcher sessions currently get lifecycle connection and heartbeat presence, but fine-grained watcher events and token/context usage need a Claude-specific usage source or hook.
+- Complete rewards apply to connected `agent: "codex"` and `agent: "claude-code"` sessions when they transition from an active state into `complete`, or when a fresh active/connected `complete` snapshot is first observed.
+- Token usage rewards and context window meters work for Codex sessions that can be matched to local Codex rollout JSONL files, including the Codex Desktop session plugin path and the desktop CLI Launcher connected path after it discovers the real Codex rollout session id.
+- Claude Code launcher sessions now use temporary hook/statusLine settings for fine-grained status and context usage. Hook events use exec-form Node commands and statusLine uses a PowerShell wrapper to avoid Windows Git Bash hangs. This is newer than the Codex rollout watcher and still needs real-CLI regression testing across ordinary prompts, tool calls, permission prompts, Stop/StopFailure, `/clear`, `/resume`, app restart, and `--bare`/user-provided `--settings` paths.
 - Codex token usage and context window usage are read from local Codex rollout JSONL files using the current session id. This is a local development integration and should not be assumed stable across all Codex versions or platforms without verification.
 - Token reward baselines are stored outside the repo. The session plugin stores them under the Codex home temp area by default; the repo-local CLI connector defaults to `%TEMP%\aivatar-usage-baselines.json` to avoid `.codex\tmp` write-permission issues when launched from restricted contexts. Baselines are cleared by `complete`, `error`, `idle`, or `--clear-active`, and expire after the configured TTL.
 - Test sessions such as usage smoke tests live in the bridge's in-memory sessions map. Restarting the bridge clears them, and the Agent Sessions panel can manually clear stale entries through `Clear Stale`.
@@ -1083,8 +1115,8 @@ High-priority agent states should not be interrupted by right-click context-menu
 - The Agent Sessions panel displays recent sessions but the room still has one avatar driven by `currentStatus`.
 - `Demo actions` is a Debug-only visual QA helper. It cycles runtime avatar behaviors and displays demo bubbles, but it does not represent real agent status or grant rewards. If a Debug status override is active, use the highlighted `Live` button to return the avatar to real bridge status.
 - The `phone` behavior is intentionally not an agent status and should not trigger bridge sends, memory rewards, task summaries, or status replies. It is only an idle-life animation.
-- Interactive Codex/Claude TUI automatic waiting detection is still limited. The generic bridge supports external status posts, but desktop app automatic status requires a client-side hook, plugin, wrapper, or API.
-- Current Codex Desktop conversations can be discovered automatically by Aivatar when the desktop app or `status:discover` is running. The local Aivatar session plugin remains useful for explicitly following/activating a specific session, reconnecting a session, or manual recovery. Explicit status posts remain useful for smoke tests and older clients. For command lifecycle tracking, use `codex:run`, `claude:run`, or `agent:run`; for the smoother launcher/CLI flow, use the desktop CLI Launcher or `codex:connected`.
+- Interactive Codex/Claude TUI automatic waiting detection is still limited to available event sources. Codex Desktop uses rollout watching; launcher-started Claude Code uses hook/statusLine injection with exec-form hooks and a PowerShell statusLine wrapper. The generic bridge still supports external status posts for smoke tests and older clients.
+- Current Codex Desktop conversations can be discovered automatically by Aivatar when the desktop app or `status:discover` is running. The local Aivatar session plugin remains useful for explicitly following/activating a specific session, reconnecting a session, or manual recovery. Explicit status posts remain useful for smoke tests and older clients. For command lifecycle tracking, use `codex:run`, `claude:run`, or `agent:run`; for smoother launcher/CLI flow, use the desktop CLI Launcher, `codex:connected`, or `claude:connected`.
 - Chat/session safety depends on keeping the Aivatar integration read-oriented toward Codex data. Scripts may read rollout JSONL, inspect `thread/list`, and clear Aivatar bridge state, but should not remove or rewrite Codex session files or Desktop chat metadata.
 - If Codex chats appear to disappear, preserve the current `%TEMP%` Aivatar recovery logs, check whether old `aivatar-connect`/watcher/heartbeat processes are still running, verify which plugin command directory is first on PATH, and confirm whether the action used `codex resume <session-id>` or explicit `--new-session`.
 - If automatic Codex session discovery does not show a session, check `%TEMP%\aivatar-session-discovery\discovery.json`, `%TEMP%\aivatar-session-discovery\helpers\*.json`, whether `CODEX_HOME\sessions` contains a recent rollout JSONL with `session_meta`, whether the external plugin path exists, and whether the bridge is reachable on `127.0.0.1:38988`.
@@ -1126,7 +1158,7 @@ For this project, prefer:
 1. Continue regression-testing Codex chat/session safety with `codex resume <session-id>`, explicit `--new-session`, automatic discovery, the desktop CLI Launcher, disconnect cleanup, stale-process cleanup, PATH/plugin shadowing checks, and recovery-log inspection.
 2. Continue validating automatic Codex Desktop session discovery and the real-time rollout watcher over ordinary chat turns, especially multiple projects/worktrees, app restart, already-running bridge, repeated `final_answer` events, token-based rewards, context-window updates, and the session-inspired idle bubble candidate flow.
 3. After the watcher and session-safety flow prove stable, decide whether to vendor `C:\Users\rniu\plugins\aivatar-session-bridge` into this repo now that the workflow is documented and wrapped by npm scripts.
-4. Validate and polish the desktop CLI Launcher connected path over real Codex CLI turns, including provisional-to-real session switching, watchdog cleanup when users close terminal windows, repeated launcher starts, stale pid cleanup, token reward baselines, and Agent Sessions display behavior.
+4. Validate and polish the desktop CLI Launcher connected path over real Codex and Claude Code CLI turns, including provisional-to-real Codex session switching, Claude exec-form hook events, Claude PowerShell statusLine wrapper behavior, watchdog cleanup when users close terminal windows, repeated launcher starts, stale pid cleanup, token/context usage, reward baselines, and Agent Sessions display behavior.
 5. Visually QA the recent Ocean Window, Growth, Oil Easel, bed layering, table collision, and exploration-learning changes in the running app: slow subpixel ship movement, distant ship scale, night ship lights, breathing wave sparkles, softened horizon, Coffee Cup slow steam, Growth hex chart hover/log-scale normalization behavior, Oil Easel scale/perspective, avatar beret/brush/palette paint pose, easel foot-collision avoidance, bed body/footboard occlusion, dedicated `admire` pose readability, and idle `explore` route collection.
 6. Add focused UI/runtime tests or screenshot regression checks for sleep recovery, token-based complete rewards, context window meters, Memory/Growth updates, `navMemory` save/load normalization, Growth hex chart `log10(points + 1)` normalization and hover labels, whole-side-panel collapse/expand and Tauri window resize behavior, collapsed HUD overlay positioning, Agent Sessions mini context meter, Growth/Agent Sessions/Debug submenu collapse/expand behavior, Terminal skin coverage across collapsed/expanded cards and canvas bubbles, idle bubble language filtering, memory/session suggestion balance, accepted phrase display, trait-driven avatar visuals, the `Demo actions` behavior cycle, placement, Room Edit, shop/inventory/Decor/window thumbnails, collision and interaction-point overlays, autonomous activity, idle exploration, agent status, work/fridge/table/coffee/cola/bento/paint/phone animation flows, unified arrive-then-interact behavior for furniture/placed items/consumables, autonomous and manual Coffee Machine brew animation, transparent Coffee Cup empty/full rendering, Game Console play-screen animation and mood recovery, Oil Easel painting and creativity growth, dynamic City Night Window and Ocean Window day/night preview states, Digital Wall Clock rendering, Decor panel collapse/tabs, and rug-underlay layering.
 7. Continue hardening avatar pathfinding after the `walkableCells` core pass, especially with the Debug `Nav grid` overlay around bed/desk/fridge/table choke points, learned blocked-cell false positives, exploration retesting, post-arrival desktop-item stability around the Terminal/desk/tabletop Coffee Machine, target-object locking when multiple Coffee Machines/Game Consoles/Oil Easels exist, navigation-cache scoping by layout/target/furniture-ignore fingerprint, and regression cases around dense bed/desk/table/fridge/Coffee Machine/Game Console/Oil Easel layouts. Include specific QA for final-target stall abandonment: if the avatar's distance to the intended interaction point does not decrease for several seconds, it should try another interaction point or clear the pending action instead of sliding forever.
@@ -1152,7 +1184,7 @@ For this project, prefer:
 27. Add an asset library/content-pack layer under `public/content-packs/` so edited avatar animations, decor, furniture, and tools can be packaged.
 28. Replace selected programmatic avatar/object art with spritesheet/atlas assets once the editor workflow is stable, starting with consumable action poses and high-value room objects like the Coffee Machine, Morph Blob Rug, Game Console, and Digital Wall Clock.
 29. Add automated tests for bridge `usage` payload normalization and token reward formula edge cases, including cached-heavy turns, missing usage, cap behavior, and work boost interaction.
-30. Add a Claude Code watcher/hook/token usage source so Claude launcher sessions can provide fine-grained tool/final/status updates and reward context comparable to Codex rollout watching.
+30. Harden the Claude Code hook/statusLine integration until it is comparable to Codex rollout watching: verify real CLI events create `%TEMP%\aivatar-claude-code-events\*.jsonl`, confirm exec-form hooks bypass Git Bash on Windows, confirm the generated PowerShell statusLine wrapper receives stdin and updates context meters, investigate any Claude transcript `hook_cancelled` attachments, confirm terminal `complete` after Stop/statusLine fallback, and decide whether a transcript watcher is still needed for richer final/tool/token details.
 31. Design and implement the future embedded terminal path with a real PTY backend and xterm.js-style frontend, so Aivatar can launch and display Codex/Claude sessions in-app rather than opening an external PowerShell window.
 32. Revisit the full bits economy before 1.0, including Codex reward pacing, shop prices, recurring sinks, debug-only rewards, and Coffee brewing costs.
 33. Consider a DOM overlay bubble renderer if Chinese/Japanese/Korean bubble clarity needs to become fully crisp at all zoom levels.
