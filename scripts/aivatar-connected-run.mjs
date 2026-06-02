@@ -100,6 +100,10 @@ const createSpawnSpec = (commandArgs) => {
     }
   }
 
+  if (process.platform === "win32" && normalizedCommand === "claude") {
+    return { file: command, args };
+  }
+
   if (
     process.platform !== "win32" ||
     command.includes("\\") ||

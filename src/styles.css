@@ -1008,6 +1008,60 @@ meter {
   color: #d9ff5f;
 }
 
+.app-shell.theme-terminal .task-cabinet-entry {
+  border-left-color: #7dff5b;
+  background: #031107;
+  box-shadow: inset 0 0 0 1px rgba(56, 201, 71, 0.22);
+}
+
+.app-shell.theme-terminal .task-cabinet-entry.task-running {
+  border-left-color: #38c947;
+}
+
+.app-shell.theme-terminal .task-cabinet-entry.task-completed {
+  border-left-color: #7dff5b;
+}
+
+.app-shell.theme-terminal .task-cabinet-entry.task-failed {
+  border-left-color: #ff5c7a;
+}
+
+.app-shell.theme-terminal .task-cabinet-entry-heading strong {
+  color: #d8ffd0;
+}
+
+.app-shell.theme-terminal .task-cabinet-entry-heading span,
+.app-shell.theme-terminal .task-cabinet-entry-footer small,
+.app-shell.theme-terminal .task-cabinet-schedule-next {
+  color: #67ff72;
+}
+
+.app-shell.theme-terminal .task-cabinet-path {
+  color: #b8ff9c;
+}
+
+.app-shell.theme-terminal .task-cabinet-schedule {
+  border-color: #1f7f2e;
+  background: #020804;
+}
+
+.app-shell.theme-terminal .task-cabinet-remove {
+  border-color: #1f7f2e;
+  color: #d8ffd0;
+  background: #06160a;
+  box-shadow: inset -2px -2px 0 #021f08;
+}
+
+.app-shell.theme-terminal .task-cabinet-remove:hover:not(:disabled) {
+  border-color: #a6ff73;
+  color: #020804;
+  background: #7dff5b;
+}
+
+.app-shell.theme-terminal .task-cabinet-error {
+  color: #ff8fa3;
+}
+
 .app-shell.theme-terminal .session-clear-button,
 .app-shell.theme-terminal .session-follow-button {
   border-color: #1f7f2e;
@@ -1615,6 +1669,52 @@ meter {
 
 .app-shell.theme-terminal.theme-terminal-amber .session-card .session-usage {
   color: #ffd166;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-entry {
+  border-left-color: #ffb02e;
+  background: #180c03;
+  box-shadow: inset 0 0 0 1px rgba(255, 176, 46, 0.22);
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-entry.task-running,
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-entry.task-completed {
+  border-left-color: #ffd166;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-entry.task-failed {
+  border-left-color: #ff6b6b;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-entry-heading strong {
+  color: #ffe3a3;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-entry-heading span,
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-entry-footer small,
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-schedule-next {
+  color: #ffbf63;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-path {
+  color: #d7a35c;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-schedule {
+  border-color: #7a3d08;
+  background: #120802;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-remove {
+  border-color: #9d5a12;
+  color: #ffd166;
+  background: #120802;
+  box-shadow: inset -2px -2px 0 #050200;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-remove:hover:not(:disabled) {
+  color: #120802;
+  background: #ffd166;
 }
 
 .app-shell.theme-terminal.theme-terminal-amber .sessions-submenu,

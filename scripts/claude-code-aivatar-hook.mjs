@@ -292,6 +292,18 @@ const statusForEvent = (input) => {
   }
 };
 
+const preserveTerminalStatusAfterTurnEnd = (input, status, previousState) => {
+  const event = input?.hook_event_name ?? (input?.context_window ? "StatusLine" : "Unknown");
+  if (previousState.status !== "complete" && previousState.status !== "error") return status;
+  if (event === "UserPromptSubmit") return status;
+  if (status.status === "complete" || status.status === "error") return status;
+  return {
+    status: previousState.status,
+    phase: previousState.phase,
+    message: previousState.message,
+  };
+};
+
 const shouldStatusLineComplete = (previousState, usage) => {
   if (!usage?.outputTokens || usage.outputTokens <= 0) return false;
   if (previousState.status === "complete" || previousState.status === "error") return false;
@@ -344,8 +356,8 @@ try {
   const input = rawInput.trim() ? JSON.parse(rawInput) : {};
   const sessionId =
     firstString(
-      input.session_id,
       process.env.AIVATAR_SESSION_ID,
+      input.session_id,
       process.env.CLAUDE_SESSION_ID,
     ) ?? "claude-code-session";
   const previousState = await readSessionState(sessionId);
@@ -355,7 +367,7 @@ try {
     previousState.latestUsage;
   const status = statusLineMode
     ? statusForStatusLine(input, previousState, usage)
-    : statusForEvent(input);
+    : preserveTerminalStatusAfterTurnEnd(input, statusForEvent(input), previousState);
   const isTerminalStatus = status.status === "complete" || status.status === "error";
   const timestamp =
     statusLineMode && previousState.status === status.status && previousState.timestamp

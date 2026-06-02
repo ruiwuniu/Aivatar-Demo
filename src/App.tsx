@@ -1998,6 +1998,28 @@ const persistTaskCabinetEntries = (entries: TaskCabinetEntry[]) => {
 const taskCabinetFileName = (path: string) =>
   path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
+const isTaskCabinetExitIdle = (session: CodexStatusMessage | undefined) => {
+  if (!session || session.status !== "idle") return false;
+  const message = session.message ?? session.summary ?? session.task ?? "";
+  if (/^Running\s+/i.test(message)) return false;
+  if (session.phase === "session-start" || session.phase === "presence") return false;
+  return (
+    session.phase === "idle" ||
+    session.phase === "other" ||
+    /disconnected|session ended|exited/i.test(message)
+  );
+};
+
+type TaskCabinetVisualFlow = {
+  sessionId: string;
+  taskName: string;
+  phase: "fetch" | "carry" | "read";
+  phaseStartedAt: number;
+  actionStartedAt?: number;
+  terminalStatus?: "complete" | "error";
+  terminalAt?: number;
+};
+
 export const App = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scenePanelRef = useRef<HTMLElement | null>(null);
@@ -2129,6 +2151,10 @@ export const App = () => {
   const statusRef = useRef({ status: effectiveStatus, source: effectiveSource, endpoint });
   const taskCabinetEntriesRef = useRef(taskCabinetEntries);
   const taskCabinetLaunchingRef = useRef(false);
+  const taskCabinetTerminalStatusRef = useRef(
+    new Map<string, "complete" | "error">(),
+  );
+  const taskCabinetVisualFlowRef = useRef<TaskCabinetVisualFlow | null>(null);
   const lastRewardedCompleteKeyRef = useRef<string | null>(null);
   const behaviorDemoTimerRef = useRef<number | null>(null);
   const previousSessionStatusRef = useRef(
@@ -2837,11 +2863,13 @@ export const App = () => {
       const currentStatus = statusRef.current.status;
       const currentInteraction = activeInteractionRef.current;
       const pendingWorldInteraction = pendingWorldInteractionRef.current;
+      const taskCabinetVisualFlow = taskCabinetVisualFlowRef.current;
+      const taskCabinetVisualFlowActive = Boolean(taskCabinetVisualFlow);
       const blockingInteraction = isBlockingInteraction(currentInteraction);
       const furnitureInteractionActive =
         pendingWorldInteraction ||
         blockingInteraction;
-      const busyRecoveryNeed = !furnitureInteractionActive
+      const busyRecoveryNeed = !furnitureInteractionActive && !taskCabinetVisualFlowActive
         ? getBusyRecoveryNeed(
             currentStatus,
             currentContent,
@@ -2853,6 +2881,7 @@ export const App = () => {
       const currentRuntimeAction = runtimeActionBehavior(runtimeRef.current);
       const avatarStatus =
         busyRecoveryActive ||
+        taskCabinetVisualFlowActive ||
         (furnitureInteractionActive && !isHighPriorityStatus(currentStatus))
           ? {
               ...currentStatus,
@@ -3109,6 +3138,93 @@ export const App = () => {
         exploreStuckAccumulator = 0;
         lastExploreDistance = Number.POSITIVE_INFINITY;
       }
+
+      const visualFlow = taskCabinetVisualFlowRef.current;
+      if (visualFlow) {
+        const activeTaskBehavior = runtimeActionBehavior(runtimeRef.current);
+        if (
+          visualFlow.phase === "fetch" &&
+          runtimeRef.current.behavior === "fetch_task_file" &&
+          !runtimeRef.current.actionIntent
+        ) {
+          if (!visualFlow.actionStartedAt) {
+            taskCabinetVisualFlowRef.current = {
+              ...visualFlow,
+              actionStartedAt: now,
+            };
+          } else if (now - visualFlow.actionStartedAt >= 1000) {
+            taskCabinetVisualFlowRef.current = {
+              ...visualFlow,
+              phase: "carry",
+              phaseStartedAt: now,
+              actionStartedAt: undefined,
+            };
+            runtimeRef.current = setBehavior(
+              runtimeRef.current,
+              "carry_task_file",
+              currentContent,
+              10,
+              `Carrying ${visualFlow.taskName}`,
+              { startImmediately: true },
+            );
+            setAvatar(runtimeRef.current);
+          }
+        } else if (visualFlow.phase === "carry") {
+          const carryDistance = Math.hypot(
+            runtimeRef.current.x - runtimeRef.current.targetX,
+            runtimeRef.current.y - runtimeRef.current.targetY,
+          );
+          if (carryDistance <= INTERACTION_ARRIVAL_DISTANCE) {
+            taskCabinetVisualFlowRef.current = {
+              ...visualFlow,
+              phase: "read",
+              phaseStartedAt: now,
+              actionStartedAt: now,
+            };
+            runtimeRef.current = setBehavior(
+              runtimeRef.current,
+              "read_task_file",
+              currentContent,
+              30,
+              `Reading ${visualFlow.taskName}`,
+              { startImmediately: true },
+            );
+            setAvatar(runtimeRef.current);
+          } else if (activeTaskBehavior !== "carry_task_file") {
+            runtimeRef.current = setBehavior(
+              runtimeRef.current,
+              "carry_task_file",
+              currentContent,
+              10,
+              `Carrying ${visualFlow.taskName}`,
+              { startImmediately: true },
+            );
+            setAvatar(runtimeRef.current);
+          }
+        } else if (
+          visualFlow.phase === "read" &&
+          visualFlow.terminalStatus &&
+          (visualFlow.actionStartedAt
+            ? now - visualFlow.actionStartedAt >= 1200
+            : now - visualFlow.phaseStartedAt >= 1200)
+        ) {
+          taskCabinetVisualFlowRef.current = null;
+        } else if (
+          visualFlow.phase === "read" &&
+          activeTaskBehavior !== "read_task_file"
+        ) {
+          runtimeRef.current = setBehavior(
+            runtimeRef.current,
+            "read_task_file",
+            currentContent,
+            30,
+            `Reading ${visualFlow.taskName}`,
+            { startImmediately: true },
+          );
+          setAvatar(runtimeRef.current);
+        }
+      }
+
       const sleepTargetDistance =
         runtimeRef.current.behavior === "sleep"
           ? Math.hypot(
@@ -4145,6 +4261,23 @@ export const App = () => {
   const createTaskCabinetSessionId = (agent: LauncherAgentId, taskId: string) =>
     `task-${agent}-${Date.now().toString(36)}-${taskId.slice(0, 8)}`;
 
+  const startTaskCabinetVisualFlow = (sessionId: string, taskName: string) => {
+    taskCabinetVisualFlowRef.current = {
+      sessionId,
+      taskName,
+      phase: "fetch",
+      phaseStartedAt: performance.now(),
+    };
+    runtimeRef.current = setBehavior(
+      runtimeRef.current,
+      "fetch_task_file",
+      contentRef.current,
+      4,
+      "Fetching task file",
+    );
+    setAvatar(runtimeRef.current);
+  };
+
   const nextReadyTaskCabinetEntry = (entries: TaskCabinetEntry[]) =>
     [...entries]
       .filter((entry) => entry.status === "ready")
@@ -4189,6 +4322,7 @@ export const App = () => {
     taskCabinetLaunchingRef.current = true;
     const now = new Date().toISOString();
     const sessionId = createTaskCabinetSessionId(launcherAgent, task.id);
+    startTaskCabinetVisualFlow(sessionId, taskCabinetFileName(task.path));
     setTaskCabinetEntries((current) =>
       current.map((entry) =>
         entry.id === task.id
@@ -4234,6 +4368,9 @@ export const App = () => {
       );
       setTaskCabinetMessage(result.message ?? "Task started.");
     } catch (error) {
+      if (taskCabinetVisualFlowRef.current?.sessionId === sessionId) {
+        taskCabinetVisualFlowRef.current = null;
+      }
       const detail = error instanceof Error ? error.message : String(error);
       const failedAt = new Date().toISOString();
       setTaskCabinetEntries((current) =>
@@ -4269,30 +4406,52 @@ export const App = () => {
   };
 
   useEffect(() => {
-    const taskStatuses = new Map(
+    const taskSessions = new Map(
       sessions
         .filter((session) => session.agent && session.sessionId)
         .map((session) => [
           `${session.agent}:${session.sessionId}`,
-          session.status,
+          session,
         ]),
     );
-    if (taskStatuses.size === 0) return;
+
+    sessions.forEach((session) => {
+      if (!session.agent || !session.sessionId) return;
+      if (session.status === "complete" || session.status === "error") {
+        taskCabinetTerminalStatusRef.current.set(
+          `${session.agent}:${session.sessionId}`,
+          session.status,
+        );
+      }
+    });
+
+    if (taskSessions.size === 0) return;
 
     setTaskCabinetEntries((current) => {
       let changed = false;
       const finishedAt = new Date().toISOString();
       const next = current.map((entry) => {
         if (
-          entry.status !== "running" ||
+          !["running", "failed"].includes(entry.status) ||
           !entry.agent ||
           !entry.sessionId
         ) {
           return entry;
         }
 
-        const sessionStatus = taskStatuses.get(`${entry.agent}:${entry.sessionId}`);
+        const sessionKey = `${entry.agent}:${entry.sessionId}`;
+        const session = taskSessions.get(sessionKey);
+        const sessionStatus =
+          taskCabinetTerminalStatusRef.current.get(sessionKey) ??
+          session?.status;
         if (sessionStatus === "complete") {
+          if (taskCabinetVisualFlowRef.current?.sessionId === entry.sessionId) {
+            taskCabinetVisualFlowRef.current = {
+              ...taskCabinetVisualFlowRef.current,
+              terminalStatus: "complete",
+              terminalAt: performance.now(),
+            };
+          }
           changed = true;
           const schedule = entry.schedule
             ? {
@@ -4321,6 +4480,9 @@ export const App = () => {
           };
         }
         if (sessionStatus === "error") {
+          if (taskCabinetVisualFlowRef.current?.sessionId === entry.sessionId) {
+            taskCabinetVisualFlowRef.current = null;
+          }
           changed = true;
           const schedule = entry.schedule
             ? {
@@ -4348,7 +4510,10 @@ export const App = () => {
             schedule,
           };
         }
-        if (sessionStatus === "idle") {
+        if (sessionStatus === "idle" && isTaskCabinetExitIdle(session)) {
+          if (taskCabinetVisualFlowRef.current?.sessionId === entry.sessionId) {
+            taskCabinetVisualFlowRef.current = null;
+          }
           changed = true;
           const schedule = entry.schedule
             ? {

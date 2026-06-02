@@ -61,6 +61,24 @@ const postJson = async (url, payload) => {
   return text ? JSON.parse(text) : {};
 };
 
+const readExistingSessionStatus = async (url, options) => {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return undefined;
+    const snapshot = await response.json();
+    const key = `${options.agent}:${options.sessionId}`;
+    const session = Array.isArray(snapshot?.sessions)
+      ? snapshot.sessions.find(
+          (candidate) =>
+            `${candidate?.agent ?? "agent"}:${candidate?.sessionId ?? "default"}` === key,
+        )
+      : undefined;
+    return typeof session?.status === "string" ? session.status : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const stopRecordedProcess = async (pidFile) => {
   try {
     const record = JSON.parse(await readFile(pidFile, "utf8"));
@@ -82,20 +100,25 @@ const stopRecordedProcess = async (pidFile) => {
 const options = parseArgs(process.argv.slice(2));
 const pidFile = pidFileFor(options);
 const record = await stopRecordedProcess(pidFile);
+const existingStatus = await readExistingSessionStatus(endpoint, options);
+const preserveTerminal =
+  existingStatus === "complete" || existingStatus === "error";
 
 try {
-  await postJson(endpoint, {
-    agent: options.agent,
-    sessionId: options.sessionId,
-    status: "idle",
-    phase: "idle",
-    task: options.message,
-    summary: options.message,
-    progress: 0,
-    message: options.message,
-    severity: "info",
-    timestamp: new Date().toISOString(),
-  });
+  if (!preserveTerminal) {
+    await postJson(endpoint, {
+      agent: options.agent,
+      sessionId: options.sessionId,
+      status: "idle",
+      phase: "idle",
+      task: options.message,
+      summary: options.message,
+      progress: 0,
+      message: options.message,
+      severity: "info",
+      timestamp: new Date().toISOString(),
+    });
+  }
   await postJson(activeEndpoint, {
     clear: true,
     agent: options.agent,
