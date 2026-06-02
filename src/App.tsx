@@ -143,6 +143,7 @@ const TASK_CABINET_UNLOCK_LEVEL = 25;
 const TASK_CABINET_SCHEDULE_INTERVAL_MS = 5000;
 const TASK_CABINET_DEFAULT_REPEAT_MINUTES = 60;
 const TASK_CABINET_ENTRY_LIMIT = 100;
+const TASK_CABINET_READ_HANDOFF_MS = 1200;
 const NAV_MEMORY_CELL_COUNT_LIMIT = 9999;
 const NAV_LEARNING_RECORD_INTERVAL_SECONDS = 2.5;
 const DEMO_BEHAVIORS: BehaviorName[] = [
@@ -181,10 +182,10 @@ type DecorSurfaceCategoryId = "wallpaper" | "flooring";
 type LauncherAgentId = "codex" | "claude-code";
 type UiThemeId = "classic" | "terminal" | "terminal-amber";
 
-const UI_THEME_OPTIONS: Array<{ id: UiThemeId; label: string }> = [
-  { id: "classic", label: "Classic" },
-  { id: "terminal", label: "Terminal" },
-  { id: "terminal-amber", label: "Amber" },
+const UI_THEME_OPTIONS: Array<{ id: UiThemeId; copyKey: string }> = [
+  { id: "classic", copyKey: "theme.classic" },
+  { id: "terminal", copyKey: "theme.terminal" },
+  { id: "terminal-amber", copyKey: "theme.amber" },
 ];
 
 const loadInitialUiTheme = (): UiThemeId => {
@@ -1913,13 +1914,16 @@ const hasTaskScheduleDue = (entry: TaskCabinetEntry, nowMs: number) => {
 const taskScheduleNextLabel = (
   schedule: TaskCabinetSchedule | undefined,
   nowMs: number,
+  formatCopy: (key: string, params?: Record<string, string | number>) => string,
 ) => {
-  if (!schedule?.enabled) return "Schedule off";
-  if (!schedule.nextRunAt) return "Next not set";
+  if (!schedule?.enabled) return formatCopy("schedule.off");
+  if (!schedule.nextRunAt) return formatCopy("schedule.nextNotSet");
   const nextMs = Date.parse(schedule.nextRunAt);
-  if (Number.isNaN(nextMs)) return "Next not set";
-  if (nextMs <= nowMs) return "Due now";
-  return `Next ${new Date(schedule.nextRunAt).toLocaleString()}`;
+  if (Number.isNaN(nextMs)) return formatCopy("schedule.nextNotSet");
+  if (nextMs <= nowMs) return formatCopy("schedule.dueNow");
+  return formatCopy("schedule.next", {
+    value: new Date(schedule.nextRunAt).toLocaleString(),
+  });
 };
 
 const taskScheduleConditionMet = (
@@ -2009,6 +2013,28 @@ const isTaskCabinetExitIdle = (session: CodexStatusMessage | undefined) => {
     /disconnected|session ended|exited/i.test(message)
   );
 };
+
+const isTaskCabinetLiveWorkStatus = (status: CodexStatusMessage) =>
+  status.status === "thinking" ||
+  status.status === "executing" ||
+  status.status === "waiting_for_user";
+
+const fallbackActiveWindowIdAfterRemoving = (
+  content: AivatarContent,
+  removedWindowId: string,
+  inventory: InventoryEntry[],
+  purchasedItemIds: string[],
+) =>
+  content.room.windows?.find(
+    (windowDefinition) =>
+      windowDefinition.id !== removedWindowId &&
+      purchasedItemIds.includes(windowDefinition.id) &&
+      getInventoryQuantity(inventory, windowDefinition.id) <= 0,
+  )?.id ??
+  content.room.windows?.find(
+    (windowDefinition) => windowDefinition.id !== removedWindowId,
+  )?.id ??
+  content.room.windows?.[0]?.id;
 
 type TaskCabinetVisualFlow = {
   sessionId: string;
@@ -2250,6 +2276,21 @@ export const App = () => {
   };
   const ui = (key: string, params?: Record<string, string | number>) =>
     t(locale, key, params);
+  const configStateLabel = ui(`config.${configState}`);
+  const taskCabinetStatusLabel = (status: TaskCabinetStatus) =>
+    ui(`taskCabinet.status.${status}`);
+  const taskCabinetRunProfileLabel = (profile: TaskCabinetRunProfile) =>
+    ui(`profile.${profile}`);
+  const taskCabinetScheduleModeLabel = (mode: TaskCabinetScheduleMode) =>
+    ui(`schedule.${mode}`);
+  const taskCabinetScheduleConditionLabel = (
+    condition: TaskCabinetScheduleCondition,
+  ) =>
+    condition === "only_idle"
+      ? ui("schedule.onlyIdle")
+      : condition === "after_success"
+        ? ui("schedule.afterSuccess")
+        : ui("schedule.always");
   const sourceLabel =
     effectiveSource === "websocket"
       ? ui("source.websocket")
@@ -2418,10 +2459,10 @@ export const App = () => {
       const path = await invoke<string | null>("pick_launcher_directory");
       if (path) {
         setLauncherDirectory(path);
-        setLauncherMessage("Launcher folder selected.");
+        setLauncherMessage(ui("message.launcherFolderSelected"));
       }
     } catch {
-      setLauncherMessage("File picker is desktop-only.");
+      setLauncherMessage(ui("message.filePickerDesktopOnly"));
     }
   };
 
@@ -3201,27 +3242,27 @@ export const App = () => {
             );
             setAvatar(runtimeRef.current);
           }
-        } else if (
-          visualFlow.phase === "read" &&
-          visualFlow.terminalStatus &&
-          (visualFlow.actionStartedAt
-            ? now - visualFlow.actionStartedAt >= 1200
-            : now - visualFlow.phaseStartedAt >= 1200)
-        ) {
-          taskCabinetVisualFlowRef.current = null;
-        } else if (
-          visualFlow.phase === "read" &&
-          activeTaskBehavior !== "read_task_file"
-        ) {
-          runtimeRef.current = setBehavior(
-            runtimeRef.current,
-            "read_task_file",
-            currentContent,
-            30,
-            `Reading ${visualFlow.taskName}`,
-            { startImmediately: true },
-          );
-          setAvatar(runtimeRef.current);
+        } else if (visualFlow.phase === "read") {
+          const readElapsedMs = visualFlow.actionStartedAt
+            ? now - visualFlow.actionStartedAt
+            : now - visualFlow.phaseStartedAt;
+          if (
+            readElapsedMs >= TASK_CABINET_READ_HANDOFF_MS &&
+            (visualFlow.terminalStatus ||
+              isTaskCabinetLiveWorkStatus(currentStatus))
+          ) {
+            taskCabinetVisualFlowRef.current = null;
+          } else if (activeTaskBehavior !== "read_task_file") {
+            runtimeRef.current = setBehavior(
+              runtimeRef.current,
+              "read_task_file",
+              currentContent,
+              30,
+              `Reading ${visualFlow.taskName}`,
+              { startImmediately: true },
+            );
+            setAvatar(runtimeRef.current);
+          }
         }
       }
 
@@ -3927,24 +3968,38 @@ export const App = () => {
         return;
       }
 
-      setSave((current) => ({
-        ...current,
-        activeWindowId: windowDefinition.id,
-        windowPlacements: current.windowPlacements?.some(
-          (placement) => placement.windowId === windowDefinition.id,
-        )
-          ? current.windowPlacements
-          : [
-              ...(current.windowPlacements ?? []),
-              {
-                windowId: windowDefinition.id,
-                x: windowDefinition.x,
-                y: windowDefinition.y,
-                width: windowDefinition.width,
-                height: windowDefinition.height,
-              },
-            ],
-      }));
+      setSave((current) => {
+        const inventory = current.inventory
+          .map((entry) =>
+            entry.itemId === item.id
+              ? clampQuantity({ ...entry, quantity: entry.quantity - 1 })
+              : entry,
+          )
+          .filter((entry) => entry.quantity > 0);
+
+        return {
+          ...current,
+          inventory,
+          purchasedItemIds: Array.from(
+            new Set([...current.purchasedItemIds, item.id]),
+          ),
+          activeWindowId: windowDefinition.id,
+          windowPlacements: current.windowPlacements?.some(
+            (placement) => placement.windowId === windowDefinition.id,
+          )
+            ? current.windowPlacements
+            : [
+                ...(current.windowPlacements ?? []),
+                {
+                  windowId: windowDefinition.id,
+                  x: windowDefinition.x,
+                  y: windowDefinition.y,
+                  width: windowDefinition.width,
+                  height: windowDefinition.height,
+                },
+              ],
+        };
+      });
       updateSelectedWindow(windowDefinition);
       updateSelectedPlacedItem(null);
       updateMovingPlacedItem(null);
@@ -4067,11 +4122,11 @@ export const App = () => {
   const addTaskCabinetEntry = () => {
     const path = taskCabinetPathInput.trim();
     if (!path) {
-      setTaskCabinetMessage("Add a .md file path first.");
+      setTaskCabinetMessage(ui("message.taskCabinetAddPath"));
       return;
     }
     if (!path.toLowerCase().endsWith(".md")) {
-      setTaskCabinetMessage("Task Cabinet only accepts .md file paths.");
+      setTaskCabinetMessage(ui("message.taskCabinetMdOnly"));
       return;
     }
     if (
@@ -4079,7 +4134,7 @@ export const App = () => {
         (entry) => entry.path.toLowerCase() === path.toLowerCase(),
       )
     ) {
-      setTaskCabinetMessage("That task file is already in the cabinet.");
+      setTaskCabinetMessage(ui("message.taskCabinetDuplicate"));
       return;
     }
 
@@ -4104,10 +4159,10 @@ export const App = () => {
     });
     if (added) {
       setTaskCabinetPathInput("");
-      setTaskCabinetMessage("Task path saved locally.");
+      setTaskCabinetMessage(ui("message.taskCabinetSaved"));
     } else {
       setTaskCabinetMessage(
-        `Task Cabinet is limited to ${TASK_CABINET_ENTRY_LIMIT} tasks.`,
+        ui("message.taskCabinetLimit", { value: TASK_CABINET_ENTRY_LIMIT }),
       );
     }
   };
@@ -4118,10 +4173,10 @@ export const App = () => {
       const path = await invoke<string | null>("pick_markdown_task_file");
       if (path) {
         setTaskCabinetPathInput(path);
-        setTaskCabinetMessage("Task file selected.");
+        setTaskCabinetMessage(ui("message.taskCabinetSelected"));
       }
     } catch {
-      setTaskCabinetMessage("File picker is desktop-only.");
+      setTaskCabinetMessage(ui("message.filePickerDesktopOnly"));
     }
   };
 
@@ -4129,7 +4184,7 @@ export const App = () => {
     setTaskCabinetEntries((current) =>
       current.filter((entry) => entry.id !== taskId),
     );
-    setTaskCabinetMessage("Task removed from Aivatar only.");
+    setTaskCabinetMessage(ui("message.taskCabinetRemoved"));
   };
 
   const setTaskCabinetRunProfile = (
@@ -4300,8 +4355,8 @@ export const App = () => {
     const cwd = launcherDirectory.trim();
     if (!cwd) {
       const message = options.scheduled
-        ? "Schedule is due, but CLI Launcher folder is missing."
-        : "Set a CLI Launcher folder before running tasks.";
+        ? ui("message.taskCabinetScheduleMissingLauncher")
+        : ui("message.taskCabinetMissingLauncher");
       setTaskCabinetMessage(message);
       if (options.scheduled) {
         setTaskCabinetEntries((current) =>
@@ -4340,7 +4395,11 @@ export const App = () => {
           : entry,
       ),
     );
-    setTaskCabinetMessage(`Starting ${taskCabinetFileName(task.path)}.`);
+    setTaskCabinetMessage(
+      ui("message.taskCabinetStarting", {
+        name: taskCabinetFileName(task.path),
+      }),
+    );
 
     try {
       const { invoke } = await import("@tauri-apps/api/core");
@@ -4350,9 +4409,7 @@ export const App = () => {
         launchArgs = taskArgs ? `${taskArgs} --bare` : "--bare";
       }
       if (task.runProfile === "fast" && launcherAgent === "codex") {
-        setTaskCabinetMessage(
-          "Starting task. Codex fast profile is pending a verified MCP-skip flag.",
-        );
+        setTaskCabinetMessage(ui("message.taskCabinetCodexFastPending"));
       }
       const result = await invoke<{ message?: string; session_id?: string }>(
         "start_task_agent",
@@ -4366,7 +4423,7 @@ export const App = () => {
           },
         },
       );
-      setTaskCabinetMessage(result.message ?? "Task started.");
+      setTaskCabinetMessage(result.message ?? ui("message.taskCabinetStarted"));
     } catch (error) {
       if (taskCabinetVisualFlowRef.current?.sessionId === sessionId) {
         taskCabinetVisualFlowRef.current = null;
@@ -4386,7 +4443,7 @@ export const App = () => {
             : entry,
         ),
       );
-      setTaskCabinetMessage(detail || "Could not start task.");
+      setTaskCabinetMessage(detail || ui("message.taskCabinetStartFailed"));
     } finally {
       taskCabinetLaunchingRef.current = false;
     }
@@ -4394,12 +4451,12 @@ export const App = () => {
 
   const runNextTaskCabinetEntry = () => {
     if (taskCabinetEntriesRef.current.some((entry) => entry.status === "running")) {
-      setTaskCabinetMessage("A task is already running.");
+      setTaskCabinetMessage(ui("message.taskCabinetAlreadyRunning"));
       return;
     }
     const nextTask = nextReadyTaskCabinetEntry(taskCabinetEntriesRef.current);
     if (!nextTask) {
-      setTaskCabinetMessage("No Ready tasks.");
+      setTaskCabinetMessage(ui("message.taskCabinetNoReady"));
       return;
     }
     void startTaskCabinetEntry(nextTask.id);
@@ -5368,6 +5425,48 @@ export const App = () => {
     });
   };
 
+  const storeSelectedWindow = () => {
+    if (!selectedWindow || !selectedWindowDefinition) return;
+    const storedWindowId = selectedWindow.id;
+
+    setSave((current) => {
+      const inventory = addInventoryItem(current.inventory, storedWindowId, 1);
+      const purchasedItemIds = Array.from(
+        new Set([...current.purchasedItemIds, storedWindowId]),
+      );
+
+      return {
+        ...current,
+        inventory,
+        purchasedItemIds,
+        activeWindowId:
+          current.activeWindowId === storedWindowId
+            ? fallbackActiveWindowIdAfterRemoving(
+                contentRef.current,
+                storedWindowId,
+                inventory,
+                purchasedItemIds,
+              )
+            : current.activeWindowId,
+        windowPlacements: current.windowPlacements?.filter(
+          (placement) => placement.windowId !== storedWindowId,
+        ),
+      };
+    });
+
+    updateSelectedWindow(null);
+    updateMovingWindow(null);
+    updateWindowPlacementPreview(null);
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: "window",
+      furnitureName: selectedWindow.name,
+      message: ui("message.windowStored", { name: selectedWindow.name }),
+      startedAt: performance.now(),
+      bubbleText: ui("bubble.stored"),
+    });
+  };
+
   const moveFurniture = (furniture: FurnitureDefinition, x: number, y: number) => {
     const next = normalizeFurniturePlacement(
       furniture,
@@ -6020,6 +6119,8 @@ export const App = () => {
   };
 
   const buyOrApplyWindow = (item: ItemDefinition) => {
+    if (saveRef.current.purchasedItemIds.includes(item.id)) return;
+
     const windowDefinition = contentRef.current.room.windows?.find(
       (candidate) => candidate.id === item.id,
     );
@@ -6279,12 +6380,12 @@ export const App = () => {
   const sceneContextActionLabel =
     sceneContextMenu?.target.kind === "placed-item"
       ? sceneContextMenu.target.action === "brew"
-        ? "Brew"
+        ? ui("scene.action.brew")
         : sceneContextMenu.target.action === "paint"
-          ? "Paint"
+          ? ui("scene.action.paint")
           : sceneContextMenu.target.action === "play"
-            ? "Play"
-            : "Interact"
+            ? ui("scene.action.play")
+            : ui("scene.action.interact")
       : sceneContextMenu
         ? behaviorLabel(locale, sceneContextMenu.target.furniture.interaction)
         : "";
@@ -6325,10 +6426,10 @@ export const App = () => {
         {!sidePanelOpen && !sidePanelAnimating && currentSessionContextMeter ? (
           <div
             className={`room-context-overlay ${currentSessionContextMeter.level}`}
-            aria-label={`Context window ${currentSessionContextMeter.percentLabel}`}
+            aria-label={`${ui("sessions.context")} ${currentSessionContextMeter.percentLabel}`}
           >
             <div>
-              <span>Context</span>
+              <span>{ui("sessions.context")}</span>
               <strong>{currentSessionContextMeter.percentLabel}</strong>
             </div>
             <div className="room-context-bar">
@@ -6341,7 +6442,7 @@ export const App = () => {
         ) : null}
         {!sidePanelOpen && !sidePanelAnimating ? (
           <>
-            <div className="room-stats-overlay" aria-label="Pet stats">
+            <div className="room-stats-overlay" aria-label={ui("app.roomAria")}>
               {statRows.map((key) => (
                 <div key={key} className="room-stat-mini">
                   <span>{statLabel(locale, key)}</span>
@@ -6350,7 +6451,7 @@ export const App = () => {
                 </div>
               ))}
             </div>
-            <div className="room-growth-overlay" aria-label="Growth summary">
+            <div className="room-growth-overlay" aria-label={ui("growth.title")}>
               <div>
                 <span>{ui("growth.title")}</span>
                 <strong>{ui("growth.level", { value: growth.level })}</strong>
@@ -6401,7 +6502,7 @@ export const App = () => {
         <header className="status-header">
           <div>
             <p className="eyebrow">
-              {sourceLabel} / {configState}
+              {sourceLabel} / {configStateLabel}
             </p>
             <h1>{content.avatar.name}</h1>
           </div>
@@ -6431,7 +6532,7 @@ export const App = () => {
           ))}
         </div>
 
-        <div className="theme-switch" aria-label="UI skin">
+        <div className="theme-switch" aria-label={ui("theme.title")}>
           {UI_THEME_OPTIONS.map((option) => (
             <button
               key={option.id}
@@ -6439,7 +6540,7 @@ export const App = () => {
               className={`theme-button${uiTheme === option.id ? " active" : ""}`}
               onClick={() => setUiTheme(option.id)}
             >
-              {option.label}
+              {ui(option.copyKey)}
             </button>
           ))}
         </div>
@@ -6449,7 +6550,7 @@ export const App = () => {
           <strong>{behaviorLabel(locale, avatar.behavior)}</strong>
           {debugStatus ? (
             <p className="debug-override-warning">
-              Debug override active - click Live
+              {ui("debug.debugOverrideWarning")}
             </p>
           ) : null}
           <p>{currentStatusMessage()}</p>
@@ -6622,12 +6723,12 @@ export const App = () => {
               <b>{liveSessionCount}/{sessions.length}</b>
             </span>
             <span className="sessions-toggle-status">
-              {currentSessionKey ? "Current" : sourceLabel}
+              {currentSessionKey ? ui("sessions.current") : sourceLabel}
             </span>
             {currentSessionContextMeter ? (
               <span className={`sessions-toggle-context ${currentSessionContextMeter.level}`}>
                 <span className="sessions-toggle-context-label">
-                  <span>Context</span>
+                  <span>{ui("sessions.context")}</span>
                   <b>{currentSessionContextMeter.percentLabel}</b>
                 </span>
                 <span className="sessions-toggle-context-bar">
@@ -6651,7 +6752,7 @@ export const App = () => {
                   className="session-clear-button"
                   onClick={clearFollowedSession}
                 >
-                  Clear Follow
+                  {ui("sessions.clearFollow")}
                 </button>
               ) : null}
               <button
@@ -6660,7 +6761,7 @@ export const App = () => {
                 onClick={clearStaleSessionRows}
                 disabled={clearableStaleSessionCount === 0}
               >
-                Clear Stale ({clearableStaleSessionCount})
+                {ui("sessions.clearStale")} ({clearableStaleSessionCount})
               </button>
               <div className="session-command-hint" aria-label="Aivatar session commands">
                 <span>CLI</span>
@@ -6690,10 +6791,10 @@ export const App = () => {
                       {session.contextMeter ? (
                         <div
                           className={`session-context-meter ${session.contextMeter.level}`}
-                          aria-label={`Context window ${session.contextMeter.percentLabel}`}
+                          aria-label={`${ui("sessions.context")} ${session.contextMeter.percentLabel}`}
                         >
                           <div>
-                            <span>Context</span>
+                            <span>{ui("sessions.context")}</span>
                             <strong>{session.contextMeter.percentLabel}</strong>
                           </div>
                           <div className="session-context-bar">
@@ -6708,19 +6809,19 @@ export const App = () => {
                       {session.rewardSummary ? (
                         <p className="session-usage">{session.rewardSummary}</p>
                       ) : null}
-                      <small>{session.sessionId ?? "default"}</small>
+                      <small>{session.sessionId ?? ui("sessions.defaultSession")}</small>
                       <div className="session-meta-row">
                         {session.sessionKey === currentSessionKey ? (
-                          <span className="session-chip">Current</span>
+                          <span className="session-chip">{ui("sessions.current")}</span>
                         ) : null}
                         {session.sessionKey === activeSessionKey ? (
-                          <span className="session-chip">Followed</span>
+                          <span className="session-chip">{ui("sessions.followed")}</span>
                         ) : null}
                         {session.sessionKey === connectedSessionKey ? (
-                          <span className="session-chip">Connected</span>
+                          <span className="session-chip">{ui("sessions.connected")}</span>
                         ) : null}
                         {session.stale && session.sessionKey === connectedSessionKey ? (
-                          <span className="session-chip">Idle</span>
+                          <span className="session-chip">{ui("sessions.idle")}</span>
                         ) : session.stale ? (
                           <span className="session-chip">{ui("sessions.stale")}</span>
                         ) : null}
@@ -6736,7 +6837,7 @@ export const App = () => {
                             session.sessionKey === activeSessionKey
                           }
                         >
-                          Follow
+                          {ui("sessions.follow")}
                         </button>
                       </div>
                     </article>
@@ -6749,7 +6850,7 @@ export const App = () => {
           ) : null}
         </section>
 
-        <section className="task-cabinet-card" aria-label="Task Cabinet">
+        <section className="task-cabinet-card" aria-label={ui("taskCabinet.title")}>
           <button
             type="button"
             className={`task-cabinet-toggle${taskCabinetPanelOpen ? " active" : ""}`}
@@ -6757,15 +6858,15 @@ export const App = () => {
             aria-expanded={taskCabinetPanelOpen}
           >
             <span className="task-cabinet-toggle-main">
-              <span>Task Cabinet</span>
+              <span>{ui("taskCabinet.title")}</span>
               <b>{taskCabinetReadyCount}/{taskCabinetEntries.length}</b>
             </span>
             <span className="task-cabinet-toggle-status">
               {taskCabinetRunningCount > 0
-                ? "Running"
+                ? ui("taskCabinet.running")
                 : canDispatchTasks
-                    ? "Cabinet placed"
-                    : "Place File Cabinet to dispatch"}
+                    ? ui("taskCabinet.placed")
+                    : ui("taskCabinet.placeToDispatch")}
             </span>
             <span className="task-cabinet-toggle-chevron" aria-hidden="true">
               {taskCabinetPanelOpen ? "-" : "+"}
@@ -6775,7 +6876,7 @@ export const App = () => {
           {taskCabinetPanelOpen ? (
             <div className="task-cabinet-submenu">
               <label className="task-cabinet-field">
-                <span>Markdown task path</span>
+                <span>{ui("taskCabinet.path")}</span>
                 <span className="path-picker-row">
                   <input
                     type="text"
@@ -6793,7 +6894,7 @@ export const App = () => {
                     className="path-picker-button"
                     onClick={browseTaskCabinetPath}
                   >
-                    Browse
+                    {ui("launcher.browse")}
                   </button>
                 </span>
               </label>
@@ -6802,11 +6903,10 @@ export const App = () => {
                 className="pixel-button task-cabinet-add"
                 onClick={addTaskCabinetEntry}
               >
-                Add Task
+                {ui("taskCabinet.add")}
               </button>
               <p className="task-cabinet-hint">
-                Task prompts are passed to the CLI as one startup prompt. Keep each
-                .md file at or below 24,000 characters.
+                {ui("taskCabinet.promptHint")}
               </p>
               <div className="task-cabinet-controls task-cabinet-controls-single">
                 <button
@@ -6815,12 +6915,11 @@ export const App = () => {
                   disabled={taskCabinetReadyCount === 0 || taskCabinetRunningCount > 0}
                   onClick={runNextTaskCabinetEntry}
                 >
-                  Run Next
+                  {ui("taskCabinet.runNext")}
                 </button>
               </div>
               <p className="task-cabinet-empty">
-                Uses CLI Launcher agent, args, and folder. Aivatar reads the md file
-                once and sends a temp copy to the agent.
+                {ui("taskCabinet.sourceHint")}
               </p>
               {taskCabinetMessage ? (
                 <p className="task-cabinet-message">{taskCabinetMessage}</p>
@@ -6836,13 +6935,13 @@ export const App = () => {
                         <strong title={entry.path}>
                           {taskCabinetFileName(entry.path)}
                         </strong>
-                        <span>{entry.status}</span>
+                        <span>{taskCabinetStatusLabel(entry.status)}</span>
                       </div>
                       <small className="task-cabinet-path" title={entry.path}>
                         {entry.path}
                       </small>
                       <label className="task-cabinet-field">
-                        <span>Profile</span>
+                        <span>{ui("profile.title")}</span>
                         <select
                           value={entry.runProfile ?? "default"}
                           onChange={(event) =>
@@ -6852,15 +6951,19 @@ export const App = () => {
                             )
                           }
                         >
-                          <option value="default">Default</option>
-                          <option value="fast">Fast</option>
+                          <option value="default">
+                            {taskCabinetRunProfileLabel("default")}
+                          </option>
+                          <option value="fast">
+                            {taskCabinetRunProfileLabel("fast")}
+                          </option>
                         </select>
                       </label>
                       {entry.runProfile === "fast" ? (
                         <small className="task-cabinet-schedule-next">
                           {launcherAgent === "claude-code"
-                            ? "Fast adds --bare for Claude Code."
-                            : "Codex fast profile waits for a verified MCP-skip flag."}
+                            ? ui("profile.fastClaude")
+                            : ui("profile.fastCodex")}
                         </small>
                       ) : null}
                       {entry.cwd || entry.sessionId || entry.error ? (
@@ -6892,11 +6995,11 @@ export const App = () => {
                               )
                             }
                           />
-                          <span>Schedule</span>
+                          <span>{ui("schedule.title")}</span>
                         </label>
                         <div className="task-cabinet-schedule-grid">
                           <label className="task-cabinet-field">
-                            <span>Mode</span>
+                            <span>{ui("schedule.mode")}</span>
                             <select
                               value={entry.schedule?.mode ?? "once"}
                               onChange={(event) =>
@@ -6906,12 +7009,16 @@ export const App = () => {
                                 )
                               }
                             >
-                              <option value="once">Once</option>
-                              <option value="repeat">Repeat</option>
+                              <option value="once">
+                                {taskCabinetScheduleModeLabel("once")}
+                              </option>
+                              <option value="repeat">
+                                {taskCabinetScheduleModeLabel("repeat")}
+                              </option>
                             </select>
                           </label>
                           <label className="task-cabinet-field">
-                            <span>Run at</span>
+                            <span>{ui("schedule.runAt")}</span>
                             <input
                               type="datetime-local"
                               value={isoToDatetimeLocal(entry.schedule?.runAt)}
@@ -6924,7 +7031,7 @@ export const App = () => {
                             />
                           </label>
                           <label className="task-cabinet-field">
-                            <span>Every min</span>
+                            <span>{ui("schedule.everyMin")}</span>
                             <input
                               type="number"
                               min="1"
@@ -6942,7 +7049,7 @@ export const App = () => {
                             />
                           </label>
                           <label className="task-cabinet-field">
-                            <span>Condition</span>
+                            <span>{ui("schedule.condition")}</span>
                             <select
                               value={entry.schedule?.condition ?? "always"}
                               onChange={(event) =>
@@ -6953,21 +7060,29 @@ export const App = () => {
                                 )
                               }
                             >
-                              <option value="always">Always</option>
-                              <option value="only_idle">Only idle</option>
-                              <option value="after_success">After success</option>
+                              <option value="always">
+                                {taskCabinetScheduleConditionLabel("always")}
+                              </option>
+                              <option value="only_idle">
+                                {taskCabinetScheduleConditionLabel("only_idle")}
+                              </option>
+                              <option value="after_success">
+                                {taskCabinetScheduleConditionLabel("after_success")}
+                              </option>
                             </select>
                           </label>
                         </div>
                         <small className="task-cabinet-schedule-next">
                           {entry.schedule?.enabled
-                            ? taskScheduleNextLabel(entry.schedule, nowMs)
-                            : "Schedule off"}
+                            ? taskScheduleNextLabel(entry.schedule, nowMs, ui)
+                            : ui("schedule.off")}
                         </small>
                       </div>
                       <div className="task-cabinet-entry-footer">
                         <small>
-                          Updated {new Date(entry.updatedAt).toLocaleDateString()}
+                          {ui("taskCabinet.updated", {
+                            value: new Date(entry.updatedAt).toLocaleDateString(),
+                          })}
                         </small>
                         {entry.status === "ready" || entry.status === "failed" ? (
                           <button
@@ -6976,7 +7091,9 @@ export const App = () => {
                             disabled={taskCabinetRunningCount > 0}
                             onClick={() => startTaskCabinetEntry(entry.id)}
                           >
-                            {entry.status === "failed" ? "Rerun" : "Run"}
+                            {entry.status === "failed"
+                              ? ui("taskCabinet.rerun")
+                              : ui("taskCabinet.run")}
                           </button>
                         ) : null}
                         <button
@@ -6984,7 +7101,7 @@ export const App = () => {
                           className="task-cabinet-remove"
                           onClick={() => removeTaskCabinetEntry(entry.id)}
                         >
-                          Remove
+                          {ui("taskCabinet.remove")}
                         </button>
                       </div>
                     </article>
@@ -6992,8 +7109,7 @@ export const App = () => {
                 </div>
               ) : (
                 <p className="task-cabinet-empty">
-                  Add markdown file paths here. Aivatar stores the list locally and
-                  leaves the files untouched.
+                  {ui("taskCabinet.empty")}
                 </p>
               )}
             </div>
@@ -7035,7 +7151,7 @@ export const App = () => {
                     className="path-picker-button"
                     onClick={browseLauncherDirectory}
                   >
-                    Browse
+                    {ui("launcher.browse")}
                   </button>
                 </span>
               </label>
@@ -7103,7 +7219,7 @@ export const App = () => {
               <b>{sourceLabel}</b>
             </span>
             <span className="debug-toggle-status">
-              {debugStatus ? "Override" : "Live"}
+              {debugStatus ? ui("debug.override") : ui("debug.live")}
             </span>
             <span className="debug-toggle-chevron" aria-hidden="true">
               {debugPanelOpen ? "-" : "+"}
@@ -7165,7 +7281,7 @@ export const App = () => {
                   className={`pixel-button${navDebugOverlay ? " debug-live-active" : ""}`}
                   onClick={() => setNavDebugOverlay((current) => !current)}
                 >
-                  Nav grid
+                  {ui("debug.navGrid")}
                 </button>
                 <button type="button" className="pixel-button" onClick={saveCurrentLayoutAsDefault}>
                   {ui("debug.saveLayout")}
@@ -7329,6 +7445,14 @@ export const App = () => {
             <div className="edit-actions">
               <button type="button" className="pixel-button" onClick={startMoveWindow}>
                 {ui("action.move")}
+              </button>
+              <button
+                type="button"
+                className="pixel-button"
+                onClick={storeSelectedWindow}
+                disabled={!selectedWindowDefinition}
+              >
+                {ui("action.store")}
               </button>
               <button
                 type="button"
@@ -7518,7 +7642,7 @@ export const App = () => {
               const label = levelLocked
                 ? `${item.name} ${ui("growth.level", { value: unlockLevel })}`
                 : purchasedWindow
-                  ? `${item.name} ${ui("state.ready")}`
+                  ? `${item.name} ${ui("state.owned")}`
                   : `${item.name} ${item.price}`;
 
               return (
@@ -7527,7 +7651,9 @@ export const App = () => {
                   type="button"
                   className="pixel-button shop-button"
                   disabled={
-                    levelLocked || (!purchasedWindow && save.wallet.bits < item.price)
+                    levelLocked ||
+                    purchasedWindow ||
+                    save.wallet.bits < item.price
                   }
                   aria-label={label}
                   title={label}
@@ -7554,17 +7680,17 @@ export const App = () => {
 
         <section className="control-section asset-editor-entry">
           <div className="section-heading">
-            <h2>Asset Studio</h2>
-            <span>Locked</span>
+            <h2>{ui("assetStudio.title")}</h2>
+            <span>{ui("assetStudio.locked")}</span>
           </div>
           <button
             type="button"
             className="pixel-button asset-editor-locked-button"
             disabled
-            title="Asset Studio is still in development"
+            title={ui("assetStudio.lockedTitle")}
           >
             <span aria-hidden="true">🔒</span>
-            Asset Studio in development
+            {ui("assetStudio.inDevelopment")}
           </button>
         </section>
       </aside>

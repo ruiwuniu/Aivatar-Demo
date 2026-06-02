@@ -123,8 +123,8 @@ const chooseCurrentStatus = () => {
       highPriorityStatuses.has(status.status) && !isActivityStale(status),
   );
 
-  if (highPriorityCandidate) return highPriorityCandidate;
   if (activeCandidate && activeCandidate.status !== "idle") return activeCandidate;
+  if (highPriorityCandidate) return highPriorityCandidate;
 
   return (
     candidates.find(
