@@ -1038,7 +1038,7 @@ const NAV_DEBUG_GRID_SIZE = 8;
 const NAV_DEBUG_MIN_X = 84;
 const NAV_DEBUG_MAX_X = 396;
 const NAV_DEBUG_MIN_Y = 136;
-const NAV_DEBUG_MAX_Y = 292;
+const NAV_DEBUG_MAX_Y = 300;
 const NAV_DEBUG_FOOT_HALF_WIDTH = 6;
 const NAV_DEBUG_FOOT_TOP_OFFSET = 6;
 const NAV_DEBUG_FOOT_HEIGHT = 8;
@@ -1138,25 +1138,31 @@ const drawNavigationDebugOverlay = (
   ctx.fill();
   ctx.stroke();
 
-  ctx.strokeStyle = "#66e8ff";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(avatar.x, avatar.y);
-  ctx.lineTo(avatar.targetX, avatar.targetY);
-  ctx.stroke();
-  drawPixelRect(ctx, avatar.targetX - 3, avatar.targetY - 3, 6, 6, "#66e8ff");
+  const hasNavigationTarget =
+    (avatar.behavior !== "idle" || avatar.actionIntent) &&
+    Math.hypot(avatar.x - avatar.targetX, avatar.y - avatar.targetY) > 1;
 
-  const path = getNavigationDebugPath(avatar, content);
-  if (path.length > 1) {
-    ctx.strokeStyle = "#00ffd5";
-    ctx.lineWidth = 2;
+  if (hasNavigationTarget) {
+    ctx.strokeStyle = "#66e8ff";
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(path[0].x, path[0].y);
-    path.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+    ctx.moveTo(avatar.x, avatar.y);
+    ctx.lineTo(avatar.targetX, avatar.targetY);
     ctx.stroke();
-    path.forEach((point) => {
-      drawPixelRect(ctx, point.x - 1, point.y - 1, 3, 3, "#00ffd5");
-    });
+    drawPixelRect(ctx, avatar.targetX - 3, avatar.targetY - 3, 6, 6, "#66e8ff");
+
+    const path = getNavigationDebugPath(avatar, content);
+    if (path.length > 1) {
+      ctx.strokeStyle = "#00ffd5";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      path.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+      ctx.stroke();
+      path.forEach((point) => {
+        drawPixelRect(ctx, point.x - 1, point.y - 1, 3, 3, "#00ffd5");
+      });
+    }
   }
 
   (avatar.interactionTargetAlternates ?? []).forEach((point) => {
@@ -2782,6 +2788,7 @@ const drawGameConsole = (
   ghost: "none" | "valid" | "invalid" = "none",
   frame = 0,
   avatar?: AvatarRuntime,
+  playingOverride = false,
 ) => {
   ctx.save();
   if (ghost !== "none") ctx.globalAlpha = 0.62;
@@ -2789,8 +2796,9 @@ const drawGameConsole = (
   const baseY = Math.round(y);
   const playing =
     ghost === "none" &&
-    avatar?.behavior === "play" &&
-    Math.hypot(avatar.x - baseX, avatar.y - baseY) < 24;
+    (playingOverride ||
+      (avatar?.behavior === "play" &&
+        Math.hypot(avatar.x - baseX, avatar.y - baseY) < 24));
   const screen = ghost === "invalid" ? "#ff8fa3" : playing ? "#1bffd2" : "#8df7c4";
 
   drawPixelRect(ctx, baseX - 21, baseY - 20, 42, 18, "#0b0d10");
@@ -3257,6 +3265,7 @@ const drawPlaceableItem = (
   coffeeCupHasCoffee = false,
   taskFileCount = 0,
   failedTaskFileCount = 0,
+  gameConsolePlaying = false,
 ) => {
   switch (itemId) {
     case "cozy-rug":
@@ -3275,7 +3284,7 @@ const drawPlaceableItem = (
       drawDigitalWallClock(ctx, x, y, ghost);
       return;
     case "game-console":
-      drawGameConsole(ctx, x, y, ghost, frame, avatar);
+      drawGameConsole(ctx, x, y, ghost, frame, avatar, gameConsolePlaying);
       return;
     case "oil-easel":
       drawOilEasel(ctx, x, y, ghost, frame, avatar);
@@ -3332,11 +3341,50 @@ const drawPlacedItemHighlight = (
   );
 };
 
+const avatarFootprintTouchesPoint = (
+  avatar: AvatarRuntime,
+  point: { x: number; y: number },
+) =>
+  point.x >= avatar.x - 7 &&
+  point.x <= avatar.x + 7 &&
+  point.y >= avatar.y + 4 &&
+  point.y <= avatar.y + 18;
+
+const isAvatarPlayingGameConsole = (
+  avatar: AvatarRuntime | undefined,
+  item: PlacedItem,
+  content: AivatarContent,
+  activeInteraction?: FurnitureInteractionState | null,
+) => {
+  if (!avatar || item.itemId !== "game-console" || avatar.behavior !== "play") {
+    return false;
+  }
+
+  if (activeInteraction?.furnitureId === item.id) {
+    return true;
+  }
+
+  const standpoints = getPlacedItemInteractionStandpoints(item, content);
+  if (standpoints.length === 0) {
+    return Math.hypot(avatar.x - item.x, avatar.y - item.y) < 36;
+  }
+
+  const nearCurrentTarget =
+    Math.hypot(avatar.x - avatar.targetX, avatar.y - avatar.targetY) <= 32;
+
+  return standpoints.some(
+    (point) =>
+      avatarFootprintTouchesPoint(avatar, point) ||
+      Math.hypot(avatar.x - point.x, avatar.y - point.y) <= 32 ||
+      (nearCurrentTarget &&
+        Math.hypot(avatar.targetX - point.x, avatar.targetY - point.y) <= 32),
+  );
+};
 
 const drawPlacedItem = (
   ctx: CanvasRenderingContext2D,
   item: PlacedItem,
-  definitions: ItemDefinition[],
+  content: AivatarContent,
   frame = 0,
   avatar?: AvatarRuntime,
   activeInteraction?: FurnitureInteractionState | null,
@@ -3344,12 +3392,18 @@ const drawPlacedItem = (
   taskFileCount = 0,
   failedTaskFileCount = 0,
 ) => {
-  const definition = definitions.find((candidate) => candidate.id === item.itemId);
+  const definition = content.itemDefinitions.find((candidate) => candidate.id === item.itemId);
   if (!definition) return;
   const brewing =
     definition.id === "coffee-machine" &&
     activeInteraction?.kind === "brew" &&
     activeInteraction.furnitureId === item.id;
+  const gameConsolePlaying = isAvatarPlayingGameConsole(
+    avatar,
+    item,
+    content,
+    activeInteraction,
+  );
 
   if (definition.kind === "decor" || definition.kind === "furniture") {
     if (item.rotation) {
@@ -3368,6 +3422,7 @@ const drawPlacedItem = (
         coffeeCupHasCoffee,
         taskFileCount,
         failedTaskFileCount,
+        gameConsolePlaying,
       );
       ctx.restore();
       return;
@@ -3385,6 +3440,7 @@ const drawPlacedItem = (
       coffeeCupHasCoffee,
       taskFileCount,
       failedTaskFileCount,
+      gameConsolePlaying,
     );
   }
 };
@@ -3438,7 +3494,7 @@ const drawPlacedItems = (
       drawPlacedItem(
         ctx,
         item,
-        content.itemDefinitions,
+        content,
         frame,
         avatar,
         activeInteraction,
@@ -3481,7 +3537,7 @@ const drawWallPlacedItems = (
     .slice()
     .sort((left, right) => left.y - right.y || left.x - right.x)
     .forEach((item) => {
-      drawPlacedItem(ctx, item, content.itemDefinitions, frame, avatar);
+      drawPlacedItem(ctx, item, content, frame, avatar);
       if (item.id === selectedPlacedItemId) {
         drawPlacedItemHighlight(ctx, item);
       }
@@ -3518,7 +3574,7 @@ const drawPlacedItemsForSurface = (
       drawPlacedItem(
         ctx,
         item,
-        content.itemDefinitions,
+        content,
         frame,
         avatar,
         activeInteraction,
@@ -3541,7 +3597,7 @@ const drawFloorUnderlayItems = (
     .filter((item) => isFloorUnderlayItem(item.itemId))
     .sort((left, right) => left.y - right.y)
     .forEach((item) => {
-      drawPlacedItem(ctx, item, content.itemDefinitions, frame, avatar);
+      drawPlacedItem(ctx, item, content, frame, avatar);
       if (item.id === selectedPlacedItemId) {
         drawPlacedItemHighlight(ctx, item);
       }
@@ -3975,6 +4031,87 @@ const drawBubbleWallpaper = (
   }
 };
 
+const drawExposedBrickWallpaper = (
+  ctx: CanvasRenderingContext2D,
+  surface: RoomSurfaceDefinition,
+) => {
+  const palette = surface.palette;
+  const hash = (x: number, y: number) =>
+    Math.abs((x * 92837111) ^ (y * 689287499));
+
+  drawPixelRect(ctx, 70, 14, 340, 120, palette.border);
+  drawPixelRect(ctx, 76, 20, 328, 106, "#7c7a72");
+  drawPixelRect(ctx, 76, 20, 328, 2, "#a49c8e");
+
+  const brickWidth = 34;
+  const brickHeight = 10;
+  const mortar = 2;
+  const brickAreaLeft = 76;
+  const brickAreaRight = 404;
+  const brickAreaTop = 24;
+  const brickAreaBottom = 128;
+
+  for (let y = brickAreaTop; y < brickAreaBottom; y += brickHeight + mortar) {
+    const row = Math.floor((y - brickAreaTop) / (brickHeight + mortar));
+    const offset = row % 2 === 0 ? -5 : -brickWidth / 2 - 5;
+
+    for (let x = brickAreaLeft + offset; x < brickAreaRight; x += brickWidth + mortar) {
+      const brickX = Math.max(brickAreaLeft, Math.round(x));
+      const brickY = y;
+      const brickRight = Math.min(brickAreaRight, Math.round(x + brickWidth));
+      const brickBottom = Math.min(brickAreaBottom, y + brickHeight);
+      const brickW = brickRight - brickX;
+      const brickH = brickBottom - brickY;
+      if (brickW < 8 || brickH < 6) continue;
+
+      const brickHash = hash(Math.floor(x), y);
+      const tone =
+        brickHash % 5 === 0
+          ? palette.plankC
+          : brickHash % 3 === 0
+            ? palette.plankB
+            : brickHash % 7 === 0
+              ? palette.plankD
+              : palette.plankA;
+
+      drawPixelRect(ctx, brickX + 1, brickY + 1, brickW, brickH, "#42342e");
+      drawPixelRect(ctx, brickX, brickY, brickW, brickH, tone);
+      drawPixelRect(ctx, brickX, brickY, brickW, 1, palette.highlight);
+      drawPixelRect(ctx, brickX + 1, brickY + 1, Math.max(0, brickW - 4), 1, palette.grainLight);
+      drawPixelRect(ctx, brickX, brickY + brickH - 1, brickW, 1, palette.grainDark);
+      drawPixelRect(ctx, brickX + brickW - 1, brickY + 1, 1, Math.max(0, brickH - 2), palette.grainDark);
+      drawPixelRect(ctx, brickX + 1, brickY + brickH - 1, Math.max(0, brickW - 3), 1, "#3b231d");
+
+      for (let dotIndex = 0; dotIndex < 5; dotIndex += 1) {
+        const dotHash = hash(brickX + dotIndex * 11, brickY + dotIndex * 7);
+        const dotX = brickX + 4 + (dotHash % Math.max(1, brickW - 9));
+        const dotY = brickY + 3 + (Math.floor(dotHash / 13) % Math.max(1, brickH - 6));
+        const dotColor =
+          dotHash % 4 === 0
+            ? "rgba(255, 203, 151, 0.28)"
+            : dotHash % 3 === 0
+              ? "rgba(52, 25, 20, 0.35)"
+              : "rgba(167, 76, 49, 0.55)";
+        drawPixelRect(ctx, dotX, dotY, dotHash % 5 === 0 ? 2 : 1, 1, dotColor);
+      }
+
+      if (brickHash % 4 === 0 && brickW > 20) {
+        const scarX = brickX + 6 + (brickHash % Math.max(1, brickW - 15));
+        drawPixelRect(ctx, scarX, brickY + brickH - 4, 6, 1, "rgba(55, 28, 23, 0.42)");
+      }
+
+      if (brickHash % 6 === 1 && brickW > 20) {
+        drawPixelRect(ctx, brickX + 3, brickY + 3, 4, 1, "#8a3828");
+        drawPixelRect(ctx, brickX + 5, brickY + 4, 2, 1, "#5b261e");
+      }
+    }
+  }
+
+  for (let y = brickAreaTop + 6; y < brickAreaBottom; y += 16) {
+    drawPixelRect(ctx, 80, y, 320, 1, "rgba(255, 255, 255, 0.08)");
+  }
+};
+
 const drawSakuraWallpaper = (
   ctx: CanvasRenderingContext2D,
   surface: RoomSurfaceDefinition,
@@ -4076,6 +4213,11 @@ const drawWall = (
   ctx: CanvasRenderingContext2D,
   surface: RoomSurfaceDefinition,
 ) => {
+  if (surface.id === "exposed-red-brick-wallpaper") {
+    drawExposedBrickWallpaper(ctx, surface);
+    return;
+  }
+
   if (surface.id === "purple-bubble-wallpaper") {
     drawBubbleWallpaper(ctx, surface);
     return;

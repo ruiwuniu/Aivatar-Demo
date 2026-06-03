@@ -1,4 +1,7 @@
 import http from "node:http";
+import { readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { WebSocketServer } from "ws";
 
 const wsPort = Number(process.env.AIVATAR_WS_PORT ?? 38987);
@@ -9,13 +12,18 @@ const agentStatusPath = "/agent-status";
 const legacyStatusPath = "/codex-status";
 const activeSessionPath = "/agent-active";
 const staleSessionsPath = "/agent-sessions/stale";
+const disconnectSessionPath = "/agent-sessions/disconnect";
 const presencePath = "/agent-presence";
 const healthPath = "/health";
 const sessionStaleMs = Number(
-  process.env.AIVATAR_SESSION_STALE_MS ?? 48 * 60 * 60 * 1000,
+  process.env.AIVATAR_SESSION_STALE_MS ?? 30 * 60 * 1000,
 );
 const activityStaleMs = Number(
   process.env.AIVATAR_ACTIVITY_STALE_MS ?? 5 * 60 * 1000,
+);
+const disconnectedSessionTombstoneMs = Number(
+  process.env.AIVATAR_DISCONNECTED_SESSION_TOMBSTONE_MS ??
+    24 * 60 * 60 * 1000,
 );
 const maxSessions = Number(process.env.AIVATAR_MAX_SESSIONS ?? 80);
 
@@ -61,9 +69,88 @@ let currentStatus = bridgeIdleStatus();
 let activeSessionKey = null;
 
 const sessions = new Map();
+const disconnectedSessionKeys = new Map();
 
 const sessionKey = (status) =>
   `${status.agent ?? "codex"}:${status.sessionId ?? "default"}`;
+
+const tombstoneSession = (key) => {
+  if (
+    !Number.isFinite(disconnectedSessionTombstoneMs) ||
+    disconnectedSessionTombstoneMs <= 0
+  ) {
+    return;
+  }
+
+  disconnectedSessionKeys.set(key, Date.now() + disconnectedSessionTombstoneMs);
+};
+
+const isSessionTombstoned = (key) => {
+  const expiresAt = disconnectedSessionKeys.get(key);
+  if (!expiresAt) return false;
+  if (Date.now() <= expiresAt) return true;
+  disconnectedSessionKeys.delete(key);
+  return false;
+};
+
+const safeName = (value) => String(value).replace(/[^a-zA-Z0-9_.-]/g, "_");
+
+const pluginPidFileFor = ({ agent, sessionId }, kind) =>
+  join(
+    tmpdir(),
+    "aivatar-session-bridge",
+    `${safeName(agent)}-${safeName(sessionId)}.${kind}.json`,
+  );
+
+const cliPidFileFor = ({ agent, sessionId }) =>
+  join(
+    tmpdir(),
+    "aivatar-cli-session",
+    `${safeName(agent)}-${safeName(sessionId)}.json`,
+  );
+
+const stopPid = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false;
+  try {
+    process.kill(pid, "SIGTERM");
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const stopPluginPidFile = async (pidFile) => {
+  try {
+    const record = JSON.parse(await readFile(pidFile, "utf8"));
+    const stopped = stopPid(record?.pid) ? 1 : 0;
+    await rm(pidFile, { force: true });
+    return stopped;
+  } catch {
+    return 0;
+  }
+};
+
+const stopCliPidFile = async (pidFile) => {
+  try {
+    const record = JSON.parse(await readFile(pidFile, "utf8"));
+    let stopped = 0;
+    for (const pid of [record?.heartbeatPid, record?.watcherPid, record?.watchdogPid]) {
+      if (stopPid(pid)) stopped += 1;
+    }
+    await rm(pidFile, { force: true });
+    return stopped;
+  } catch {
+    return 0;
+  }
+};
+
+const stopRecordedSessionProcesses = async (session) => {
+  let stoppedProcesses = 0;
+  stoppedProcesses += await stopPluginPidFile(pluginPidFileFor(session, "heartbeat"));
+  stoppedProcesses += await stopPluginPidFile(pluginPidFileFor(session, "watcher"));
+  stoppedProcesses += await stopCliPidFile(cliPidFileFor(session));
+  return stoppedProcesses;
+};
 
 const sessionExpiresAt = () =>
   new Date(Date.now() + sessionStaleMs).toISOString();
@@ -369,6 +456,28 @@ const readPresenceBody = async (request) => {
   };
 };
 
+const readDisconnectSessionBody = async (request) => {
+  const body = await readBody(request);
+  if (!body.trim()) {
+    throw new Error("Disconnect session payload must be a JSON object");
+  }
+
+  const parsed = JSON.parse(body);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Disconnect session payload must be a JSON object");
+  }
+
+  const agent = typeof parsed.agent === "string" ? parsed.agent.trim() : "";
+  const sessionId =
+    typeof parsed.sessionId === "string" ? parsed.sessionId.trim() : "";
+
+  if (!agent || !sessionId) {
+    throw new Error("Disconnect session payload requires agent and sessionId");
+  }
+
+  return { agent, sessionId };
+};
+
 const wsHttpServer = http.createServer();
 const wsServer = new WebSocketServer({ noServer: true });
 
@@ -414,6 +523,7 @@ const httpServer = http.createServer(async (request, response) => {
       legacyHttp: `http://127.0.0.1:${httpPort}${legacyStatusPath}`,
       activeSessionHttp: `http://127.0.0.1:${httpPort}${activeSessionPath}`,
       staleSessionsHttp: `http://127.0.0.1:${httpPort}${staleSessionsPath}`,
+      disconnectSessionHttp: `http://127.0.0.1:${httpPort}${disconnectSessionPath}`,
       presenceHttp: `http://127.0.0.1:${httpPort}${presencePath}`,
       clients: wsServer.clients.size,
       agentStatus: snapshot.currentStatus,
@@ -425,6 +535,7 @@ const httpServer = http.createServer(async (request, response) => {
       currentSessionKey: snapshot.currentSessionKey,
       sessionStaleMs,
       activityStaleMs,
+      disconnectedSessionTombstoneMs,
     });
     return;
   }
@@ -449,6 +560,7 @@ const httpServer = http.createServer(async (request, response) => {
   if (request.url === activeSessionPath && request.method === "POST") {
     try {
       activeSessionKey = await readActiveSessionBody(request);
+      if (activeSessionKey) disconnectedSessionKeys.delete(activeSessionKey);
       const snapshot = makeSnapshot();
       broadcast(snapshot);
       sendJson(response, 202, snapshot);
@@ -471,10 +583,37 @@ const httpServer = http.createServer(async (request, response) => {
     return;
   }
 
+  if (request.url === disconnectSessionPath && request.method === "POST") {
+    try {
+      const session = await readDisconnectSessionBody(request);
+      const key = `${session.agent}:${session.sessionId}`;
+      const deletedSessions = sessions.delete(key) ? 1 : 0;
+      if (key === activeSessionKey) activeSessionKey = null;
+      tombstoneSession(key);
+      const stoppedProcesses = await stopRecordedSessionProcesses(session);
+      const snapshot = makeSnapshot();
+      broadcast(snapshot);
+      sendJson(response, 202, {
+        ...snapshot,
+        deletedSessions,
+        stoppedProcesses,
+      });
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : "Invalid disconnect session payload",
+      });
+    }
+    return;
+  }
+
   if (request.url === presencePath && request.method === "POST") {
     try {
       const presence = await readPresenceBody(request);
       const key = `${presence.agent}:${presence.sessionId}`;
+      if (isSessionTombstoned(key)) {
+        sendJson(response, 202, makeSnapshot());
+        return;
+      }
       const existing = sessions.get(key);
       sessions.set(key, withSessionExpiry({
         ...(existing ?? {
@@ -510,7 +649,12 @@ const httpServer = http.createServer(async (request, response) => {
     try {
       const body = await readBody(request);
       const nextStatus = normalizeStatus(JSON.parse(body));
-      const existing = sessions.get(sessionKey(nextStatus));
+      const key = sessionKey(nextStatus);
+      if (isSessionTombstoned(key)) {
+        sendJson(response, 202, makeSnapshot());
+        return;
+      }
+      const existing = sessions.get(key);
       currentStatus = {
         ...nextStatus,
         presenceTimestamp: nextStatus.presenceTimestamp ?? existing?.presenceTimestamp,
@@ -519,7 +663,7 @@ const httpServer = http.createServer(async (request, response) => {
           nextStatus.idleBubbleCandidates ?? existing?.idleBubbleCandidates,
       };
       currentStatus = withSessionExpiry(currentStatus);
-      sessions.set(sessionKey(currentStatus), currentStatus);
+      sessions.set(key, currentStatus);
       pruneSessionOverflow();
       const snapshot = makeSnapshot();
       broadcast(snapshot);
@@ -545,6 +689,7 @@ httpServer.listen(httpPort, "127.0.0.1", () => {
   console.log(`Aivatar legacy HTTP bridge: http://127.0.0.1:${httpPort}${legacyStatusPath}`);
   console.log(`Aivatar active session: http://127.0.0.1:${httpPort}${activeSessionPath}`);
   console.log(`Aivatar stale sessions: http://127.0.0.1:${httpPort}${staleSessionsPath}`);
+  console.log(`Aivatar disconnect session: http://127.0.0.1:${httpPort}${disconnectSessionPath}`);
   console.log(`Aivatar presence: http://127.0.0.1:${httpPort}${presencePath}`);
   console.log(`Aivatar health: http://127.0.0.1:${httpPort}${healthPath}`);
 });

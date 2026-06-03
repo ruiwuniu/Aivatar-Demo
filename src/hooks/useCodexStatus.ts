@@ -10,6 +10,7 @@ const WS_URL = "ws://127.0.0.1:38987/agent-status";
 const HTTP_URL = "http://127.0.0.1:38988/agent-status";
 const ACTIVE_SESSION_URL = "http://127.0.0.1:38988/agent-active";
 const STALE_SESSIONS_URL = "http://127.0.0.1:38988/agent-sessions/stale";
+const DISCONNECT_SESSION_URL = "http://127.0.0.1:38988/agent-sessions/disconnect";
 
 const simulatedStatuses: CodexStatusName[] = [
   "idle",
@@ -120,6 +121,20 @@ export const useCodexStatus = () => {
     applyStatusPayload(parsed);
   };
 
+  const disconnectSession = async (agent: string, sessionId: string) => {
+    const response = await fetch(DISCONNECT_SESSION_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agent, sessionId }),
+    });
+
+    if (!response.ok) throw new Error(await response.text());
+    const parsed: unknown = await response.json();
+    applyStatusPayload(parsed);
+  };
+
   useEffect(() => {
     let socket: WebSocket | null = null;
     let reconnectTimer = 0;
@@ -209,6 +224,7 @@ export const useCodexStatus = () => {
       activateSession,
       clearActiveSession,
       clearStaleSessions,
+      disconnectSession,
     }),
     [activeSessionKey, connectedSessionKey, currentSessionKey, sessions, source, status],
   );

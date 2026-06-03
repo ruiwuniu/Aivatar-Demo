@@ -86,10 +86,10 @@ const SLEEP_RECOVERY_INTERVAL_SECONDS = 2;
 const INTERACTION_FEEDBACK_SECONDS = 5;
 const REWARD_BUBBLE_SECONDS = 10;
 const PLAY_MOOD_RECOVERY_PER_TICK = 1;
-const PLAY_MOOD_RECOVERY_INTERVAL_SECONDS = 2;
+const PLAY_MOOD_RECOVERY_INTERVAL_SECONDS = 14;
 const PLAY_ACTIVE_TARGET_REACH = 24;
 const PAINT_MOOD_RECOVERY_PER_TICK = 1;
-const PAINT_RECOVERY_INTERVAL_SECONDS = 3;
+const PAINT_RECOVERY_INTERVAL_SECONDS = 16;
 const COFFEE_MACHINE_ITEM_ID = "coffee-machine";
 const EASEL_ITEM_ID = "oil-easel";
 const COFFEE_CUP_ITEM_ID = "coffee-cup";
@@ -103,6 +103,7 @@ const COFFEE_BREW_SECONDS = 4;
 const COFFEE_BREW_BIT_COST = 1;
 const SURFACE_APPLY_COST = 1000;
 const COFFEE_AUTONOMOUS_INTERVAL_SECONDS = 4;
+const COFFEE_AUTONOMOUS_COOLDOWN_SECONDS = 90;
 const WORK_BOOST_SECONDS = 120;
 const WORK_BOOST_COMPLETE_BONUS = 3;
 const TOKEN_REWARD_TOKEN_STEP = 1000;
@@ -2049,6 +2050,7 @@ type TaskCabinetVisualFlow = {
 export const App = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scenePanelRef = useRef<HTMLElement | null>(null);
+  const roomEditPanelRef = useRef<HTMLElement | null>(null);
   const initialSaveRef = useRef<AivatarSaveState | null>(null);
   const loadInitialSave = () => {
     if (!initialSaveRef.current) {
@@ -2097,6 +2099,7 @@ export const App = () => {
   const selectedFurnitureRef = useRef<FurnitureDefinition | null>(null);
   const hoveredFurnitureRef = useRef<FurnitureDefinition | null>(null);
   const activeInteractionRef = useRef<FurnitureInteractionState | null>(null);
+  const autonomousCoffeeCooldownUntilRef = useRef(0);
   const placingItemRef = useRef<ItemDefinition | null>(null);
   const placementPreviewRef = useRef<{
     x: number;
@@ -2155,6 +2158,7 @@ export const App = () => {
     activateSession,
     clearActiveSession,
     clearStaleSessions,
+    disconnectSession,
   } = useCodexStatus();
   const [debugStatus, setDebugStatus] = useState<CodexStatusMessage | null>(null);
   const [windowTimePreview, setWindowTimePreview] = useState(false);
@@ -2337,6 +2341,13 @@ export const App = () => {
   const clearStaleSessionRows = () => {
     void clearStaleSessions().catch(() => {
       console.warn("Could not clear stale sessions.");
+    });
+  };
+
+  const disconnectSessionRow = (session: CodexStatusMessage) => {
+    if (!session.agent || !session.sessionId) return;
+    void disconnectSession(session.agent, session.sessionId).catch(() => {
+      console.warn("Could not disconnect session.");
     });
   };
 
@@ -2652,6 +2663,18 @@ export const App = () => {
   const updateSelectedPlacedItem = (item: PlacedItem | null) => {
     selectedPlacedItemRef.current = item;
     setSelectedPlacedItem(item);
+  };
+
+  const scrollRoomEditPanelIntoView = () => {
+    if (!sidePanelOpen) return;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        roomEditPanelRef.current?.scrollIntoView({
+          block: "start",
+          behavior: "smooth",
+        });
+      });
+    });
   };
 
   const updateMovingPlacedItem = (item: PlacedItem | null) => {
@@ -3466,10 +3489,12 @@ export const App = () => {
         if (runtimeActionBehavior(runtimeRef.current) === "brew") {
           runtimeRef.current = {
             ...runtimeRef.current,
+            targetX: runtimeRef.current.x,
+            targetY: runtimeRef.current.y,
             behavior: "idle",
             behaviorTimer: 2,
             expression: "calm",
-            activityLabel: "Idle",
+            activityLabel: undefined,
             actionIntent: undefined,
             actionActivityLabel: undefined,
             interactionTargetAlternates: undefined,
@@ -3614,6 +3639,7 @@ export const App = () => {
 
       if (
         runtimeActionBehavior(runtimeRef.current) === "brew" &&
+        now >= autonomousCoffeeCooldownUntilRef.current &&
         !isHighPriorityStatus(currentStatus) &&
         currentContent.placedItems?.some((item) => item.itemId === COFFEE_MACHINE_ITEM_ID)
       ) {
@@ -3653,6 +3679,21 @@ export const App = () => {
         if (nearCoffeeMachine && coffeeAccumulator >= COFFEE_AUTONOMOUS_INTERVAL_SECONDS) {
           coffeeAccumulator = 0;
           if (currentContent.wallet.bits < COFFEE_BREW_BIT_COST) {
+            autonomousCoffeeCooldownUntilRef.current =
+              now + COFFEE_AUTONOMOUS_COOLDOWN_SECONDS * 1000;
+            runtimeRef.current = {
+              ...runtimeRef.current,
+              targetX: runtimeRef.current.x,
+              targetY: runtimeRef.current.y,
+              behavior: "idle",
+              behaviorTimer: 2,
+              expression: "calm",
+              activityLabel: undefined,
+              actionIntent: undefined,
+              actionActivityLabel: undefined,
+              interactionTargetAlternates: undefined,
+            };
+            setAvatar(runtimeRef.current);
             updateActiveInteraction({
               kind: "blocked",
               furnitureId: coffeeMachine?.id ?? COFFEE_MACHINE_ITEM_ID,
@@ -3661,11 +3702,11 @@ export const App = () => {
                 name: coffeeMachineName,
                 bits: COFFEE_BREW_BIT_COST,
               }),
-              startedAt: performance.now(),
+              startedAt: now,
+              endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
               bubbleText: ui("bubble.bits"),
             });
-            return;
-          }
+          } else {
           setSave((current) => {
             const coffeeCount = getInventoryQuantity(current.inventory, COFFEE_ITEM_ID);
             const tableCoffeeCapacity = getTableCoffeeCapacity(current.placedItems);
@@ -3725,7 +3766,21 @@ export const App = () => {
               ),
             };
           });
-          const now = performance.now();
+          autonomousCoffeeCooldownUntilRef.current =
+            now + COFFEE_AUTONOMOUS_COOLDOWN_SECONDS * 1000;
+          runtimeRef.current = {
+            ...runtimeRef.current,
+            targetX: runtimeRef.current.x,
+            targetY: runtimeRef.current.y,
+            behavior: "idle",
+            behaviorTimer: 2,
+            expression: "calm",
+            activityLabel: undefined,
+            actionIntent: undefined,
+            actionActivityLabel: undefined,
+            interactionTargetAlternates: undefined,
+          };
+          setAvatar(runtimeRef.current);
           updateActiveInteraction({
             kind: "brew",
             furnitureId: coffeeMachine?.id ?? COFFEE_MACHINE_ITEM_ID,
@@ -3735,6 +3790,7 @@ export const App = () => {
             endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
             bubbleText: ui("thought.brew"),
           });
+          }
         }
       } else {
         coffeeAccumulator = 0;
@@ -5933,6 +5989,7 @@ export const App = () => {
       updateSelectedWindow(null);
       updateMovingFurniture(null);
       clearPendingFurnitureInteraction();
+      scrollRoomEditPanelIntoView();
 
       updateActiveInteraction({
         kind: "none",
@@ -5958,6 +6015,7 @@ export const App = () => {
         updateSelectedWindow(roomWindow);
         updateMovingFurniture(null);
         clearPendingFurnitureInteraction();
+        scrollRoomEditPanelIntoView();
         updateActiveInteraction({
           kind: "none",
           furnitureId: "window",
@@ -5977,6 +6035,7 @@ export const App = () => {
     updateMovingFurniture(null);
     selectedFurnitureRef.current = furniture;
     setSelectedFurniture(furniture);
+    scrollRoomEditPanelIntoView();
 
     updateActiveInteraction({
       kind: "none",
@@ -6031,6 +6090,7 @@ export const App = () => {
       updateSelectedWindow(null);
       updateMovingFurniture(null);
       clearPendingFurnitureInteraction();
+      scrollRoomEditPanelIntoView();
 
       if (placedItemDefinition && action) {
         setSceneContextMenu({
@@ -6056,6 +6116,7 @@ export const App = () => {
     selectedFurnitureRef.current = furniture;
     setSelectedFurniture(furniture);
     clearPendingFurnitureInteraction();
+    scrollRoomEditPanelIntoView();
     setSceneContextMenu({
       x: menuX,
       y: menuY,
@@ -6839,6 +6900,14 @@ export const App = () => {
                         >
                           {ui("sessions.follow")}
                         </button>
+                        <button
+                          type="button"
+                          className="session-disconnect-button"
+                          onClick={() => disconnectSessionRow(session)}
+                          disabled={!session.agent || !session.sessionId}
+                        >
+                          {ui("sessions.disconnect")}
+                        </button>
                       </div>
                     </article>
                   ))}
@@ -7383,7 +7452,7 @@ export const App = () => {
         ) : null}
 
         {selectedPlacedItem && selectedPlacedItemDefinition ? (
-          <section className="control-section edit-panel">
+          <section ref={roomEditPanelRef} className="control-section edit-panel">
             <div className="section-heading">
               <h2>{ui("roomEdit.title")}</h2>
               <span>{movingPlacedItem ? ui("state.moving") : ui("state.selected")}</span>
@@ -7436,7 +7505,7 @@ export const App = () => {
         ) : null}
 
         {selectedWindow ? (
-          <section className="control-section edit-panel">
+          <section ref={roomEditPanelRef} className="control-section edit-panel">
             <div className="section-heading">
               <h2>{ui("roomEdit.title")}</h2>
               <span>{movingWindow ? ui("state.moving") : ui("state.selected")}</span>
@@ -7473,7 +7542,7 @@ export const App = () => {
         ) : null}
 
         {selectedFurniture ? (
-          <section className="control-section edit-panel">
+          <section ref={roomEditPanelRef} className="control-section edit-panel">
             <div className="section-heading">
               <h2>{furnitureEditorTitle(locale, selectedFurniture)}</h2>
               <span>{movingFurniture ? ui("state.moving") : ui("state.selected")}</span>

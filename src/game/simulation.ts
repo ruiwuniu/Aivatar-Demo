@@ -20,7 +20,7 @@ const NAV_GRID_SIZE = 8;
 const NAV_ROOM_MIN_X = 84;
 const NAV_ROOM_MAX_X = 396;
 const NAV_ROOM_MIN_Y = 136;
-const NAV_ROOM_MAX_Y = 292;
+const NAV_ROOM_MAX_Y = 300;
 const AVATAR_FOOTPRINT_HALF_WIDTH = 6;
 const AVATAR_FOOTPRINT_TOP_OFFSET = 6;
 const AVATAR_FOOTPRINT_HEIGHT = 8;
@@ -41,16 +41,18 @@ const NAV_VISITED_CELL_PENALTY = 0.08;
 const NAV_PLANNING_CLEARANCE = 4;
 const NAV_CORRIDOR_CLEARANCE = NAV_PLANNING_CLEARANCE;
 const INTERACTION_SAFE_GAP = AVATAR_FOOTPRINT_HALF_WIDTH + NAV_PLANNING_CLEARANCE + 4;
+const CLOSE_INTERACTION_STANDPOINT_DISTANCE = INTERACTION_SAFE_GAP / 2;
 const TERMINAL_SURFACE_STANDPOINT_DISTANCE =
   Math.max(0, AVATAR_FOOTPRINT_HALF_WIDTH + NAV_PLANNING_CLEARANCE + 1 - NAV_GRID_SIZE);
-const DESK_CLOSE_STANDPOINT_DISTANCE = INTERACTION_SAFE_GAP;
-const DESK_FRONT_STANDPOINT_DISTANCE = INTERACTION_SAFE_GAP;
-const FURNITURE_CLOSE_STANDPOINT_DISTANCE = INTERACTION_SAFE_GAP;
-const SURFACE_ITEM_CLOSE_STANDPOINT_DISTANCE = INTERACTION_SAFE_GAP;
+const DESK_CLOSE_STANDPOINT_DISTANCE = CLOSE_INTERACTION_STANDPOINT_DISTANCE;
+const DESK_FRONT_STANDPOINT_DISTANCE = CLOSE_INTERACTION_STANDPOINT_DISTANCE;
+const FURNITURE_CLOSE_STANDPOINT_DISTANCE = CLOSE_INTERACTION_STANDPOINT_DISTANCE;
+const SURFACE_ITEM_CLOSE_STANDPOINT_DISTANCE = CLOSE_INTERACTION_STANDPOINT_DISTANCE;
 const SOFT_COLLISION_BACKOFF_DISTANCE = 5;
 const SOFT_COLLISION_REPLAN_PAUSE_SECONDS = 0.28;
 const NAV_STALL_SECONDS = BLOCKED_TARGET_ABANDON_SECONDS;
 const NAV_STALL_MIN_PROGRESS = 0.8;
+const NAV_ACTION_STALL_FAILSAFE_LIMIT = 3;
 const ARRIVAL_GATED_BEHAVIORS: BehaviorName[] = [
   "sleep",
   "interact",
@@ -121,6 +123,14 @@ let cachedNavigationProgress:
     }
   | null = null;
 
+let cachedActionNavigationFailsafe:
+  | {
+      behavior: BehaviorName;
+      ignoredFurnitureId?: string;
+      stalls: number;
+    }
+  | null = null;
+
 const sameNavigationTarget = (
   cache: NonNullable<typeof cachedNavWaypoint>,
   behavior: BehaviorName,
@@ -184,6 +194,31 @@ const clearBlockedTarget = () => {
 
 const clearNavigationProgress = () => {
   cachedNavigationProgress = null;
+};
+
+const clearActionNavigationFailsafe = () => {
+  cachedActionNavigationFailsafe = null;
+};
+
+const recordActionNavigationStall = (
+  behavior: BehaviorName,
+  ignoredFurnitureId: string | undefined,
+) => {
+  if (
+    cachedActionNavigationFailsafe &&
+    cachedActionNavigationFailsafe.behavior === behavior &&
+    cachedActionNavigationFailsafe.ignoredFurnitureId === ignoredFurnitureId
+  ) {
+    cachedActionNavigationFailsafe.stalls += 1;
+  } else {
+    cachedActionNavigationFailsafe = {
+      behavior,
+      ignoredFurnitureId,
+      stalls: 1,
+    };
+  }
+
+  return cachedActionNavigationFailsafe.stalls >= NAV_ACTION_STALL_FAILSAFE_LIMIT;
 };
 
 const pauseForNavigationReplan = (
@@ -346,6 +381,11 @@ export const deriveBehaviorFromCodex = (
 const randomRoomPoint = () => ({
   targetX: 120 + Math.random() * 260,
   targetY: 155 + Math.random() * 86,
+});
+
+const clampNavigationPoint = (point: Point): Point => ({
+  x: clamp(point.x, NAV_ROOM_MIN_X, NAV_ROOM_MAX_X),
+  y: clamp(point.y, NAV_ROOM_MIN_Y, NAV_ROOM_MAX_Y),
 });
 
 export const explorationCellKey = (point: Point) => {
@@ -522,18 +562,31 @@ export const getPlacedItemInteractionStandpoints = (
       const itemDistance =
         item.itemId === TERMINAL_MONITOR_ITEM_ID
           ? TERMINAL_SURFACE_STANDPOINT_DISTANCE
-          : Math.max(SURFACE_ITEM_CLOSE_STANDPOINT_DISTANCE, INTERACTION_SAFE_GAP);
+          : SURFACE_ITEM_CLOSE_STANDPOINT_DISTANCE;
       const surfaceStandpoints =
         usesItemOnlySurfaceStandpoints
           ? []
           : getFurnitureInteractionStandpoints(surface, content);
+      const frontStandpoints = [
+        { x: itemX, y: bounds.y + bounds.height + itemDistance },
+        ...(item.itemId === TERMINAL_MONITOR_ITEM_ID
+          ? []
+          : [
+              { x: itemX - 22, y: bounds.y + bounds.height + itemDistance },
+              { x: itemX + 22, y: bounds.y + bounds.height + itemDistance },
+            ]),
+      ];
+      const sideStandpoints =
+        item.itemId === "coffee-machine" || item.itemId === TERMINAL_MONITOR_ITEM_ID
+          ? []
+          : [
+              { x: bounds.x - itemDistance, y: bounds.y + bounds.height * 0.72 },
+              { x: bounds.x + bounds.width + itemDistance, y: bounds.y + bounds.height * 0.72 },
+            ];
       return validStandpoints(
         [
-          { x: itemX, y: bounds.y + bounds.height + itemDistance },
-          { x: itemX - 22, y: bounds.y + bounds.height + itemDistance },
-          { x: itemX + 22, y: bounds.y + bounds.height + itemDistance },
-          { x: bounds.x - itemDistance, y: bounds.y + bounds.height * 0.72 },
-          { x: bounds.x + bounds.width + itemDistance, y: bounds.y + bounds.height * 0.72 },
+          ...frontStandpoints,
+          ...sideStandpoints,
           ...surfaceStandpoints,
         ],
         content,
@@ -623,8 +676,23 @@ export const getFurnitureInteractionTarget = (
 const targetNearPlacedItem = (
   item: PlacedItem | undefined,
   content?: AivatarContent,
+  from?: Point,
 ): Pick<AvatarRuntime, "targetX" | "targetY"> => {
   if (!item) return randomRoomPoint();
+  const fallback = clampNavigationPoint({ x: item.x + 18, y: item.y + 14 });
+
+  if (content) {
+    const standpoints = getPlacedItemInteractionStandpoints(item, content);
+    if (standpoints.length > 0) {
+      const point = chooseNearestPoint(
+        from ?? { x: item.x, y: item.y },
+        standpoints,
+        fallback,
+      );
+      return { targetX: point.x, targetY: point.y };
+    }
+  }
+
   if (item.surfaceFurnitureId && content) {
     const surface = content.room.furniture.find(
       (furniture) => furniture.id === item.surfaceFurnitureId,
@@ -642,10 +710,7 @@ const targetNearPlacedItem = (
     }
   }
 
-  return {
-    targetX: item.x + 18,
-    targetY: item.y + 14,
-  };
+  return { targetX: fallback.x, targetY: fallback.y };
 };
 
 const behaviorInteractionAlternates = (
@@ -767,7 +832,7 @@ export const targetForBehavior = (
       ),
       (item) => ({ x: item.x, y: item.y }),
     );
-    return targetNearPlacedItem(terminal, content);
+    return targetNearPlacedItem(terminal, content, from);
   }
 
   if (behavior === "wander") {
@@ -802,7 +867,7 @@ export const targetForBehavior = (
       ),
       (item) => ({ x: item.x, y: item.y }),
     );
-    return targetNearPlacedItem(terminal, content);
+    return targetNearPlacedItem(terminal, content, from);
   }
 
   if (behavior === "sleep") {
@@ -853,7 +918,7 @@ export const targetForBehavior = (
       placedItems.filter((item) => item.itemId === "coffee-machine"),
       (item) => ({ x: item.x, y: item.y }),
     );
-    return targetNearPlacedItem(coffeeMachine, content);
+    return targetNearPlacedItem(coffeeMachine, content, from);
   }
 
   if (behavior === "relax") {
@@ -864,7 +929,7 @@ export const targetForBehavior = (
   if (behavior === "admire") {
     const placedItems = content.placedItems ?? [];
     const item = placedItems[Math.floor(Math.random() * placedItems.length)];
-    return targetNearPlacedItem(item, content);
+    return targetNearPlacedItem(item, content, from);
   }
 
   if (behavior === "play") {
@@ -882,6 +947,7 @@ export const targetForBehavior = (
       targetNearPlacedItem(
         gameConsole ?? placedItems[Math.floor(Math.random() * placedItems.length)],
         content,
+        from,
       ),
     );
   }
@@ -893,7 +959,7 @@ export const targetForBehavior = (
       placedItems.filter((item) => item.itemId === EASEL_ITEM_ID),
       (item) => ({ x: item.x, y: item.y }),
     );
-    return targetNearPlacedItem(easel, content);
+    return targetNearPlacedItem(easel, content, from);
   }
 
   if (behavior === "waiting") {
@@ -978,6 +1044,7 @@ const failNavigationTarget = (
   cachedReplanPause = null;
   clearNavigationProgress();
   clearBlockedTarget();
+  clearActionNavigationFailsafe();
 
   const failure = {
     behavior,
@@ -1048,15 +1115,7 @@ const isAtInteractionRange = (avatar: AvatarRuntime) => {
   const stopDistance = interactionStopDistanceForBehavior(activeBehaviorForRuntime(avatar));
   if (stopDistance <= 0) return false;
 
-  if (Math.hypot(avatar.x - avatar.targetX, avatar.y - avatar.targetY) <= stopDistance) {
-    return true;
-  }
-
-  return (
-    avatar.interactionTargetAlternates?.some(
-      (point) => Math.hypot(avatar.x - point.x, avatar.y - point.y) <= stopDistance,
-    ) ?? false
-  );
+  return Math.hypot(avatar.x - avatar.targetX, avatar.y - avatar.targetY) <= stopDistance;
 };
 
 const collisionRectsForContent = (
@@ -1942,14 +2001,70 @@ const activityLabelForBehavior = (behavior: BehaviorName): string => {
   }
 };
 
+const randomRange = (min: number, max: number) =>
+  min + Math.random() * (max - min);
+
+const autonomousBehaviorDurationSeconds = (behavior: BehaviorName) => {
+  switch (behavior) {
+    case "play":
+      return randomRange(28, 42);
+    case "paint":
+      return randomRange(32, 48);
+    case "relax":
+      return randomRange(16, 26);
+    case "admire":
+      return randomRange(12, 20);
+    case "phone":
+      return randomRange(10, 18);
+    case "explore":
+      return randomRange(16, 24);
+    case "wander":
+      return randomRange(8, 14);
+    case "interact":
+      return randomRange(10, 16);
+    case "brew":
+      return randomRange(7, 11);
+    case "snack":
+      return randomRange(6, 10);
+    case "sleep":
+      return randomRange(14, 22);
+    default:
+      return randomRange(6, 12);
+  }
+};
+
 const traitInfluence = (value: number | undefined, max: number, divisor: number) =>
   Math.min(max, Math.max(0, (value ?? 0) / divisor));
+
+type WeightedBehaviorChoice = {
+  behavior: BehaviorName;
+  weight: number;
+};
+
+const weightedPick = (
+  choices: WeightedBehaviorChoice[],
+  fallback: BehaviorName,
+): BehaviorName => {
+  const viableChoices = choices.filter((choice) => choice.weight > 0);
+  const totalWeight = viableChoices.reduce(
+    (total, choice) => total + choice.weight,
+    0,
+  );
+  if (totalWeight <= 0) return fallback;
+
+  let roll = Math.random() * totalWeight;
+  for (const choice of viableChoices) {
+    roll -= choice.weight;
+    if (roll <= 0) return choice.behavior;
+  }
+
+  return viableChoices[viableChoices.length - 1]?.behavior ?? fallback;
+};
 
 const chooseAutonomousBehavior = (
   content: AivatarContent,
   memory?: AivatarMemory,
 ): BehaviorName => {
-  const roll = Math.random();
   const placedItems = content.placedItems ?? [];
   const hasDecor = placedItems.length > 0;
   const hasGameConsole = placedItems.some((item) => item.itemId === "game-console");
@@ -1968,28 +2083,96 @@ const chooseAutonomousBehavior = (
     content.petStats.mood > EXPLORE_MIN_MOOD &&
     content.petStats.hunger > EXPLORE_MIN_HUNGER;
 
-  if (content.petStats.energy < 24 && coffeeCount > 0) return "snack";
-  if (content.petStats.energy < 24) return "sleep";
-  if (hasCoffeeMachine && coffeeCount < 2 && roll < 0.72 + efficiencyBoost) return "brew";
-  if (content.petStats.hunger < 24 && roll < 0.7) return "snack";
-  if (content.petStats.mood < 50 && hasGameConsole && roll < 0.78 + resilienceBoost + efficiencyBoost) return "play";
-  if (content.petStats.mood < 50 && hasEasel && roll < 0.72 + creativityBoost) return "paint";
-  if (content.petStats.mood < 34 && hasDecor && roll < 0.72 + curiosityBoost) return "admire";
-  if (content.petStats.mood < 34 && roll < 0.72 + resilienceBoost) return "play";
-  if (content.petStats.energy < 42 && roll < 0.6 + focusBoost) return "relax";
+  if (content.petStats.energy < 24) {
+    return weightedPick(
+      [
+        { behavior: "snack", weight: coffeeCount > 0 ? 8 : 0 },
+        { behavior: "sleep", weight: 8 + resilienceBoost * 20 },
+        { behavior: "relax", weight: 2 + focusBoost * 10 },
+      ],
+      coffeeCount > 0 ? "snack" : "sleep",
+    );
+  }
 
-  if (hasGameConsole && roll < 0.28 + efficiencyBoost) return "play";
-  if (hasEasel && roll < 0.32 + creativityBoost) return "paint";
-  if (hasCoffeeMachine && coffeeCount < 5 && roll < 0.34 + efficiencyBoost) return "brew";
-  if (canExplore && roll < EXPLORE_CHANCE + curiosityBoost * 0.3) return "explore";
-  if (hasDecor && roll < 0.24 + curiosityBoost) return "admire";
-  if (roll < 0.3 + curiosityBoost) return "interact";
-  if (roll < 0.42) return "wander";
-  if (roll < 0.5) return "phone";
-  if (roll < 0.6 - focusBoost * 0.5) return "snack";
-  if (roll < 0.78 + focusBoost) return "relax";
-  if (roll < 0.9 + resilienceBoost) return "play";
-  return "interact";
+  if (content.petStats.hunger < 24) {
+    return weightedPick(
+      [
+        { behavior: "snack", weight: 12 },
+        { behavior: "wander", weight: 1 },
+        { behavior: "relax", weight: 1 },
+      ],
+      "snack",
+    );
+  }
+
+  if (content.petStats.mood < 50) {
+    return weightedPick(
+      [
+        {
+          behavior: "play",
+          weight: hasGameConsole
+            ? 10 + resilienceBoost * 20 + efficiencyBoost * 12
+            : 0,
+        },
+        {
+          behavior: "paint",
+          weight: hasEasel ? 8 + creativityBoost * 20 : 0,
+        },
+        {
+          behavior: "admire",
+          weight: hasDecor ? 5 + curiosityBoost * 12 : 0,
+        },
+        { behavior: "relax", weight: 3 + focusBoost * 10 },
+        { behavior: "wander", weight: 2 },
+      ],
+      "relax",
+    );
+  }
+
+  if (content.petStats.energy < 42) {
+    return weightedPick(
+      [
+        { behavior: "relax", weight: 10 + focusBoost * 20 },
+        { behavior: "snack", weight: coffeeCount > 0 ? 4 : 0 },
+        { behavior: "wander", weight: 2 },
+        { behavior: "phone", weight: 1 },
+      ],
+      "relax",
+    );
+  }
+
+  return weightedPick(
+    [
+      {
+        behavior: "play",
+        weight: hasGameConsole
+          ? 14 + resilienceBoost * 16 + efficiencyBoost * 20
+          : 0,
+      },
+      {
+        behavior: "paint",
+        weight: hasEasel ? 8 + creativityBoost * 20 : 0,
+      },
+      {
+        behavior: "brew",
+        weight: hasCoffeeMachine && coffeeCount < 5 ? 3 + efficiencyBoost * 12 : 0,
+      },
+      {
+        behavior: "explore",
+        weight: canExplore ? 8 + curiosityBoost * 18 : 0,
+      },
+      {
+        behavior: "admire",
+        weight: hasDecor ? 7 + curiosityBoost * 16 : 0,
+      },
+      { behavior: "interact", weight: 7 + curiosityBoost * 10 },
+      { behavior: "wander", weight: 10 },
+      { behavior: "phone", weight: 6 },
+      { behavior: "snack", weight: Math.max(1, 5 - focusBoost * 10) },
+      { behavior: "relax", weight: 10 + focusBoost * 20 },
+    ],
+    "wander",
+  );
 };
 
 export const tickAvatar = (
@@ -2025,9 +2208,24 @@ export const tickAvatar = (
       avatar,
       autonomous,
       content,
-      autonomous === "explore" ? 12 + Math.random() * 6 : 4 + Math.random() * 5,
+      autonomousBehaviorDurationSeconds(autonomous),
       activityLabelForBehavior(autonomous),
     );
+  }
+
+  if (!forcedBehavior && next.behavior === "idle" && !next.actionIntent) {
+    cachedNavWaypoint = null;
+    cachedReplanPause = null;
+    clearNavigationProgress();
+    clearBlockedTarget();
+    clearActionNavigationFailsafe();
+    return {
+      ...next,
+      targetX: next.x,
+      targetY: next.y,
+      activityLabel: next.activityLabel === "Idle" ? undefined : next.activityLabel,
+      behaviorTimer: Math.max(0, next.behaviorTimer - elapsedSeconds),
+    };
   }
 
   const movementBehavior = activeBehaviorForRuntime(next);
@@ -2288,13 +2486,41 @@ export const tickAvatar = (
       );
 
       if (stalled) {
+        const alternative = chooseAlternativeInteractionTarget(
+          { x: next.x, y: next.y },
+          { targetX: navigationTarget.targetX, targetY: navigationTarget.targetY },
+          next.interactionTargetAlternates,
+          content,
+          ignoredFurnitureId,
+          options?.navMemory,
+        );
+        const shouldFailAction =
+          Boolean(next.actionIntent) &&
+          recordActionNavigationStall(movementBehavior, ignoredFurnitureId);
         clearNavigationProgress();
         clearBlockedTarget();
-        return pauseForNavigationReplan(
+        cachedNavWaypoint = null;
+        cachedReplanPause = null;
+
+        if (alternative && !shouldFailAction) {
+          return {
+            ...next,
+            targetX: alternative.x,
+            targetY: alternative.y,
+            expression: "focused",
+            activityLabel: "Planning route",
+            behaviorTimer: next.actionIntent
+              ? next.behaviorTimer
+              : next.behaviorTimer - elapsedSeconds,
+          };
+        }
+
+        next = failNavigationTarget(
           next,
+          content,
           movementBehavior,
-          ignoredFurnitureId,
-          elapsedSeconds,
+          forcedBehavior,
+          "stalled",
         );
       }
     } else {

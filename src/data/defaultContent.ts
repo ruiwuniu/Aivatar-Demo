@@ -175,6 +175,22 @@ export const defaultContent: AivatarContent = {
         },
       },
       {
+        id: "exposed-red-brick-wallpaper",
+        name: "Exposed Red Brick Wallpaper",
+        palette: {
+          border: "#24100c",
+          base: "#8f3827",
+          plankA: "#a8482f",
+          plankB: "#bf5a37",
+          plankC: "#763023",
+          plankD: "#d07a4c",
+          seam: "#3b231d",
+          highlight: "#e6a06d",
+          grainDark: "#55221a",
+          grainLight: "#c96b48",
+        },
+      },
+      {
         id: "pink-sakura-wallpaper",
         name: "Pink Sakura Wallpaper",
         palette: {
@@ -507,6 +523,14 @@ export const defaultContent: AivatarContent = {
       effect: { mood: 6 },
     },
     {
+      id: "exposed-red-brick-wallpaper",
+      name: "Exposed Red Brick Wallpaper",
+      kind: "decor",
+      tags: ["wall-surface"],
+      price: 72,
+      effect: { mood: 4, energy: 1 },
+    },
+    {
       id: "checker-tile-floor",
       name: "Checker Tile Floor",
       kind: "decor",
@@ -716,6 +740,14 @@ export const defaultContent: AivatarContent = {
         tags: ["wall-surface"],
         price: 42,
         effect: { mood: 6 },
+      },
+      {
+        id: "exposed-red-brick-wallpaper",
+        name: "Exposed Red Brick Wallpaper",
+        kind: "decor",
+        tags: ["wall-surface"],
+        price: 72,
+        effect: { mood: 4, energy: 1 },
       },
       {
         id: "checker-tile-floor",

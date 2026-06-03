@@ -1063,7 +1063,8 @@ meter {
 }
 
 .app-shell.theme-terminal .session-clear-button,
-.app-shell.theme-terminal .session-follow-button {
+.app-shell.theme-terminal .session-follow-button,
+.app-shell.theme-terminal .session-disconnect-button {
   border-color: #1f7f2e;
   color: #d8ffd0;
   background: #06160a;
@@ -1071,7 +1072,8 @@ meter {
 }
 
 .app-shell.theme-terminal .session-clear-button:hover,
-.app-shell.theme-terminal .session-follow-button:hover:not(:disabled) {
+.app-shell.theme-terminal .session-follow-button:hover:not(:disabled),
+.app-shell.theme-terminal .session-disconnect-button:hover:not(:disabled) {
   border-color: #a6ff73;
   color: #d8ffd0;
   background:
@@ -1084,7 +1086,8 @@ meter {
     rgba(125, 255, 91, 0.28);
 }
 
-.app-shell.theme-terminal .session-follow-button:disabled {
+.app-shell.theme-terminal .session-follow-button:disabled,
+.app-shell.theme-terminal .session-disconnect-button:disabled {
   border-color: #145c22;
   color: #3c8f49;
   background: #031006;
@@ -1419,6 +1422,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .idle-bubble-candidate,
 .app-shell.theme-terminal.theme-terminal-amber .session-clear-button,
 .app-shell.theme-terminal.theme-terminal-amber .session-follow-button,
+.app-shell.theme-terminal.theme-terminal-amber .session-disconnect-button,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-agent-choice button,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-start {
   border-color: #7a3d08;
@@ -1458,6 +1462,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .idle-bubble-candidate:hover:not(:disabled),
 .app-shell.theme-terminal.theme-terminal-amber .session-clear-button:hover,
 .app-shell.theme-terminal.theme-terminal-amber .session-follow-button:hover:not(:disabled),
+.app-shell.theme-terminal.theme-terminal-amber .session-disconnect-button:hover:not(:disabled),
 .app-shell.theme-terminal.theme-terminal-amber .launcher-agent-choice button:hover,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-agent-choice button.active,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-start:hover:not(:disabled) {
@@ -2428,7 +2433,8 @@ h2 {
 }
 
 .session-clear-button,
-.session-follow-button {
+.session-follow-button,
+.session-disconnect-button {
   min-height: 23px;
   border: 2px solid #52607d;
   color: #d8fff7;
@@ -2445,9 +2451,15 @@ h2 {
 }
 
 .session-clear-button:hover,
-.session-follow-button:hover:not(:disabled) {
+.session-follow-button:hover:not(:disabled),
+.session-disconnect-button:hover:not(:disabled) {
   color: #141823;
   background: #9ee6ff;
+}
+
+.session-disconnect-button:hover:not(:disabled) {
+  border-color: #ff8fa3;
+  background: #ffb6c6;
 }
 
 .session-command-hint {
@@ -2476,7 +2488,8 @@ h2 {
   font-size: 9px;
 }
 
-.session-follow-button:disabled {
+.session-follow-button:disabled,
+.session-disconnect-button:disabled {
   color: #6d7794;
   cursor: not-allowed;
   box-shadow: none;
@@ -2500,7 +2513,7 @@ h2 {
 
 .session-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
 }
 
@@ -3092,6 +3105,18 @@ meter::-webkit-meter-optimum-value {
     radial-gradient(circle at 20px 15px, #9d78df 0 4px, transparent 5px),
     radial-gradient(circle at 23px 5px, #8c63cf 0 2px, transparent 3px),
     repeating-linear-gradient(90deg, #5f3a8f 0 7px, #6842a0 7px 14px);
+}
+
+.surface-preview-exposed-red-brick-wallpaper {
+  background:
+    radial-gradient(circle at 6px 7px, rgba(230, 160, 109, 0.75) 0 1px, transparent 2px),
+    radial-gradient(circle at 21px 17px, rgba(36, 16, 12, 0.65) 0 1px, transparent 2px),
+    linear-gradient(90deg, transparent 0 14px, #3b231d 14px 15px, transparent 15px 30px),
+    linear-gradient(90deg, transparent 0 7px, #3b231d 7px 8px, transparent 8px 23px),
+    repeating-linear-gradient(0deg, transparent 0 10px, #55221a 10px 11px, #3b231d 11px 12px),
+    linear-gradient(135deg, #d07a4c 0 8%, #a8482f 8% 42%, #763023 42% 48%, #bf5a37 48% 82%, #8f3827 82%);
+  background-size: auto, auto, 30px 22px, 30px 22px, auto, auto;
+  background-position: 0 0, 0 0, 0 0, 15px 11px, 0 0, 0 0;
 }
 
 .surface-preview-pink-sakura-wallpaper {
