@@ -389,6 +389,36 @@ meter {
   gap: 4px;
 }
 
+.audio-control {
+  display: grid;
+  gap: 5px;
+  padding: 7px 8px;
+  border: 2px solid #39445f;
+  background: #171c2b;
+}
+
+.audio-control span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #9ee6ff;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.audio-control b {
+  color: #ffe66d;
+  font-size: 11px;
+}
+
+.audio-control input {
+  width: 100%;
+  min-width: 0;
+  accent-color: #ffe66d;
+  cursor: pointer;
+}
+
 .language-button,
 .theme-button {
   min-height: 24px;
@@ -1176,6 +1206,24 @@ meter {
   color: #b8ff9c;
 }
 
+.app-shell.theme-terminal .audio-control {
+  border-color: #2fcf54;
+  background: rgba(3, 18, 7, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(122, 255, 139, 0.14);
+}
+
+.app-shell.theme-terminal .audio-control span {
+  color: #8ddf7d;
+}
+
+.app-shell.theme-terminal .audio-control b {
+  color: #eaff9f;
+}
+
+.app-shell.theme-terminal .audio-control input {
+  accent-color: #80ff62;
+}
+
 .app-shell.theme-terminal .side-panel h2,
 .app-shell.theme-terminal .section-heading span,
 .app-shell.theme-terminal .meta-list dt,
@@ -1417,6 +1465,24 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .side-panel > span,
 .app-shell.theme-terminal.theme-terminal-amber .session-card p {
   color: #ffd166;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .audio-control {
+  border-color: #c96f19;
+  background: rgba(22, 12, 3, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(255, 194, 102, 0.16);
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .audio-control span {
+  color: #ffd166;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .audio-control b {
+  color: #ffe4a3;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .audio-control input {
+  accent-color: #ffb23f;
 }
 
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle,

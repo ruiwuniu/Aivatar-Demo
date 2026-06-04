@@ -79,6 +79,7 @@ const SAVE_KEY = "aivatar.save.v1";
 const DEFAULT_LAYOUT_KEY = "aivatar.defaultLayout.v1";
 const TASK_CABINET_STORAGE_KEY = "aivatar.taskCabinet.v1";
 const UI_THEME_KEY = "aivatar.uiTheme.v1";
+const AUDIO_VOLUME_KEY = "aivatar.audioVolume.v1";
 const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
 const SAVE_LAYOUT_VERSION = 2;
 const SLEEP_INTERACTION_SECONDS = 12;
@@ -148,6 +149,17 @@ const TASK_CABINET_ENTRY_LIMIT = 100;
 const TASK_CABINET_READ_HANDOFF_MS = 1200;
 const NAV_MEMORY_CELL_COUNT_LIMIT = 9999;
 const NAV_LEARNING_RECORD_INTERVAL_SECONDS = 2.5;
+const DEFAULT_AUDIO_VOLUME = 0.45;
+const KEYBOARD_TYPING_AUDIO_SRC = "/audio/keyboard-typing-loop.wav";
+const GAME_CONSOLE_AUDIO_SOURCES = [
+  "/audio/game-console-jump.ogg",
+  "/audio/game-console-invincibility.ogg",
+  "/audio/game-console-victory.ogg",
+  "/audio/game-console-battle.ogg",
+  "/audio/game-console-get-equipped.wav",
+  "/audio/game-console-curious.ogg",
+];
+const GAME_CONSOLE_AUDIO_VOLUME_MULTIPLIER = 0.5;
 const DEMO_BEHAVIORS: BehaviorName[] = [
   "idle",
   "phone",
@@ -194,6 +206,12 @@ const loadInitialUiTheme = (): UiThemeId => {
   const saved = localStorage.getItem(UI_THEME_KEY);
   if (saved === "terminal-amber") return "terminal-amber";
   return saved === "terminal" ? "terminal" : "classic";
+};
+
+const loadInitialAudioVolume = () => {
+  const saved = Number(localStorage.getItem(AUDIO_VOLUME_KEY));
+  if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
+  return DEFAULT_AUDIO_VOLUME;
 };
 
 const TASK_CABINET_STATUSES: TaskCabinetStatus[] = [
@@ -2196,7 +2214,13 @@ export const App = () => {
   const saveRef = useRef(save);
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
   const [uiTheme, setUiTheme] = useState<UiThemeId>(() => loadInitialUiTheme());
+  const [audioVolume, setAudioVolume] = useState(() => loadInitialAudioVolume());
   const uiThemeRef = useRef(uiTheme);
+  const keyboardTypingAudioRef = useRef<HTMLAudioElement | null>(null);
+  const gameConsoleAudioRef = useRef<HTMLAudioElement | null>(null);
+  const gameConsoleAudioSourceRef = useRef(GAME_CONSOLE_AUDIO_SOURCES[0]);
+  const gameConsoleAnimatingRef = useRef(false);
+  const audioUnlockedRef = useRef(false);
   const {
     status,
     sessions,
@@ -2533,6 +2557,75 @@ export const App = () => {
     setActiveInteraction(interaction);
   };
 
+  const unlockAppAudio = () => {
+    audioUnlockedRef.current = true;
+    [keyboardTypingAudioRef.current, gameConsoleAudioRef.current].forEach((audio) => {
+      if (!audio) return;
+      const wasMuted = audio.muted;
+      audio.muted = true;
+      void audio
+        .play()
+        .then(() => {
+          audio.pause();
+          audio.currentTime = 0;
+          audio.muted = wasMuted;
+        })
+        .catch(() => {
+          audio.muted = wasMuted;
+        });
+    });
+  };
+
+  const pauseAudio = (audio: HTMLAudioElement | null) => {
+    if (!audio || audio.paused) return;
+    audio.pause();
+    audio.currentTime = 0;
+  };
+
+  const setAudioPlaying = (
+    audio: HTMLAudioElement | null,
+    shouldPlay: boolean,
+    volumeMultiplier = 1,
+  ) => {
+    if (!audio) return;
+    audio.volume = Math.min(1, Math.max(0, audioVolume * volumeMultiplier));
+    if (shouldPlay) {
+      if (audio.paused) {
+        void audio.play().catch(() => undefined);
+      }
+    } else {
+      pauseAudio(audio);
+    }
+  };
+
+  const randomGameConsoleAudioSource = () =>
+    GAME_CONSOLE_AUDIO_SOURCES[
+      Math.floor(Math.random() * GAME_CONSOLE_AUDIO_SOURCES.length)
+    ];
+
+  const isGameConsoleAnimatingForAudio = () => {
+    if (avatar.behavior !== "play") return false;
+    return Boolean(
+      contentRef.current.placedItems?.some((item) => {
+        if (item.itemId !== "game-console") return false;
+        if (activeInteraction?.furnitureId === item.id) return true;
+        return isNearActivePlayTarget(avatar, item, contentRef.current);
+      }),
+    );
+  };
+
+  const prepareGameConsoleAudioForNewPlay = () => {
+    const audio = gameConsoleAudioRef.current;
+    if (!audio) return;
+    const source = randomGameConsoleAudioSource();
+    gameConsoleAudioSourceRef.current = source;
+    if (audio.getAttribute("src") !== source) {
+      audio.src = source;
+      audio.load();
+    }
+    audio.currentTime = 0;
+  };
+
   const clearPendingFurnitureInteraction = () => {
     pendingWorldInteractionRef.current = null;
   };
@@ -2665,6 +2758,12 @@ export const App = () => {
       if (isHighPriorityStatus(statusRef.current.status)) {
         showPlacedItemBusy(placedItem, item);
         return;
+      }
+      if (
+        (isBuiltinTerminalPlacedItem(placedItem) && action === "interact") ||
+        (placedItem.itemId === "game-console" && action === "play")
+      ) {
+        unlockAppAudio();
       }
       queuePlacedItemInteraction(placedItem, item, action);
       return;
@@ -2961,6 +3060,66 @@ export const App = () => {
     localStorage.setItem(UI_THEME_KEY, uiTheme);
     uiThemeRef.current = uiTheme;
   }, [uiTheme]);
+
+  useEffect(() => {
+    const keyboardAudio = new Audio(KEYBOARD_TYPING_AUDIO_SRC);
+    keyboardAudio.loop = true;
+    keyboardAudio.preload = "auto";
+    keyboardAudio.volume = audioVolume;
+    keyboardTypingAudioRef.current = keyboardAudio;
+
+    const gameAudio = new Audio(gameConsoleAudioSourceRef.current);
+    gameAudio.loop = true;
+    gameAudio.preload = "auto";
+    gameAudio.volume = audioVolume;
+    gameConsoleAudioRef.current = gameAudio;
+
+    return () => {
+      keyboardAudio.pause();
+      gameAudio.pause();
+      keyboardTypingAudioRef.current = null;
+      gameConsoleAudioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(AUDIO_VOLUME_KEY, String(audioVolume));
+    [keyboardTypingAudioRef.current, gameConsoleAudioRef.current].forEach((audio) => {
+      if (!audio) return;
+      audio.volume = audioVolume;
+      if (audioVolume <= 0) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    });
+  }, [audioVolume]);
+
+  useEffect(() => {
+    const activeBehavior = runtimeActionBehavior(avatar);
+    const terminal = contentRef.current.placedItems?.find(
+      (item) =>
+        item.id === BUILTIN_TERMINAL_PLACED_ITEM_ID ||
+        item.itemId === TERMINAL_MONITOR_ITEM_ID,
+    );
+    const isTerminalAnimating =
+      Boolean(terminal) &&
+      (activeBehavior === "coding" || activeBehavior === "thinking") &&
+      Math.hypot(avatar.x - terminal!.x, avatar.y - (terminal!.y + 18)) < 92;
+    const canPlayAudio = audioVolume > 0 && audioUnlockedRef.current;
+    const isGameConsoleAnimating = isGameConsoleAnimatingForAudio();
+
+    if (isGameConsoleAnimating && !gameConsoleAnimatingRef.current) {
+      prepareGameConsoleAudioForNewPlay();
+    }
+    gameConsoleAnimatingRef.current = isGameConsoleAnimating;
+
+    setAudioPlaying(keyboardTypingAudioRef.current, isTerminalAnimating && canPlayAudio);
+    setAudioPlaying(
+      gameConsoleAudioRef.current,
+      isGameConsoleAnimating && canPlayAudio,
+      GAME_CONSOLE_AUDIO_VOLUME_MULTIPLIER,
+    );
+  }, [activeInteraction, audioVolume, avatar]);
 
   useEffect(() => {
     if (!bridgeStartMessage) return;
@@ -6793,6 +6952,24 @@ export const App = () => {
             </button>
           ))}
         </div>
+
+        <label className="audio-control">
+          <span>
+            {ui("audio.volume")}
+            <b>{audioVolume <= 0 ? ui("audio.muted") : `${Math.round(audioVolume * 100)}%`}</b>
+          </span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={Math.round(audioVolume * 100)}
+            onPointerDown={unlockAppAudio}
+            onKeyDown={unlockAppAudio}
+            onChange={(event) => setAudioVolume(Number(event.target.value) / 100)}
+            aria-label={ui("audio.title")}
+          />
+        </label>
 
         <div className="status-card">
           <span>{statusLabel(locale, effectiveStatus.status)}</span>
