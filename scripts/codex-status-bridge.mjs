@@ -29,6 +29,9 @@ const disconnectedSessionTombstoneMs = Number(
   process.env.AIVATAR_DISCONNECTED_SESSION_TOMBSTONE_MS ??
     24 * 60 * 60 * 1000,
 );
+const disconnectedSessionTombstoneFile =
+  process.env.AIVATAR_DISCONNECTED_SESSION_TOMBSTONE_PATH ??
+  join(tmpdir(), "aivatar-disconnected-sessions.json");
 const maxSessions = Number(process.env.AIVATAR_MAX_SESSIONS ?? 80);
 
 const allowedStatuses = new Set([
@@ -87,6 +90,58 @@ const tombstoneSession = (key) => {
   }
 
   disconnectedSessionKeys.set(key, Date.now() + disconnectedSessionTombstoneMs);
+  void persistDisconnectedSessionTombstones().catch(() => {});
+};
+
+const pruneDisconnectedSessionTombstones = () => {
+  let deleted = 0;
+  const now = Date.now();
+  for (const [key, expiresAt] of disconnectedSessionKeys) {
+    if (now <= expiresAt) continue;
+    disconnectedSessionKeys.delete(key);
+    deleted += 1;
+  }
+  return deleted;
+};
+
+const persistDisconnectedSessionTombstones = async () => {
+  pruneDisconnectedSessionTombstones();
+  await mkdir(dirname(disconnectedSessionTombstoneFile), { recursive: true });
+  await writeFile(
+    disconnectedSessionTombstoneFile,
+    JSON.stringify(
+      [...disconnectedSessionKeys.entries()].map(([key, expiresAt]) => ({
+        key,
+        expiresAt,
+      })),
+      null,
+      2,
+    ),
+    "utf8",
+  );
+};
+
+const loadDisconnectedSessionTombstones = async () => {
+  try {
+    const parsed = JSON.parse(
+      await readFile(disconnectedSessionTombstoneFile, "utf8"),
+    );
+    if (!Array.isArray(parsed)) return;
+    const now = Date.now();
+    for (const entry of parsed) {
+      if (typeof entry?.key !== "string") continue;
+      const expiresAt = Number(entry.expiresAt);
+      if (!Number.isFinite(expiresAt) || expiresAt <= now) continue;
+      disconnectedSessionKeys.set(entry.key, expiresAt);
+    }
+  } catch {
+    // No persisted disconnect tombstones yet.
+  }
+};
+
+const untombstoneSession = (key) => {
+  if (!disconnectedSessionKeys.delete(key)) return;
+  void persistDisconnectedSessionTombstones().catch(() => {});
 };
 
 const isSessionTombstoned = (key) => {
@@ -94,6 +149,7 @@ const isSessionTombstoned = (key) => {
   if (!expiresAt) return false;
   if (Date.now() <= expiresAt) return true;
   disconnectedSessionKeys.delete(key);
+  void persistDisconnectedSessionTombstones().catch(() => {});
   return false;
 };
 
@@ -112,6 +168,16 @@ const cliPidFileFor = ({ agent, sessionId }) =>
     "aivatar-cli-session",
     `${safeName(agent)}-${safeName(sessionId)}.json`,
   );
+
+const discoveryHelperFileFor = ({ agent, sessionId }) =>
+  agent === "codex"
+    ? join(
+        tmpdir(),
+        "aivatar-session-discovery",
+        "helpers",
+        `codex-${safeName(sessionId)}.json`,
+      )
+    : null;
 
 const stopPid = (pid) => {
   if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false;
@@ -148,11 +214,27 @@ const stopCliPidFile = async (pidFile) => {
   }
 };
 
+const stopDiscoveryHelperFile = async (pidFile) => {
+  if (!pidFile) return 0;
+  try {
+    const record = JSON.parse(await readFile(pidFile, "utf8"));
+    let stopped = 0;
+    for (const pid of [record?.heartbeatPid, record?.watcherPid]) {
+      if (stopPid(pid)) stopped += 1;
+    }
+    await rm(pidFile, { force: true });
+    return stopped;
+  } catch {
+    return 0;
+  }
+};
+
 const stopRecordedSessionProcesses = async (session) => {
   let stoppedProcesses = 0;
   stoppedProcesses += await stopPluginPidFile(pluginPidFileFor(session, "heartbeat"));
   stoppedProcesses += await stopPluginPidFile(pluginPidFileFor(session, "watcher"));
   stoppedProcesses += await stopCliPidFile(cliPidFileFor(session));
+  stoppedProcesses += await stopDiscoveryHelperFile(discoveryHelperFileFor(session));
   return stoppedProcesses;
 };
 
@@ -604,6 +686,8 @@ const broadcast = (payload) => {
   }
 };
 
+await loadDisconnectedSessionTombstones();
+
 wsServer.on("connection", (socket) => {
   socket.send(JSON.stringify(makeSnapshot()));
 });
@@ -650,6 +734,8 @@ const httpServer = http.createServer(async (request, response) => {
       sessionStaleMs,
       activityStaleMs,
       disconnectedSessionTombstoneMs,
+      disconnectedSessionTombstoneFile,
+      disconnectedSessionTombstoneCount: disconnectedSessionKeys.size,
     });
     return;
   }
@@ -692,7 +778,7 @@ const httpServer = http.createServer(async (request, response) => {
   if (request.url === activeSessionPath && request.method === "POST") {
     try {
       activeSessionKey = await readActiveSessionBody(request);
-      if (activeSessionKey) disconnectedSessionKeys.delete(activeSessionKey);
+      if (activeSessionKey) untombstoneSession(activeSessionKey);
       const snapshot = makeSnapshot();
       broadcast(snapshot);
       sendJson(response, 202, snapshot);
@@ -743,7 +829,11 @@ const httpServer = http.createServer(async (request, response) => {
       const presence = await readPresenceBody(request);
       const key = `${presence.agent}:${presence.sessionId}`;
       if (isSessionTombstoned(key)) {
-        sendJson(response, 202, makeSnapshot());
+        sendJson(response, 202, {
+          ...makeSnapshot(),
+          ignored: true,
+          disconnectedSessionKey: key,
+        });
         return;
       }
       const existing = sessions.get(key);
@@ -783,7 +873,11 @@ const httpServer = http.createServer(async (request, response) => {
       const nextStatus = normalizeStatus(JSON.parse(body));
       const key = sessionKey(nextStatus);
       if (isSessionTombstoned(key)) {
-        sendJson(response, 202, makeSnapshot());
+        sendJson(response, 202, {
+          ...makeSnapshot(),
+          ignored: true,
+          disconnectedSessionKey: key,
+        });
         return;
       }
       const existing = sessions.get(key);

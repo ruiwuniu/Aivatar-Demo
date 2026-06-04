@@ -18,6 +18,9 @@ const presenceEndpoint =
   process.env.AIVATAR_PRESENCE_ENDPOINT ?? "http://127.0.0.1:38988/agent-presence";
 const statusEndpoint =
   process.env.AIVATAR_HTTP_ENDPOINT ?? "http://127.0.0.1:38988/agent-status";
+const disconnectSessionEndpoint =
+  process.env.AIVATAR_DISCONNECT_SESSION_ENDPOINT ??
+  "http://127.0.0.1:38988/agent-sessions/disconnect";
 const usageBaselinePath =
   process.env.AIVATAR_USAGE_BASELINE_PATH ??
   join(tmpdir(), "aivatar-usage-baselines.json");
@@ -28,9 +31,12 @@ const discoveryIntervalMs = Math.max(
   1000,
   Number(process.env.AIVATAR_DISCOVERY_INTERVAL_MS ?? 3000),
 );
+const sessionStaleMs = Number(
+  process.env.AIVATAR_SESSION_STALE_MS ?? 30 * 60 * 1000,
+);
 const activeWindowMs = Math.max(
   discoveryIntervalMs,
-  Number(process.env.AIVATAR_DISCOVERY_ACTIVE_MS ?? 48 * 60 * 60 * 1000),
+  Number(process.env.AIVATAR_DISCOVERY_ACTIVE_MS ?? sessionStaleMs),
 );
 const pidDir = join(tmpdir(), "aivatar-session-discovery");
 const pidFile = join(pidDir, "discovery.json");
@@ -60,6 +66,83 @@ const processIsRunning = (pid) => {
   } catch {
     return false;
   }
+};
+
+const stopProcess = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false;
+  try {
+    process.kill(pid, "SIGTERM");
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const rolloutIsInActiveWindow = async (rolloutPath) => {
+  if (typeof rolloutPath !== "string" || !rolloutPath) return false;
+  try {
+    const info = await stat(rolloutPath);
+    return Date.now() - info.mtimeMs <= activeWindowMs;
+  } catch {
+    return false;
+  }
+};
+
+const cleanupInactiveHelpers = async () => {
+  let entries = [];
+  try {
+    entries = await readdir(helperDir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+
+  let stoppedHelpers = 0;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const helperFile = join(helperDir, entry.name);
+    let record = null;
+    try {
+      record = JSON.parse(await readFile(helperFile, "utf8"));
+    } catch {
+      continue;
+    }
+
+    if (await rolloutIsInActiveWindow(record?.rolloutPath)) continue;
+
+    let stoppedProcesses = 0;
+    for (const pid of [record?.heartbeatPid, record?.watcherPid]) {
+      if (stopProcess(pid)) stoppedProcesses += 1;
+    }
+
+    if (stoppedProcesses > 0) stoppedHelpers += 1;
+    if (typeof record?.agent === "string" && typeof record?.sessionId === "string") {
+      try {
+        await postDisconnectSession(record);
+      } catch {
+        // Bridge cleanup is best-effort; helper processes were already stopped.
+      }
+    }
+    try {
+      await writeFile(
+        helperFile,
+        JSON.stringify(
+          {
+            ...record,
+            heartbeatPid: null,
+            watcherPid: null,
+            stoppedAt: new Date().toISOString(),
+            staleReason: "rollout-outside-active-window",
+          },
+          null,
+          2,
+        ),
+      );
+    } catch {
+      // Helper cleanup is best-effort.
+    }
+  }
+
+  return stoppedHelpers;
 };
 
 const ensureSingleInstance = async () => {
@@ -164,10 +247,11 @@ const postJson = async (url, payload) => {
     body: JSON.stringify(payload),
   });
   if (!response.ok) throw new Error(await response.text());
+  return response.json();
 };
 
 const postPresence = async (session) => {
-  await postJson(presenceEndpoint, {
+  return postJson(presenceEndpoint, {
     agent: "codex",
     sessionId: session.sessionId,
     timestamp: new Date().toISOString(),
@@ -175,7 +259,7 @@ const postPresence = async (session) => {
 };
 
 const postDetectedStatus = async (session) => {
-  await postJson(statusEndpoint, {
+  return postJson(statusEndpoint, {
     agent: "codex",
     sessionId: session.sessionId,
     status: "thinking",
@@ -188,6 +272,13 @@ const postDetectedStatus = async (session) => {
     message: "Codex Desktop session detected",
     severity: "info",
     timestamp: new Date().toISOString(),
+  });
+};
+
+const postDisconnectSession = async (session) => {
+  return postJson(disconnectSessionEndpoint, {
+    agent: session.agent,
+    sessionId: session.sessionId,
   });
 };
 
@@ -289,6 +380,7 @@ process.on("SIGTERM", () => {
 });
 
 await ensureSingleInstance();
+await cleanupInactiveHelpers();
 
 if (!(await pathExists(heartbeatScript)) || !(await pathExists(watcherScript))) {
   console.warn(
@@ -304,10 +396,12 @@ try {
   while (!stopped) {
     try {
       const rollouts = await recentRollouts();
+      await cleanupInactiveHelpers();
       for (const rollout of rollouts) {
         const session = await readSessionMeta(rollout.filePath);
         if (!session) continue;
-        await postPresence(session);
+        const presenceResult = await postPresence(session);
+        if (presenceResult?.ignored) continue;
         const startedHelpers = await ensureHelpers(session);
         if (startedHelpers) {
           await postDetectedStatus(session);
