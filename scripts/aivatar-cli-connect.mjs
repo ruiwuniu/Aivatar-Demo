@@ -155,6 +155,13 @@ const childEnv = (options) => ({
   AIVATAR_ACTIVE_ENDPOINT: activeEndpoint,
   AIVATAR_PRESENCE_ENDPOINT: presenceEndpoint,
   AIVATAR_USAGE_BASELINE_PATH: usageBaselinePath,
+  AIVATAR_LEARNING_ENABLED: process.env.AIVATAR_LEARNING_ENABLED ?? "1",
+  AIVATAR_LEARNING_PROVIDER:
+    process.env.AIVATAR_LEARNING_PROVIDER ??
+    (options.agent === "codex" ? "codex" : options.agent),
+  AIVATAR_LEARNING_SCRIPT:
+    process.env.AIVATAR_LEARNING_SCRIPT ??
+    join(scriptDir, "aivatar-learning-worker.mjs"),
 });
 
 const quotePowerShell = (value) => `'${String(value).replace(/'/g, "''")}'`;

@@ -20,6 +20,17 @@ export interface TokenUsage {
   scope?: string;
 }
 
+export interface AivatarLearningResult {
+  id: string;
+  source: "llm" | "heuristic";
+  summary: string;
+  idleBubbleCandidates?: string[];
+  traitChanges?: Partial<AivatarGrowthTraits>;
+  xp?: number;
+  confidence?: number;
+  privacyRisk: "low" | "medium" | "high";
+}
+
 export interface CodexStatusMessage {
   agent?: string;
   sessionId?: string;
@@ -37,6 +48,7 @@ export interface CodexStatusMessage {
   connected?: boolean;
   usage?: TokenUsage;
   idleBubbleCandidates?: string[];
+  learning?: AivatarLearningResult;
 }
 
 export interface AgentStatusSnapshot {
@@ -104,6 +116,7 @@ export type AivatarMemoryEventType =
   | "task_error"
   | "error_recovered"
   | "waited_for_user"
+  | "session_learning"
   | "recovery_used"
   | "item_bought"
   | "item_used"

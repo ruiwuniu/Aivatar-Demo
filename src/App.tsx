@@ -79,6 +79,7 @@ const SAVE_KEY = "aivatar.save.v1";
 const DEFAULT_LAYOUT_KEY = "aivatar.defaultLayout.v1";
 const TASK_CABINET_STORAGE_KEY = "aivatar.taskCabinet.v1";
 const UI_THEME_KEY = "aivatar.uiTheme.v1";
+const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
 const SAVE_LAYOUT_VERSION = 2;
 const SLEEP_INTERACTION_SECONDS = 12;
 const SLEEP_RECOVERY_PER_TICK = 4;
@@ -461,6 +462,8 @@ const memoryIdleBubbleCandidates = (memory: AivatarMemory): string[] => {
       add("补回来了", "Recovered cleanly");
     } else if (event.type === "waited_for_user") {
       add("我有乖乖等", "Waiting nicely");
+    } else if (event.type === "session_learning") {
+      add("I learned a little", "Session thoughts saved");
     } else if (event.type === "item_bought") {
       add("新东西到家", "New room treasure");
     } else if (event.behavior === "coffee" || event.itemId === COFFEE_ITEM_ID) {
@@ -820,6 +823,53 @@ const recordStatusMemory = (
     status: status.status,
     traitChanges:
       status.status === "error" ? { resilience: 1 } : { focus: 1 },
+  });
+};
+
+const recordSessionLearningMemory = (
+  memory: AivatarMemory | undefined,
+  status: CodexStatusMessage,
+) => {
+  const learning = status.learning;
+  if (!learning || learning.privacyRisk === "high") return normalizeMemory(memory);
+
+  const normalized = normalizeMemory(memory);
+  const eventId = `learning:${status.agent ?? "agent"}:${status.sessionId ?? "default"}:${learning.id}`;
+  if (normalized.recentEvents.some((event) => event.id === eventId)) {
+    return normalized;
+  }
+
+  const traitChanges = learning.traitChanges ?? {};
+  const xp = Math.max(1, Math.min(12, Math.round(learning.xp ?? 3)));
+  const { memory: withXp, leveledUp } = applyGrowthXp(normalized, xp);
+  const learnedMemory: AivatarMemory = {
+    ...withXp,
+    growth: {
+      ...withXp.growth,
+      traits: applyTraitChanges(withXp.growth.traits, traitChanges),
+    },
+  };
+  const nextMemory = appendMemoryEvent(learnedMemory, {
+    id: eventId,
+    type: "session_learning",
+    timestamp: status.timestamp,
+    summary: learning.summary,
+    agent: status.agent,
+    sessionId: status.sessionId,
+    status: status.status,
+    xp,
+    traitChanges,
+  });
+
+  if (!leveledUp) return nextMemory;
+
+  return appendMemoryEvent(nextMemory, {
+    id: `learning-level:${status.agent ?? "agent"}:${status.sessionId ?? "default"}:${learning.id}:${learnedMemory.growth.level}`,
+    type: "level_up",
+    timestamp: status.timestamp,
+    summary: `Reached level ${learnedMemory.growth.level}`,
+    agent: status.agent,
+    sessionId: status.sessionId,
   });
 };
 
@@ -2182,6 +2232,7 @@ export const App = () => {
   );
   const taskCabinetVisualFlowRef = useRef<TaskCabinetVisualFlow | null>(null);
   const lastRewardedCompleteKeyRef = useRef<string | null>(null);
+  const appliedLearningIdsRef = useRef(new Set<string>());
   const behaviorDemoTimerRef = useRef<number | null>(null);
   const previousSessionStatusRef = useRef(
     new Map<string, CodexStatusMessage["status"]>(),
@@ -2816,6 +2867,40 @@ export const App = () => {
       avatarRuntime: runtimeRef.current,
     });
   }, [save]);
+
+  useEffect(() => {
+    const currentMemory = normalizeMemory(save.memory);
+    const payload = {
+      avatarId: save.avatarId,
+      avatarName: save.avatarName ?? contentBase.avatar.name,
+      growth: {
+        level: currentMemory.growth.level,
+        traits: currentMemory.growth.traits,
+      },
+      preferences: {
+        idleBubbleLanguage: currentMemory.preferences.idleBubbleLanguage ?? "auto",
+      },
+    };
+    const body = JSON.stringify(payload);
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 1500);
+    void fetch(AVATAR_STATE_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      signal: controller.signal,
+    })
+      .catch(() => {
+        if (!navigator.sendBeacon) return undefined;
+        navigator.sendBeacon(
+          AVATAR_STATE_URL,
+          new Blob([body], { type: "application/json" }),
+        );
+        return undefined;
+      })
+      .finally(() => window.clearTimeout(timer));
+  }, [contentBase.avatar.name, save.avatarId, save.avatarName, save.memory]);
 
   useEffect(() => {
     const flushSave = () => {
@@ -3819,7 +3904,26 @@ export const App = () => {
     const previousStatus = previousSessionStatusRef.current.get(sessionKey);
     previousSessionStatusRef.current.set(sessionKey, effectiveStatus.status);
 
+    const learning = effectiveStatus.learning;
+    if (learning) {
+      const learningKey = [
+        effectiveStatus.agent ?? "agent",
+        effectiveStatus.sessionId ?? "default",
+        learning.id,
+      ].join(":");
+      if (!appliedLearningIdsRef.current.has(learningKey)) {
+        appliedLearningIdsRef.current.add(learningKey);
+        setSave((current) => ({
+          ...current,
+          memory: recordSessionLearningMemory(current.memory, effectiveStatus),
+        }));
+      }
+    }
+
+    const isSessionLearningStatus = effectiveStatus.phase === "session-learning";
+
     if (
+      !isSessionLearningStatus &&
       isRewardAgent(effectiveStatus) &&
       (effectiveStatus.status === "error" ||
         effectiveStatus.status === "waiting_for_user")
@@ -3831,6 +3935,7 @@ export const App = () => {
     }
 
     if (effectiveStatus.status !== "complete") return;
+    if (isSessionLearningStatus) return;
     if (!isRewardAgent(effectiveStatus)) return;
     const completedAt = Date.parse(effectiveStatus.timestamp);
     const freshComplete =
@@ -6313,28 +6418,111 @@ export const App = () => {
   const memoryCandidates = filterIdleBubbleCandidates(
     memoryIdleBubbleCandidates(memory),
   );
-  const sessionCandidates = filterIdleBubbleCandidates([
-    ...(effectiveStatus.idleBubbleCandidates ?? []),
-    ...sessions.flatMap((session) => session.idleBubbleCandidates ?? []),
+  type IdleBubbleCandidateSource = "memory" | "session" | "llm";
+  type IdleBubbleCandidateOption = {
+    phrase: string;
+    source: IdleBubbleCandidateSource;
+    agent?: string;
+  };
+  const idleBubbleCandidateOptions = (
+    options: IdleBubbleCandidateOption[],
+  ): IdleBubbleCandidateOption[] => {
+    const priority: Record<IdleBubbleCandidateSource, number> = {
+      memory: 0,
+      session: 1,
+      llm: 2,
+    };
+    const byPhrase = new Map<string, IdleBubbleCandidateOption>();
+    options
+      .map((option) => ({
+        ...option,
+        phrase: normalizeIdleBubblePhrase(option.phrase),
+      }))
+      .filter((option) => {
+        if (!option.phrase) return false;
+        if (!shouldShowIdleBubbleCandidate(
+          option.phrase,
+          idleBubbleLanguage,
+          locale,
+        )) {
+          return false;
+        }
+        return !idleBubblePhrases.includes(option.phrase);
+      })
+      .forEach((option) => {
+        const existing = byPhrase.get(option.phrase);
+        if (!existing || priority[option.source] > priority[existing.source]) {
+          byPhrase.set(option.phrase, option);
+        }
+      });
+
+    return [...byPhrase.values()];
+  };
+  const memoryCandidateOptions = idleBubbleCandidateOptions(
+    memoryCandidates.map((phrase) => ({ phrase, source: "memory" })),
+  );
+  const idleBubbleCandidateBadge = (candidate: IdleBubbleCandidateOption) => {
+    if (candidate.source === "llm") return "LLM";
+    if (candidate.agent === "claude-code") return "CC";
+    if (candidate.agent === "codex") return "Codex";
+    return null;
+  };
+  const idleBubbleCandidateBadgeClass = (candidate: IdleBubbleCandidateOption) => {
+    if (candidate.source === "llm") return "llm";
+    if (candidate.agent === "claude-code") return "agent-claude-code";
+    if (candidate.agent === "codex") return "agent-codex";
+    return "";
+  };
+  const sessionCandidateOptions = idleBubbleCandidateOptions([
+    ...(effectiveStatus.learning?.idleBubbleCandidates ?? []).map((phrase) => ({
+      phrase,
+      source:
+        effectiveStatus.learning?.source === "llm"
+          ? ("llm" as const)
+          : ("session" as const),
+      agent: effectiveStatus.agent,
+    })),
+    ...(effectiveStatus.idleBubbleCandidates ?? []).map((phrase) => ({
+      phrase,
+      source: "session" as const,
+      agent: effectiveStatus.agent,
+    })),
+    ...sessions.flatMap((session) =>
+      (session.learning?.idleBubbleCandidates ?? []).map((phrase) => ({
+        phrase,
+        source:
+          session.learning?.source === "llm"
+            ? ("llm" as const)
+            : ("session" as const),
+        agent: session.agent,
+      })),
+    ),
+    ...sessions.flatMap((session) =>
+      (session.idleBubbleCandidates ?? []).map((phrase) => ({
+        phrase,
+        source: "session" as const,
+        agent: session.agent,
+      })),
+    ),
   ]);
-  const primaryMemoryCandidates = memoryCandidates.slice(
+  const primaryMemoryCandidateOptions = memoryCandidateOptions.slice(
     0,
     IDLE_BUBBLE_MEMORY_CANDIDATE_TARGET,
   );
-  const primarySessionCandidates = sessionCandidates
-    .filter((phrase) => !primaryMemoryCandidates.includes(phrase))
-    .slice(0, IDLE_BUBBLE_SESSION_CANDIDATE_TARGET);
-  const idleBubbleCandidates = uniqueIdleBubbleCandidates([
-    ...primaryMemoryCandidates,
-    ...primarySessionCandidates,
-    ...memoryCandidates,
-    ...sessionCandidates,
-  ])
-    .filter((phrase) =>
-      shouldShowIdleBubbleCandidate(phrase, idleBubbleLanguage, locale),
+  const primarySessionCandidateOptions = sessionCandidateOptions
+    .filter(
+      (candidate) =>
+        !primaryMemoryCandidateOptions.some(
+          (memoryCandidate) => memoryCandidate.phrase === candidate.phrase,
+        ),
     )
-    .filter((phrase) => !idleBubblePhrases.includes(phrase))
-    .slice(0, IDLE_BUBBLE_CANDIDATE_LIMIT);
+    .slice(0, IDLE_BUBBLE_SESSION_CANDIDATE_TARGET);
+  const idleBubbleCandidates = idleBubbleCandidateOptions([
+    ...primaryMemoryCandidateOptions,
+    ...primarySessionCandidateOptions,
+    ...memoryCandidateOptions,
+    ...sessionCandidateOptions,
+  ]).slice(0, IDLE_BUBBLE_CANDIDATE_LIMIT);
   const dominantTrait = traitRows.reduce(
     (best, trait) => (growth.traits[trait] > growth.traits[best] ? trait : best),
     traitRows[0],
@@ -6690,18 +6878,35 @@ export const App = () => {
                 </div>
                 {idleBubbleCandidates.length > 0 ? (
                   <div className="idle-bubble-candidates">
-                    {idleBubbleCandidates.map((phrase) => (
-                      <button
-                        key={phrase}
-                        type="button"
-                        className="pixel-button idle-bubble-candidate"
-                        disabled={!idleBubbleSlotsAvailable}
-                        onClick={() => addIdleBubblePhrase(phrase)}
-                      >
-                        <span>{phrase}</span>
-                        <b>{ui("action.add")}</b>
-                      </button>
-                    ))}
+                    {idleBubbleCandidates.map((candidate) => {
+                      const badge = idleBubbleCandidateBadge(candidate);
+                      const badgeClass = idleBubbleCandidateBadgeClass(candidate);
+                      return (
+                        <button
+                          key={`${candidate.source}:${candidate.agent ?? "local"}:${candidate.phrase}`}
+                          type="button"
+                          className={`pixel-button idle-bubble-candidate${
+                            candidate.source === "llm" ? " llm" : ""
+                          }${candidate.agent ? ` ${badgeClass}` : ""}`}
+                          disabled={!idleBubbleSlotsAvailable}
+                          onClick={() => addIdleBubblePhrase(candidate.phrase)}
+                          title={
+                            badge
+                              ? `${badge} suggested`
+                              : undefined
+                          }
+                        >
+                          <span>{candidate.phrase}</span>
+                          {badge ? (
+                            <b className={`idle-bubble-source ${badgeClass}`}>
+                              {badge}
+                            </b>
+                          ) : (
+                            <b>{ui("action.add")}</b>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="idle-bubble-empty">{ui("idleBubble.noSuggestions")}</p>

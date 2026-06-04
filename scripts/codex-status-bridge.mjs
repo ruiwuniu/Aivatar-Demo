@@ -1,4 +1,7 @@
 import http from "node:http";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { WebSocketServer } from "ws";
 
 const wsPort = Number(process.env.AIVATAR_WS_PORT ?? 38987);
@@ -10,7 +13,11 @@ const legacyStatusPath = "/codex-status";
 const activeSessionPath = "/agent-active";
 const staleSessionsPath = "/agent-sessions/stale";
 const presencePath = "/agent-presence";
+const avatarStatePath = "/avatar-state";
 const healthPath = "/health";
+const avatarStateFile =
+  process.env.AIVATAR_AVATAR_STATE_PATH ??
+  join(tmpdir(), "aivatar-avatar-state.json");
 const sessionStaleMs = Number(
   process.env.AIVATAR_SESSION_STALE_MS ?? 48 * 60 * 60 * 1000,
 );
@@ -229,6 +236,114 @@ const normalizeIdleBubbleCandidates = (value) => {
   return candidates.length > 0 ? candidates : undefined;
 };
 
+const normalizeTraitChanges = (value) => {
+  if (!value || typeof value !== "object") return undefined;
+  const traitNames = [
+    "focus",
+    "resilience",
+    "curiosity",
+    "efficiency",
+    "creativity",
+    "warmth",
+  ];
+  const changes = {};
+
+  for (const trait of traitNames) {
+    const next = Number(value[trait]);
+    if (!Number.isFinite(next) || next === 0) continue;
+    changes[trait] = Math.max(-20, Math.min(20, Math.round(next)));
+  }
+
+  return Object.keys(changes).length > 0 ? changes : undefined;
+};
+
+const normalizeLearning = (value) => {
+  if (!value || typeof value !== "object") return undefined;
+
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const summary = typeof value.summary === "string"
+    ? value.summary.trim().replace(/\s+/g, " ")
+    : "";
+  if (!id || !summary) return undefined;
+
+  const source = value.source === "heuristic" ? "heuristic" : "llm";
+  const privacyRisk =
+    value.privacyRisk === "medium" || value.privacyRisk === "high"
+      ? value.privacyRisk
+      : "low";
+  const xp = Number(value.xp);
+  const confidence = Number(value.confidence);
+
+  return {
+    id,
+    source,
+    summary: summary.length > 180 ? `${summary.slice(0, 177)}...` : summary,
+    idleBubbleCandidates: normalizeIdleBubbleCandidates(
+      value.idleBubbleCandidates,
+    ),
+    traitChanges: normalizeTraitChanges(value.traitChanges),
+    xp: Number.isFinite(xp) && xp > 0 ? Math.min(12, Math.round(xp)) : undefined,
+    confidence:
+      Number.isFinite(confidence) && confidence >= 0
+        ? Math.min(1, confidence)
+        : undefined,
+    privacyRisk,
+  };
+};
+
+const normalizeAvatarState = (value) => {
+  if (!value || typeof value !== "object") {
+    throw new Error("Avatar state payload must be a JSON object");
+  }
+
+  const traitNames = [
+    "focus",
+    "resilience",
+    "curiosity",
+    "efficiency",
+    "creativity",
+    "warmth",
+  ];
+  const sourceTraits = value.growth?.traits ?? value.traits ?? {};
+  const traits = {};
+  for (const trait of traitNames) {
+    const next = Number(sourceTraits[trait]);
+    traits[trait] = Number.isFinite(next) && next >= 0 ? Math.round(next) : 0;
+  }
+
+  const level = Number(value.growth?.level ?? value.level);
+  const idleBubbleLanguage =
+    value.preferences?.idleBubbleLanguage === "zh" ||
+    value.preferences?.idleBubbleLanguage === "en" ||
+    value.preferences?.idleBubbleLanguage === "mixed"
+      ? value.preferences.idleBubbleLanguage
+      : "auto";
+
+  return {
+    avatarId:
+      typeof value.avatarId === "string"
+        ? value.avatarId.trim().slice(0, 80)
+        : undefined,
+    avatarName:
+      typeof value.avatarName === "string"
+        ? value.avatarName.trim().replace(/\s+/g, " ").slice(0, 40)
+        : undefined,
+    growth: {
+      level: Number.isFinite(level) && level > 0 ? Math.round(level) : 1,
+      traits,
+    },
+    preferences: {
+      idleBubbleLanguage,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+};
+
+const persistAvatarState = async (state) => {
+  await mkdir(dirname(avatarStateFile), { recursive: true });
+  await writeFile(avatarStateFile, JSON.stringify(state, null, 2), "utf8");
+};
+
 const makeSnapshot = () => ({
   type: "aivatar.status.snapshot",
   currentStatus: chooseCurrentStatus(),
@@ -276,6 +391,7 @@ const normalizeStatus = (value) => {
           : new Date().toISOString(),
     usage: normalizeUsage(value.usage),
     idleBubbleCandidates: normalizeIdleBubbleCandidates(value.idleBubbleCandidates),
+    learning: normalizeLearning(value.learning),
   };
 };
 
@@ -415,6 +531,7 @@ const httpServer = http.createServer(async (request, response) => {
       activeSessionHttp: `http://127.0.0.1:${httpPort}${activeSessionPath}`,
       staleSessionsHttp: `http://127.0.0.1:${httpPort}${staleSessionsPath}`,
       presenceHttp: `http://127.0.0.1:${httpPort}${presencePath}`,
+      avatarStateHttp: `http://127.0.0.1:${httpPort}${avatarStatePath}`,
       clients: wsServer.clients.size,
       agentStatus: snapshot.currentStatus,
       codexStatus: snapshot.currentStatus,
@@ -426,6 +543,24 @@ const httpServer = http.createServer(async (request, response) => {
       sessionStaleMs,
       activityStaleMs,
     });
+    return;
+  }
+
+  if (request.url === avatarStatePath && request.method === "POST") {
+    try {
+      const body = await readBody(request);
+      const avatarState = normalizeAvatarState(JSON.parse(body));
+      await persistAvatarState(avatarState);
+      sendJson(response, 202, {
+        ok: true,
+        avatarStateFile,
+        updatedAt: avatarState.updatedAt,
+      });
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : "Invalid avatar state payload",
+      });
+    }
     return;
   }
 
@@ -517,6 +652,7 @@ const httpServer = http.createServer(async (request, response) => {
         usage: nextStatus.usage ?? existing?.usage,
         idleBubbleCandidates:
           nextStatus.idleBubbleCandidates ?? existing?.idleBubbleCandidates,
+        learning: nextStatus.learning ?? existing?.learning,
       };
       currentStatus = withSessionExpiry(currentStatus);
       sessions.set(sessionKey(currentStatus), currentStatus);
@@ -546,6 +682,7 @@ httpServer.listen(httpPort, "127.0.0.1", () => {
   console.log(`Aivatar active session: http://127.0.0.1:${httpPort}${activeSessionPath}`);
   console.log(`Aivatar stale sessions: http://127.0.0.1:${httpPort}${staleSessionsPath}`);
   console.log(`Aivatar presence: http://127.0.0.1:${httpPort}${presencePath}`);
+  console.log(`Aivatar avatar state: http://127.0.0.1:${httpPort}${avatarStatePath}`);
   console.log(`Aivatar health: http://127.0.0.1:${httpPort}${healthPath}`);
 });
 

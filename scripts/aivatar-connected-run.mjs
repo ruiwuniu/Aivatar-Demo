@@ -498,6 +498,10 @@ const commandEnv = (options) => {
       process.env.AIVATAR_ACTIVE_ENDPOINT ?? "http://127.0.0.1:38988/agent-active",
     AIVATAR_PRESENCE_ENDPOINT:
       process.env.AIVATAR_PRESENCE_ENDPOINT ?? "http://127.0.0.1:38988/agent-presence",
+    AIVATAR_LEARNING_ENABLED: process.env.AIVATAR_LEARNING_ENABLED ?? "1",
+    AIVATAR_LEARNING_PROVIDER:
+      process.env.AIVATAR_LEARNING_PROVIDER ??
+      (options.agent === "codex" ? "codex" : "claude-code"),
   };
 
   if (options.allowNewSession && !options.hasExplicitSessionId) {
