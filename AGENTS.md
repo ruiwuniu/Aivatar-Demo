@@ -1255,6 +1255,23 @@ For this project, prefer:
 - `npm.cmd run build` and `cargo check` after code changes.
 - Runtime screenshots after meaningful UI changes.
 
+## Merge / Worktree Safety
+
+To reduce semantic regressions from parallel worktrees:
+
+- Keep changes to central lifecycle files small and isolated. In this project, `scripts/codex-status-bridge.mjs`, `scripts/codex-session-discovery.mjs`, `scripts/aivatar-connected-run.mjs`, `src/App.tsx`, and `AGENTS.md` are high-conflict files.
+- Before starting or finishing work in a worktree, update from `main` with `git fetch` plus either `git merge main` or `git rebase main`, depending on the branch workflow.
+- When a merge conflict touches bridge/discovery/session files, resolve text conflicts and then do a semantic checklist:
+  - New or changed endpoints appear in `/health`.
+  - Session keys are normalized consistently.
+  - Disconnect covers manual plugin pid files, repo-local CLI pid files, and auto-discovery helper pid files.
+  - Bridge restart preserves expected persisted state such as disconnect tombstones.
+  - Discovery does not resurrect a just-disconnected session.
+  - Stale/active-window defaults match across bridge, discovery, frontend fallback constants, and documentation.
+- After changing bridge/discovery code, restart both `status:bridge` and `status:discover`; already-running Node processes do not hot-reload patched files.
+- Prefer adding focused smoke tests for lifecycle behavior after merge-prone changes: post presence, disconnect, post presence again, restart bridge, post presence again, and verify the session does not reappear while tombstoned.
+- Avoid mixing unrelated lifecycle changes with learning/UI/documentation edits in the same commit when possible. If a merge combines those areas, explicitly re-check cross-feature behavior rather than relying only on build success.
+
 ## Recommended Next Steps
 
 1. Continue regression-testing Codex chat/session safety with `codex resume <session-id>`, explicit `--new-session`, automatic discovery, the desktop CLI Launcher, disconnect cleanup, 30-minute expiry behavior, stale-process cleanup, PATH/plugin shadowing checks, recovery-log inspection, and bridge/discovery restart behavior after code changes.
