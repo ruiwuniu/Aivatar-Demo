@@ -4,7 +4,9 @@ import { access } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
+const scriptDir = dirname(fileURLToPath(import.meta.url));
 const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
 const sessionsRoot = process.env.CODEX_SESSIONS_ROOT ?? join(codexHome, "sessions");
 const pluginRoot =
@@ -19,6 +21,9 @@ const statusEndpoint =
 const usageBaselinePath =
   process.env.AIVATAR_USAGE_BASELINE_PATH ??
   join(tmpdir(), "aivatar-usage-baselines.json");
+const learningScript =
+  process.env.AIVATAR_LEARNING_SCRIPT ??
+  join(scriptDir, "aivatar-learning-worker.mjs");
 const discoveryIntervalMs = Math.max(
   1000,
   Number(process.env.AIVATAR_DISCOVERY_INTERVAL_MS ?? 3000),
@@ -201,6 +206,10 @@ const spawnHelper = (script, session, extraEnv = {}) => {
         AIVATAR_PRESENCE_ENDPOINT: presenceEndpoint,
         AIVATAR_HTTP_ENDPOINT: statusEndpoint,
         AIVATAR_USAGE_BASELINE_PATH: usageBaselinePath,
+        AIVATAR_LEARNING_ENABLED: process.env.AIVATAR_LEARNING_ENABLED ?? "1",
+        AIVATAR_LEARNING_PROVIDER:
+          process.env.AIVATAR_LEARNING_PROVIDER ?? "codex",
+        AIVATAR_LEARNING_SCRIPT: learningScript,
       },
     },
   );

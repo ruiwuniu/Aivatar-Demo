@@ -1,7 +1,11 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const scriptDir = dirname(fileURLToPath(import.meta.url));
 
 const endpoint =
   process.env.AIVATAR_HTTP_ENDPOINT ?? "http://127.0.0.1:38988/agent-status";
@@ -12,6 +16,13 @@ const presenceEndpoint =
 const claudeDefaultModelContextWindow = Number(
   process.env.AIVATAR_CLAUDE_MODEL_CONTEXT_WINDOW ?? 200000,
 );
+const learningEnabled = /^(1|true|yes|on)$/i.test(
+  process.env.AIVATAR_LEARNING_ENABLED ?? "",
+);
+const learningProvider =
+  process.env.AIVATAR_LEARNING_PROVIDER ??
+  process.env.AIVATAR_PROVIDER ??
+  "claude-code";
 
 const readStdin = async () => {
   let input = "";
@@ -301,8 +312,11 @@ const preserveTerminalStatusAfterTurnEnd = (input, status, previousState) => {
     status: previousState.status,
     phase: previousState.phase,
     message: previousState.message,
+    preservedTerminal: true,
   };
 };
+
+const isTerminalStatusName = (status) => status === "complete" || status === "error";
 
 const shouldStatusLineComplete = (previousState, usage) => {
   if (!usage?.outputTokens || usage.outputTokens <= 0) return false;
@@ -350,6 +364,149 @@ const idleBubbleCandidatesFromInput = (input) => {
   return candidates.length > 0 ? candidates.slice(0, 6) : undefined;
 };
 
+const compactLearningText = (value, limit = 700) =>
+  String(value ?? "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`]*`/g, " ")
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/[A-Za-z]:\\[^\s"'<>]+/g, "[path]")
+    .replace(/(?:[./]|\\\\)[^\s"'<>]*[\\/][^\s"'<>]+/g, "[path]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
+    .replace(/\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*\S+/gi, "[secret]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+
+const transcriptMessageText = (entry) => {
+  const content = entry?.message?.content ?? entry?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((item) =>
+        typeof item === "string"
+          ? item
+          : typeof item?.text === "string"
+            ? item.text
+            : "",
+      )
+      .filter(Boolean)
+      .join(" ");
+  }
+  return firstString(entry?.message?.text, entry?.text, entry?.summary) ?? "";
+};
+
+const learningDigestFromTranscript = async (input) => {
+  const transcriptPath = firstString(input?.transcript_path);
+  if (!transcriptPath) return "";
+
+  try {
+    const text = await readFile(transcriptPath, "utf8");
+    const snippets = [];
+    const lines = text.split(/\r?\n/u).filter(Boolean).slice(-20);
+    for (const line of lines) {
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const role = firstString(entry?.message?.role, entry?.role, entry?.type);
+      const snippet = compactLearningText(transcriptMessageText(entry), 260);
+      if (!snippet) continue;
+      snippets.push(`${role ?? "message"}: ${snippet}`);
+      if (snippets.length >= 6) break;
+    }
+    return snippets.join("\n");
+  } catch {
+    return "";
+  }
+};
+
+const learningDigestFromInput = async (input, payload) => {
+  const directSnippets = [
+    firstString(input?.session_name) ? `session: ${input.session_name}` : "",
+    firstString(input?.hook_event_name)
+      ? `event: ${input.hook_event_name}`
+      : input?.context_window
+        ? "event: StatusLine"
+        : "",
+    firstString(input?.tool_name) ? `tool: ${input.tool_name}` : "",
+    firstString(input?.message) ? `message: ${input.message}` : "",
+    firstString(input?.last_assistant_message)
+      ? `assistant: ${input.last_assistant_message}`
+      : "",
+    firstString(payload?.summary) ? `status: ${payload.summary}` : "",
+  ]
+    .map((snippet) => compactLearningText(snippet, 360))
+    .filter(Boolean);
+  const transcriptDigest = await learningDigestFromTranscript(input);
+  return [...directSnippets, transcriptDigest].filter(Boolean).join("\n");
+};
+
+const writeLearningContext = async (sessionId, digest) => {
+  const path = join(
+    tmpdir(),
+    "aivatar-learning-context",
+    `${safeName(sessionId)}-${Date.now()}.txt`,
+  );
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, compactLearningText(digest, 2000), "utf8");
+  return path;
+};
+
+const spawnLearningWorker = async (sessionId, input, payload) => {
+  if (!learningEnabled) return null;
+  if (payload.status !== "complete" && payload.status !== "error") return null;
+
+  const digest = await learningDigestFromInput(input, payload);
+  const contextPath = await writeLearningContext(sessionId, digest || payload.summary);
+  const workerPath = join(scriptDir, "aivatar-learning-worker.mjs");
+  const child = spawn(
+    process.execPath,
+    [
+      workerPath,
+      "--provider",
+      learningProvider,
+      "--agent",
+      payload.agent,
+      "--session",
+      sessionId,
+      "--status",
+      payload.status,
+      "--summary",
+      payload.summary ?? payload.message ?? "Claude Code turn complete",
+      "--context-file",
+      contextPath,
+    ],
+    {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      env: {
+        ...process.env,
+        AIVATAR_AGENT: payload.agent,
+        AIVATAR_SESSION_ID: sessionId,
+        AIVATAR_LEARNING_PROVIDER: learningProvider,
+      },
+    },
+  );
+  child.unref();
+
+  return {
+    key: [
+      payload.status,
+      payload.phase,
+      payload.timestamp,
+      payload.usage?.totalTokens ?? 0,
+      payload.summary,
+    ].join(":"),
+    provider: learningProvider,
+    contextPath,
+    pid: child.pid,
+    startedAt: new Date().toISOString(),
+  };
+};
+
 try {
   const statusLineMode = process.argv.includes("--status-line");
   const rawInput = await readStdin();
@@ -368,9 +525,12 @@ try {
   const status = statusLineMode
     ? statusForStatusLine(input, previousState, usage)
     : preserveTerminalStatusAfterTurnEnd(input, statusForEvent(input), previousState);
-  const isTerminalStatus = status.status === "complete" || status.status === "error";
+  const preservedTerminalStatus = Boolean(status.preservedTerminal);
+  const isTerminalStatus = isTerminalStatusName(status.status);
   const timestamp =
-    statusLineMode && previousState.status === status.status && previousState.timestamp
+    (statusLineMode || preservedTerminalStatus) &&
+    previousState.status === status.status &&
+    previousState.timestamp
       ? previousState.timestamp
       : new Date().toISOString();
   const payload = {
@@ -398,6 +558,13 @@ try {
       : undefined,
     idleBubbleCandidates: idleBubbleCandidatesFromInput(input),
   };
+  const learningTriggerKey = [
+    payload.status,
+    payload.phase,
+    payload.timestamp,
+    payload.usage?.totalTokens ?? 0,
+    payload.summary,
+  ].join(":");
 
   await writeSessionState(sessionId, {
     status: payload.status,
@@ -405,6 +572,9 @@ try {
     message: payload.message,
     timestamp: payload.timestamp,
     latestUsage: payload.usage ?? previousState.latestUsage,
+    lastLearningKey: isTerminalStatus
+      ? previousState.lastLearningKey
+      : undefined,
   });
   await appendEventLog(sessionId, input, payload, statusLineMode ? "statusLine" : "hook");
 
@@ -432,6 +602,25 @@ try {
     const pct = numberField(input?.context_window?.used_percentage);
     const label = pct === undefined ? "Aivatar linked" : `Aivatar ${Math.round(pct)}% ctx`;
     process.stdout.write(label);
+  }
+
+  if (
+    learningEnabled &&
+    isTerminalStatus &&
+    !preservedTerminalStatus &&
+    learningTriggerKey !== previousState.lastLearningKey
+  ) {
+    await writeSessionState(sessionId, {
+      status: payload.status,
+      phase: payload.phase,
+      message: payload.message,
+      timestamp: payload.timestamp,
+      latestUsage: payload.usage ?? previousState.latestUsage,
+      lastLearningKey: learningTriggerKey,
+    });
+    void spawnLearningWorker(sessionId, input, payload).catch(() => {
+      // Learning is best-effort and must not break Claude Code hooks.
+    });
   }
 } catch (error) {
   if (process.argv.includes("--status-line")) {
