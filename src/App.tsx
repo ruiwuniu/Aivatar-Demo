@@ -151,6 +151,9 @@ const NAV_MEMORY_CELL_COUNT_LIMIT = 9999;
 const NAV_LEARNING_RECORD_INTERVAL_SECONDS = 2.5;
 const DEFAULT_AUDIO_VOLUME = 0.45;
 const KEYBOARD_TYPING_AUDIO_SRC = "/audio/keyboard-typing-loop.wav";
+const COFFEE_MACHINE_BREW_AUDIO_SRC = "/audio/coffee-machine-brew-loop.ogg";
+const FRIDGE_DOOR_OPEN_AUDIO_SRC = "/audio/fridge-door-open.mp3";
+const FRIDGE_DOOR_CLOSE_AUDIO_SRC = "/audio/fridge-door-close.mp3";
 const GAME_CONSOLE_AUDIO_SOURCES = [
   "/audio/game-console-jump.ogg",
   "/audio/game-console-invincibility.ogg",
@@ -159,6 +162,9 @@ const GAME_CONSOLE_AUDIO_SOURCES = [
   "/audio/game-console-get-equipped.wav",
   "/audio/game-console-curious.ogg",
 ];
+const COFFEE_MACHINE_BREW_AUDIO_VOLUME_MULTIPLIER = 0.45;
+const FRIDGE_DOOR_AUDIO_VOLUME_MULTIPLIER = 0.65;
+const FRIDGE_DOOR_CLOSE_AUDIO_DELAY_MS = 3650;
 const GAME_CONSOLE_AUDIO_VOLUME_MULTIPLIER = 0.5;
 const DEMO_BEHAVIORS: BehaviorName[] = [
   "idle",
@@ -2217,6 +2223,13 @@ export const App = () => {
   const [audioVolume, setAudioVolume] = useState(() => loadInitialAudioVolume());
   const uiThemeRef = useRef(uiTheme);
   const keyboardTypingAudioRef = useRef<HTMLAudioElement | null>(null);
+  const coffeeMachineBrewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const fridgeDoorOpenAudioRef = useRef<HTMLAudioElement | null>(null);
+  const fridgeDoorCloseAudioRef = useRef<HTMLAudioElement | null>(null);
+  const fridgeDoorAudioInteractionRef = useRef<{
+    key: string;
+    closePlayed: boolean;
+  } | null>(null);
   const gameConsoleAudioRef = useRef<HTMLAudioElement | null>(null);
   const gameConsoleAudioSourceRef = useRef(GAME_CONSOLE_AUDIO_SOURCES[0]);
   const gameConsoleAnimatingRef = useRef(false);
@@ -2559,21 +2572,17 @@ export const App = () => {
 
   const unlockAppAudio = () => {
     audioUnlockedRef.current = true;
-    [keyboardTypingAudioRef.current, gameConsoleAudioRef.current].forEach((audio) => {
-      if (!audio) return;
-      const wasMuted = audio.muted;
-      audio.muted = true;
-      void audio
-        .play()
-        .then(() => {
-          audio.pause();
-          audio.currentTime = 0;
-          audio.muted = wasMuted;
-        })
-        .catch(() => {
-          audio.muted = wasMuted;
-        });
-    });
+  };
+
+  const playOneShotAudio = (
+    audio: HTMLAudioElement | null,
+    volumeMultiplier = 1,
+  ) => {
+    if (!audio || audioVolume <= 0 || !audioUnlockedRef.current) return;
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = Math.min(1, Math.max(0, audioVolume * volumeMultiplier));
+    void audio.play().catch(() => undefined);
   };
 
   const pauseAudio = (audio: HTMLAudioElement | null) => {
@@ -3068,6 +3077,22 @@ export const App = () => {
     keyboardAudio.volume = audioVolume;
     keyboardTypingAudioRef.current = keyboardAudio;
 
+    const coffeeMachineAudio = new Audio(COFFEE_MACHINE_BREW_AUDIO_SRC);
+    coffeeMachineAudio.loop = true;
+    coffeeMachineAudio.preload = "auto";
+    coffeeMachineAudio.volume = audioVolume;
+    coffeeMachineBrewAudioRef.current = coffeeMachineAudio;
+
+    const fridgeDoorOpenAudio = new Audio(FRIDGE_DOOR_OPEN_AUDIO_SRC);
+    fridgeDoorOpenAudio.preload = "auto";
+    fridgeDoorOpenAudio.volume = audioVolume;
+    fridgeDoorOpenAudioRef.current = fridgeDoorOpenAudio;
+
+    const fridgeDoorCloseAudio = new Audio(FRIDGE_DOOR_CLOSE_AUDIO_SRC);
+    fridgeDoorCloseAudio.preload = "auto";
+    fridgeDoorCloseAudio.volume = audioVolume;
+    fridgeDoorCloseAudioRef.current = fridgeDoorCloseAudio;
+
     const gameAudio = new Audio(gameConsoleAudioSourceRef.current);
     gameAudio.loop = true;
     gameAudio.preload = "auto";
@@ -3076,15 +3101,27 @@ export const App = () => {
 
     return () => {
       keyboardAudio.pause();
+      coffeeMachineAudio.pause();
+      fridgeDoorOpenAudio.pause();
+      fridgeDoorCloseAudio.pause();
       gameAudio.pause();
       keyboardTypingAudioRef.current = null;
+      coffeeMachineBrewAudioRef.current = null;
+      fridgeDoorOpenAudioRef.current = null;
+      fridgeDoorCloseAudioRef.current = null;
       gameConsoleAudioRef.current = null;
     };
   }, []);
 
   useEffect(() => {
     localStorage.setItem(AUDIO_VOLUME_KEY, String(audioVolume));
-    [keyboardTypingAudioRef.current, gameConsoleAudioRef.current].forEach((audio) => {
+    [
+      keyboardTypingAudioRef.current,
+      coffeeMachineBrewAudioRef.current,
+      fridgeDoorOpenAudioRef.current,
+      fridgeDoorCloseAudioRef.current,
+      gameConsoleAudioRef.current,
+    ].forEach((audio) => {
       if (!audio) return;
       audio.volume = audioVolume;
       if (audioVolume <= 0) {
@@ -3103,9 +3140,15 @@ export const App = () => {
     );
     const isTerminalAnimating =
       Boolean(terminal) &&
-      (activeBehavior === "coding" || activeBehavior === "thinking") &&
+      (avatar.behavior === "coding" || avatar.behavior === "thinking") &&
       Math.hypot(avatar.x - terminal!.x, avatar.y - (terminal!.y + 18)) < 92;
     const canPlayAudio = audioVolume > 0 && audioUnlockedRef.current;
+    const isCoffeeMachineBrewing =
+      activeInteraction?.kind === "brew" && activeBehavior === "brew";
+    const activeFridgeFeedInteraction =
+      activeInteraction?.kind === "feed" && activeInteraction.furnitureId === "fridge"
+        ? activeInteraction
+        : null;
     const isGameConsoleAnimating = isGameConsoleAnimatingForAudio();
 
     if (isGameConsoleAnimating && !gameConsoleAnimatingRef.current) {
@@ -3113,7 +3156,39 @@ export const App = () => {
     }
     gameConsoleAnimatingRef.current = isGameConsoleAnimating;
 
+    if (activeFridgeFeedInteraction && canPlayAudio) {
+      const interactionKey = `${activeFridgeFeedInteraction.furnitureId}:${activeFridgeFeedInteraction.startedAt}`;
+      const elapsedMs = performance.now() - activeFridgeFeedInteraction.startedAt;
+      if (fridgeDoorAudioInteractionRef.current?.key !== interactionKey) {
+        fridgeDoorAudioInteractionRef.current = {
+          key: interactionKey,
+          closePlayed: false,
+        };
+        playOneShotAudio(
+          fridgeDoorOpenAudioRef.current,
+          FRIDGE_DOOR_AUDIO_VOLUME_MULTIPLIER,
+        );
+      }
+      if (
+        elapsedMs >= FRIDGE_DOOR_CLOSE_AUDIO_DELAY_MS &&
+        !fridgeDoorAudioInteractionRef.current.closePlayed
+      ) {
+        fridgeDoorAudioInteractionRef.current.closePlayed = true;
+        playOneShotAudio(
+          fridgeDoorCloseAudioRef.current,
+          FRIDGE_DOOR_AUDIO_VOLUME_MULTIPLIER,
+        );
+      }
+    } else if (!activeFridgeFeedInteraction) {
+      fridgeDoorAudioInteractionRef.current = null;
+    }
+
     setAudioPlaying(keyboardTypingAudioRef.current, isTerminalAnimating && canPlayAudio);
+    setAudioPlaying(
+      coffeeMachineBrewAudioRef.current,
+      isCoffeeMachineBrewing && canPlayAudio,
+      COFFEE_MACHINE_BREW_AUDIO_VOLUME_MULTIPLIER,
+    );
     setAudioPlaying(
       gameConsoleAudioRef.current,
       isGameConsoleAnimating && canPlayAudio,
