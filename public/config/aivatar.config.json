@@ -506,6 +506,24 @@
       "effect": { "mood": 3, "energy": 1 }
     },
     {
+      "id": "wood-red-bed-skin",
+      "name": "Wood Red Bed Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "bed"],
+      "targetFurnitureId": "bed",
+      "price": 260,
+      "effect": { "mood": 4, "energy": 1 }
+    },
+    {
+      "id": "ivory-pink-plaid-bed-skin",
+      "name": "Ivory Pink Plaid Bed Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "bed"],
+      "targetFurnitureId": "bed",
+      "price": 280,
+      "effect": { "mood": 5, "energy": 1 }
+    },
+    {
       "id": "industrial-desk-skin",
       "name": "Industrial Desk Skin",
       "kind": "decor",
@@ -513,6 +531,42 @@
       "targetFurnitureId": "desk",
       "price": 280,
       "effect": { "mood": 3, "energy": 2 }
+    },
+    {
+      "id": "rococo-ivory-desk-skin",
+      "name": "Rococo Ivory Desk Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "desk"],
+      "targetFurnitureId": "desk",
+      "price": 340,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
+      "id": "rococo-ivory-table-skin",
+      "name": "Rococo Ivory Table Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "table"],
+      "targetFurnitureId": "table",
+      "price": 320,
+      "effect": { "mood": 5, "energy": 1 }
+    },
+    {
+      "id": "dark-oak-table-skin",
+      "name": "Dark Oak Table Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "table"],
+      "targetFurnitureId": "table",
+      "price": 260,
+      "effect": { "mood": 4, "energy": 1 }
+    },
+    {
+      "id": "ivory-fridge-skin",
+      "name": "Ivory Fridge Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "fridge"],
+      "targetFurnitureId": "fridge",
+      "price": 300,
+      "effect": { "mood": 4, "energy": 2 }
     },
     {
       "id": "city-night-window",
@@ -743,6 +797,24 @@
         "effect": { "mood": 3, "energy": 1 }
       },
       {
+        "id": "wood-red-bed-skin",
+        "name": "Wood Red Bed Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "bed"],
+        "targetFurnitureId": "bed",
+        "price": 260,
+        "effect": { "mood": 4, "energy": 1 }
+      },
+      {
+        "id": "ivory-pink-plaid-bed-skin",
+        "name": "Ivory Pink Plaid Bed Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "bed"],
+        "targetFurnitureId": "bed",
+        "price": 280,
+        "effect": { "mood": 5, "energy": 1 }
+      },
+      {
         "id": "industrial-desk-skin",
         "name": "Industrial Desk Skin",
         "kind": "decor",
@@ -750,6 +822,42 @@
         "targetFurnitureId": "desk",
         "price": 280,
         "effect": { "mood": 3, "energy": 2 }
+      },
+      {
+        "id": "rococo-ivory-desk-skin",
+        "name": "Rococo Ivory Desk Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "desk"],
+        "targetFurnitureId": "desk",
+        "price": 340,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "rococo-ivory-table-skin",
+        "name": "Rococo Ivory Table Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "table"],
+        "targetFurnitureId": "table",
+        "price": 320,
+        "effect": { "mood": 5, "energy": 1 }
+      },
+      {
+        "id": "dark-oak-table-skin",
+        "name": "Dark Oak Table Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "table"],
+        "targetFurnitureId": "table",
+        "price": 260,
+        "effect": { "mood": 4, "energy": 1 }
+      },
+      {
+        "id": "ivory-fridge-skin",
+        "name": "Ivory Fridge Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "fridge"],
+        "targetFurnitureId": "fridge",
+        "price": 300,
+        "effect": { "mood": 4, "energy": 2 }
       },
       {
         "id": "city-night-window",

@@ -98,6 +98,13 @@ const COFFEE_ITEM_ID = "coffee";
 const COLA_ITEM_ID = "cola";
 const BENTO_ITEM_ID = "bento";
 const BED_INDUSTRIAL_SKIN_ID = "industrial-bed-skin";
+const BED_WOOD_RED_SKIN_ID = "wood-red-bed-skin";
+const BED_IVORY_PINK_PLAID_SKIN_ID = "ivory-pink-plaid-bed-skin";
+const DESK_INDUSTRIAL_SKIN_ID = "industrial-desk-skin";
+const DESK_ROCOCO_IVORY_SKIN_ID = "rococo-ivory-desk-skin";
+const TABLE_ROCOCO_IVORY_SKIN_ID = "rococo-ivory-table-skin";
+const TABLE_DARK_OAK_SKIN_ID = "dark-oak-table-skin";
+const FRIDGE_IVORY_SKIN_ID = "ivory-fridge-skin";
 const COFFEE_MAX_QUANTITY = 6;
 const TABLE_FURNITURE_ID = "table";
 const EMPTY_TABLE_COFFEE_CAPACITY = 0;
@@ -6452,6 +6459,48 @@ export const App = () => {
     });
   };
 
+  const clearAppliedFurnitureSkin = (item: ItemDefinition) => {
+    const targetFurnitureId = item.targetFurnitureId;
+    const targetFurniture = targetFurnitureId
+      ? contentRef.current.room.furniture.find(
+          (candidate) => candidate.id === targetFurnitureId,
+        )
+      : null;
+
+    if (!targetFurnitureId || !targetFurniture) {
+      updateActiveInteraction({
+        kind: "blocked",
+        furnitureId: "furniture-skin",
+        furnitureName: item.name,
+        message: ui("message.windowMissing", { name: item.name }),
+        startedAt: performance.now(),
+        bubbleText: ui("bubble.missing"),
+      });
+      return;
+    }
+
+    setSave((current) => {
+      if (current.activeFurnitureSkinIds?.[targetFurnitureId] !== item.id) return current;
+      const nextActiveFurnitureSkinIds = { ...(current.activeFurnitureSkinIds ?? {}) };
+      delete nextActiveFurnitureSkinIds[targetFurnitureId];
+      return {
+        ...current,
+        activeFurnitureSkinIds: nextActiveFurnitureSkinIds,
+      };
+    });
+
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: targetFurnitureId,
+      furnitureName: targetFurniture.name,
+      message: ui("message.furnitureSkinCleared", {
+        furniture: targetFurniture.name,
+      }),
+      startedAt: performance.now(),
+      bubbleText: ui("bubble.skin"),
+    });
+  };
+
   const buyOrApplySurface = (item: ItemDefinition) => {
     const isWallSurface = isWallSurfaceItem(item);
     const surface = isWallSurface
@@ -6764,6 +6813,342 @@ export const App = () => {
               width: 8,
               height: 3,
               background: "#d7dce0",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === BED_WOOD_RED_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 2,
+              top: 5,
+              width: 14,
+              height: 10,
+              background: "#9d1f2f",
+              border: "2px solid #4d2614",
+              boxShadow: "inset 0 3px 0 #d6454b",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 1,
+              top: 3,
+              width: 3,
+              height: 14,
+              background: "#c47a3c",
+              boxShadow: "13px 0 0 #c47a3c",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 4,
+              width: 8,
+              height: 3,
+              background: "#f5e6d0",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === BED_IVORY_PINK_PLAID_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 2,
+              top: 5,
+              width: 14,
+              height: 10,
+              background: "#f4a1bd",
+              border: "2px solid #efe2c7",
+              boxShadow: "inset 0 3px 0 #ffd2df",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 1,
+              top: 3,
+              width: 3,
+              height: 14,
+              background: "#fff7df",
+              boxShadow: "13px 0 0 #fff7df",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 4,
+              width: 8,
+              height: 3,
+              background: "#fff0f4",
+              boxShadow: "0 5px 0 #bd4d78, 4px 3px 0 #ffd2df",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 8,
+              width: 2,
+              height: 8,
+              background: "#bd4d78",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === DESK_INDUSTRIAL_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 5,
+              background: "#3f4650",
+              border: "2px solid #171b22",
+              boxShadow: "inset 0 2px 0 #68717d",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 4,
+              top: 11,
+              width: 3,
+              height: 7,
+              background: "#171b22",
+              boxShadow: "9px 0 0 #171b22",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 6,
+              top: 14,
+              width: 8,
+              height: 2,
+              background: "#68717d",
+              boxShadow: "0 -8px 0 #a8b0ba",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === DESK_ROCOCO_IVORY_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 5,
+              background: "#eadbbd",
+              border: "2px solid #aa9777",
+              boxShadow: "inset 0 2px 0 #fff4d8",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 3,
+              top: 11,
+              width: 3,
+              height: 7,
+              background: "#d8c59b",
+              boxShadow: "10px 0 0 #d8c59b, 2px 5px 0 #a88442, 8px 5px 0 #a88442",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 6,
+              width: 9,
+              height: 2,
+              background: "#ffe8a4",
+              boxShadow: "2px 7px 0 #fff6df",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 13,
+              width: 2,
+              height: 2,
+              background: "#a88442",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === TABLE_ROCOCO_IVORY_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 6,
+              background: "#eadbbd",
+              border: "2px solid #aa9777",
+              boxShadow: "inset 0 2px 0 #fff4d8",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 4,
+              top: 12,
+              width: 3,
+              height: 6,
+              background: "#d8c59b",
+              boxShadow: "8px 0 0 #d8c59b, 2px 4px 0 #a88442, 6px 4px 0 #a88442",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 7,
+              width: 9,
+              height: 1,
+              background: "#ffe8a4",
+              boxShadow: "2px 4px 0 #fff6df",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 10,
+              width: 3,
+              height: 1,
+              background: "#a88442",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === TABLE_DARK_OAK_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 6,
+              background: "#5d3321",
+              border: "2px solid #2a1710",
+              boxShadow: "inset 0 2px 0 #815136",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 4,
+              top: 12,
+              width: 3,
+              height: 6,
+              background: "#4a2618",
+              boxShadow: "8px 0 0 #4a2618, 2px 4px 0 #1b0f0a, 6px 4px 0 #1b0f0a",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 7,
+              width: 9,
+              height: 1,
+              background: "#a66c4a",
+              boxShadow: "2px 4px 0 #815136",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 10,
+              width: 3,
+              height: 1,
+              background: "#2a1710",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === FRIDGE_IVORY_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 5,
+              top: 2,
+              width: 10,
+              height: 16,
+              background: "#eadbbd",
+              border: "2px solid #9f8b67",
+              boxShadow: "inset 2px 2px 0 #f1e4c9",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 7,
+              top: 8,
+              width: 6,
+              height: 1,
+              background: "#9f8b67",
+              boxShadow: "0 5px 0 #9f8b67",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 7,
+              top: 5,
+              width: 4,
+              height: 1,
+              background: "#ffe8a4",
+              boxShadow: "0 6px 0 #ffe8a4",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 13,
+              top: 4,
+              width: 1,
+              height: 12,
+              background: "#cdb58a",
             }}
           />
         </span>
@@ -8056,7 +8441,7 @@ export const App = () => {
               const label = levelLocked
                 ? `${item.name} ${ui("growth.level", { value: unlockLevel })}`
                 : appliedFurnitureSkin
-                  ? `${item.name} ${ui("state.applied")}`
+                  ? `${item.name} ${ui("action.clearApplied")}`
                   : purchasedFurnitureSkin
                     ? `${item.name} ${ui("action.apply")}`
                     : purchasedWindow
@@ -8071,7 +8456,6 @@ export const App = () => {
                   disabled={
                     levelLocked ||
                     purchasedWindow ||
-                    appliedFurnitureSkin ||
                     (!purchasedFurnitureSkin && save.wallet.bits < item.price)
                   }
                   aria-label={label}
@@ -8080,7 +8464,9 @@ export const App = () => {
                     isWindowItem(item)
                       ? buyOrApplyWindow(item)
                       : isFurnitureSkinItem(item)
-                        ? buyOrApplyFurnitureSkin(item)
+                        ? appliedFurnitureSkin
+                          ? clearAppliedFurnitureSkin(item)
+                          : buyOrApplyFurnitureSkin(item)
                         : buyItem(item)
                   }
                 >
@@ -8090,7 +8476,7 @@ export const App = () => {
                       {levelLocked
                         ? ui("growth.level", { value: unlockLevel })
                         : appliedFurnitureSkin
-                          ? ui("state.applied")
+                          ? ui("action.clearApplied")
                           : purchasedFurnitureSkin
                             ? ui("action.apply")
                             : item.price}
