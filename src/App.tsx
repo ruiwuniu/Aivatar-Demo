@@ -97,6 +97,7 @@ const COFFEE_CUP_ITEM_ID = "coffee-cup";
 const COFFEE_ITEM_ID = "coffee";
 const COLA_ITEM_ID = "cola";
 const BENTO_ITEM_ID = "bento";
+const BED_INDUSTRIAL_SKIN_ID = "industrial-bed-skin";
 const COFFEE_MAX_QUANTITY = 6;
 const TABLE_FURNITURE_ID = "table";
 const EMPTY_TABLE_COFFEE_CAPACITY = 0;
@@ -175,6 +176,7 @@ const DEMO_BEHAVIORS: BehaviorName[] = [
 
 type ShopCategoryId =
   | "furniture"
+  | "furniture-skins"
   | "windows"
   | "supplies"
   | "hangings";
@@ -220,6 +222,7 @@ const DECOR_SURFACE_CATEGORIES: Array<{ id: DecorSurfaceCategoryId; copyKey: str
 
 const SHOP_CATEGORIES: Array<{ id: ShopCategoryId; copyKey: string }> = [
   { id: "furniture", copyKey: "shop.furniture" },
+  { id: "furniture-skins", copyKey: "shop.furnitureSkins" },
   { id: "windows", copyKey: "shop.windows" },
   { id: "supplies", copyKey: "shop.supplies" },
   { id: "hangings", copyKey: "shop.hangings" },
@@ -236,8 +239,12 @@ const isSurfaceItem = (item: ItemDefinition) =>
 
 const isWindowItem = (item: ItemDefinition) => item.kind === "window";
 
+const isFurnitureSkinItem = (item: ItemDefinition) =>
+  item.tags?.includes("furniture-skin") ?? false;
+
 const getShopCategoryId = (item: ItemDefinition): ShopCategoryId => {
   if (item.kind === "window") return "windows";
+  if (isFurnitureSkinItem(item)) return "furniture-skins";
   if (item.kind === "food" || item.kind === "drink" || item.kind === "tool") {
     return "supplies";
   }
@@ -1781,6 +1788,19 @@ const normalizeAvatarId = (avatarId: unknown) =>
     ? avatarId
     : createAvatarId();
 
+const normalizeFurnitureSkinIds = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      (entry): entry is [string, string] =>
+        entry[0].trim().length > 0 &&
+        typeof entry[1] === "string" &&
+        entry[1].trim().length > 0,
+    ),
+  );
+};
+
 const saveFromContent = (content: AivatarContent): AivatarSaveState => ({
   layoutVersion: SAVE_LAYOUT_VERSION,
   avatarId: createAvatarId(),
@@ -1793,6 +1813,7 @@ const saveFromContent = (content: AivatarContent): AivatarSaveState => ({
   ...loadDefaultLayout(content),
   wallet: content.wallet,
   purchasedItemIds: [],
+  activeFurnitureSkinIds: {},
 });
 
 const loadSave = (content: AivatarContent): AivatarSaveState => {
@@ -1828,6 +1849,7 @@ const loadSave = (content: AivatarContent): AivatarSaveState => {
       furnitureStorage: normalizeFurnitureStorage(parsed.furnitureStorage),
       memory: normalizeMemory(parsed.memory),
       navMemory: normalizeNavMemory(parsed.navMemory),
+      activeFurnitureSkinIds: normalizeFurnitureSkinIds(parsed.activeFurnitureSkinIds),
       placedItems,
       furniturePlacements,
       layoutVersion: SAVE_LAYOUT_VERSION,
@@ -2248,7 +2270,13 @@ export const App = () => {
       const furniturePlacements = withoutLegacyTerminalFurniturePlacements(
         save.furniturePlacements,
       );
-      const baseFurniture = furnitureWithPlacements(contentBase, furniturePlacements);
+      const activeFurnitureSkinIds = save.activeFurnitureSkinIds ?? {};
+      const baseFurniture = furnitureWithPlacements(contentBase, furniturePlacements).map(
+        (item) => {
+          const skinId = activeFurnitureSkinIds[item.id];
+          return skinId ? { ...item, skinId } : item;
+        },
+      );
       const taskCabinetPlacedItem = save.placedItems.find(
         (item) => item.itemId === TASK_CABINET_FURNITURE_ID,
       );
@@ -6361,6 +6389,69 @@ export const App = () => {
     });
   };
 
+  const buyOrApplyFurnitureSkin = (item: ItemDefinition) => {
+    const targetFurnitureId = item.targetFurnitureId;
+    const targetFurniture = targetFurnitureId
+      ? contentRef.current.room.furniture.find(
+          (candidate) => candidate.id === targetFurnitureId,
+        )
+      : null;
+
+    if (!targetFurnitureId || !targetFurniture) {
+      updateActiveInteraction({
+        kind: "blocked",
+        furnitureId: "furniture-skin",
+        furnitureName: item.name,
+        message: ui("message.windowMissing", { name: item.name }),
+        startedAt: performance.now(),
+        bubbleText: ui("bubble.missing"),
+      });
+      return;
+    }
+
+    setSave((current) => {
+      const purchased = current.purchasedItemIds.includes(item.id);
+      const alreadyApplied = current.activeFurnitureSkinIds?.[targetFurnitureId] === item.id;
+      if (alreadyApplied) return current;
+      if (!purchased && current.wallet.bits < item.price) return current;
+
+      return {
+        ...current,
+        wallet: purchased ? current.wallet : { bits: current.wallet.bits - item.price },
+        purchasedItemIds: purchased
+          ? current.purchasedItemIds
+          : Array.from(new Set([...current.purchasedItemIds, item.id])),
+        activeFurnitureSkinIds: {
+          ...(current.activeFurnitureSkinIds ?? {}),
+          [targetFurnitureId]: item.id,
+        },
+        memory: purchased
+          ? current.memory
+          : recordLifeMemory(
+              current.memory,
+              {
+                type: "item_bought",
+                summary: `Bought ${item.name}`,
+                itemId: item.id,
+              },
+              traitChangesForPurchase(item),
+            ),
+      };
+    });
+
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: targetFurnitureId,
+      furnitureName: targetFurniture.name,
+      message: ui("message.furnitureSkinApplied", {
+        name: item.name,
+        furniture: targetFurniture.name,
+      }),
+      startedAt: performance.now(),
+      bubbleText: ui("bubble.skin"),
+    });
+  };
+
   const buyOrApplySurface = (item: ItemDefinition) => {
     const isWallSurface = isWallSurfaceItem(item);
     const surface = isWallSurface
@@ -6638,16 +6729,58 @@ export const App = () => {
       : sceneContextMenu
         ? behaviorLabel(locale, sceneContextMenu.target.furniture.interaction)
         : "";
-  const ItemThumbnail = ({ itemId }: { itemId: string }) => (
-    <span className={`item-button-thumbnail item-thumb-${itemId}`} aria-hidden="true">
-      <span className="item-thumb-steam steam-left" />
-      <span className="item-thumb-steam steam-right" />
-      <span className="item-thumb-shape" />
-      <span className="item-thumb-accent" />
-      <span className="item-thumb-detail" />
-      <span className="item-thumb-detail-two" />
-    </span>
-  );
+  const ItemThumbnail = ({ itemId }: { itemId: string }) => {
+    if (itemId === BED_INDUSTRIAL_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 2,
+              top: 5,
+              width: 14,
+              height: 10,
+              background: "#2f343b",
+              border: "2px solid #222933",
+              boxShadow: "inset 0 3px 0 #4a5058",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 1,
+              top: 3,
+              width: 3,
+              height: 14,
+              background: "#8d98a6",
+              boxShadow: "13px 0 0 #8d98a6",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 4,
+              width: 8,
+              height: 3,
+              background: "#d7dce0",
+            }}
+          />
+        </span>
+      );
+    }
+
+    return (
+      <span className={`item-button-thumbnail item-thumb-${itemId}`} aria-hidden="true">
+        <span className="item-thumb-steam steam-left" />
+        <span className="item-thumb-steam steam-right" />
+        <span className="item-thumb-shape" />
+        <span className="item-thumb-accent" />
+        <span className="item-thumb-detail" />
+        <span className="item-thumb-detail-two" />
+      </span>
+    );
+  };
 
   return (
     <main
@@ -7913,11 +8046,22 @@ export const App = () => {
               const levelLocked = growth.level < unlockLevel;
               const purchasedWindow =
                 isWindowItem(item) && save.purchasedItemIds.includes(item.id);
+              const furnitureSkin = isFurnitureSkinItem(item);
+              const furnitureSkinTargetId = item.targetFurnitureId ?? "";
+              const purchasedFurnitureSkin =
+                furnitureSkin && save.purchasedItemIds.includes(item.id);
+              const appliedFurnitureSkin =
+                furnitureSkin &&
+                save.activeFurnitureSkinIds?.[furnitureSkinTargetId] === item.id;
               const label = levelLocked
                 ? `${item.name} ${ui("growth.level", { value: unlockLevel })}`
-                : purchasedWindow
-                  ? `${item.name} ${ui("state.owned")}`
-                  : `${item.name} ${item.price}`;
+                : appliedFurnitureSkin
+                  ? `${item.name} ${ui("state.applied")}`
+                  : purchasedFurnitureSkin
+                    ? `${item.name} ${ui("action.apply")}`
+                    : purchasedWindow
+                      ? `${item.name} ${ui("state.owned")}`
+                      : `${item.name} ${item.price}`;
 
               return (
                 <button
@@ -7927,12 +8071,17 @@ export const App = () => {
                   disabled={
                     levelLocked ||
                     purchasedWindow ||
-                    save.wallet.bits < item.price
+                    appliedFurnitureSkin ||
+                    (!purchasedFurnitureSkin && save.wallet.bits < item.price)
                   }
                   aria-label={label}
                   title={label}
                   onClick={() =>
-                    isWindowItem(item) ? buyOrApplyWindow(item) : buyItem(item)
+                    isWindowItem(item)
+                      ? buyOrApplyWindow(item)
+                      : isFurnitureSkinItem(item)
+                        ? buyOrApplyFurnitureSkin(item)
+                        : buyItem(item)
                   }
                 >
                   <span className="item-button-content">
@@ -7940,7 +8089,11 @@ export const App = () => {
                     <span>
                       {levelLocked
                         ? ui("growth.level", { value: unlockLevel })
-                        : item.price}
+                        : appliedFurnitureSkin
+                          ? ui("state.applied")
+                          : purchasedFurnitureSkin
+                            ? ui("action.apply")
+                            : item.price}
                     </span>
                   </span>
                 </button>
