@@ -57,6 +57,7 @@ interface FurniturePlacementPreview {
 type FurnitureRenderLayer = "all" | "behind-avatar" | "in-front-of-avatar";
 type PlacedItemRenderLayer = "all" | "behind-avatar" | "in-front-of-avatar";
 type BedSkinId = "classic" | "industrial-bed-skin";
+type DeskSkinId = "classic" | "industrial-desk-skin";
 
 type DominantTrait = keyof AivatarMemory["growth"]["traits"];
 type MoodBand = "high" | "normal" | "low" | "depleted";
@@ -970,6 +971,48 @@ const bedPalette = (item: FurnitureDefinition) =>
         blanketSpark: "#ffe58a",
       };
 
+const deskSkinId = (item: FurnitureDefinition): DeskSkinId =>
+  item.skinId === "industrial-desk-skin" ? "industrial-desk-skin" : "classic";
+
+const deskPalette = (item: FurnitureDefinition) =>
+  deskSkinId(item) === "industrial-desk-skin"
+    ? {
+        shadow: "#101217",
+        topDark: "#2a1710",
+        top: "#4a2618",
+        topMid: "#5d3321",
+        topLight: "#815136",
+        topEdge: "#1b0f0a",
+        padDark: "#11151a",
+        pad: "#252b31",
+        padLight: "#4c5660",
+        metalDark: "#080a0d",
+        metal: "#171b21",
+        metalMid: "#262c34",
+        metalLight: "#5d6873",
+        bolt: "#8b98a5",
+        handle: "#2f3842",
+        handleLight: "#6f7d8a",
+      }
+    : {
+        shadow: "#151321",
+        topDark: "#5a2b1c",
+        top: "#8f4e38",
+        topMid: "#a76549",
+        topLight: "#d4875d",
+        topEdge: "#3c1b13",
+        padDark: "#111624",
+        pad: "#282b2d",
+        padLight: "#45494d",
+        metalDark: "#2a120d",
+        metal: "#3b1a11",
+        metalMid: "#8f4e38",
+        metalLight: "#b86d4d",
+        bolt: "#d2a24a",
+        handle: "#8f611c",
+        handleLight: "#d2a24a",
+      };
+
 const drawBedFootboard = (
   ctx: CanvasRenderingContext2D,
   item: FurnitureDefinition,
@@ -1371,19 +1414,41 @@ const drawFurniture = (
   }
 
   if (item.id === "desk") {
-    drawPixelRect(ctx, item.x + 6, item.y + 9, item.width, item.height + 19, "#151321");
+    const palette = deskPalette(item);
+    const industrial = deskSkinId(item) === "industrial-desk-skin";
 
-    drawPixelRect(ctx, item.x - 5, item.y - 3, item.width + 10, 39, "#5a2b1c");
-    drawPixelRect(ctx, item.x - 2, item.y - 7, item.width + 4, 34, "#a76549");
-    drawPixelRect(ctx, item.x + 2, item.y - 4, item.width - 4, 28, "#8f4e38");
-    drawPixelRect(ctx, item.x + 3, item.y - 4, item.width - 9, 4, "#d4875d");
-    drawPixelRect(ctx, item.x + item.width - 6, item.y - 5, 4, 29, "#c06f4d");
-    drawPixelRect(ctx, item.x - 2, item.y + 23, item.width + 4, 3, "#3c1b13");
+    drawPixelRect(ctx, item.x + 6, item.y + 9, item.width, item.height + 19, palette.shadow);
 
-    drawPixelRect(ctx, item.x + 12, item.y + 1, item.width - 24, 21, "#111624");
-    drawPixelRect(ctx, item.x + 14, item.y + 3, item.width - 28, 17, "#45494d");
-    drawPixelRect(ctx, item.x + 19, item.y + 6, item.width - 38, 11, "#282b2d");
-    drawPixelRect(ctx, item.x + item.width - 20, item.y + 8, 4, 9, "#1b1e20");
+    drawPixelRect(ctx, item.x - 5, item.y - 3, item.width + 10, 39, palette.topDark);
+    drawPixelRect(ctx, item.x - 2, item.y - 7, item.width + 4, 34, palette.topMid);
+    drawPixelRect(ctx, item.x + 2, item.y - 4, item.width - 4, 28, palette.top);
+    drawPixelRect(ctx, item.x + 3, item.y - 4, item.width - 9, 4, palette.topLight);
+    drawPixelRect(ctx, item.x + item.width - 6, item.y - 5, 4, 29, industrial ? "#6c3e2a" : "#c06f4d");
+    drawPixelRect(ctx, item.x - 2, item.y + 23, item.width + 4, 3, palette.topEdge);
+    if (industrial) {
+      drawPixelRect(ctx, item.x + 9, item.y + 2, item.width - 22, 2, "#6f432b");
+      drawPixelRect(ctx, item.x + 14, item.y + 10, item.width - 34, 2, "#351d13");
+      drawPixelRect(ctx, item.x + 5, item.y + 18, item.width - 18, 1, "#7c4a31");
+    }
+
+    if (industrial) {
+      drawPixelRect(ctx, item.x + 8, item.y + 1, item.width - 16, 1, "#7b4a31");
+      drawPixelRect(ctx, item.x + 12, item.y + 5, 18, 1, "#6f432b");
+      drawPixelRect(ctx, item.x + 36, item.y + 6, 23, 1, "#3b2116");
+      drawPixelRect(ctx, item.x + item.width - 34, item.y + 5, 14, 1, "#75472f");
+      drawPixelRect(ctx, item.x + 10, item.y + 11, 25, 1, "#3a2015");
+      drawPixelRect(ctx, item.x + 44, item.y + 12, 17, 1, "#6a402a");
+      drawPixelRect(ctx, item.x + item.width - 28, item.y + 13, 12, 1, "#4b2a1c");
+      drawPixelRect(ctx, item.x + 20, item.y + 18, 16, 1, "#75472f");
+      drawPixelRect(ctx, item.x + 52, item.y + 18, 22, 1, "#3b2116");
+      drawPixelRect(ctx, item.x + 37, item.y + 13, 3, 2, "#3a2015");
+      drawPixelRect(ctx, item.x + 38, item.y + 14, 1, 1, "#6f432b");
+    } else {
+      drawPixelRect(ctx, item.x + 12, item.y + 1, item.width - 24, 21, palette.padDark);
+      drawPixelRect(ctx, item.x + 14, item.y + 3, item.width - 28, 17, palette.padLight);
+      drawPixelRect(ctx, item.x + 19, item.y + 6, item.width - 38, 11, palette.pad);
+      drawPixelRect(ctx, item.x + item.width - 20, item.y + 8, 4, 9, "#1b1e20");
+    }
 
     const drawerTop = item.y + 32;
     const leftX = item.x - 2;
@@ -1392,34 +1457,90 @@ const drawFurniture = (
     const drawerHeight = 10;
     const drawerGap = 11;
     const drawDrawer = (x: number, y: number, width: number, height: number) => {
-      drawPixelRect(ctx, x, y, width, height, "#3b1a11");
-      drawPixelRect(ctx, x + 3, y + 3, width - 6, height - 5, "#8f4e38");
-      drawPixelRect(ctx, x + 5, y + 5, width - 10, 2, "#b86d4d");
-      drawPixelRect(ctx, x + width / 2 - 5, y + 8, 10, 3, "#8f611c");
-      drawPixelRect(ctx, x + width / 2 - 3, y + 6, 6, 3, "#d2a24a");
+      drawPixelRect(ctx, x, y, width, height, palette.metal);
+      drawPixelRect(ctx, x + 3, y + 3, width - 6, height - 5, industrial ? palette.metalMid : palette.top);
+      drawPixelRect(ctx, x + 5, y + 5, width - 10, 2, industrial ? palette.metalLight : palette.metalLight);
+      drawPixelRect(ctx, x + width / 2 - 5, y + 8, 10, 3, palette.handle);
+      drawPixelRect(ctx, x + width / 2 - 3, y + 6, 6, 3, palette.handleLight);
     };
 
-    drawPixelRect(ctx, leftX - 2, drawerTop - 2, stackWidth + 4, 35, "#2a120d");
-    drawPixelRect(ctx, rightX - 2, drawerTop - 2, stackWidth + 4, 35, "#2a120d");
-    drawDrawer(leftX, drawerTop, stackWidth, drawerHeight);
-    drawDrawer(leftX, drawerTop + drawerGap, stackWidth, drawerHeight);
-    drawDrawer(leftX, drawerTop + drawerGap * 2, stackWidth, drawerHeight);
-    drawDrawer(rightX, drawerTop, stackWidth, drawerHeight);
-    drawDrawer(rightX, drawerTop + drawerGap, stackWidth, drawerHeight);
-    drawDrawer(rightX, drawerTop + drawerGap * 2, stackWidth, drawerHeight);
+    if (industrial) {
+      const drawIndustrialLeg = (
+        x: number,
+        y: number,
+        height: number,
+        front = false,
+      ) => {
+        drawPixelRect(ctx, x, y, 6, height, palette.metalDark);
+        drawPixelRect(ctx, x + 1, y + 1, 4, height - 3, front ? "#20262d" : "#171c22");
+        drawPixelRect(ctx, x + 2, y + 2, 2, height - 5, front ? "#333b45" : "#252c34");
+        drawPixelRect(ctx, x + 2, y + 4, 1, height - 10, front ? "#747f8b" : "#4c5660");
+        if (front) {
+          drawPixelRect(ctx, x + 3, y + 7, 1, Math.max(4, height - 16), "#3f4852");
+        }
+        drawPixelRect(ctx, x + 4, y + 2, 1, height - 5, "#0b0d10");
+        drawPixelRect(ctx, x - 1, y + height - 3, 8, 3, palette.metalDark);
+        drawPixelRect(ctx, x + 1, y + height - 4, 4, 1, palette.metalLight);
+      };
 
-    const centerX = item.x + 29;
-    const centerWidth = item.width - 58;
-    drawPixelRect(ctx, centerX, drawerTop, centerWidth, 15, "#2a120d");
-    drawPixelRect(ctx, centerX + 4, drawerTop + 3, centerWidth - 8, 8, "#8f4e38");
-    drawPixelRect(ctx, centerX + 8, drawerTop + 6, centerWidth - 16, 3, "#6f351d");
-    drawPixelRect(ctx, item.x + item.width / 2 - 5, drawerTop + 8, 10, 3, "#8f611c");
-    drawPixelRect(ctx, item.x + item.width / 2 - 3, drawerTop + 6, 6, 3, "#d2a24a");
+      drawIndustrialLeg(leftX + 3, drawerTop - 1, 12);
+      drawIndustrialLeg(rightX + stackWidth - 9, drawerTop - 1, 12);
+      drawIndustrialLeg(leftX - 1, drawerTop - 2, 38, true);
+      drawIndustrialLeg(rightX + stackWidth - 5, drawerTop - 2, 38, true);
 
-    drawPixelRect(ctx, leftX + 2, drawerTop + 35, 5, 4, "#5a2b1c");
-    drawPixelRect(ctx, leftX + stackWidth - 7, drawerTop + 35, 5, 4, "#5a2b1c");
-    drawPixelRect(ctx, rightX + 2, drawerTop + 35, 5, 4, "#5a2b1c");
-    drawPixelRect(ctx, rightX + stackWidth - 7, drawerTop + 35, 5, 4, "#5a2b1c");
+      const frontFootY = drawerTop - 2 + 38 - 3;
+      drawPixelRect(ctx, item.x + 6, drawerTop + 5, item.width - 12, frontFootY - drawerTop - 2, "#080a0d");
+      drawPixelRect(ctx, item.x + 10, frontFootY - 2, item.width - 20, 3, "#0f1216");
+      drawPixelRect(ctx, leftX, drawerTop + 6, 4, frontFootY - drawerTop - 3, "#05070a");
+      drawPixelRect(ctx, rightX + stackWidth + 1, drawerTop + 6, 4, frontFootY - drawerTop - 3, "#05070a");
+      const eyeCycle = (frame + item.x * 3 + item.y * 5) % 190;
+      if (eyeCycle > 98 && eyeCycle < 164) {
+        const eyeY = drawerTop + 17;
+        const eyeX = Math.round(item.x + item.width / 2 + 3);
+        const drawShadowEye = (x: number) => {
+          drawPixelRect(ctx, x - 1, eyeY - 1, 4, 4, "#080a0d");
+          drawPixelRect(ctx, x - 1, eyeY, 3, 1, "#8f611c");
+          drawPixelRect(ctx, x, eyeY, 1, 1, "#ffe66d");
+          drawPixelRect(ctx, x, eyeY + 1, 1, 1, "#ffe66d");
+        };
+        drawShadowEye(eyeX);
+        drawShadowEye(eyeX + 8);
+      }
+
+      drawPixelRect(ctx, item.x - 2, drawerTop - 5, item.width + 4, 9, palette.topEdge);
+      drawPixelRect(ctx, item.x + 2, drawerTop - 4, item.width - 4, 3, "#2f1a12");
+      drawPixelRect(ctx, item.x + 6, drawerTop - 1, item.width - 13, 1, "#6c3e2a");
+      drawPixelRect(ctx, item.x + 1, drawerTop - 4, 3, 7, palette.topLight);
+      drawPixelRect(ctx, item.x + 4, drawerTop - 4, 9, 1, "#8a5638");
+      drawPixelRect(ctx, item.x + item.width - 5, drawerTop - 4, 3, 7, "#6c3e2a");
+      drawPixelRect(ctx, item.x + item.width - 14, drawerTop - 4, 9, 1, "#8a5638");
+      drawPixelRect(ctx, leftX + 1, drawerTop + 6, 1, 27, "#747f8b");
+      drawPixelRect(ctx, leftX + 2, drawerTop + 10, 1, 18, "#3f4852");
+      drawPixelRect(ctx, rightX + stackWidth - 3, drawerTop + 6, 1, 27, "#747f8b");
+      drawPixelRect(ctx, rightX + stackWidth - 2, drawerTop + 10, 1, 18, "#3f4852");
+    } else {
+      drawPixelRect(ctx, leftX - 2, drawerTop - 2, stackWidth + 4, 35, palette.metalDark);
+      drawPixelRect(ctx, rightX - 2, drawerTop - 2, stackWidth + 4, 35, palette.metalDark);
+      drawDrawer(leftX, drawerTop, stackWidth, drawerHeight);
+      drawDrawer(leftX, drawerTop + drawerGap, stackWidth, drawerHeight);
+      drawDrawer(leftX, drawerTop + drawerGap * 2, stackWidth, drawerHeight);
+      drawDrawer(rightX, drawerTop, stackWidth, drawerHeight);
+      drawDrawer(rightX, drawerTop + drawerGap, stackWidth, drawerHeight);
+      drawDrawer(rightX, drawerTop + drawerGap * 2, stackWidth, drawerHeight);
+
+      const centerX = item.x + 29;
+      const centerWidth = item.width - 58;
+      drawPixelRect(ctx, centerX, drawerTop, centerWidth, 15, palette.metalDark);
+      drawPixelRect(ctx, centerX + 4, drawerTop + 3, centerWidth - 8, 8, palette.top);
+      drawPixelRect(ctx, centerX + 8, drawerTop + 6, centerWidth - 16, 3, "#6f351d");
+      drawPixelRect(ctx, item.x + item.width / 2 - 5, drawerTop + 8, 10, 3, palette.handle);
+      drawPixelRect(ctx, item.x + item.width / 2 - 3, drawerTop + 6, 6, 3, palette.handleLight);
+
+      drawPixelRect(ctx, leftX + 2, drawerTop + 35, 5, 4, palette.topDark);
+      drawPixelRect(ctx, leftX + stackWidth - 7, drawerTop + 35, 5, 4, palette.topDark);
+      drawPixelRect(ctx, rightX + 2, drawerTop + 35, 5, 4, palette.topDark);
+      drawPixelRect(ctx, rightX + stackWidth - 7, drawerTop + 35, 5, 4, palette.topDark);
+    }
 
     if (highlight !== "none") {
       ctx.strokeStyle = highlight === "selected" ? "#ffe66d" : "#9ee6ff";

@@ -508,6 +508,15 @@ export const defaultContent: AivatarContent = {
       effect: { mood: 3, energy: 1 },
     },
     {
+      id: "industrial-desk-skin",
+      name: "Industrial Desk Skin",
+      kind: "decor",
+      tags: ["furniture-skin", "desk"],
+      targetFurnitureId: "desk",
+      price: 280,
+      effect: { mood: 3, energy: 2 },
+    },
+    {
       id: "city-night-window",
       name: "City Night Window",
       kind: "window",
@@ -734,6 +743,15 @@ export const defaultContent: AivatarContent = {
         targetFurnitureId: "bed",
         price: 240,
         effect: { mood: 3, energy: 1 },
+      },
+      {
+        id: "industrial-desk-skin",
+        name: "Industrial Desk Skin",
+        kind: "decor",
+        tags: ["furniture-skin", "desk"],
+        targetFurnitureId: "desk",
+        price: 280,
+        effect: { mood: 3, energy: 2 },
       },
       {
         id: "city-night-window",
