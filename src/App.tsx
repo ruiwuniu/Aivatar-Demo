@@ -6805,6 +6805,16 @@ export const App = () => {
           <p>{currentStatusMessage()}</p>
         </div>
 
+        <div className="stats-grid">
+          {statRows.map((key) => (
+            <label key={key} className="stat-row">
+              <span>{statLabel(locale, key)}</span>
+              <meter min="0" max="100" value={save.petStats[key]} />
+              <b>{Math.round(save.petStats[key])}</b>
+            </label>
+          ))}
+        </div>
+
         <section className="growth-card" aria-label={ui("growth.title")}>
           <button
             type="button"
@@ -7588,16 +7598,6 @@ export const App = () => {
             </div>
           ) : null}
         </section>
-
-        <div className="stats-grid">
-          {statRows.map((key) => (
-            <label key={key} className="stat-row">
-              <span>{statLabel(locale, key)}</span>
-              <meter min="0" max="100" value={save.petStats[key]} />
-              <b>{Math.round(save.petStats[key])}</b>
-            </label>
-          ))}
-        </div>
 
         {placingItem ? (
           <section className="control-section placement-panel">

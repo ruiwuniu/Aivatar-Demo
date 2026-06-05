@@ -1,7 +1,21 @@
+@font-face {
+  font-family: "Aivatar CJK Serif";
+  src:
+    local("Noto Serif TC"),
+    local("Noto Serif SC"),
+    local("Noto Serif HK");
+  unicode-range:
+    U+3000-303F,
+    U+3400-9FFF,
+    U+FF00-FFEF,
+    U+F900-FAFF;
+}
+
 :root {
   color: #f4ead2;
   background: #141823;
   font-family:
+    "Aivatar CJK Serif",
     "Microsoft JhengHei",
     "Microsoft YaHei",
     "PingFang TC",
@@ -1941,8 +1955,10 @@ h2 {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 800;
   text-transform: uppercase;
+  transform: translateY(1px);
 }
 
 .sessions-toggle-main b,
@@ -1959,7 +1975,7 @@ h2 {
   grid-column: 1 / -1;
   min-width: 0;
   color: #9ee6ff;
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.25;
   overflow-wrap: anywhere;
   text-transform: uppercase;
@@ -1979,14 +1995,14 @@ h2 {
   gap: 6px;
   min-width: 0;
   color: #9ee6ff;
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.1;
   text-transform: uppercase;
 }
 
 .sessions-toggle-context-label b {
   color: #d8fff7;
-  font-size: 9px;
+  font-size: 10px;
   white-space: nowrap;
 }
 
@@ -2018,14 +2034,17 @@ h2 {
   grid-column: 2;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border: 2px solid #52607d;
   color: #ffe66d;
   background: #111624;
-  box-shadow: inset -2px -2px 0 #080b14;
-  font-size: 14px;
-  line-height: 1;
+  box-shadow: inset -1px -1px 0 #080b14;
+  font-family: "Courier New", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
 }
 
 .sessions-toggle:hover .sessions-toggle-chevron,
@@ -2680,8 +2699,10 @@ h2 {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 800;
   text-transform: uppercase;
+  transform: translateY(1px);
 }
 
 .growth-toggle-main b {
@@ -2698,7 +2719,7 @@ h2 {
   gap: 7px;
   min-width: 0;
   color: #ffe66d;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .growth-toggle-chevron {
@@ -2706,14 +2727,17 @@ h2 {
   grid-column: 2;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border: 2px solid #52607d;
   color: #ffe66d;
   background: #111624;
-  box-shadow: inset -2px -2px 0 #080b14;
-  font-size: 14px;
-  line-height: 1;
+  box-shadow: inset -1px -1px 0 #080b14;
+  font-family: "Courier New", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
 }
 
 .growth-toggle:hover .growth-toggle-chevron,
@@ -3330,8 +3354,10 @@ meter::-webkit-meter-optimum-value {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 800;
   text-transform: uppercase;
+  transform: translateY(1px);
 }
 
 .debug-toggle-main b {
@@ -3344,7 +3370,7 @@ meter::-webkit-meter-optimum-value {
   grid-column: 1 / -1;
   min-width: 0;
   color: #9ee6ff;
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.25;
   overflow-wrap: anywhere;
   text-transform: uppercase;
@@ -3355,14 +3381,17 @@ meter::-webkit-meter-optimum-value {
   grid-column: 2;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border: 2px solid #52607d;
   color: #ffe66d;
   background: #111624;
-  box-shadow: inset -2px -2px 0 #080b14;
-  font-size: 14px;
-  line-height: 1;
+  box-shadow: inset -1px -1px 0 #080b14;
+  font-family: "Courier New", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
 }
 
 .debug-toggle:hover .debug-toggle-chevron,

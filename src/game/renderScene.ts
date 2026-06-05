@@ -28,7 +28,7 @@ import {
 } from "./simulation";
 
 const CJK_CANVAS_FONT =
-  '"Microsoft YaHei UI", "Microsoft YaHei", "Microsoft JhengHei", "PingFang SC", "PingFang TC", "Noto Sans CJK SC", "Noto Sans CJK TC", sans-serif';
+  '"Noto Sans TC", "Noto Sans SC", "Noto Sans HK", "Microsoft JhengHei UI", "Microsoft YaHei UI", "Microsoft JhengHei", "Microsoft YaHei", sans-serif';
 
 const isCjkCharacter = (char: string) =>
   /[\u3400-\u9fff\uf900-\ufaff]/u.test(char);
