@@ -34,6 +34,62 @@ Aivatar splits this 7-second fridge door recording into separate one-shot open
 and close sounds. The close sound plays when the fridge animation enters its
 closing phase.
 
+## agent-complete-success.ogg
+
+- Source: 16bit Success sound
+- Author: flush
+- URL: https://opengameart.org/content/16bit-success-sound
+- License: CC0 1.0 Universal
+- Original file: `sfx_-_success.ogg`
+
+Aivatar uses this as a one-shot success sound when a reward-eligible agent
+session reaches `complete`.
+
+## cola-can-open.mp3
+
+- Source: Can Opening fizzy drink soda pop high quality
+- Author: CADSoundDesignEmporium (Freesound)
+- URL: https://pixabay.com/sound-effects/film-special-effects-can-opening-fizzy-drink-soda-pop-high-quality-96655/
+- Original URL: https://freesound.org/people/CADSoundDesignEmporium/sounds/513823/
+- License: Pixabay Content License / original Freesound Creative Commons 0
+- Original file: `Can Opening fizzy drink soda pop high quality.wav`
+
+Aivatar uses this as a one-shot can-opening fizz sound when the avatar starts
+the `cola` drinking action.
+
+## cola-drink.mp3
+
+- Source: Drink / Drinking liquid
+- Author: Breviceps
+- URL: https://freesound.org/s/445970/
+- License: Creative Commons 0 / Public Domain
+- Original file: `Drink / Drinking liquid`
+
+Aivatar uses this as a short one-shot drinking sound after the Cola can-opening
+sound during the `cola` action.
+
+## coffee-drink-slurping.mp3
+
+- Source: Drinking & Slurping
+- Author: Shut_Up_Ghost
+- URL: https://pixabay.com/sound-effects/people-drinking-amp-slurping-135545/
+- License: Pixabay Content License
+- Original file: `audio_a8b2fa9372.mp3`
+
+Aivatar uses this as a one-shot drinking and slurping sound when the avatar
+starts the `coffee` drinking action.
+
+## bento-eat-munchin.mp3
+
+- Source: munchin
+- Author: micahlg (Freesound)
+- URL: https://pixabay.com/sound-effects/people-munchin-95618/
+- License: Pixabay Content License
+- Original file: `audio_eafefc49df.mp3`
+
+Aivatar uses this as a one-shot crunching and munching sound when the avatar
+starts the `bento` eating action. Playback stops when the `bento` action ends.
+
 ## Game Console random pool
 
 Aivatar randomly chooses one of these tracks each time the Game Console play
