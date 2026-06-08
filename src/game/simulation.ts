@@ -14,6 +14,7 @@ import { getPlacedItemPlacementFootBounds } from "./interactions";
 const BUILTIN_TERMINAL_PLACED_ITEM_ID = "builtin-terminal";
 const TERMINAL_MONITOR_ITEM_ID = "terminal-monitor";
 const GAME_CONSOLE_ITEM_ID = "game-console";
+const RECORD_PLAYER_ITEM_ID = "record-player";
 const EASEL_ITEM_ID = "oil-easel";
 const TASK_CABINET_ITEM_ID = "file-cabinet";
 const NAV_GRID_SIZE = 8;
@@ -65,6 +66,7 @@ const ARRIVAL_GATED_BEHAVIORS: BehaviorName[] = [
   "snack",
   "paint",
   "play",
+  "music",
   "thinking",
   "coding",
   "fetch_task_file",
@@ -345,9 +347,16 @@ export const initialAvatarRuntime = (): AvatarRuntime => ({
   activityLabel: "Settling in",
 });
 
-export const applyPetTick = (stats: PetStats, elapsedSeconds: number): PetStats => ({
+export const applyPetTick = (
+  stats: PetStats,
+  elapsedSeconds: number,
+  options: { moodDecayMultiplier?: number } = {},
+): PetStats => ({
   energy: clamp(stats.energy - elapsedSeconds * 0.08),
-  mood: clamp(stats.mood - elapsedSeconds * 0.04),
+  mood: clamp(
+    stats.mood -
+      elapsedSeconds * 0.04 * Math.max(0, options.moodDecayMultiplier ?? 1),
+  ),
   hunger: clamp(stats.hunger - elapsedSeconds * 0.06),
 });
 
@@ -801,6 +810,17 @@ const behaviorInteractionAlternates = (
     return gameConsole ? getPlacedItemInteractionStandpoints(gameConsole, content) : undefined;
   }
 
+  if (behavior === "music") {
+    const recordPlayer = chooseNearestOrRandom(
+      from,
+      placedItems.filter((item) => item.itemId === RECORD_PLAYER_ITEM_ID),
+      (item) => ({ x: item.x, y: item.y }),
+    );
+    return recordPlayer
+      ? getPlacedItemInteractionStandpoints(recordPlayer, content)
+      : undefined;
+  }
+
   if (behavior === "paint") {
     const easel = chooseNearestOrRandom(
       from,
@@ -952,6 +972,16 @@ export const targetForBehavior = (
     );
   }
 
+  if (behavior === "music") {
+    const placedItems = content.placedItems ?? [];
+    const recordPlayer = chooseNearestOrRandom(
+      from,
+      placedItems.filter((item) => item.itemId === RECORD_PLAYER_ITEM_ID),
+      (item) => ({ x: item.x, y: item.y }),
+    );
+    return targetNearPlacedItem(recordPlayer, content, from);
+  }
+
   if (behavior === "paint") {
     const placedItems = content.placedItems ?? [];
     const easel = chooseNearestOrRandom(
@@ -993,6 +1023,7 @@ export const expressionForBehavior = (
       return "sleepy";
     case "admire":
     case "play":
+    case "music":
     case "paint":
     case "phone":
       return "happy";
@@ -1096,6 +1127,7 @@ const interactionStopDistanceForBehavior = (behavior: BehaviorName) => {
       "brew",
       "paint",
       "play",
+      "music",
       "relax",
       "sleep",
       "admire",
@@ -1986,6 +2018,8 @@ const activityLabelForBehavior = (behavior: BehaviorName): string => {
       return "Relaxing";
     case "play":
       return "Playing games";
+    case "music":
+      return "Playing music";
     case "paint":
       return "Painting";
     case "phone":
@@ -2008,6 +2042,8 @@ const autonomousBehaviorDurationSeconds = (behavior: BehaviorName) => {
   switch (behavior) {
     case "play":
       return randomRange(28, 42);
+    case "music":
+      return randomRange(36, 58);
     case "paint":
       return randomRange(32, 48);
     case "relax":
@@ -2064,11 +2100,15 @@ const weightedPick = (
 const chooseAutonomousBehavior = (
   content: AivatarContent,
   memory?: AivatarMemory,
+  options?: {
+    autoMusicEnabled?: boolean;
+  },
 ): BehaviorName => {
   const placedItems = content.placedItems ?? [];
   const hasDecor = placedItems.length > 0;
   const hasGameConsole = placedItems.some((item) => item.itemId === "game-console");
   const hasCoffeeMachine = placedItems.some((item) => item.itemId === "coffee-machine");
+  const hasRecordPlayer = placedItems.some((item) => item.itemId === RECORD_PLAYER_ITEM_ID);
   const hasEasel = placedItems.some((item) => item.itemId === EASEL_ITEM_ID);
   const coffeeCount =
     content.inventory.find((entry) => entry.itemId === "coffee")?.quantity ?? 0;
@@ -2078,6 +2118,16 @@ const chooseAutonomousBehavior = (
   const focusBoost = traitInfluence(traits?.focus, 0.12, 700);
   const resilienceBoost = traitInfluence(traits?.resilience, 0.12, 700);
   const creativityBoost = traitInfluence(traits?.creativity, 0.16, 500);
+  const warmthBoost = traitInfluence(traits?.warmth, 0.14, 600);
+  const musicWeight =
+    options?.autoMusicEnabled && hasRecordPlayer
+      ? 3 +
+        creativityBoost * 18 +
+        warmthBoost * 14 +
+        resilienceBoost * 10 +
+        curiosityBoost * 8 +
+        focusBoost * 5
+      : 0;
   const canExplore =
     content.petStats.energy > EXPLORE_MIN_ENERGY &&
     content.petStats.mood > EXPLORE_MIN_MOOD &&
@@ -2113,6 +2163,10 @@ const chooseAutonomousBehavior = (
           weight: hasGameConsole
             ? 10 + resilienceBoost * 20 + efficiencyBoost * 12
             : 0,
+        },
+        {
+          behavior: "music",
+          weight: musicWeight + warmthBoost * 10 + resilienceBoost * 8,
         },
         {
           behavior: "paint",
@@ -2154,6 +2208,10 @@ const chooseAutonomousBehavior = (
         weight: hasEasel ? 8 + creativityBoost * 20 : 0,
       },
       {
+        behavior: "music",
+        weight: musicWeight,
+      },
+      {
         behavior: "brew",
         weight: hasCoffeeMachine && coffeeCount < 5 ? 3 + efficiencyBoost * 12 : 0,
       },
@@ -2184,6 +2242,7 @@ export const tickAvatar = (
   options?: {
     ignoredFurnitureId?: string;
     navMemory?: AivatarNavMemory;
+    autoMusicEnabled?: boolean;
   },
 ): AvatarRuntime => {
   const forcedBehavior = deriveBehaviorFromCodex(codexStatus);
@@ -2203,7 +2262,9 @@ export const tickAvatar = (
       undefined,
     );
   } else if (!forcedBehavior && !avatar.actionIntent && avatar.behaviorTimer <= 0) {
-    const autonomous = chooseAutonomousBehavior(content, memory);
+    const autonomous = chooseAutonomousBehavior(content, memory, {
+      autoMusicEnabled: options?.autoMusicEnabled,
+    });
     next = setBehavior(
       avatar,
       autonomous,

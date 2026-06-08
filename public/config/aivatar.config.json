@@ -456,6 +456,16 @@
       "effect": { "mood": 10 }
     },
     {
+      "id": "record-player",
+      "name": "Record Player",
+      "kind": "decor",
+      "tags": ["item", "record-player"],
+      "price": 2400,
+      "placementSurfaces": ["floor", "furnitureTop"],
+      "placement": "floor",
+      "effect": { "mood": 9 }
+    },
+    {
       "id": "oil-easel",
       "name": "Oil Easel",
       "kind": "decor",
@@ -683,6 +693,16 @@
       "placementSurfaces": ["floor", "furnitureTop"],
       "placement": "floor",
       "effect": { "mood": 10 }
+    },
+    {
+      "id": "record-player",
+      "name": "Record Player",
+      "kind": "decor",
+      "tags": ["item", "record-player"],
+      "price": 2400,
+      "placementSurfaces": ["floor", "furnitureTop"],
+      "placement": "floor",
+      "effect": { "mood": 9 }
     },
     {
       "id": "oil-easel",

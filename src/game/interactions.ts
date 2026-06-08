@@ -662,6 +662,8 @@ export const placedItemBounds = (item: PlacedItem) => {
       return { x: item.x - 40, y: item.y - 44, width: 88, height: 62 };
     case "game-console":
       return { x: item.x - 22, y: item.y - 28, width: 44, height: 38 };
+    case "record-player":
+      return { x: item.x - 24, y: item.y - 29, width: 48, height: 36 };
     case "oil-easel":
       return { x: item.x - 26, y: item.y - 68, width: 54, height: 76 };
     case "coffee-machine":

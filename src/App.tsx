@@ -79,6 +79,11 @@ const SAVE_KEY = "aivatar.save.v1";
 const DEFAULT_LAYOUT_KEY = "aivatar.defaultLayout.v1";
 const TASK_CABINET_STORAGE_KEY = "aivatar.taskCabinet.v1";
 const UI_THEME_KEY = "aivatar.uiTheme.v1";
+const AUDIO_VOLUME_KEY = "aivatar.audioVolume.v1";
+const STARTUP_SOUND_KEY = "aivatar.startupSound.v1";
+const BGM_VOLUME_KEY = "aivatar.bgmVolume.v1";
+const BGM_TRACK_KEY = "aivatar.bgmTrack.v1";
+const AUTO_MUSIC_KEY = "aivatar.autoMusic.v1";
 const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
 const SAVE_LAYOUT_VERSION = 2;
 const SLEEP_INTERACTION_SECONDS = 12;
@@ -91,8 +96,13 @@ const PLAY_MOOD_RECOVERY_INTERVAL_SECONDS = 14;
 const PLAY_ACTIVE_TARGET_REACH = 24;
 const PAINT_MOOD_RECOVERY_PER_TICK = 1;
 const PAINT_RECOVERY_INTERVAL_SECONDS = 16;
+const MUSIC_MOOD_DECAY_MULTIPLIER = 0.35;
+const BGM_AUTONOMOUS_STOP_MIN_SECONDS = 45;
+const BGM_AUTONOMOUS_STOP_CHECK_SECONDS = 60;
+const BGM_AUTONOMOUS_STOP_CHANCE = 0.08;
 const COFFEE_MACHINE_ITEM_ID = "coffee-machine";
 const EASEL_ITEM_ID = "oil-easel";
+const RECORD_PLAYER_ITEM_ID = "record-player";
 const COFFEE_CUP_ITEM_ID = "coffee-cup";
 const COFFEE_ITEM_ID = "coffee";
 const COLA_ITEM_ID = "cola";
@@ -148,6 +158,62 @@ const TASK_CABINET_ENTRY_LIMIT = 100;
 const TASK_CABINET_READ_HANDOFF_MS = 1200;
 const NAV_MEMORY_CELL_COUNT_LIMIT = 9999;
 const NAV_LEARNING_RECORD_INTERVAL_SECONDS = 2.5;
+const DEFAULT_AUDIO_VOLUME = 0.45;
+const DEFAULT_BGM_VOLUME = 0.25;
+const DEFAULT_BGM_TRACK_ID = "pixel-parlor";
+const KEYBOARD_TYPING_AUDIO_SRC = "/audio/keyboard-typing-loop.wav";
+const COFFEE_MACHINE_BREW_AUDIO_SRC = "/audio/coffee-machine-brew-loop.ogg";
+const FRIDGE_DOOR_OPEN_AUDIO_SRC = "/audio/fridge-door-open.mp3";
+const FRIDGE_DOOR_CLOSE_AUDIO_SRC = "/audio/fridge-door-close.mp3";
+const AGENT_COMPLETE_AUDIO_SRC = "/audio/agent-complete-success.ogg";
+const COLA_CAN_OPEN_AUDIO_SRC = "/audio/cola-can-open.mp3";
+const COLA_DRINK_AUDIO_SRC = "/audio/cola-drink.mp3";
+const COFFEE_DRINK_AUDIO_SRC = "/audio/coffee-drink-slurping.mp3";
+const BENTO_EAT_AUDIO_SRC = "/audio/bento-eat-munchin.mp3";
+const GAME_CONSOLE_AUDIO_SOURCES = [
+  "/audio/game-console-jump.ogg",
+  "/audio/game-console-invincibility.ogg",
+  "/audio/game-console-victory.ogg",
+  "/audio/game-console-battle.ogg",
+  "/audio/game-console-get-equipped.wav",
+  "/audio/game-console-curious.ogg",
+];
+const BGM_TRACKS = [
+  {
+    id: DEFAULT_BGM_TRACK_ID,
+    copyKey: "audio.bgmTrack.pixelParlor",
+    kind: "programmatic",
+    stepMs: 210,
+    pattern: [
+      523.25, 659.25, 783.99, 659.25, 587.33, 698.46, 880, 698.46,
+      493.88, 587.33, 739.99, 587.33, 523.25, 659.25, 783.99, 1046.5,
+    ],
+  },
+  {
+    id: "bach-fugue-bwv-577-the-jig",
+    copyKey: "audio.bgmTrack.bachFugue577",
+    kind: "audio",
+    src: "/audio/bach-fugue-bwv-577-the-jig.ogg",
+  },
+  {
+    id: "cyberpunk-moonlight-sonata",
+    copyKey: "audio.bgmTrack.cyberpunkMoonlight",
+    kind: "audio",
+    src: "/audio/cyberpunk-moonlight-sonata.mp3",
+  },
+] as const;
+const COFFEE_MACHINE_BREW_AUDIO_VOLUME_MULTIPLIER = 0.45;
+const FRIDGE_DOOR_AUDIO_VOLUME_MULTIPLIER = 0.65;
+const FRIDGE_DOOR_CLOSE_AUDIO_DELAY_MS = 3650;
+const GAME_CONSOLE_AUDIO_VOLUME_MULTIPLIER = 0.5;
+const AGENT_COMPLETE_AUDIO_VOLUME_MULTIPLIER = 0.65;
+const STARTUP_SOUND_AUDIO_VOLUME_MULTIPLIER = 0.28;
+const COLA_CAN_OPEN_AUDIO_VOLUME_MULTIPLIER = 0.55;
+const COLA_CAN_OPEN_AFTER_FRIDGE_DELAY_MS = 550;
+const COLA_DRINK_AUDIO_VOLUME_MULTIPLIER = 0.45;
+const COLA_DRINK_AFTER_CAN_OPEN_DELAY_MS = 1200;
+const COFFEE_DRINK_AUDIO_VOLUME_MULTIPLIER = 0.42;
+const BENTO_EAT_AUDIO_VOLUME_MULTIPLIER = 0.42;
 const DEMO_BEHAVIORS: BehaviorName[] = [
   "idle",
   "phone",
@@ -166,6 +232,7 @@ const DEMO_BEHAVIORS: BehaviorName[] = [
   "snack",
   "paint",
   "play",
+  "music",
   "thinking",
   "coding",
   "waiting",
@@ -183,6 +250,7 @@ type DecorSurfaceCategoryId = "wallpaper" | "flooring";
 
 type LauncherAgentId = "codex" | "claude-code";
 type UiThemeId = "classic" | "terminal" | "terminal-amber";
+type BgmTrackId = (typeof BGM_TRACKS)[number]["id"];
 
 const UI_THEME_OPTIONS: Array<{ id: UiThemeId; copyKey: string }> = [
   { id: "classic", copyKey: "theme.classic" },
@@ -195,6 +263,37 @@ const loadInitialUiTheme = (): UiThemeId => {
   if (saved === "terminal-amber") return "terminal-amber";
   return saved === "terminal" ? "terminal" : "classic";
 };
+
+const loadInitialAudioVolume = () => {
+  const saved = Number(localStorage.getItem(AUDIO_VOLUME_KEY));
+  if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
+  return DEFAULT_AUDIO_VOLUME;
+};
+
+const loadInitialStartupSoundEnabled = () =>
+  localStorage.getItem(STARTUP_SOUND_KEY) === "true";
+
+const loadInitialBgmVolume = () => {
+  const saved = Number(localStorage.getItem(BGM_VOLUME_KEY));
+  if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
+  return DEFAULT_BGM_VOLUME;
+};
+
+const loadInitialBgmTrackId = (): BgmTrackId => {
+  const saved = localStorage.getItem(BGM_TRACK_KEY);
+  return BGM_TRACKS.some((track) => track.id === saved)
+    ? (saved as BgmTrackId)
+    : DEFAULT_BGM_TRACK_ID;
+};
+
+const randomBgmTrackId = (currentTrackId: BgmTrackId): BgmTrackId => {
+  const candidates = BGM_TRACKS.filter((track) => track.id !== currentTrackId);
+  const pool = candidates.length > 0 ? candidates : BGM_TRACKS;
+  return pool[Math.floor(Math.random() * pool.length)].id;
+};
+
+const loadInitialAutoMusicEnabled = () =>
+  localStorage.getItem(AUTO_MUSIC_KEY) !== "false";
 
 const TASK_CABINET_STATUSES: TaskCabinetStatus[] = [
   "ready",
@@ -1509,7 +1608,7 @@ type PendingWorldInteraction =
       target: "placed-item";
       placedItem: PlacedItem;
       item: ItemDefinition;
-      kind: "brew" | "paint" | "play" | "interact";
+      kind: "brew" | "paint" | "play" | "music" | "interact";
     };
 
 const runtimeActionBehavior = (avatar: AvatarRuntime): BehaviorName =>
@@ -1523,7 +1622,7 @@ type SceneContextMenuState = {
         kind: "placed-item";
         placedItem: PlacedItem;
         item: ItemDefinition;
-        action: "brew" | "paint" | "play" | "interact";
+        action: "brew" | "paint" | "play" | "music" | "interact";
       }
     | {
         kind: "furniture";
@@ -2120,6 +2219,7 @@ export const App = () => {
   );
   const [activeInteraction, setActiveInteraction] =
     useState<FurnitureInteractionState | null>(null);
+  const [activeRecordPlayerId, setActiveRecordPlayerId] = useState<string | null>(null);
   const pendingWorldInteractionRef = useRef<PendingWorldInteraction | null>(
     null,
   );
@@ -2149,6 +2249,8 @@ export const App = () => {
   const selectedFurnitureRef = useRef<FurnitureDefinition | null>(null);
   const hoveredFurnitureRef = useRef<FurnitureDefinition | null>(null);
   const activeInteractionRef = useRef<FurnitureInteractionState | null>(null);
+  const activeRecordPlayerIdRef = useRef<string | null>(null);
+  const activeRecordPlayerStartedAtRef = useRef<number | null>(null);
   const autonomousCoffeeCooldownUntilRef = useRef(0);
   const placingItemRef = useRef<ItemDefinition | null>(null);
   const placementPreviewRef = useRef<{
@@ -2181,6 +2283,7 @@ export const App = () => {
   const [activeDecorSurfaceCategory, setActiveDecorSurfaceCategory] =
     useState<DecorSurfaceCategoryId>("wallpaper");
   const [decorPanelOpen, setDecorPanelOpen] = useState(false);
+  const [soundPanelOpen, setSoundPanelOpen] = useState(false);
   const [growthPanelOpen, setGrowthPanelOpen] = useState(false);
   const [sessionsPanelOpen, setSessionsPanelOpen] = useState(false);
   const [taskCabinetPanelOpen, setTaskCabinetPanelOpen] = useState(false);
@@ -2196,7 +2299,49 @@ export const App = () => {
   const saveRef = useRef(save);
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
   const [uiTheme, setUiTheme] = useState<UiThemeId>(() => loadInitialUiTheme());
+  const [audioVolume, setAudioVolume] = useState(() => loadInitialAudioVolume());
+  const [startupSoundEnabled, setStartupSoundEnabled] = useState(() =>
+    loadInitialStartupSoundEnabled(),
+  );
+  const [bgmVolume, setBgmVolume] = useState(() => loadInitialBgmVolume());
+  const [bgmTrackId, setBgmTrackId] = useState<BgmTrackId>(() =>
+    loadInitialBgmTrackId(),
+  );
+  const [autoMusicEnabled, setAutoMusicEnabled] = useState(() =>
+    loadInitialAutoMusicEnabled(),
+  );
   const uiThemeRef = useRef(uiTheme);
+  const autoMusicEnabledRef = useRef(autoMusicEnabled);
+  const keyboardTypingAudioRef = useRef<HTMLAudioElement | null>(null);
+  const coffeeMachineBrewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const fridgeDoorOpenAudioRef = useRef<HTMLAudioElement | null>(null);
+  const fridgeDoorCloseAudioRef = useRef<HTMLAudioElement | null>(null);
+  const fridgeDoorAudioInteractionRef = useRef<{
+    key: string;
+    closePlayed: boolean;
+  } | null>(null);
+  const agentCompleteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const gameConsoleAudioRef = useRef<HTMLAudioElement | null>(null);
+  const gameConsoleAudioSourceRef = useRef(GAME_CONSOLE_AUDIO_SOURCES[0]);
+  const gameConsoleAnimatingRef = useRef(false);
+  const colaCanOpenAudioRef = useRef<HTMLAudioElement | null>(null);
+  const colaSippingAudioRef = useRef(false);
+  const colaDrinkAudioRef = useRef<HTMLAudioElement | null>(null);
+  const colaDrinkAudioTimeoutRef = useRef<number | null>(null);
+  const coffeeDrinkAudioRef = useRef<HTMLAudioElement | null>(null);
+  const coffeeSippingAudioRef = useRef(false);
+  const bentoEatAudioRef = useRef<HTMLAudioElement | null>(null);
+  const bentoEatingAudioRef = useRef(false);
+  const audioUnlockedRef = useRef(false);
+  const startupSoundPlayedRef = useRef(false);
+  const bgmAudioContextRef = useRef<AudioContext | null>(null);
+  const bgmGainRef = useRef<GainNode | null>(null);
+  const bgmOscillatorRef = useRef<OscillatorNode | null>(null);
+  const bgmStepTimeoutRef = useRef<number | null>(null);
+  const bgmAudioRef = useRef<HTMLAudioElement | null>(null);
+  const bgmTrackIdRef = useRef<BgmTrackId>(bgmTrackId);
+  const bgmPlayingRef = useRef(false);
+  const bgmStepRef = useRef(0);
   const {
     status,
     sessions,
@@ -2533,6 +2678,202 @@ export const App = () => {
     setActiveInteraction(interaction);
   };
 
+  const unlockAppAudio = () => {
+    audioUnlockedRef.current = true;
+  };
+
+  const playStartupSound = () => {
+    if (!startupSoundEnabled || startupSoundPlayedRef.current) return;
+    startupSoundPlayedRef.current = true;
+    playOneShotAudio(
+      agentCompleteAudioRef.current,
+      STARTUP_SOUND_AUDIO_VOLUME_MULTIPLIER,
+    );
+  };
+
+  const playOneShotAudio = (
+    audio: HTMLAudioElement | null,
+    volumeMultiplier = 1,
+  ) => {
+    if (!audio || audioVolume <= 0 || !audioUnlockedRef.current) return;
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = Math.min(1, Math.max(0, audioVolume * volumeMultiplier));
+    void audio.play().catch(() => undefined);
+  };
+
+  const pauseAudio = (audio: HTMLAudioElement | null) => {
+    if (!audio || audio.paused) return;
+    audio.pause();
+    audio.currentTime = 0;
+  };
+
+  const setAudioPlaying = (
+    audio: HTMLAudioElement | null,
+    shouldPlay: boolean,
+    volumeMultiplier = 1,
+  ) => {
+    if (!audio) return;
+    audio.volume = Math.min(1, Math.max(0, audioVolume * volumeMultiplier));
+    if (shouldPlay) {
+      if (audio.paused) {
+        void audio.play().catch(() => undefined);
+      }
+    } else {
+      pauseAudio(audio);
+    }
+  };
+
+  const ensureBgmAudioContext = () => {
+    if (bgmAudioContextRef.current && bgmGainRef.current) {
+      return {
+        context: bgmAudioContextRef.current,
+        gain: bgmGainRef.current,
+      };
+    }
+    const AudioContextConstructor = window.AudioContext;
+    const context = new AudioContextConstructor();
+    const gain = context.createGain();
+    gain.gain.value = Math.min(0.22, Math.max(0, bgmVolume * 0.22));
+    gain.connect(context.destination);
+    bgmAudioContextRef.current = context;
+    bgmGainRef.current = gain;
+    return { context, gain };
+  };
+
+  const stopCurrentBgmNote = () => {
+    const oscillator = bgmOscillatorRef.current;
+    if (!oscillator) return;
+    oscillator.onended = null;
+    try {
+      oscillator.stop();
+    } catch {
+      // Oscillators can only be stopped once.
+    }
+    bgmOscillatorRef.current = null;
+  };
+
+  const stopProgrammaticBgm = () => {
+    bgmPlayingRef.current = false;
+    if (bgmStepTimeoutRef.current !== null) {
+      window.clearTimeout(bgmStepTimeoutRef.current);
+      bgmStepTimeoutRef.current = null;
+    }
+    stopCurrentBgmNote();
+  };
+
+  const stopAudioBgm = () => {
+    const audio = bgmAudioRef.current;
+    if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+  };
+
+  const stopRecordPlayerBgm = () => {
+    stopProgrammaticBgm();
+    stopAudioBgm();
+  };
+
+  const currentBgmTrack = () =>
+    BGM_TRACKS.find((track) => track.id === bgmTrackIdRef.current) ??
+    BGM_TRACKS[0];
+
+  const playNextBgmStep = () => {
+    if (!bgmPlayingRef.current) return;
+    const track = currentBgmTrack();
+    if (track.kind !== "programmatic") return;
+    const { context, gain } = ensureBgmAudioContext();
+    if (context.state === "suspended") {
+      void context.resume().catch(() => undefined);
+    }
+
+    const step = bgmStepRef.current % track.pattern.length;
+    bgmStepRef.current += 1;
+    const oscillator = context.createOscillator();
+    const noteGain = context.createGain();
+    const now = context.currentTime;
+    const durationSeconds = step % 4 === 3 ? 0.34 : 0.18;
+    oscillator.type = "square";
+    oscillator.frequency.value = track.pattern[step];
+    noteGain.gain.setValueAtTime(0.0001, now);
+    noteGain.gain.exponentialRampToValueAtTime(0.42, now + 0.012);
+    noteGain.gain.exponentialRampToValueAtTime(0.0001, now + durationSeconds);
+    oscillator.connect(noteGain);
+    noteGain.connect(gain);
+    oscillator.start(now);
+    oscillator.stop(now + durationSeconds + 0.02);
+    bgmOscillatorRef.current = oscillator;
+
+    bgmStepTimeoutRef.current = window.setTimeout(playNextBgmStep, track.stepMs);
+  };
+
+  const setRecordPlayerBgmPlaying = (shouldPlay: boolean) => {
+    if (!shouldPlay || bgmVolume <= 0 || !audioUnlockedRef.current) {
+      stopRecordPlayerBgm();
+      return;
+    }
+    const track = currentBgmTrack();
+    if (track.kind === "audio") {
+      stopProgrammaticBgm();
+      const audio = bgmAudioRef.current;
+      if (!audio) return;
+      if (audio.getAttribute("src") !== track.src) {
+        audio.src = track.src;
+        audio.load();
+      }
+      audio.loop = true;
+      audio.volume = Math.min(1, Math.max(0, bgmVolume));
+      if (audio.paused) {
+        void audio.play().catch(() => undefined);
+      }
+      return;
+    }
+    stopAudioBgm();
+    const { gain } = ensureBgmAudioContext();
+    gain.gain.value = Math.min(0.22, Math.max(0, bgmVolume * 0.22));
+    if (bgmPlayingRef.current) return;
+    bgmPlayingRef.current = true;
+    playNextBgmStep();
+  };
+
+  const randomGameConsoleAudioSource = () =>
+    GAME_CONSOLE_AUDIO_SOURCES[
+      Math.floor(Math.random() * GAME_CONSOLE_AUDIO_SOURCES.length)
+    ];
+
+  const isGameConsoleAnimatingForAudio = () => {
+    if (avatar.behavior !== "play") return false;
+    return Boolean(
+      contentRef.current.placedItems?.some((item) => {
+        if (item.itemId !== "game-console") return false;
+        if (activeInteraction?.furnitureId === item.id) return true;
+        return isNearActivePlayTarget(avatar, item, contentRef.current);
+      }),
+    );
+  };
+
+  const isRecordPlayerAnimatingForAudio = () =>
+    Boolean(
+      activeRecordPlayerIdRef.current &&
+        contentRef.current.placedItems?.some(
+          (item) =>
+            item.id === activeRecordPlayerIdRef.current &&
+            item.itemId === RECORD_PLAYER_ITEM_ID,
+        ),
+    );
+
+  const prepareGameConsoleAudioForNewPlay = () => {
+    const audio = gameConsoleAudioRef.current;
+    if (!audio) return;
+    const source = randomGameConsoleAudioSource();
+    gameConsoleAudioSourceRef.current = source;
+    if (audio.getAttribute("src") !== source) {
+      audio.src = source;
+      audio.load();
+    }
+    audio.currentTime = 0;
+  };
+
   const clearPendingFurnitureInteraction = () => {
     pendingWorldInteractionRef.current = null;
   };
@@ -2567,7 +2908,7 @@ export const App = () => {
   const queuePlacedItemInteraction = (
     placedItem: PlacedItem,
     item: ItemDefinition,
-    kind: "brew" | "paint" | "play" | "interact",
+    kind: "brew" | "paint" | "play" | "music" | "interact",
   ) => {
     pendingWorldInteractionRef.current = {
       target: "placed-item",
@@ -2584,7 +2925,9 @@ export const App = () => {
           ? "paint"
           : kind === "play"
             ? "play"
-            : "interact";
+            : kind === "music"
+              ? "music"
+              : "interact";
     const activity =
       kind === "brew"
         ? "Brewing coffee"
@@ -2592,7 +2935,9 @@ export const App = () => {
           ? "Painting"
           : kind === "play"
             ? "Playing games"
-            : "Heading over";
+            : kind === "music"
+              ? "Playing music"
+              : "Heading over";
     runtimeRef.current = {
       ...runtimeRef.current,
       ...target,
@@ -2617,10 +2962,11 @@ export const App = () => {
 
   const placedItemContextAction = (
     placedItem: PlacedItem,
-  ): "brew" | "paint" | "play" | "interact" | null => {
+  ): "brew" | "paint" | "play" | "music" | "interact" | null => {
     if (isBuiltinTerminalPlacedItem(placedItem)) return "interact";
     if (placedItem.itemId === COFFEE_MACHINE_ITEM_ID) return "brew";
     if (placedItem.itemId === "game-console") return "play";
+    if (placedItem.itemId === RECORD_PLAYER_ITEM_ID) return "music";
     if (placedItem.itemId === EASEL_ITEM_ID) return "paint";
     return null;
   };
@@ -2665,6 +3011,13 @@ export const App = () => {
       if (isHighPriorityStatus(statusRef.current.status)) {
         showPlacedItemBusy(placedItem, item);
         return;
+      }
+      if (
+        (isBuiltinTerminalPlacedItem(placedItem) && action === "interact") ||
+        (placedItem.itemId === "game-console" && action === "play") ||
+        (placedItem.itemId === RECORD_PLAYER_ITEM_ID && action === "music")
+      ) {
+        unlockAppAudio();
       }
       queuePlacedItemInteraction(placedItem, item, action);
       return;
@@ -2802,6 +3155,22 @@ export const App = () => {
   }, [content]);
 
   useEffect(() => {
+    activeRecordPlayerIdRef.current = activeRecordPlayerId;
+    activeRecordPlayerStartedAtRef.current = activeRecordPlayerId
+      ? performance.now()
+      : null;
+  }, [activeRecordPlayerId]);
+
+  useEffect(() => {
+    if (
+      activeRecordPlayerId &&
+      !content.placedItems?.some((item) => item.id === activeRecordPlayerId)
+    ) {
+      setActiveRecordPlayerId(null);
+    }
+  }, [activeRecordPlayerId, content.placedItems]);
+
+  useEffect(() => {
     windowTimePreviewRef.current = windowTimePreview;
   }, [windowTimePreview]);
 
@@ -2856,10 +3225,12 @@ export const App = () => {
         taskCabinetEntries.filter((entry) => entry.status === "failed").length,
         uiTheme,
         navDebugOverlay,
+        activeRecordPlayerId,
       );
     }
   }, [
     activeInteraction,
+    activeRecordPlayerId,
     content,
     effectiveStatus,
     hoveredFurniture,
@@ -2963,6 +3334,289 @@ export const App = () => {
   }, [uiTheme]);
 
   useEffect(() => {
+    const keyboardAudio = new Audio(KEYBOARD_TYPING_AUDIO_SRC);
+    keyboardAudio.loop = true;
+    keyboardAudio.preload = "auto";
+    keyboardAudio.volume = audioVolume;
+    keyboardTypingAudioRef.current = keyboardAudio;
+
+    const coffeeMachineAudio = new Audio(COFFEE_MACHINE_BREW_AUDIO_SRC);
+    coffeeMachineAudio.loop = true;
+    coffeeMachineAudio.preload = "auto";
+    coffeeMachineAudio.volume = audioVolume;
+    coffeeMachineBrewAudioRef.current = coffeeMachineAudio;
+
+    const fridgeDoorOpenAudio = new Audio(FRIDGE_DOOR_OPEN_AUDIO_SRC);
+    fridgeDoorOpenAudio.preload = "auto";
+    fridgeDoorOpenAudio.volume = audioVolume;
+    fridgeDoorOpenAudioRef.current = fridgeDoorOpenAudio;
+
+    const fridgeDoorCloseAudio = new Audio(FRIDGE_DOOR_CLOSE_AUDIO_SRC);
+    fridgeDoorCloseAudio.preload = "auto";
+    fridgeDoorCloseAudio.volume = audioVolume;
+    fridgeDoorCloseAudioRef.current = fridgeDoorCloseAudio;
+
+    const agentCompleteAudio = new Audio(AGENT_COMPLETE_AUDIO_SRC);
+    agentCompleteAudio.preload = "auto";
+    agentCompleteAudio.volume = audioVolume;
+    agentCompleteAudioRef.current = agentCompleteAudio;
+
+    const colaCanOpenAudio = new Audio(COLA_CAN_OPEN_AUDIO_SRC);
+    colaCanOpenAudio.preload = "auto";
+    colaCanOpenAudio.volume = audioVolume;
+    colaCanOpenAudioRef.current = colaCanOpenAudio;
+
+    const colaDrinkAudio = new Audio(COLA_DRINK_AUDIO_SRC);
+    colaDrinkAudio.preload = "auto";
+    colaDrinkAudio.volume = audioVolume;
+    colaDrinkAudioRef.current = colaDrinkAudio;
+
+    const coffeeDrinkAudio = new Audio(COFFEE_DRINK_AUDIO_SRC);
+    coffeeDrinkAudio.preload = "auto";
+    coffeeDrinkAudio.volume = audioVolume;
+    coffeeDrinkAudioRef.current = coffeeDrinkAudio;
+
+    const bentoEatAudio = new Audio(BENTO_EAT_AUDIO_SRC);
+    bentoEatAudio.preload = "auto";
+    bentoEatAudio.volume = audioVolume;
+    bentoEatAudioRef.current = bentoEatAudio;
+
+    const gameAudio = new Audio(gameConsoleAudioSourceRef.current);
+    gameAudio.loop = true;
+    gameAudio.preload = "auto";
+    gameAudio.volume = audioVolume;
+    gameConsoleAudioRef.current = gameAudio;
+
+    const bgmAudio = new Audio();
+    bgmAudio.loop = true;
+    bgmAudio.preload = "auto";
+    bgmAudio.volume = bgmVolume;
+    bgmAudioRef.current = bgmAudio;
+
+    return () => {
+      keyboardAudio.pause();
+      coffeeMachineAudio.pause();
+      fridgeDoorOpenAudio.pause();
+      fridgeDoorCloseAudio.pause();
+      agentCompleteAudio.pause();
+      colaCanOpenAudio.pause();
+      colaDrinkAudio.pause();
+      coffeeDrinkAudio.pause();
+      bentoEatAudio.pause();
+      if (colaDrinkAudioTimeoutRef.current !== null) {
+        window.clearTimeout(colaDrinkAudioTimeoutRef.current);
+        colaDrinkAudioTimeoutRef.current = null;
+      }
+      gameAudio.pause();
+      stopRecordPlayerBgm();
+      bgmAudio.pause();
+      void bgmAudioContextRef.current?.close().catch(() => undefined);
+      bgmAudioContextRef.current = null;
+      bgmGainRef.current = null;
+      keyboardTypingAudioRef.current = null;
+      coffeeMachineBrewAudioRef.current = null;
+      fridgeDoorOpenAudioRef.current = null;
+      fridgeDoorCloseAudioRef.current = null;
+      agentCompleteAudioRef.current = null;
+      colaCanOpenAudioRef.current = null;
+      colaDrinkAudioRef.current = null;
+      coffeeDrinkAudioRef.current = null;
+      bentoEatAudioRef.current = null;
+      gameConsoleAudioRef.current = null;
+      bgmAudioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(AUDIO_VOLUME_KEY, String(audioVolume));
+    [
+      keyboardTypingAudioRef.current,
+      coffeeMachineBrewAudioRef.current,
+      fridgeDoorOpenAudioRef.current,
+      fridgeDoorCloseAudioRef.current,
+      agentCompleteAudioRef.current,
+      colaCanOpenAudioRef.current,
+      colaDrinkAudioRef.current,
+      coffeeDrinkAudioRef.current,
+      bentoEatAudioRef.current,
+      gameConsoleAudioRef.current,
+    ].forEach((audio) => {
+      if (!audio) return;
+      audio.volume = audioVolume;
+      if (audioVolume <= 0) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    });
+  }, [audioVolume]);
+
+  useEffect(() => {
+    localStorage.setItem(STARTUP_SOUND_KEY, String(startupSoundEnabled));
+  }, [startupSoundEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem(BGM_VOLUME_KEY, String(bgmVolume));
+    if (bgmGainRef.current) {
+      bgmGainRef.current.gain.value = Math.min(0.22, Math.max(0, bgmVolume * 0.22));
+    }
+    if (bgmAudioRef.current) {
+      bgmAudioRef.current.volume = Math.min(1, Math.max(0, bgmVolume));
+    }
+    if (bgmVolume <= 0) stopRecordPlayerBgm();
+  }, [bgmVolume]);
+
+  useEffect(() => {
+    localStorage.setItem(BGM_TRACK_KEY, bgmTrackId);
+    bgmTrackIdRef.current = bgmTrackId;
+    bgmStepRef.current = 0;
+    if (activeRecordPlayerIdRef.current) {
+      stopRecordPlayerBgm();
+      setRecordPlayerBgmPlaying(isRecordPlayerAnimatingForAudio());
+    }
+  }, [bgmTrackId]);
+
+  useEffect(() => {
+    localStorage.setItem(AUTO_MUSIC_KEY, String(autoMusicEnabled));
+    autoMusicEnabledRef.current = autoMusicEnabled;
+  }, [autoMusicEnabled]);
+
+  useEffect(() => {
+    const unlockOnFirstInteraction = () => {
+      unlockAppAudio();
+      playStartupSound();
+    };
+
+    window.addEventListener("pointerdown", unlockOnFirstInteraction, { once: true });
+    window.addEventListener("keydown", unlockOnFirstInteraction, { once: true });
+    window.addEventListener("touchstart", unlockOnFirstInteraction, { once: true });
+
+    return () => {
+      window.removeEventListener("pointerdown", unlockOnFirstInteraction);
+      window.removeEventListener("keydown", unlockOnFirstInteraction);
+      window.removeEventListener("touchstart", unlockOnFirstInteraction);
+    };
+  }, [startupSoundEnabled, audioVolume]);
+
+  useEffect(() => {
+    const activeBehavior = runtimeActionBehavior(avatar);
+    const terminal = contentRef.current.placedItems?.find(
+      (item) =>
+        item.id === BUILTIN_TERMINAL_PLACED_ITEM_ID ||
+        item.itemId === TERMINAL_MONITOR_ITEM_ID,
+    );
+    const isTerminalAnimating =
+      Boolean(terminal) &&
+      (avatar.behavior === "coding" || avatar.behavior === "thinking") &&
+      Math.hypot(avatar.x - terminal!.x, avatar.y - (terminal!.y + 18)) < 92;
+    const canPlayAudio = audioVolume > 0 && audioUnlockedRef.current;
+    const isCoffeeMachineBrewing =
+      activeInteraction?.kind === "brew" && activeBehavior === "brew";
+    const activeFridgeFeedInteraction =
+      activeInteraction?.kind === "feed" && activeInteraction.furnitureId === "fridge"
+        ? activeInteraction
+        : null;
+    const isGameConsoleAnimating = isGameConsoleAnimatingForAudio();
+    const isRecordPlayerAnimating = isRecordPlayerAnimatingForAudio();
+    const isColaSipping = activeBehavior === "cola";
+    const isCoffeeSipping = activeBehavior === "coffee";
+    const isBentoEating = activeBehavior === "bento";
+
+    if (isGameConsoleAnimating && !gameConsoleAnimatingRef.current) {
+      prepareGameConsoleAudioForNewPlay();
+    }
+    gameConsoleAnimatingRef.current = isGameConsoleAnimating;
+
+    if (activeFridgeFeedInteraction && canPlayAudio) {
+      const interactionKey = `${activeFridgeFeedInteraction.furnitureId}:${activeFridgeFeedInteraction.startedAt}`;
+      const elapsedMs = performance.now() - activeFridgeFeedInteraction.startedAt;
+      if (fridgeDoorAudioInteractionRef.current?.key !== interactionKey) {
+        fridgeDoorAudioInteractionRef.current = {
+          key: interactionKey,
+          closePlayed: false,
+        };
+        playOneShotAudio(
+          fridgeDoorOpenAudioRef.current,
+          FRIDGE_DOOR_AUDIO_VOLUME_MULTIPLIER,
+        );
+      }
+      if (
+        elapsedMs >= FRIDGE_DOOR_CLOSE_AUDIO_DELAY_MS &&
+        !fridgeDoorAudioInteractionRef.current.closePlayed
+      ) {
+        fridgeDoorAudioInteractionRef.current.closePlayed = true;
+        playOneShotAudio(
+          fridgeDoorCloseAudioRef.current,
+          FRIDGE_DOOR_AUDIO_VOLUME_MULTIPLIER,
+        );
+      }
+    } else if (!activeFridgeFeedInteraction) {
+      fridgeDoorAudioInteractionRef.current = null;
+    }
+
+    if (!isColaSipping) {
+      colaSippingAudioRef.current = false;
+      if (colaDrinkAudioTimeoutRef.current !== null) {
+        window.clearTimeout(colaDrinkAudioTimeoutRef.current);
+        colaDrinkAudioTimeoutRef.current = null;
+      }
+    } else if (canPlayAudio && !colaSippingAudioRef.current) {
+      const colaCanOpenDelayElapsed =
+        !activeFridgeFeedInteraction ||
+        performance.now() - activeFridgeFeedInteraction.startedAt >=
+          COLA_CAN_OPEN_AFTER_FRIDGE_DELAY_MS;
+      if (colaCanOpenDelayElapsed) {
+        colaSippingAudioRef.current = true;
+        playOneShotAudio(
+          colaCanOpenAudioRef.current,
+          COLA_CAN_OPEN_AUDIO_VOLUME_MULTIPLIER,
+        );
+        colaDrinkAudioTimeoutRef.current = window.setTimeout(() => {
+          colaDrinkAudioTimeoutRef.current = null;
+          playOneShotAudio(
+            colaDrinkAudioRef.current,
+            COLA_DRINK_AUDIO_VOLUME_MULTIPLIER,
+          );
+        }, COLA_DRINK_AFTER_CAN_OPEN_DELAY_MS);
+      }
+    }
+
+    if (!isCoffeeSipping) {
+      coffeeSippingAudioRef.current = false;
+      pauseAudio(coffeeDrinkAudioRef.current);
+    } else if (canPlayAudio && !coffeeSippingAudioRef.current) {
+      coffeeSippingAudioRef.current = true;
+      playOneShotAudio(
+        coffeeDrinkAudioRef.current,
+        COFFEE_DRINK_AUDIO_VOLUME_MULTIPLIER,
+      );
+    }
+
+    if (!isBentoEating) {
+      bentoEatingAudioRef.current = false;
+      pauseAudio(bentoEatAudioRef.current);
+    } else if (canPlayAudio && !bentoEatingAudioRef.current) {
+      bentoEatingAudioRef.current = true;
+      playOneShotAudio(
+        bentoEatAudioRef.current,
+        BENTO_EAT_AUDIO_VOLUME_MULTIPLIER,
+      );
+    }
+
+    setAudioPlaying(keyboardTypingAudioRef.current, isTerminalAnimating && canPlayAudio);
+    setAudioPlaying(
+      coffeeMachineBrewAudioRef.current,
+      isCoffeeMachineBrewing && canPlayAudio,
+      COFFEE_MACHINE_BREW_AUDIO_VOLUME_MULTIPLIER,
+    );
+    setAudioPlaying(
+      gameConsoleAudioRef.current,
+      isGameConsoleAnimating && canPlayAudio,
+      GAME_CONSOLE_AUDIO_VOLUME_MULTIPLIER,
+    );
+    setRecordPlayerBgmPlaying(isRecordPlayerAnimating && canPlayAudio);
+  }, [activeInteraction, activeRecordPlayerId, audioVolume, bgmTrackId, bgmVolume, avatar]);
+
+  useEffect(() => {
     if (!bridgeStartMessage) return;
     const timer = window.setTimeout(
       () => setBridgeStartMessage(""),
@@ -2988,6 +3642,7 @@ export const App = () => {
     let playAccumulator = 0;
     let paintAccumulator = 0;
     let coffeeAccumulator = 0;
+    let bgmAutonomousStopAccumulator = 0;
     let uiAccumulator = 0;
     let exploreAccumulator = 0;
     let exploreStuckAccumulator = 0;
@@ -3037,6 +3692,47 @@ export const App = () => {
               status: "idle" as const,
             }
           : currentStatus;
+      const recordPlayerPlayingForSeconds = activeRecordPlayerStartedAtRef.current
+        ? (now - activeRecordPlayerStartedAtRef.current) / 1000
+        : 0;
+      const canAutonomouslyStopBgm =
+        Boolean(activeRecordPlayerIdRef.current) &&
+        recordPlayerPlayingForSeconds >= BGM_AUTONOMOUS_STOP_MIN_SECONDS &&
+        !isHighPriorityStatus(currentStatus) &&
+        !pendingWorldInteractionRef.current &&
+        !blockingInteraction &&
+        !taskCabinetVisualFlowActive;
+
+      if (canAutonomouslyStopBgm) {
+        bgmAutonomousStopAccumulator += elapsedSeconds;
+        if (bgmAutonomousStopAccumulator >= BGM_AUTONOMOUS_STOP_CHECK_SECONDS) {
+          bgmAutonomousStopAccumulator = 0;
+          if (Math.random() < BGM_AUTONOMOUS_STOP_CHANCE) {
+            const recordPlayerName =
+              currentContent.itemDefinitions.find(
+                (item) => item.id === RECORD_PLAYER_ITEM_ID,
+              )?.name ?? "Record Player";
+            const activeRecordPlayer = currentContent.placedItems?.find(
+              (item) => item.id === activeRecordPlayerIdRef.current,
+            );
+            activeRecordPlayerIdRef.current = null;
+            activeRecordPlayerStartedAtRef.current = null;
+            setActiveRecordPlayerId(null);
+            stopRecordPlayerBgm();
+            updateActiveInteraction({
+              kind: "none",
+              furnitureId: activeRecordPlayer?.id ?? RECORD_PLAYER_ITEM_ID,
+              furnitureName: recordPlayerName,
+              message: "Aivatar turned off the music.",
+              startedAt: now,
+              endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
+              bubbleText: "Quiet time",
+            });
+          }
+        }
+      } else {
+        bgmAutonomousStopAccumulator = 0;
+      }
 
       if (
         busyRecoveryNeed &&
@@ -3098,6 +3794,7 @@ export const App = () => {
               pendingWorldInteraction,
             ),
           navMemory: saveRef.current.navMemory,
+          autoMusicEnabled: autoMusicEnabledRef.current,
         },
       );
 
@@ -3477,6 +4174,36 @@ export const App = () => {
                 startedAt: performance.now(),
                 bubbleText: ui("thought.play"),
               });
+            } else if (pendingWorldInteraction.kind === "music") {
+              const startedAt = performance.now();
+              setBgmTrackId(randomBgmTrackId(bgmTrackIdRef.current));
+              setActiveRecordPlayerId(pendingWorldInteraction.placedItem.id);
+              runtimeRef.current = {
+                ...runtimeRef.current,
+                targetX: runtimeRef.current.x,
+                targetY: runtimeRef.current.y,
+                behavior: "idle",
+                behaviorTimer: 2,
+                expression: "happy",
+                facing: facingTowardPlacedItem(
+                  runtimeRef.current,
+                  pendingWorldInteraction.placedItem,
+                ),
+                activityLabel: "Idle",
+                actionIntent: undefined,
+                actionActivityLabel: undefined,
+                interactionTargetAlternates: undefined,
+              };
+              setAvatar(runtimeRef.current);
+              updateActiveInteraction({
+                kind: "none",
+                furnitureId: pendingWorldInteraction.placedItem.id,
+                furnitureName: pendingWorldInteraction.item.name,
+                message: ui("message.selected", { name: pendingWorldInteraction.item.name }),
+                startedAt,
+                endsAt: startedAt + INTERACTION_FEEDBACK_SECONDS * 1000,
+                bubbleText: ui("thought.music"),
+              });
             } else if (pendingWorldInteraction.kind === "interact") {
               runtimeRef.current = {
                 ...runtimeRef.current,
@@ -3646,6 +4373,67 @@ export const App = () => {
         }
       } else {
         playAccumulator = 0;
+      }
+
+      if (runtimeRef.current.behavior === "music" && !isHighPriorityStatus(currentStatus)) {
+        const recordPlayer = currentContent.placedItems?.find(
+          (item) =>
+            item.itemId === RECORD_PLAYER_ITEM_ID &&
+            isNearPlacedItemInteractionTarget(runtimeRef.current, item, currentContent),
+        );
+
+        if (recordPlayer) {
+          setBgmTrackId(randomBgmTrackId(bgmTrackIdRef.current));
+          setActiveRecordPlayerId(recordPlayer.id);
+          runtimeRef.current = {
+            ...runtimeRef.current,
+            targetX: runtimeRef.current.x,
+            targetY: runtimeRef.current.y,
+            behavior: "idle",
+            behaviorTimer: 2,
+            expression: "happy",
+            activityLabel: "Idle",
+            actionIntent: undefined,
+            actionActivityLabel: undefined,
+            interactionTargetAlternates: undefined,
+          };
+          setAvatar(runtimeRef.current);
+          updateActiveInteraction({
+            kind: "none",
+            furnitureId: recordPlayer.id,
+            furnitureName:
+              currentContent.itemDefinitions.find(
+                (item) => item.id === RECORD_PLAYER_ITEM_ID,
+              )?.name ?? "Record Player",
+            message: ui("message.selected", {
+              name:
+                currentContent.itemDefinitions.find(
+                  (item) => item.id === RECORD_PLAYER_ITEM_ID,
+                )?.name ?? "Record Player",
+            }),
+            startedAt: now,
+            endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
+            bubbleText: ui("thought.music"),
+          });
+          setSave((current) => ({
+            ...current,
+            memory: recordLifeMemory(
+              current.memory,
+              {
+                type: "recovery_used",
+                summary: "Started 8-bit music",
+                behavior: "music",
+                itemId: RECORD_PLAYER_ITEM_ID,
+              },
+              {
+                creativity: 1,
+                warmth: 1,
+                ...(current.petStats.mood < 45 ? { resilience: 1 } : {}),
+              },
+              { throttleMs: 60000, throttleKey: "music-start" },
+            ),
+          }));
+        }
       }
 
       if (runtimeRef.current.behavior === "paint" && !isHighPriorityStatus(currentStatus)) {
@@ -3892,7 +4680,11 @@ export const App = () => {
         statAccumulator = 0;
         setSave((current) => ({
           ...current,
-          petStats: applyPetTick(current.petStats, elapsedStats),
+          petStats: applyPetTick(current.petStats, elapsedStats, {
+            moodDecayMultiplier: activeRecordPlayerIdRef.current
+              ? MUSIC_MOOD_DECAY_MULTIPLIER
+              : 1,
+          }),
         }));
       }
 
@@ -3942,6 +4734,7 @@ export const App = () => {
             ).length,
             uiThemeRef.current,
             navDebugOverlayRef.current,
+            activeRecordPlayerIdRef.current,
           );
       }
 
@@ -4027,6 +4820,10 @@ export const App = () => {
         rewardBits,
       ),
     }));
+    playOneShotAudio(
+      agentCompleteAudioRef.current,
+      AGENT_COMPLETE_AUDIO_VOLUME_MULTIPLIER,
+    );
     const now = performance.now();
     const rewardAgentName = agentDisplayName(effectiveStatus);
     updateActiveInteraction({
@@ -6626,6 +7423,22 @@ export const App = () => {
     sceneContextMenu?.target.kind === "placed-item"
       ? sceneContextMenu.target.item.name
       : sceneContextMenu?.target.furniture.name;
+  const sceneContextRecordPlayer =
+    sceneContextMenu?.target.kind === "placed-item" &&
+    sceneContextMenu.target.placedItem.itemId === RECORD_PLAYER_ITEM_ID
+      ? sceneContextMenu.target.placedItem
+      : null;
+  const stopSceneContextRecordPlayer = () => {
+    if (!sceneContextRecordPlayer) return;
+    setSceneContextMenu(null);
+    if (activeRecordPlayerId === sceneContextRecordPlayer.id) {
+      setActiveRecordPlayerId(null);
+      stopRecordPlayerBgm();
+    }
+  };
+  const selectedBgmTrackLabel = ui(
+    (BGM_TRACKS.find((track) => track.id === bgmTrackId) ?? BGM_TRACKS[0]).copyKey,
+  );
   const sceneContextActionLabel =
     sceneContextMenu?.target.kind === "placed-item"
       ? sceneContextMenu.target.action === "brew"
@@ -6634,7 +7447,9 @@ export const App = () => {
           ? ui("scene.action.paint")
           : sceneContextMenu.target.action === "play"
             ? ui("scene.action.play")
-            : ui("scene.action.interact")
+            : sceneContextMenu.target.action === "music"
+              ? ui("scene.action.music")
+              : ui("scene.action.interact")
       : sceneContextMenu
         ? behaviorLabel(locale, sceneContextMenu.target.furniture.interaction)
         : "";
@@ -6743,6 +7558,60 @@ export const App = () => {
             >
               {sceneContextActionLabel}
             </button>
+            {sceneContextRecordPlayer ? (
+              <label className="scene-context-control">
+                <span>
+                  {ui("audio.bgmTrack")}
+                  <b>{selectedBgmTrackLabel}</b>
+                </span>
+                <select
+                  value={bgmTrackId}
+                  onPointerDown={unlockAppAudio}
+                  onKeyDown={unlockAppAudio}
+                  onChange={(event) => setBgmTrackId(event.target.value as BgmTrackId)}
+                  aria-label={ui("audio.bgmTrack")}
+                >
+                  {BGM_TRACKS.map((track) => (
+                    <option key={track.id} value={track.id}>
+                      {ui(track.copyKey)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {sceneContextRecordPlayer ? (
+              <label className="scene-context-control">
+                <span>
+                  {ui("audio.bgmVolume")}
+                  <b>
+                    {bgmVolume <= 0
+                      ? ui("audio.muted")
+                      : `${Math.round(bgmVolume * 100)}%`}
+                  </b>
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={Math.round(bgmVolume * 100)}
+                  onPointerDown={unlockAppAudio}
+                  onKeyDown={unlockAppAudio}
+                  onChange={(event) => setBgmVolume(Number(event.target.value) / 100)}
+                  aria-label={ui("audio.bgmVolume")}
+                />
+              </label>
+            ) : null}
+            {sceneContextRecordPlayer &&
+            activeRecordPlayerId === sceneContextRecordPlayer.id ? (
+              <button
+                type="button"
+                className="scene-context-button scene-context-stop-button"
+                onClick={stopSceneContextRecordPlayer}
+              >
+                {ui("scene.action.stopMusic")}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -6793,6 +7662,124 @@ export const App = () => {
             </button>
           ))}
         </div>
+
+        <section className="sound-card" aria-label={ui("audio.title")}>
+          <button
+            type="button"
+            className={`sound-toggle${soundPanelOpen ? " active" : ""}`}
+            onClick={() => setSoundPanelOpen((current) => !current)}
+            aria-expanded={soundPanelOpen}
+          >
+            <span className="sound-toggle-main">
+              <span>{ui("audio.title")}</span>
+              <b>{audioVolume <= 0 ? ui("audio.muted") : `${Math.round(audioVolume * 100)}%`}</b>
+            </span>
+            <span className="sound-toggle-status">{selectedBgmTrackLabel}</span>
+            <span className="sound-toggle-chevron" aria-hidden="true">
+              {soundPanelOpen ? "-" : "+"}
+            </span>
+          </button>
+
+          {soundPanelOpen ? (
+            <div className="sound-submenu">
+              <label className="audio-control">
+                <span>
+                  {ui("audio.volume")}
+                  <b>
+                    {audioVolume <= 0
+                      ? ui("audio.muted")
+                      : `${Math.round(audioVolume * 100)}%`}
+                  </b>
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={Math.round(audioVolume * 100)}
+                  onPointerDown={unlockAppAudio}
+                  onKeyDown={unlockAppAudio}
+                  onChange={(event) => setAudioVolume(Number(event.target.value) / 100)}
+                  aria-label={ui("audio.title")}
+                />
+              </label>
+
+              <label className="audio-control">
+                <span>
+                  {ui("audio.startupSound")}
+                  <b>{startupSoundEnabled ? ui("common.on") : ui("common.off")}</b>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={startupSoundEnabled}
+                  onPointerDown={unlockAppAudio}
+                  onKeyDown={unlockAppAudio}
+                  onChange={(event) => setStartupSoundEnabled(event.target.checked)}
+                  aria-label={ui("audio.startupSound")}
+                  style={{ width: "auto", justifySelf: "start" }}
+                />
+              </label>
+
+              <label className="audio-control">
+                <span>
+                  {ui("audio.bgmTrack")}
+                  <b>{selectedBgmTrackLabel}</b>
+                </span>
+                <select
+                  value={bgmTrackId}
+                  onPointerDown={unlockAppAudio}
+                  onKeyDown={unlockAppAudio}
+                  onChange={(event) => setBgmTrackId(event.target.value as BgmTrackId)}
+                  aria-label={ui("audio.bgmTrack")}
+                >
+                  {BGM_TRACKS.map((track) => (
+                    <option key={track.id} value={track.id}>
+                      {ui(track.copyKey)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="audio-control">
+                <span>
+                  {ui("audio.bgmVolume")}
+                  <b>
+                    {bgmVolume <= 0
+                      ? ui("audio.muted")
+                      : `${Math.round(bgmVolume * 100)}%`}
+                  </b>
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={Math.round(bgmVolume * 100)}
+                  onPointerDown={unlockAppAudio}
+                  onKeyDown={unlockAppAudio}
+                  onChange={(event) => setBgmVolume(Number(event.target.value) / 100)}
+                  aria-label={ui("audio.bgmVolume")}
+                />
+              </label>
+
+              <label className="audio-control">
+                <span>
+                  {ui("audio.autoMusic")}
+                  <b>{autoMusicEnabled ? ui("common.on") : ui("common.off")}</b>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={autoMusicEnabled}
+                  onPointerDown={unlockAppAudio}
+                  onKeyDown={unlockAppAudio}
+                  onChange={(event) => setAutoMusicEnabled(event.target.checked)}
+                  aria-label={ui("audio.autoMusic")}
+                  style={{ width: "auto", justifySelf: "start" }}
+                />
+              </label>
+            </div>
+          ) : null}
+        </section>
 
         <div className="status-card">
           <span>{statusLabel(locale, effectiveStatus.status)}</span>

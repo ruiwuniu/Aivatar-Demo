@@ -48,6 +48,7 @@ body {
 
 button,
 input,
+select,
 meter {
   font: inherit;
 }
@@ -141,6 +142,43 @@ meter {
 
 .scene-context-button:hover {
   background: #d8fff7;
+}
+
+.scene-context-control {
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid #39445f;
+  background: rgba(8, 11, 20, 0.58);
+}
+
+.scene-context-control span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.scene-context-control b {
+  color: #ffe66d;
+}
+
+.scene-context-control input,
+.scene-context-control select {
+  width: 100%;
+  min-width: 0;
+  color: #d8fff7;
+  background: #111624;
+  border: 1px solid #52607d;
+  accent-color: #ffe66d;
+}
+
+.scene-context-stop-button {
+  color: #f4ead2;
+  background: #7d3144;
+}
+
+.scene-context-stop-button:hover {
+  background: #ff5c7a;
 }
 
 .side-panel-edge-toggle {
@@ -353,6 +391,7 @@ meter {
 .side-panel > *,
 .control-section,
 .status-card,
+.sound-card,
 .debug-card,
 .placement-panel,
 .edit-panel {
@@ -403,6 +442,125 @@ meter {
   gap: 4px;
 }
 
+.sound-card {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+}
+
+.sound-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+  width: 100%;
+  min-height: 38px;
+  border: 2px solid #39445f;
+  color: #d8fff7;
+  background: #171c2b;
+  box-shadow: inset -2px -2px 0 #111624;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.sound-toggle:hover,
+.sound-toggle.active {
+  border-color: #ffe66d;
+  background: #253149;
+}
+
+.sound-toggle-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sound-toggle-main span {
+  color: #9ee6ff;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.sound-toggle-main b {
+  color: #ffe66d;
+  font-size: 11px;
+}
+
+.sound-toggle-status {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #cfc5a8;
+  font-size: 9px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.sound-toggle-chevron {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid #52607d;
+  color: #ffe66d;
+  background: #111624;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.sound-submenu {
+  display: grid;
+  gap: 5px;
+}
+
+.audio-control {
+  display: grid;
+  gap: 5px;
+  padding: 7px 8px;
+  border: 2px solid #39445f;
+  background: #171c2b;
+}
+
+.audio-control span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #9ee6ff;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.audio-control b {
+  color: #ffe66d;
+  font-size: 11px;
+}
+
+.audio-control input,
+.audio-control select {
+  width: 100%;
+  min-width: 0;
+  accent-color: #ffe66d;
+  cursor: pointer;
+}
+
+.audio-control select {
+  min-height: 28px;
+  border: 2px solid #52607d;
+  color: #d8fff7;
+  background: #111624;
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 4px 6px;
+}
+
 .language-button,
 .theme-button {
   min-height: 24px;
@@ -442,6 +600,7 @@ meter {
 .app-shell.theme-terminal .status-card,
 .app-shell.theme-terminal .name-editor,
 .app-shell.theme-terminal .stats-grid,
+.app-shell.theme-terminal .sound-card,
 .app-shell.theme-terminal .sessions-card,
 .app-shell.theme-terminal .task-cabinet-card,
 .app-shell.theme-terminal .launcher-card,
@@ -509,6 +668,68 @@ meter {
   border-right-color: #020804;
 }
 
+.app-shell.theme-terminal .scene-context-menu {
+  border-color: #38c947;
+  color: #b8ff9c;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(103, 255, 114, 0.08) 0 1px,
+      transparent 1px 4px
+    ),
+    rgba(3, 18, 7, 0.97);
+  box-shadow:
+    inset 0 0 0 1px #0a3b13,
+    4px 4px 0 #020804,
+    0 0 12px rgba(76, 255, 87, 0.18);
+}
+
+.app-shell.theme-terminal .scene-context-menu span {
+  color: #67ff72;
+}
+
+.app-shell.theme-terminal .scene-context-button {
+  border-color: #1f7f2e;
+  color: #b8ff9c;
+  background: #020804;
+  box-shadow: inset -2px -2px 0 #031207;
+}
+
+.app-shell.theme-terminal .scene-context-button:hover {
+  border-color: #a6ff73;
+  color: #020804;
+  background: #7dff5b;
+}
+
+.app-shell.theme-terminal .scene-context-control {
+  border-color: #1f7f2e;
+  background: rgba(2, 8, 4, 0.72);
+}
+
+.app-shell.theme-terminal .scene-context-control b {
+  color: #eaff9f;
+}
+
+.app-shell.theme-terminal .scene-context-control input,
+.app-shell.theme-terminal .scene-context-control select {
+  border-color: #1f7f2e;
+  color: #b8ff9c;
+  background: #020804;
+  accent-color: #80ff62;
+}
+
+.app-shell.theme-terminal .scene-context-stop-button {
+  border-color: #9f3049;
+  color: #ffd0d8;
+  background: #3b0713;
+}
+
+.app-shell.theme-terminal .scene-context-stop-button:hover {
+  border-color: #ffd0d8;
+  color: #020804;
+  background: #ff5c7a;
+}
+
 .app-shell.theme-terminal .status-card {
   background:
     repeating-linear-gradient(
@@ -525,6 +746,8 @@ meter {
 
 .app-shell.theme-terminal .eyebrow,
 .app-shell.theme-terminal .status-card span,
+.app-shell.theme-terminal .sound-toggle-main span,
+.app-shell.theme-terminal .sound-toggle-status,
 .app-shell.theme-terminal .sessions-toggle-status,
 .app-shell.theme-terminal .task-cabinet-toggle-status,
 .app-shell.theme-terminal .launcher-toggle-status,
@@ -538,6 +761,7 @@ meter {
 .app-shell.theme-terminal h1,
 .app-shell.theme-terminal h2,
 .app-shell.theme-terminal .status-card strong,
+.app-shell.theme-terminal .sound-toggle-main b,
 .app-shell.theme-terminal .sessions-toggle-main b,
 .app-shell.theme-terminal .task-cabinet-toggle-main b,
 .app-shell.theme-terminal .launcher-toggle-main b,
@@ -561,6 +785,7 @@ meter {
 .app-shell.theme-terminal .task-cabinet-toggle,
 .app-shell.theme-terminal .launcher-toggle,
 .app-shell.theme-terminal .growth-toggle,
+.app-shell.theme-terminal .sound-toggle,
 .app-shell.theme-terminal .debug-toggle,
 .app-shell.theme-terminal .language-button,
 .app-shell.theme-terminal .theme-button,
@@ -586,6 +811,8 @@ meter {
 .app-shell.theme-terminal .launcher-toggle.active,
 .app-shell.theme-terminal .growth-toggle:hover,
 .app-shell.theme-terminal .growth-toggle.active,
+.app-shell.theme-terminal .sound-toggle:hover,
+.app-shell.theme-terminal .sound-toggle.active,
 .app-shell.theme-terminal .debug-toggle:hover,
 .app-shell.theme-terminal .debug-toggle.active,
 .app-shell.theme-terminal .language-button:hover,
@@ -634,6 +861,8 @@ meter {
 .app-shell.theme-terminal .launcher-toggle.active span,
 .app-shell.theme-terminal .growth-toggle:hover span,
 .app-shell.theme-terminal .growth-toggle.active span,
+.app-shell.theme-terminal .sound-toggle:hover span,
+.app-shell.theme-terminal .sound-toggle.active span,
 .app-shell.theme-terminal .debug-toggle:hover span,
 .app-shell.theme-terminal .debug-toggle.active span,
 .app-shell.theme-terminal .language-button:hover,
@@ -690,6 +919,8 @@ meter {
   .app-shell.theme-terminal .launcher-toggle.active,
   .app-shell.theme-terminal .growth-toggle:hover,
   .app-shell.theme-terminal .growth-toggle.active,
+  .app-shell.theme-terminal .sound-toggle:hover,
+  .app-shell.theme-terminal .sound-toggle.active,
   .app-shell.theme-terminal .debug-toggle:hover,
   .app-shell.theme-terminal .debug-toggle.active,
   .app-shell.theme-terminal .language-button:hover,
@@ -1190,6 +1421,31 @@ meter {
   color: #b8ff9c;
 }
 
+.app-shell.theme-terminal .audio-control {
+  border-color: #2fcf54;
+  background: rgba(3, 18, 7, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(122, 255, 139, 0.14);
+}
+
+.app-shell.theme-terminal .audio-control span {
+  color: #8ddf7d;
+}
+
+.app-shell.theme-terminal .audio-control b {
+  color: #eaff9f;
+}
+
+.app-shell.theme-terminal .audio-control input,
+.app-shell.theme-terminal .audio-control select {
+  accent-color: #80ff62;
+}
+
+.app-shell.theme-terminal .audio-control select {
+  border-color: #1f7f2e;
+  color: #b8ff9c;
+  background: #020804;
+}
+
 .app-shell.theme-terminal .side-panel h2,
 .app-shell.theme-terminal .section-heading span,
 .app-shell.theme-terminal .meta-list dt,
@@ -1231,6 +1487,7 @@ meter {
 .app-shell.theme-terminal .task-cabinet-submenu,
 .app-shell.theme-terminal .launcher-submenu,
 .app-shell.theme-terminal .growth-submenu,
+.app-shell.theme-terminal .sound-submenu,
 .app-shell.theme-terminal .debug-submenu,
 .app-shell.theme-terminal .decor-surface-group {
   border-color: #1f7f2e;
@@ -1241,6 +1498,7 @@ meter {
 .app-shell.theme-terminal .task-cabinet-toggle-chevron,
 .app-shell.theme-terminal .launcher-toggle-chevron,
 .app-shell.theme-terminal .growth-toggle-chevron,
+.app-shell.theme-terminal .sound-toggle-chevron,
 .app-shell.theme-terminal .debug-toggle-chevron {
   border-color: #38c947;
   color: #7dff5b;
@@ -1255,6 +1513,8 @@ meter {
 .app-shell.theme-terminal .launcher-toggle.active .launcher-toggle-chevron,
 .app-shell.theme-terminal .growth-toggle:hover .growth-toggle-chevron,
 .app-shell.theme-terminal .growth-toggle.active .growth-toggle-chevron,
+.app-shell.theme-terminal .sound-toggle:hover .sound-toggle-chevron,
+.app-shell.theme-terminal .sound-toggle.active .sound-toggle-chevron,
 .app-shell.theme-terminal .debug-toggle:hover .debug-toggle-chevron,
 .app-shell.theme-terminal .debug-toggle.active .debug-toggle-chevron {
   color: #020804;
@@ -1280,6 +1540,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .status-card,
 .app-shell.theme-terminal.theme-terminal-amber .name-editor,
 .app-shell.theme-terminal.theme-terminal-amber .stats-grid,
+.app-shell.theme-terminal.theme-terminal-amber .sound-card,
 .app-shell.theme-terminal.theme-terminal-amber .sessions-card,
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-card,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-card,
@@ -1347,6 +1608,68 @@ meter {
   border-right-color: #090500;
 }
 
+.app-shell.theme-terminal.theme-terminal-amber .scene-context-menu {
+  border-color: #c97918;
+  color: #ffd166;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 176, 46, 0.08) 0 1px,
+      transparent 1px 4px
+    ),
+    rgba(22, 12, 3, 0.97);
+  box-shadow:
+    inset 0 0 0 1px #3b1b03,
+    4px 4px 0 #090500,
+    0 0 12px rgba(255, 176, 46, 0.2);
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .scene-context-menu span {
+  color: #ffb02e;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .scene-context-button {
+  border-color: #7a3d08;
+  color: #ffd166;
+  background: #150a02;
+  box-shadow: inset -2px -2px 0 #090500;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .scene-context-button:hover {
+  border-color: #ffe4a3;
+  color: #090500;
+  background: #ffb02e;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .scene-context-control {
+  border-color: #7a3d08;
+  background: rgba(9, 5, 0, 0.72);
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .scene-context-control b {
+  color: #ffe4a3;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .scene-context-control input,
+.app-shell.theme-terminal.theme-terminal-amber .scene-context-control select {
+  border-color: #9f5b1a;
+  color: #ffe4a3;
+  background: #150a02;
+  accent-color: #ffb23f;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .scene-context-stop-button {
+  border-color: #9f3049;
+  color: #ffd0d8;
+  background: #3b0713;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .scene-context-stop-button:hover {
+  border-color: #ffd0d8;
+  color: #090500;
+  background: #ff5c7a;
+}
+
 .app-shell.theme-terminal.theme-terminal-amber .status-card {
   background:
     repeating-linear-gradient(
@@ -1363,6 +1686,8 @@ meter {
 
 .app-shell.theme-terminal.theme-terminal-amber .eyebrow,
 .app-shell.theme-terminal.theme-terminal-amber .status-card span,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle-main span,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle-status,
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle-status,
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-toggle-status,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle-status,
@@ -1388,6 +1713,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber h1,
 .app-shell.theme-terminal.theme-terminal-amber h2,
 .app-shell.theme-terminal.theme-terminal-amber .status-card strong,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle-main b,
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle-main b,
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle-context-label,
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle-context-label b,
@@ -1433,10 +1759,36 @@ meter {
   color: #ffd166;
 }
 
+.app-shell.theme-terminal.theme-terminal-amber .audio-control {
+  border-color: #c96f19;
+  background: rgba(22, 12, 3, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(255, 194, 102, 0.16);
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .audio-control span {
+  color: #ffd166;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .audio-control b {
+  color: #ffe4a3;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .audio-control input,
+.app-shell.theme-terminal.theme-terminal-amber .audio-control select {
+  accent-color: #ffb23f;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .audio-control select {
+  border-color: #9f5b1a;
+  color: #ffe4a3;
+  background: #150a02;
+}
+
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .language-button,
 .app-shell.theme-terminal.theme-terminal-amber .theme-button,
@@ -1489,6 +1841,8 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle.active,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle:hover,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle.active,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle:hover,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle.active,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle:hover,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle.active,
 .app-shell.theme-terminal.theme-terminal-amber .language-button:hover,
@@ -1541,6 +1895,8 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle.active span,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle:hover span,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle.active span,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle:hover span,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle.active span,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle:hover span,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle.active span,
 .app-shell.theme-terminal.theme-terminal-amber .language-button:hover,
@@ -1776,6 +2132,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-submenu,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-submenu,
 .app-shell.theme-terminal.theme-terminal-amber .growth-submenu,
+.app-shell.theme-terminal.theme-terminal-amber .sound-submenu,
 .app-shell.theme-terminal.theme-terminal-amber .debug-submenu,
 .app-shell.theme-terminal.theme-terminal-amber .decor-surface-group,
 .app-shell.theme-terminal.theme-terminal-amber .idle-bubble-editor {
@@ -1791,6 +2148,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle-chevron,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle-chevron {
   border-color: #c97918;
   color: #ffb02e;
@@ -1805,6 +2163,8 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle.active .launcher-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle:hover .growth-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle.active .growth-toggle-chevron,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle:hover .sound-toggle-chevron,
+.app-shell.theme-terminal.theme-terminal-amber .sound-toggle.active .sound-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle:hover .debug-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle.active .debug-toggle-chevron {
   color: #090500;

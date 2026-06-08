@@ -291,6 +291,7 @@ const idleBubbleBehaviors = new Set<AvatarRuntime["behavior"]>([
   "interact",
   "admire",
   "paint",
+  "music",
 ]);
 
 const stableTextHash = (text: string) =>
@@ -2831,6 +2832,153 @@ const drawGameConsole = (
   ctx.restore();
 };
 
+const drawRecordPlayer = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  ghost: "none" | "valid" | "invalid" = "none",
+  frame = 0,
+  avatar?: AvatarRuntime,
+  recordPlayerPlaying = false,
+) => {
+  void avatar;
+  ctx.save();
+  if (ghost !== "none") ctx.globalAlpha = 0.62;
+  const baseX = Math.round(x);
+  const baseY = Math.round(y);
+  const playing = ghost === "none" && recordPlayerPlaying;
+  const pulse = Math.floor(frame / 6) % 4;
+  const spinPhase = playing ? Math.floor(frame / 4) % 4 : 0;
+  const recordHighlight = playing
+    ? ["#ffe66d", "#9ee6ff", "#ff8fa3", "#b4f56c"][pulse]
+    : "#2f3648";
+
+  drawPixelRect(ctx, baseX - 23, baseY - 18, 46, 24, "#111624");
+  drawPixelRect(
+    ctx,
+    baseX - 21,
+    baseY - 20,
+    42,
+    23,
+    ghost === "invalid" ? "#7d3144" : "#6d4c41",
+  );
+  drawPixelRect(
+    ctx,
+    baseX - 18,
+    baseY - 17,
+    36,
+    17,
+    ghost === "invalid" ? "#ff8fa3" : "#9a6a4c",
+  );
+  drawPixelRect(ctx, baseX - 20, baseY + 1, 40, 6, "#3b2430");
+  drawPixelRect(ctx, baseX - 17, baseY + 3, 34, 2, "#4a2b3a");
+  drawPixelRect(ctx, baseX + 14, baseY + 2, 4, 4, "#111624");
+  drawPixelRect(ctx, baseX + 15, baseY + 3, 2, 2, playing ? "#ff304f" : "#5a1f2c");
+  if (playing) {
+    drawPixelRect(ctx, baseX + 15, baseY + 3, 1, 1, "#ffd1dc");
+  }
+  drawPixelRect(ctx, baseX - 15, baseY + 7, 5, 4, "#111624");
+  drawPixelRect(ctx, baseX + 10, baseY + 7, 5, 4, "#111624");
+  drawPixelRect(ctx, baseX - 14, baseY + 6, 3, 2, "#273044");
+  drawPixelRect(ctx, baseX + 11, baseY + 6, 3, 2, "#273044");
+
+  const recordY = baseY - 4;
+  drawPixelRect(ctx, baseX - 8, recordY - 12, 16, 2, "#0b0d10");
+  drawPixelRect(ctx, baseX - 13, recordY - 10, 26, 2, "#0b0d10");
+  drawPixelRect(ctx, baseX - 16, recordY - 8, 32, 4, "#0b0d10");
+  drawPixelRect(ctx, baseX - 16, recordY - 4, 32, 4, "#0b0d10");
+  drawPixelRect(ctx, baseX - 13, recordY, 26, 2, "#0b0d10");
+  drawPixelRect(ctx, baseX - 8, recordY + 2, 16, 2, "#0b0d10");
+
+  drawPixelRect(ctx, baseX - 6, recordY - 9, 12, 1, "#273044");
+  drawPixelRect(ctx, baseX - 10, recordY - 8, 20, 2, "#273044");
+  drawPixelRect(ctx, baseX - 11, recordY - 6, 22, 4, "#273044");
+  drawPixelRect(ctx, baseX - 9, recordY - 2, 18, 1, "#273044");
+  drawPixelRect(ctx, baseX - 6, recordY - 1, 12, 1, "#273044");
+
+  if (playing) {
+    const spinStreaks = [
+      [
+        { x: -10, y: -8, width: 8 },
+        { x: 3, y: -5, width: 7 },
+        { x: -5, y: -2, width: 10 },
+      ],
+      [
+        { x: -2, y: -9, width: 10 },
+        { x: -11, y: -5, width: 8 },
+        { x: 4, y: -2, width: 6 },
+      ],
+      [
+        { x: 2, y: -8, width: 8 },
+        { x: -10, y: -5, width: 7 },
+        { x: -5, y: -1, width: 10 },
+      ],
+      [
+        { x: -9, y: -9, width: 7 },
+        { x: 2, y: -6, width: 10 },
+        { x: -11, y: -3, width: 6 },
+      ],
+    ][spinPhase];
+    spinStreaks.forEach((streak, index) => {
+      drawPixelRect(
+        ctx,
+        baseX + streak.x,
+        recordY + streak.y,
+        streak.width,
+        1,
+        index === 0 ? recordHighlight : "#465068",
+      );
+    });
+  }
+
+  drawPixelRect(ctx, baseX - 4, recordY - 7, 8, 6, "#111624");
+  drawPixelRect(ctx, baseX - 2, recordY - 5, 4, 3, "#273044");
+  drawPixelRect(ctx, baseX - 1, recordY - 4, 2, 1, "#f4ead2");
+  if (playing) {
+    const labelGlints = [
+      { x: -2, y: -6 },
+      { x: 1, y: -6 },
+      { x: 1, y: -3 },
+      { x: -2, y: -3 },
+    ];
+    const glint = labelGlints[spinPhase];
+    drawPixelRect(ctx, baseX + glint.x, recordY + glint.y, 1, 1, "#fff8df");
+  }
+  if (playing) {
+    drawPixelRect(ctx, baseX - 11 + pulse, recordY - 9 + pulse, 7, 1, recordHighlight);
+    drawPixelRect(
+      ctx,
+      baseX + 4 - pulse,
+      recordY - 3 - Math.min(pulse, 2),
+      7,
+      1,
+      recordHighlight,
+    );
+  } else {
+    drawPixelRect(ctx, baseX - 10, recordY - 10, 9, 1, "#465068");
+  }
+
+  drawPixelRect(ctx, baseX + 9, recordY - 14, 10, 3, "#d7caa8");
+  drawPixelRect(ctx, baseX + 15, recordY - 12, 3, 11, "#8f8270");
+  drawPixelRect(ctx, baseX + 10, recordY - 4, 8, 3, "#d7caa8");
+  drawPixelRect(ctx, baseX + 7, recordY - 5, 4, 2, "#f4ead2");
+  drawPixelRect(ctx, baseX + 12, recordY - 16, 5, 2, "#ffe66d");
+
+  if (playing) {
+    const noteY = baseY - 32 + (pulse % 2);
+    drawPixelRect(ctx, baseX + 21, noteY, 2, 9, "#ffe66d");
+    drawPixelRect(ctx, baseX + 18, noteY + 7, 5, 4, "#ffe66d");
+    drawPixelRect(ctx, baseX + 27, noteY - 5, 2, 8, "#9ee6ff");
+    drawPixelRect(ctx, baseX + 24, noteY + 1, 5, 4, "#9ee6ff");
+  }
+
+  if (ghost !== "none") {
+    ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
+    ctx.strokeRect(baseX - 24, baseY - 29, 48, 36);
+  }
+  ctx.restore();
+};
+
 const drawOilEasel = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -3266,6 +3414,7 @@ const drawPlaceableItem = (
   taskFileCount = 0,
   failedTaskFileCount = 0,
   gameConsolePlaying = false,
+  recordPlayerPlaying = false,
 ) => {
   switch (itemId) {
     case "cozy-rug":
@@ -3285,6 +3434,9 @@ const drawPlaceableItem = (
       return;
     case "game-console":
       drawGameConsole(ctx, x, y, ghost, frame, avatar, gameConsolePlaying);
+      return;
+    case "record-player":
+      drawRecordPlayer(ctx, x, y, ghost, frame, avatar, recordPlayerPlaying);
       return;
     case "oil-easel":
       drawOilEasel(ctx, x, y, ghost, frame, avatar);
@@ -3378,8 +3530,13 @@ const isAvatarPlayingGameConsole = (
       Math.hypot(avatar.x - point.x, avatar.y - point.y) <= 32 ||
       (nearCurrentTarget &&
         Math.hypot(avatar.targetX - point.x, avatar.targetY - point.y) <= 32),
-  );
+    );
 };
+
+const isRecordPlayerActive = (
+  item: PlacedItem,
+  activeRecordPlayerId?: string | null,
+) => item.itemId === "record-player" && item.id === activeRecordPlayerId;
 
 const drawPlacedItem = (
   ctx: CanvasRenderingContext2D,
@@ -3388,6 +3545,7 @@ const drawPlacedItem = (
   frame = 0,
   avatar?: AvatarRuntime,
   activeInteraction?: FurnitureInteractionState | null,
+  activeRecordPlayerId?: string | null,
   coffeeCupHasCoffee = false,
   taskFileCount = 0,
   failedTaskFileCount = 0,
@@ -3404,6 +3562,7 @@ const drawPlacedItem = (
     content,
     activeInteraction,
   );
+  const recordPlayerPlaying = isRecordPlayerActive(item, activeRecordPlayerId);
 
   if (definition.kind === "decor" || definition.kind === "furniture") {
     if (item.rotation) {
@@ -3423,6 +3582,7 @@ const drawPlacedItem = (
         taskFileCount,
         failedTaskFileCount,
         gameConsolePlaying,
+        recordPlayerPlaying,
       );
       ctx.restore();
       return;
@@ -3441,6 +3601,7 @@ const drawPlacedItem = (
       taskFileCount,
       failedTaskFileCount,
       gameConsolePlaying,
+      recordPlayerPlaying,
     );
   }
 };
@@ -3473,6 +3634,7 @@ const drawPlacedItems = (
   taskCabinetFileCount = 0,
   failedTaskCabinetFileCount = 0,
   layer: PlacedItemRenderLayer = "all",
+  activeRecordPlayerId?: string | null,
 ) => {
   const placedItems = content.placedItems ?? [];
   const filledCoffeeCups = tableCoffeeCupFillSet(content, tableCoffeeQuantity);
@@ -3498,6 +3660,7 @@ const drawPlacedItems = (
         frame,
         avatar,
         activeInteraction,
+        activeRecordPlayerId,
         filledCoffeeCups.has(item.id),
         item.itemId === "file-cabinet" ? taskCabinetFileCount : 0,
         item.itemId === "file-cabinet" ? failedTaskCabinetFileCount : 0,
@@ -3565,6 +3728,7 @@ const drawPlacedItemsForSurface = (
   selectedPlacedItemId?: string | null,
   activeInteraction?: FurnitureInteractionState | null,
   tableCoffeeQuantity = 0,
+  activeRecordPlayerId?: string | null,
 ) => {
   const filledCoffeeCups = tableCoffeeCupFillSet(content, tableCoffeeQuantity);
   (content.placedItems ?? [])
@@ -3578,6 +3742,7 @@ const drawPlacedItemsForSurface = (
         frame,
         avatar,
         activeInteraction,
+        activeRecordPlayerId,
         filledCoffeeCups.has(item.id),
       );
       if (item.id === selectedPlacedItemId) {
@@ -5134,6 +5299,7 @@ export const renderScene = (
   failedTaskCabinetFileCount = 0,
   uiTheme: UiThemeId = "classic",
   showNavigationDebug = false,
+  activeRecordPlayerId?: string | null,
 ) => {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -5181,6 +5347,7 @@ export const renderScene = (
     taskCabinetFileCount,
     failedTaskCabinetFileCount,
     "behind-avatar",
+    activeRecordPlayerId,
   );
   drawAvatar(ctx, avatar, frame, content.petStats, status, memory);
   drawPlacedItems(
@@ -5195,6 +5362,7 @@ export const renderScene = (
     taskCabinetFileCount,
     failedTaskCabinetFileCount,
     "in-front-of-avatar",
+    activeRecordPlayerId,
   );
   furnitureByDepth(content.room.furniture).forEach((item) => {
     if (!isFurnitureInFrontOfAvatar(item, avatar)) return;
@@ -5227,6 +5395,7 @@ export const renderScene = (
       selectedPlacedItemId,
       activeInteraction,
       tableCoffeeQuantity,
+      activeRecordPlayerId,
     );
     const surfacePreview = placementPreview;
     if (surfacePreview && isPreviewOnSurface(surfacePreview, item)) {
