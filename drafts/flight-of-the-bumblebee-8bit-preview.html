@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flight of the Bumblebee 8-bit Programmatic Preview</title>
+    <style>
+      :root {
+        color: #f4ead2;
+        background: #141823;
+        font-family: "Courier New", Consolas, monospace;
+      }
+
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+        background:
+          linear-gradient(135deg, rgba(255, 230, 109, 0.12), transparent 34%),
+          #141823;
+      }
+
+      main {
+        display: grid;
+        gap: 14px;
+        width: min(540px, calc(100vw - 32px));
+        padding: 18px;
+        border: 2px solid #52607d;
+        background: #111624;
+        box-shadow: 6px 6px 0 #080b14;
+      }
+
+      h1,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        color: #ffe66d;
+        font-size: 18px;
+        line-height: 1.2;
+      }
+
+      p {
+        color: #cfc5a8;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      button {
+        min-height: 32px;
+        padding: 7px 10px;
+        border: 2px solid #5d6b8a;
+        color: #141823;
+        background: #ffe66d;
+        font: inherit;
+        font-size: 11px;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #d8fff7;
+      }
+
+      button.stop {
+        color: #f4ead2;
+        background: #7d3144;
+      }
+
+      label {
+        display: grid;
+        gap: 5px;
+        color: #9ee6ff;
+        font-size: 11px;
+      }
+
+      input {
+        width: 100%;
+        accent-color: #ffe66d;
+      }
+
+      .now-playing {
+        min-height: 20px;
+        color: #ffe66d;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Flight of the Bumblebee, 8-bit sketch</h1>
+      <p>
+        A fast programmatic chiptune draft based on the public-domain score of
+        Rimsky-Korsakov's <em>Flight of the Bumblebee</em>. It follows the
+        opening chromatic violin line and the score's Vivace pulse, simplified
+        for Aivatar's record-player synth.
+      </p>
+
+      <div class="controls">
+        <button id="play" type="button">Play</button>
+        <button id="stop" class="stop" type="button">Stop</button>
+      </div>
+
+      <label>
+        Volume
+        <input id="volume" type="range" min="0" max="100" value="24" />
+      </label>
+
+      <label>
+        Tempo
+        <input id="tempo" type="range" min="70" max="125" value="100" />
+      </label>
+
+      <div id="status" class="now-playing">Ready.</div>
+    </main>
+
+    <script>
+      const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+      const NOTE_FREQUENCIES = {
+        E3: 164.81,
+        A3: 220,
+        "A#3": 233.08,
+        Bb3: 233.08,
+        B3: 246.94,
+        C4: 261.63,
+        "C#4": 277.18,
+        Db4: 277.18,
+        D4: 293.66,
+        "D#4": 311.13,
+        Eb4: 311.13,
+        E4: 329.63,
+        F4: 349.23,
+        "F#4": 369.99,
+        Gb4: 369.99,
+        G4: 392,
+        "G#4": 415.3,
+        Ab4: 415.3,
+        A4: 440,
+        "A#4": 466.16,
+        Bb4: 466.16,
+        B4: 493.88,
+        C5: 523.25,
+        "C#5": 554.37,
+        Db5: 554.37,
+        D5: 587.33,
+        "D#5": 622.25,
+        Eb5: 622.25,
+        E5: 659.25,
+        F5: 698.46,
+        "F#5": 739.99,
+        Gb5: 739.99,
+        G5: 783.99,
+        "G#5": 830.61,
+        Ab5: 830.61,
+        A5: 880,
+        "A#5": 932.33,
+        Bb5: 932.33,
+        B5: 987.77,
+        C6: 1046.5,
+      };
+
+      const track = {
+        title: "Score Bee Run",
+        baseStepMs: 83,
+        pickupSteps: 2,
+        lead: [
+          "A5", "G#5", "G5", "F#5", "F5", "E5", "D#5", "E5",
+          "F5", "E5", "D#5", "E5", "F#5", "F5", "E5", "F#5",
+          "G5", "F#5", "F5", "E5", "D#5", "D5", "C#5", "D5",
+          "E5", "D#5", "D5", "C#5", "C5", "B4", "A#4", "B4",
+          "C5", "B4", "A#4", "B4", "C#5", "C5", "B4", "C#5",
+          "D5", "C#5", "C5", "B4", "A#4", "A4", "G#4", "A4",
+          "B4", "A#4", "A4", "G#4", "G4", "F#4", "F4", "E4",
+          "F4", "F#4", "G4", "G#4", "A4", "A#4", "B4", "C5",
+          "C#5", "D5", "D#5", "E5", "F5", "F#5", "G5", "G#5",
+          "A5", "G#5", "G5", "F#5", "F5", "E5", "D#5", "E5",
+          "F5", "E5", "D#5", "E5", "F#5", "F5", "E5", "F#5",
+          "G5", "F#5", "F5", "E5", "D#5", "D5", "C#5", "D5",
+        ],
+        bass: [
+          "A3", "E3", "A3", "E3",
+          "B3", "E3", "B3", "E3",
+          "C4", "E3", "C4", "E3",
+          "A3", "E3", "A3", "E3",
+        ],
+      };
+
+      let context = null;
+      let masterGain = null;
+      let timers = [];
+      let playing = false;
+
+      const status = document.getElementById("status");
+      const volume = document.getElementById("volume");
+      const tempo = document.getElementById("tempo");
+
+      const ensureAudio = () => {
+        if (context && masterGain) return;
+        context = new AudioContextConstructor();
+        masterGain = context.createGain();
+        masterGain.gain.value = Number(volume.value) / 100;
+        masterGain.connect(context.destination);
+      };
+
+      const frequencyFor = (note) => NOTE_FREQUENCIES[note] || 0;
+
+      const scheduleTone = ({ note, start, duration, wave, gainValue }) => {
+        const frequency = frequencyFor(note);
+        if (!frequency) return;
+
+        const oscillator = context.createOscillator();
+        const noteGain = context.createGain();
+        oscillator.type = wave;
+        oscillator.frequency.value = frequency;
+
+        noteGain.gain.setValueAtTime(0.0001, start);
+        noteGain.gain.exponentialRampToValueAtTime(gainValue, start + 0.006);
+        noteGain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+        oscillator.connect(noteGain);
+        noteGain.connect(masterGain);
+        oscillator.start(start);
+        oscillator.stop(start + duration + 0.012);
+      };
+
+      const stop = () => {
+        playing = false;
+        timers.forEach((timer) => window.clearTimeout(timer));
+        timers = [];
+        status.textContent = "Stopped.";
+      };
+
+      const play = async () => {
+        stop();
+        ensureAudio();
+        if (context.state === "suspended") await context.resume();
+
+        playing = true;
+        masterGain.gain.value = Number(volume.value) / 100;
+
+        const tempoScale = 100 / Number(tempo.value);
+        const stepSeconds = (track.baseStepMs * tempoScale) / 1000;
+        let cursor = context.currentTime + 0.05;
+        cursor += stepSeconds * track.pickupSteps;
+
+        track.lead.forEach((note, index) => {
+          const phraseAccent = index % 16 === 0 ? 0.22 : 0.15;
+          scheduleTone({
+            note,
+            start: cursor,
+            duration: stepSeconds * 0.78,
+            wave: index % 8 < 4 ? "square" : "triangle",
+            gainValue: phraseAccent,
+          });
+
+          if (index % 8 === 0) {
+            const bassNote = track.bass[Math.floor(index / 8) % track.bass.length];
+            scheduleTone({
+              note: bassNote,
+              start: cursor,
+              duration: stepSeconds * 6.4,
+              wave: "square",
+              gainValue: 0.045,
+            });
+          }
+
+          cursor += stepSeconds;
+        });
+
+        const totalMs = Math.max(0, (cursor - context.currentTime) * 1000);
+        status.textContent = `Playing: ${track.title}`;
+        timers.push(
+          window.setTimeout(() => {
+            if (!playing) return;
+            playing = false;
+            status.textContent = "Finished.";
+          }, totalMs + 120),
+        );
+      };
+
+      volume.addEventListener("input", () => {
+        if (!masterGain) return;
+        masterGain.gain.value = Number(volume.value) / 100;
+      });
+      document.getElementById("play").addEventListener("click", play);
+      document.getElementById("stop").addEventListener("click", stop);
+    </script>
+  </body>
+</html>
