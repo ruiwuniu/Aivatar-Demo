@@ -3682,6 +3682,31 @@ meter::-webkit-meter-optimum-value {
   background: #7d55d8;
 }
 
+.item-thumb-blue-persian-rug .item-thumb-shape {
+  left: 2px;
+  top: 5px;
+  width: 14px;
+  height: 10px;
+  background: #f7fbff;
+  border: 2px solid #173f78;
+  box-shadow:
+    inset 0 0 0 2px #4fa3d9,
+    inset 4px 3px 0 #d7f0ff;
+}
+
+.item-thumb-blue-persian-rug .item-thumb-accent {
+  left: 7px;
+  top: 8px;
+  width: 4px;
+  height: 3px;
+  background: #1d5fa8;
+  box-shadow:
+    -3px -2px 0 #79c9f2,
+    3px -2px 0 #79c9f2,
+    -3px 2px 0 #79c9f2,
+    3px 2px 0 #79c9f2;
+}
+
 .item-thumb-desk-lamp .item-thumb-shape {
   left: 8px;
   top: 7px;
@@ -3749,6 +3774,30 @@ meter::-webkit-meter-optimum-value {
   width: 4px;
   height: 3px;
   background: #ff8fa3;
+}
+
+.item-thumb-sky-sentinel-poster .item-thumb-shape {
+  left: 4px;
+  top: 2px;
+  width: 10px;
+  height: 14px;
+  background: #5b8cff;
+  border: 2px solid #111624;
+  box-shadow:
+    inset 0 5px 0 #9ee6ff,
+    inset 0 10px 0 #243a68;
+}
+
+.item-thumb-sky-sentinel-poster .item-thumb-accent {
+  left: 7px;
+  top: 6px;
+  width: 4px;
+  height: 7px;
+  background: #2456b8;
+  box-shadow:
+    -3px 1px 0 #d94a4a,
+    3px 1px 0 #d94a4a,
+    4px -3px 0 #ffe66d;
 }
 
 .item-thumb-digital-wall-clock .item-thumb-shape {

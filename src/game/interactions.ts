@@ -406,7 +406,9 @@ export const isWallItem = (content: AivatarContent, itemId: string) =>
   getItemPlacementKindById(content, itemId) === "wall";
 
 const isFloorUnderlayItem = (itemId: string) =>
-  itemId === "cozy-rug" || itemId === "morph-blob-rug";
+  itemId === "cozy-rug" ||
+  itemId === "morph-blob-rug" ||
+  itemId === "blue-persian-rug";
 
 export const getPlacedItemPlacementFootBounds = (item: PlacedItem) => {
   const bounds = placedItemBounds(item);
@@ -660,6 +662,8 @@ export const placedItemBounds = (item: PlacedItem) => {
       return { x: item.x - 44, y: item.y - 24, width: 88, height: 48 };
     case "morph-blob-rug":
       return { x: item.x - 40, y: item.y - 44, width: 88, height: 62 };
+    case "blue-persian-rug":
+      return { x: item.x - 52, y: item.y - 36, width: 104, height: 72 };
     case "game-console":
       return { x: item.x - 22, y: item.y - 28, width: 44, height: 38 };
     case "oil-easel":
@@ -675,6 +679,7 @@ export const placedItemBounds = (item: PlacedItem) => {
     case "digital-wall-clock":
       return { x: item.x - 20, y: item.y - 19, width: 40, height: 24 };
     case "poster":
+    case "sky-sentinel-poster":
       return { x: item.x - 18, y: item.y - 46, width: 36, height: 54 };
     case "desk-lamp":
       return { x: item.x - 14, y: item.y - 32, width: 28, height: 36 };

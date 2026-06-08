@@ -100,6 +100,7 @@ const BENTO_ITEM_ID = "bento";
 const BED_INDUSTRIAL_SKIN_ID = "industrial-bed-skin";
 const BED_WOOD_RED_SKIN_ID = "wood-red-bed-skin";
 const BED_IVORY_PINK_PLAID_SKIN_ID = "ivory-pink-plaid-bed-skin";
+const BED_MODERN_MINIMAL_SKIN_ID = "modern-minimal-bed-skin";
 const DESK_INDUSTRIAL_SKIN_ID = "industrial-desk-skin";
 const DESK_ROCOCO_IVORY_SKIN_ID = "rococo-ivory-desk-skin";
 const TABLE_ROCOCO_IVORY_SKIN_ID = "rococo-ivory-table-skin";
@@ -272,6 +273,8 @@ const isUniqueShopItemOwned = (save: AivatarSaveState, item: ItemDefinition) =>
   item.id === TASK_CABINET_FURNITURE_ID
     ? save.inventory.some((entry) => entry.itemId === item.id && entry.quantity > 0) ||
       save.placedItems.some((placedItem) => placedItem.itemId === item.id)
+    : item.tags?.includes("one-time")
+      ? save.purchasedItemIds.includes(item.id)
     : false;
 
 const clampQuantity = (entry: InventoryEntry): InventoryEntry => ({
@@ -6910,6 +6913,47 @@ export const App = () => {
       );
     }
 
+    if (itemId === BED_MODERN_MINIMAL_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 2,
+              top: 5,
+              width: 14,
+              height: 10,
+              background: "#7c998b",
+              border: "2px solid #b9824d",
+              boxShadow: "inset 0 3px 0 #a7bdaf",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 1,
+              top: 4,
+              width: 3,
+              height: 13,
+              background: "#2e3335",
+              boxShadow: "13px 0 0 #2e3335",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 4,
+              width: 8,
+              height: 3,
+              background: "#f4efe5",
+              boxShadow: "0 7px 0 #d8b46a",
+            }}
+          />
+        </span>
+      );
+    }
+
     if (itemId === DESK_INDUSTRIAL_SKIN_ID) {
       return (
         <span className="item-button-thumbnail" aria-hidden="true">
@@ -8438,6 +8482,7 @@ export const App = () => {
               const appliedFurnitureSkin =
                 furnitureSkin &&
                 save.activeFurnitureSkinIds?.[furnitureSkinTargetId] === item.id;
+              const uniqueShopItemOwned = isUniqueShopItemOwned(save, item);
               const label = levelLocked
                 ? `${item.name} ${ui("growth.level", { value: unlockLevel })}`
                 : appliedFurnitureSkin
@@ -8446,6 +8491,8 @@ export const App = () => {
                     ? `${item.name} ${ui("action.apply")}`
                     : purchasedWindow
                       ? `${item.name} ${ui("state.owned")}`
+                      : uniqueShopItemOwned
+                        ? `${item.name} ${ui("state.owned")}`
                       : `${item.name} ${item.price}`;
 
               return (
@@ -8456,6 +8503,7 @@ export const App = () => {
                   disabled={
                     levelLocked ||
                     purchasedWindow ||
+                    uniqueShopItemOwned ||
                     (!purchasedFurnitureSkin && save.wallet.bits < item.price)
                   }
                   aria-label={label}
@@ -8479,6 +8527,8 @@ export const App = () => {
                           ? ui("action.clearApplied")
                           : purchasedFurnitureSkin
                             ? ui("action.apply")
+                            : uniqueShopItemOwned
+                              ? ui("state.owned")
                             : item.price}
                     </span>
                   </span>

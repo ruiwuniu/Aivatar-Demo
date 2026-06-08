@@ -202,7 +202,8 @@ export type ContentTag =
   | "easel"
   | "coffee-cup"
   | "coffee-storage"
-  | "file-cabinet";
+  | "file-cabinet"
+  | "one-time";
 
 export type PlacementSurface = "floor" | "furnitureTop" | "wall";
 

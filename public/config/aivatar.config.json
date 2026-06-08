@@ -406,6 +406,16 @@
       "effect": { "mood": 7 }
     },
     {
+      "id": "blue-persian-rug",
+      "name": "Blue Persian Rug",
+      "kind": "decor",
+      "tags": ["item", "rug", "one-time"],
+      "price": 520,
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 8 }
+    },
+    {
       "id": "desk-lamp",
       "name": "Desk Lamp",
       "kind": "decor",
@@ -434,6 +444,16 @@
       "placementSurfaces": ["wall"],
       "placement": "wall",
       "effect": { "mood": 4 }
+    },
+    {
+      "id": "sky-sentinel-poster",
+      "name": "Sky Sentinel Poster",
+      "kind": "decor",
+      "tags": ["hanging"],
+      "price": 88,
+      "placementSurfaces": ["wall"],
+      "placement": "wall",
+      "effect": { "mood": 8 }
     },
     {
       "id": "digital-wall-clock",
@@ -522,6 +542,15 @@
       "targetFurnitureId": "bed",
       "price": 280,
       "effect": { "mood": 5, "energy": 1 }
+    },
+    {
+      "id": "modern-minimal-bed-skin",
+      "name": "Modern Minimal Bed Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "bed"],
+      "targetFurnitureId": "bed",
+      "price": 300,
+      "effect": { "mood": 5, "energy": 2 }
     },
     {
       "id": "industrial-desk-skin",
@@ -707,6 +736,16 @@
       "effect": { "mood": 7 }
     },
     {
+      "id": "blue-persian-rug",
+      "name": "Blue Persian Rug",
+      "kind": "decor",
+      "tags": ["item", "rug", "one-time"],
+      "price": 520,
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 8 }
+    },
+    {
       "id": "desk-lamp",
       "name": "Desk Lamp",
         "kind": "decor",
@@ -735,6 +774,16 @@
         "placementSurfaces": ["wall"],
       "placement": "wall",
       "effect": { "mood": 4 }
+    },
+    {
+      "id": "sky-sentinel-poster",
+      "name": "Sky Sentinel Poster",
+      "kind": "decor",
+      "tags": ["hanging"],
+      "price": 88,
+      "placementSurfaces": ["wall"],
+      "placement": "wall",
+      "effect": { "mood": 8 }
     },
     {
       "id": "digital-wall-clock",
@@ -813,6 +862,15 @@
         "targetFurnitureId": "bed",
         "price": 280,
         "effect": { "mood": 5, "energy": 1 }
+      },
+      {
+        "id": "modern-minimal-bed-skin",
+        "name": "Modern Minimal Bed Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "bed"],
+        "targetFurnitureId": "bed",
+        "price": 300,
+        "effect": { "mood": 5, "energy": 2 }
       },
       {
         "id": "industrial-desk-skin",
