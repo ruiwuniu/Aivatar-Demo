@@ -128,7 +128,7 @@ const INTERACTION_POINT_TOUCH_PADDING = 1;
 const BUILTIN_TERMINAL_PLACED_ITEM_ID = "builtin-terminal";
 const TERMINAL_MONITOR_ITEM_ID = "terminal-monitor";
 const LEGACY_TERMINAL_FURNITURE_ID = "computer";
-const SESSION_STALE_MS = 30 * 60 * 1000;
+const SESSION_STALE_MS = 5 * 60 * 60 * 1000;
 const IDLE_BUBBLE_PHRASE_MAX_LENGTH = 28;
 const IDLE_BUBBLE_CANDIDATE_LIMIT = 6;
 const IDLE_BUBBLE_MEMORY_CANDIDATE_TARGET = 3;
@@ -194,6 +194,18 @@ const BGM_TRACKS = [
     copyKey: "audio.bgmTrack.bachFugue577",
     kind: "audio",
     src: "/audio/bach-fugue-bwv-577-the-jig.ogg",
+  },
+  {
+    id: "bach-invention-4",
+    copyKey: "audio.bgmTrack.bachInvention4",
+    kind: "audio",
+    src: "/audio/bach-invention-4.wav",
+  },
+  {
+    id: "nes-bach-bwv-565",
+    copyKey: "audio.bgmTrack.nesBachBwv565",
+    kind: "audio",
+    src: "/audio/nes-bach-bwv-565.ogg",
   },
   {
     id: "cyberpunk-moonlight-sonata",
@@ -1597,6 +1609,14 @@ const isLegacyDefaultFurniturePlacement = (
   placement: FurniturePlacement,
 ) => furniture.id === "bed" && placement.x === 94 && placement.y === 154;
 
+type PlacedItemInteractionKind =
+  | "brew"
+  | "paint"
+  | "play"
+  | "music"
+  | "stop-music"
+  | "interact";
+
 type PendingWorldInteraction =
   | {
       target: "furniture";
@@ -1608,7 +1628,7 @@ type PendingWorldInteraction =
       target: "placed-item";
       placedItem: PlacedItem;
       item: ItemDefinition;
-      kind: "brew" | "paint" | "play" | "music" | "interact";
+      kind: PlacedItemInteractionKind;
     };
 
 const runtimeActionBehavior = (avatar: AvatarRuntime): BehaviorName =>
@@ -1622,7 +1642,7 @@ type SceneContextMenuState = {
         kind: "placed-item";
         placedItem: PlacedItem;
         item: ItemDefinition;
-        action: "brew" | "paint" | "play" | "music" | "interact";
+        action: PlacedItemInteractionKind;
       }
     | {
         kind: "furniture";
@@ -2908,7 +2928,7 @@ export const App = () => {
   const queuePlacedItemInteraction = (
     placedItem: PlacedItem,
     item: ItemDefinition,
-    kind: "brew" | "paint" | "play" | "music" | "interact",
+    kind: PlacedItemInteractionKind,
   ) => {
     pendingWorldInteractionRef.current = {
       target: "placed-item",
@@ -2927,6 +2947,8 @@ export const App = () => {
             ? "play"
             : kind === "music"
               ? "music"
+              : kind === "stop-music"
+                ? "music"
               : "interact";
     const activity =
       kind === "brew"
@@ -2937,6 +2959,8 @@ export const App = () => {
             ? "Playing games"
             : kind === "music"
               ? "Playing music"
+              : kind === "stop-music"
+                ? "Stopping music"
               : "Heading over";
     runtimeRef.current = {
       ...runtimeRef.current,
@@ -2962,7 +2986,7 @@ export const App = () => {
 
   const placedItemContextAction = (
     placedItem: PlacedItem,
-  ): "brew" | "paint" | "play" | "music" | "interact" | null => {
+  ): PlacedItemInteractionKind | null => {
     if (isBuiltinTerminalPlacedItem(placedItem)) return "interact";
     if (placedItem.itemId === COFFEE_MACHINE_ITEM_ID) return "brew";
     if (placedItem.itemId === "game-console") return "play";
@@ -3015,7 +3039,8 @@ export const App = () => {
       if (
         (isBuiltinTerminalPlacedItem(placedItem) && action === "interact") ||
         (placedItem.itemId === "game-console" && action === "play") ||
-        (placedItem.itemId === RECORD_PLAYER_ITEM_ID && action === "music")
+        (placedItem.itemId === RECORD_PLAYER_ITEM_ID &&
+          (action === "music" || action === "stop-music"))
       ) {
         unlockAppAudio();
       }
@@ -3708,26 +3733,34 @@ export const App = () => {
         if (bgmAutonomousStopAccumulator >= BGM_AUTONOMOUS_STOP_CHECK_SECONDS) {
           bgmAutonomousStopAccumulator = 0;
           if (Math.random() < BGM_AUTONOMOUS_STOP_CHANCE) {
-            const recordPlayerName =
-              currentContent.itemDefinitions.find(
-                (item) => item.id === RECORD_PLAYER_ITEM_ID,
-              )?.name ?? "Record Player";
+            const recordPlayerDefinition = currentContent.itemDefinitions.find(
+              (item) => item.id === RECORD_PLAYER_ITEM_ID,
+            );
             const activeRecordPlayer = currentContent.placedItems?.find(
               (item) => item.id === activeRecordPlayerIdRef.current,
             );
-            activeRecordPlayerIdRef.current = null;
-            activeRecordPlayerStartedAtRef.current = null;
-            setActiveRecordPlayerId(null);
-            stopRecordPlayerBgm();
-            updateActiveInteraction({
-              kind: "none",
-              furnitureId: activeRecordPlayer?.id ?? RECORD_PLAYER_ITEM_ID,
-              furnitureName: recordPlayerName,
-              message: "Aivatar turned off the music.",
-              startedAt: now,
-              endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
-              bubbleText: "Quiet time",
-            });
+            if (activeRecordPlayer && recordPlayerDefinition) {
+              queuePlacedItemInteraction(
+                activeRecordPlayer,
+                recordPlayerDefinition,
+                "stop-music",
+              );
+            } else {
+              const recordPlayerName = recordPlayerDefinition?.name ?? "Record Player";
+              activeRecordPlayerIdRef.current = null;
+              activeRecordPlayerStartedAtRef.current = null;
+              setActiveRecordPlayerId(null);
+              stopRecordPlayerBgm();
+              updateActiveInteraction({
+                kind: "none",
+                furnitureId: activeRecordPlayer?.id ?? RECORD_PLAYER_ITEM_ID,
+                furnitureName: recordPlayerName,
+                message: ui("message.musicStopped", { name: recordPlayerName }),
+                startedAt: now,
+                endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
+                bubbleText: ui("thought.stopMusic"),
+              });
+            }
           }
         }
       } else {
@@ -4203,6 +4236,46 @@ export const App = () => {
                 startedAt,
                 endsAt: startedAt + INTERACTION_FEEDBACK_SECONDS * 1000,
                 bubbleText: ui("thought.music"),
+              });
+            } else if (pendingWorldInteraction.kind === "stop-music") {
+              const startedAt = performance.now();
+              const isActiveRecordPlayer =
+                activeRecordPlayerIdRef.current === pendingWorldInteraction.placedItem.id;
+              if (isActiveRecordPlayer) {
+                activeRecordPlayerIdRef.current = null;
+                activeRecordPlayerStartedAtRef.current = null;
+                setActiveRecordPlayerId(null);
+                stopRecordPlayerBgm();
+              }
+              runtimeRef.current = {
+                ...runtimeRef.current,
+                targetX: runtimeRef.current.x,
+                targetY: runtimeRef.current.y,
+                behavior: "idle",
+                behaviorTimer: 2,
+                expression: "calm",
+                facing: facingTowardPlacedItem(
+                  runtimeRef.current,
+                  pendingWorldInteraction.placedItem,
+                ),
+                activityLabel: "Idle",
+                actionIntent: undefined,
+                actionActivityLabel: undefined,
+                interactionTargetAlternates: undefined,
+              };
+              setAvatar(runtimeRef.current);
+              updateActiveInteraction({
+                kind: "none",
+                furnitureId: pendingWorldInteraction.placedItem.id,
+                furnitureName: pendingWorldInteraction.item.name,
+                message: isActiveRecordPlayer
+                  ? ui("message.musicStopped", {
+                      name: pendingWorldInteraction.item.name,
+                    })
+                  : ui("message.selected", { name: pendingWorldInteraction.item.name }),
+                startedAt,
+                endsAt: startedAt + INTERACTION_FEEDBACK_SECONDS * 1000,
+                bubbleText: ui("thought.stopMusic"),
               });
             } else if (pendingWorldInteraction.kind === "interact") {
               runtimeRef.current = {
@@ -7429,12 +7502,21 @@ export const App = () => {
       ? sceneContextMenu.target.placedItem
       : null;
   const stopSceneContextRecordPlayer = () => {
-    if (!sceneContextRecordPlayer) return;
-    setSceneContextMenu(null);
-    if (activeRecordPlayerId === sceneContextRecordPlayer.id) {
-      setActiveRecordPlayerId(null);
-      stopRecordPlayerBgm();
+    if (
+      !sceneContextRecordPlayer ||
+      !sceneContextMenu ||
+      sceneContextMenu.target.kind !== "placed-item"
+    ) {
+      return;
     }
+    const { placedItem, item } = sceneContextMenu.target;
+    setSceneContextMenu(null);
+    if (activeRecordPlayerId !== sceneContextRecordPlayer.id) return;
+    if (isHighPriorityStatus(statusRef.current.status)) {
+      showPlacedItemBusy(placedItem, item);
+      return;
+    }
+    queuePlacedItemInteraction(placedItem, item, "stop-music");
   };
   const selectedBgmTrackLabel = ui(
     (BGM_TRACKS.find((track) => track.id === bgmTrackId) ?? BGM_TRACKS[0]).copyKey,
@@ -7449,7 +7531,9 @@ export const App = () => {
             ? ui("scene.action.play")
             : sceneContextMenu.target.action === "music"
               ? ui("scene.action.music")
-              : ui("scene.action.interact")
+              : sceneContextMenu.target.action === "stop-music"
+                ? ui("scene.action.stopMusic")
+                : ui("scene.action.interact")
       : sceneContextMenu
         ? behaviorLabel(locale, sceneContextMenu.target.furniture.interaction)
         : "";
@@ -7627,61 +7711,89 @@ export const App = () => {
           <span className={`status-dot status-${effectiveStatus.status}`} />
         </header>
 
-        <label className="name-editor">
-          <span>{ui("avatar.name")}</span>
-          <input
-            type="text"
-            maxLength={16}
-            value={save.avatarName ?? contentBase.avatar.name}
-            onChange={(event) => updateAvatarName(event.target.value)}
-          />
-        </label>
-
-        <div className="language-switch" aria-label={ui("app.language")}>
-          {localeOptions.map((option) => (
-            <button
-              key={option.locale}
-              type="button"
-              className={`language-button${locale === option.locale ? " active" : ""}`}
-              onClick={() => setLocale(option.locale)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="theme-switch" aria-label={ui("theme.title")}>
-          {UI_THEME_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className={`theme-button${uiTheme === option.id ? " active" : ""}`}
-              onClick={() => setUiTheme(option.id)}
-            >
-              {ui(option.copyKey)}
-            </button>
-          ))}
-        </div>
-
-        <section className="sound-card" aria-label={ui("audio.title")}>
+        <section className="settings-card" aria-label={ui("settings.title")}>
           <button
             type="button"
-            className={`sound-toggle${soundPanelOpen ? " active" : ""}`}
+            className={`settings-toggle${soundPanelOpen ? " active" : ""}`}
             onClick={() => setSoundPanelOpen((current) => !current)}
             aria-expanded={soundPanelOpen}
           >
-            <span className="sound-toggle-main">
-              <span>{ui("audio.title")}</span>
-              <b>{audioVolume <= 0 ? ui("audio.muted") : `${Math.round(audioVolume * 100)}%`}</b>
+            <span className="settings-toggle-main">
+              <span>{ui("settings.title")}</span>
+              <b>
+                <svg
+                  className="settings-volume-icon"
+                  aria-hidden="true"
+                  focusable="false"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    fill="currentColor"
+                    d="M3 8.25C3 7.56 3.56 7 4.25 7h4.1l6.15-4.4c.67-.48 1.6 0 1.6.82v17.16c0 .82-.93 1.3-1.6.82L8.35 17h-4.1C3.56 17 3 16.44 3 15.75v-7.5Z"
+                  />
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeWidth="2.7"
+                    d="M18.1 9.1a4.8 4.8 0 0 1 0 5.8"
+                  />
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeWidth="2.7"
+                    d="M20.35 5.9a9 9 0 0 1 0 12.2"
+                  />
+                </svg>
+                <span>
+                  {audioVolume <= 0 ? ui("audio.muted") : `${Math.round(audioVolume * 100)}%`}
+                </span>
+              </b>
             </span>
-            <span className="sound-toggle-status">{selectedBgmTrackLabel}</span>
-            <span className="sound-toggle-chevron" aria-hidden="true">
+            <span className="settings-toggle-chevron" aria-hidden="true">
               {soundPanelOpen ? "-" : "+"}
             </span>
           </button>
 
           {soundPanelOpen ? (
-            <div className="sound-submenu">
+            <div className="settings-submenu">
+              <label className="name-editor settings-name-editor">
+                <span>{ui("avatar.name")}</span>
+                <input
+                  type="text"
+                  maxLength={16}
+                  value={save.avatarName ?? contentBase.avatar.name}
+                  onChange={(event) => updateAvatarName(event.target.value)}
+                />
+              </label>
+
+              <div className="language-switch" aria-label={ui("app.language")}>
+                {localeOptions.map((option) => (
+                  <button
+                    key={option.locale}
+                    type="button"
+                    className={`language-button${locale === option.locale ? " active" : ""}`}
+                    onClick={() => setLocale(option.locale)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="theme-switch" aria-label={ui("theme.title")}>
+                {UI_THEME_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={`theme-button${uiTheme === option.id ? " active" : ""}`}
+                    onClick={() => setUiTheme(option.id)}
+                  >
+                    {ui(option.copyKey)}
+                  </button>
+                ))}
+              </div>
+
               <label className="audio-control">
                 <span>
                   {ui("audio.volume")}
@@ -7738,6 +7850,9 @@ export const App = () => {
                     </option>
                   ))}
                 </select>
+                <small className="audio-control-hint">
+                  {ui("audio.bgmRequiresRecordPlayer")}
+                </small>
               </label>
 
               <label className="audio-control">

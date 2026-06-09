@@ -20,7 +20,7 @@ const avatarStateFile =
   process.env.AIVATAR_AVATAR_STATE_PATH ??
   join(tmpdir(), "aivatar-avatar-state.json");
 const sessionStaleMs = Number(
-  process.env.AIVATAR_SESSION_STALE_MS ?? 30 * 60 * 1000,
+  process.env.AIVATAR_SESSION_STALE_MS ?? 5 * 60 * 60 * 1000,
 );
 const activityStaleMs = Number(
   process.env.AIVATAR_ACTIVITY_STALE_MS ?? 5 * 60 * 1000,

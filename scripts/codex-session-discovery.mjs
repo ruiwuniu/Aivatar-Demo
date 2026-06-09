@@ -32,7 +32,7 @@ const discoveryIntervalMs = Math.max(
   Number(process.env.AIVATAR_DISCOVERY_INTERVAL_MS ?? 3000),
 );
 const sessionStaleMs = Number(
-  process.env.AIVATAR_SESSION_STALE_MS ?? 30 * 60 * 1000,
+  process.env.AIVATAR_SESSION_STALE_MS ?? 5 * 60 * 60 * 1000,
 );
 const activeWindowMs = Math.max(
   discoveryIntervalMs,

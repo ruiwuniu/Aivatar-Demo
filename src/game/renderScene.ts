@@ -75,15 +75,15 @@ interface BubblePalette {
 
 const bubblePalettes: Record<UiThemeId, BubblePalette> = {
   classic: {
-    shadow: "#101421",
-    border: "#f4ead2",
-    fill: "#1b2335",
-    tail: "#f4ead2",
-    infoText: "#9ee6ff",
-    warningText: "#f2a65a",
-    errorText: "#ff8fa3",
-    progressTrack: "#0f1422",
-    progressFill: "#8df7c4",
+    shadow: "#404040",
+    border: "#000000",
+    fill: "#ffffe1",
+    tail: "#000000",
+    infoText: "#000080",
+    warningText: "#808000",
+    errorText: "#800000",
+    progressTrack: "#ffffff",
+    progressFill: "#000080",
   },
   terminal: {
     shadow: "#010804",
@@ -5254,17 +5254,24 @@ const drawStatusLights = (
 
   const panel = isTerminalTheme(uiTheme)
     ? terminalStatusPanelForTheme(uiTheme)
-    : "#171b26";
+    : "#c0c0c0";
   const text = isTerminalTheme(uiTheme)
     ? terminalStatusTextForTheme(uiTheme)
-    : "#e9e3c7";
+    : "#000000";
   const accent = isTerminalTheme(uiTheme)
     ? terminalScanlineForTheme(uiTheme)
-    : "#171b26";
+    : "#808080";
 
   drawPixelRect(ctx, 22, 22, 82, 24, panel);
   if (isTerminalTheme(uiTheme)) {
     drawPixelRect(ctx, 24, 24, 78, 2, accent);
+    drawPixelRect(ctx, 24, 42, 78, 2, accent);
+  } else {
+    drawPixelRect(ctx, 22, 22, 82, 2, "#ffffff");
+    drawPixelRect(ctx, 22, 22, 2, 24, "#ffffff");
+    drawPixelRect(ctx, 22, 44, 82, 2, "#404040");
+    drawPixelRect(ctx, 102, 22, 2, 24, "#404040");
+    drawPixelRect(ctx, 24, 24, 78, 2, "#dfdfdf");
     drawPixelRect(ctx, 24, 42, 78, 2, accent);
   }
   drawPixelRect(ctx, 30, 30, 8, 8, colors[status.status]);

@@ -448,6 +448,188 @@ meter {
   padding: 0;
 }
 
+.settings-card {
+  display: grid;
+  gap: 5px;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 2px solid #39445f;
+  background: #171c2b;
+}
+
+.settings-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 7px;
+  border: 0;
+  border-left: 4px solid #52607d;
+  color: #d8fff7;
+  background: #171c2b;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.settings-toggle:hover,
+.settings-toggle.active {
+  background: #202638;
+  border-left-color: #ffe66d;
+  box-shadow: inset 0 -2px 0 #39445f;
+}
+
+.settings-toggle:hover {
+  border-left-color: #9ee6ff;
+}
+
+.settings-toggle-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  transform: translateY(1px);
+}
+
+.settings-toggle-main b {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #ffe66d;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.settings-volume-icon {
+  display: block;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: currentColor;
+}
+
+.settings-toggle-status {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: #9ee6ff;
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.settings-toggle-chevron {
+  grid-row: 1 / 3;
+  grid-column: 2;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #52607d;
+  color: #ffe66d;
+  background: #111624;
+  box-shadow: inset -1px -1px 0 #080b14;
+  font-family: "Courier New", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+}
+
+.settings-toggle:hover .settings-toggle-chevron,
+.settings-toggle.active .settings-toggle-chevron {
+  border-color: #ffe66d;
+  color: #141823;
+  background: #ffe66d;
+}
+
+.settings-submenu {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  margin: 0 7px 7px;
+  padding: 7px;
+  border: 1px solid #39445f;
+  background: #202638;
+}
+
+.settings-submenu > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.settings-submenu .name-editor,
+.settings-submenu .language-switch,
+.settings-submenu .theme-switch {
+  margin: 0;
+}
+
+.settings-submenu .name-editor {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  width: 100%;
+}
+
+.settings-name-editor input {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.settings-submenu .audio-control {
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 6px 7px;
+}
+
+.settings-submenu .audio-control span {
+  gap: 6px;
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+.settings-submenu .audio-control b {
+  max-width: 86px;
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-submenu .audio-control input,
+.settings-submenu .audio-control select {
+  max-width: 100%;
+}
+
+.settings-submenu .audio-control select {
+  min-height: 24px;
+  padding: 3px 5px;
+  font-family: inherit;
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+.audio-control-hint {
+  color: #9ee6ff;
+  font-size: 8px;
+  line-height: 1.3;
+  opacity: 0.85;
+}
+
 .sound-toggle {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -600,6 +782,7 @@ meter {
 .app-shell.theme-terminal .status-card,
 .app-shell.theme-terminal .name-editor,
 .app-shell.theme-terminal .stats-grid,
+.app-shell.theme-terminal .settings-card,
 .app-shell.theme-terminal .sound-card,
 .app-shell.theme-terminal .sessions-card,
 .app-shell.theme-terminal .task-cabinet-card,
@@ -746,6 +929,8 @@ meter {
 
 .app-shell.theme-terminal .eyebrow,
 .app-shell.theme-terminal .status-card span,
+.app-shell.theme-terminal .settings-toggle-main span,
+.app-shell.theme-terminal .settings-toggle-status,
 .app-shell.theme-terminal .sound-toggle-main span,
 .app-shell.theme-terminal .sound-toggle-status,
 .app-shell.theme-terminal .sessions-toggle-status,
@@ -761,6 +946,7 @@ meter {
 .app-shell.theme-terminal h1,
 .app-shell.theme-terminal h2,
 .app-shell.theme-terminal .status-card strong,
+.app-shell.theme-terminal .settings-toggle-main b,
 .app-shell.theme-terminal .sound-toggle-main b,
 .app-shell.theme-terminal .sessions-toggle-main b,
 .app-shell.theme-terminal .task-cabinet-toggle-main b,
@@ -785,6 +971,7 @@ meter {
 .app-shell.theme-terminal .task-cabinet-toggle,
 .app-shell.theme-terminal .launcher-toggle,
 .app-shell.theme-terminal .growth-toggle,
+.app-shell.theme-terminal .settings-toggle,
 .app-shell.theme-terminal .sound-toggle,
 .app-shell.theme-terminal .debug-toggle,
 .app-shell.theme-terminal .language-button,
@@ -811,6 +998,8 @@ meter {
 .app-shell.theme-terminal .launcher-toggle.active,
 .app-shell.theme-terminal .growth-toggle:hover,
 .app-shell.theme-terminal .growth-toggle.active,
+.app-shell.theme-terminal .settings-toggle:hover,
+.app-shell.theme-terminal .settings-toggle.active,
 .app-shell.theme-terminal .sound-toggle:hover,
 .app-shell.theme-terminal .sound-toggle.active,
 .app-shell.theme-terminal .debug-toggle:hover,
@@ -861,6 +1050,8 @@ meter {
 .app-shell.theme-terminal .launcher-toggle.active span,
 .app-shell.theme-terminal .growth-toggle:hover span,
 .app-shell.theme-terminal .growth-toggle.active span,
+.app-shell.theme-terminal .settings-toggle:hover span,
+.app-shell.theme-terminal .settings-toggle.active span,
 .app-shell.theme-terminal .sound-toggle:hover span,
 .app-shell.theme-terminal .sound-toggle.active span,
 .app-shell.theme-terminal .debug-toggle:hover span,
@@ -919,6 +1110,8 @@ meter {
   .app-shell.theme-terminal .launcher-toggle.active,
   .app-shell.theme-terminal .growth-toggle:hover,
   .app-shell.theme-terminal .growth-toggle.active,
+  .app-shell.theme-terminal .settings-toggle:hover,
+  .app-shell.theme-terminal .settings-toggle.active,
   .app-shell.theme-terminal .sound-toggle:hover,
   .app-shell.theme-terminal .sound-toggle.active,
   .app-shell.theme-terminal .debug-toggle:hover,
@@ -1427,6 +1620,13 @@ meter {
   box-shadow: inset 0 0 0 1px rgba(122, 255, 139, 0.14);
 }
 
+.app-shell.theme-terminal .settings-submenu .name-editor,
+.app-shell.theme-terminal .settings-submenu .audio-control {
+  border-color: #2aad3d;
+  background: #020804;
+  box-shadow: inset 0 0 0 1px rgba(103, 255, 114, 0.2);
+}
+
 .app-shell.theme-terminal .audio-control span {
   color: #8ddf7d;
 }
@@ -1444,6 +1644,17 @@ meter {
   border-color: #1f7f2e;
   color: #b8ff9c;
   background: #020804;
+}
+
+.app-shell.theme-terminal .settings-submenu .name-editor input,
+.app-shell.theme-terminal .settings-submenu .audio-control select {
+  border-color: #38c947;
+  color: #d8ffd0;
+  background: #041108;
+}
+
+.app-shell.theme-terminal .settings-submenu .audio-control input {
+  accent-color: #80ff62;
 }
 
 .app-shell.theme-terminal .side-panel h2,
@@ -1487,6 +1698,7 @@ meter {
 .app-shell.theme-terminal .task-cabinet-submenu,
 .app-shell.theme-terminal .launcher-submenu,
 .app-shell.theme-terminal .growth-submenu,
+.app-shell.theme-terminal .settings-submenu,
 .app-shell.theme-terminal .sound-submenu,
 .app-shell.theme-terminal .debug-submenu,
 .app-shell.theme-terminal .decor-surface-group {
@@ -1498,6 +1710,7 @@ meter {
 .app-shell.theme-terminal .task-cabinet-toggle-chevron,
 .app-shell.theme-terminal .launcher-toggle-chevron,
 .app-shell.theme-terminal .growth-toggle-chevron,
+.app-shell.theme-terminal .settings-toggle-chevron,
 .app-shell.theme-terminal .sound-toggle-chevron,
 .app-shell.theme-terminal .debug-toggle-chevron {
   border-color: #38c947;
@@ -1513,6 +1726,8 @@ meter {
 .app-shell.theme-terminal .launcher-toggle.active .launcher-toggle-chevron,
 .app-shell.theme-terminal .growth-toggle:hover .growth-toggle-chevron,
 .app-shell.theme-terminal .growth-toggle.active .growth-toggle-chevron,
+.app-shell.theme-terminal .settings-toggle:hover .settings-toggle-chevron,
+.app-shell.theme-terminal .settings-toggle.active .settings-toggle-chevron,
 .app-shell.theme-terminal .sound-toggle:hover .sound-toggle-chevron,
 .app-shell.theme-terminal .sound-toggle.active .sound-toggle-chevron,
 .app-shell.theme-terminal .debug-toggle:hover .debug-toggle-chevron,
@@ -1540,6 +1755,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .status-card,
 .app-shell.theme-terminal.theme-terminal-amber .name-editor,
 .app-shell.theme-terminal.theme-terminal-amber .stats-grid,
+.app-shell.theme-terminal.theme-terminal-amber .settings-card,
 .app-shell.theme-terminal.theme-terminal-amber .sound-card,
 .app-shell.theme-terminal.theme-terminal-amber .sessions-card,
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-card,
@@ -1686,6 +1902,8 @@ meter {
 
 .app-shell.theme-terminal.theme-terminal-amber .eyebrow,
 .app-shell.theme-terminal.theme-terminal-amber .status-card span,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle-main span,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle-status,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle-main span,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle-status,
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle-status,
@@ -1713,6 +1931,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber h1,
 .app-shell.theme-terminal.theme-terminal-amber h2,
 .app-shell.theme-terminal.theme-terminal-amber .status-card strong,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle-main b,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle-main b,
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle-main b,
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle-context-label,
@@ -1765,6 +1984,13 @@ meter {
   box-shadow: inset 0 0 0 1px rgba(255, 194, 102, 0.16);
 }
 
+.app-shell.theme-terminal.theme-terminal-amber .settings-submenu .name-editor,
+.app-shell.theme-terminal.theme-terminal-amber .settings-submenu .audio-control {
+  border-color: #c97918;
+  background: #090500;
+  box-shadow: inset 0 0 0 1px rgba(255, 194, 102, 0.18);
+}
+
 .app-shell.theme-terminal.theme-terminal-amber .audio-control span {
   color: #ffd166;
 }
@@ -1784,10 +2010,22 @@ meter {
   background: #150a02;
 }
 
+.app-shell.theme-terminal.theme-terminal-amber .settings-submenu .name-editor input,
+.app-shell.theme-terminal.theme-terminal-amber .settings-submenu .audio-control select {
+  border-color: #c97918;
+  color: #ffe4a3;
+  background: #160c03;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .settings-submenu .audio-control input {
+  accent-color: #ffb23f;
+}
+
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .language-button,
@@ -1841,6 +2079,8 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle.active,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle:hover,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle.active,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle:hover,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle.active,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle:hover,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle.active,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle:hover,
@@ -1895,6 +2135,8 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle.active span,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle:hover span,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle.active span,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle:hover span,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle.active span,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle:hover span,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle.active span,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle:hover span,
@@ -2132,6 +2374,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-submenu,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-submenu,
 .app-shell.theme-terminal.theme-terminal-amber .growth-submenu,
+.app-shell.theme-terminal.theme-terminal-amber .settings-submenu,
 .app-shell.theme-terminal.theme-terminal-amber .sound-submenu,
 .app-shell.theme-terminal.theme-terminal-amber .debug-submenu,
 .app-shell.theme-terminal.theme-terminal-amber .decor-surface-group,
@@ -2148,6 +2391,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle-chevron,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle-chevron {
   border-color: #c97918;
@@ -2163,6 +2407,8 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle.active .launcher-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle:hover .growth-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .growth-toggle.active .growth-toggle-chevron,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle:hover .settings-toggle-chevron,
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle.active .settings-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle:hover .sound-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .sound-toggle.active .sound-toggle-chevron,
 .app-shell.theme-terminal.theme-terminal-amber .debug-toggle:hover .debug-toggle-chevron,
@@ -4526,6 +4772,735 @@ meter::-webkit-meter-optimum-value {
   border-color: #ff8fa3;
   background: rgba(255, 143, 163, 0.22);
   box-shadow: 0 0 0 1px #101421;
+}
+
+.app-shell.theme-classic {
+  color: #000;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 30%),
+    #008080;
+  font-family:
+    Tahoma,
+    "Microsoft YaHei UI",
+    "Microsoft JhengHei UI",
+    "Microsoft JhengHei",
+    "Microsoft YaHei",
+    MingLiU,
+    PMingLiU,
+    SimSun,
+    NSimSun,
+    Arial,
+    sans-serif;
+}
+
+.app-shell.theme-classic .settings-toggle-chevron,
+.app-shell.theme-classic .sound-toggle-chevron,
+.app-shell.theme-classic .sessions-toggle-chevron,
+.app-shell.theme-classic .task-cabinet-toggle-chevron,
+.app-shell.theme-classic .launcher-toggle-chevron,
+.app-shell.theme-classic .growth-toggle-chevron,
+.app-shell.theme-classic .debug-toggle-chevron,
+.app-shell.theme-classic .session-command-hint code,
+.app-shell.theme-classic .growth-trait-svg-label {
+  font-family:
+    Tahoma,
+    "Microsoft YaHei UI",
+    "Microsoft JhengHei UI",
+    "Microsoft JhengHei",
+    "Microsoft YaHei",
+    MingLiU,
+    PMingLiU,
+    SimSun,
+    NSimSun,
+    sans-serif;
+}
+
+.app-shell.theme-classic .settings-toggle-main,
+.app-shell.theme-classic .sound-toggle-main,
+.app-shell.theme-classic .sessions-toggle-main,
+.app-shell.theme-classic .task-cabinet-toggle-main,
+.app-shell.theme-classic .launcher-toggle-main,
+.app-shell.theme-classic .growth-toggle-main,
+.app-shell.theme-classic .debug-toggle-main {
+  font-weight: 600;
+}
+
+.app-shell.theme-classic .eyebrow,
+.app-shell.theme-classic .audio-control span,
+.app-shell.theme-classic .audio-control b,
+.app-shell.theme-classic .settings-submenu .audio-control span,
+.app-shell.theme-classic .settings-submenu .audio-control b,
+.app-shell.theme-classic .settings-toggle-status,
+.app-shell.theme-classic .sound-toggle-status,
+.app-shell.theme-classic .sessions-toggle-status,
+.app-shell.theme-classic .task-cabinet-toggle-status,
+.app-shell.theme-classic .launcher-toggle-status,
+.app-shell.theme-classic .debug-toggle-status,
+.app-shell.theme-classic .room-stats-overlay span,
+.app-shell.theme-classic .room-growth-overlay span,
+.app-shell.theme-classic .launcher-field span,
+.app-shell.theme-classic .task-cabinet-field span,
+.app-shell.theme-classic .session-card span,
+.app-shell.theme-classic .session-card small,
+.app-shell.theme-classic .session-context-meter span,
+.app-shell.theme-classic .session-context-meter small,
+.app-shell.theme-classic .session-command-hint,
+.app-shell.theme-classic .memory-list,
+.app-shell.theme-classic .memory-list span,
+.app-shell.theme-classic .idle-bubble-heading,
+.app-shell.theme-classic .idle-bubble-language > span,
+.app-shell.theme-classic .idle-bubble-empty,
+.app-shell.theme-classic .audio-control-hint,
+.app-shell.theme-classic .meta-list {
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.app-shell.theme-classic .scene-panel,
+.app-shell.theme-classic .side-panel,
+.app-shell.theme-classic .status-card,
+.app-shell.theme-classic .settings-card,
+.app-shell.theme-classic .sound-card,
+.app-shell.theme-classic .sessions-card,
+.app-shell.theme-classic .task-cabinet-card,
+.app-shell.theme-classic .launcher-card,
+.app-shell.theme-classic .growth-card,
+.app-shell.theme-classic .debug-card,
+.app-shell.theme-classic .asset-editor-entry,
+.app-shell.theme-classic .asset-editor,
+.app-shell.theme-classic .decor-panel,
+.app-shell.theme-classic .placement-panel,
+.app-shell.theme-classic .edit-panel,
+.app-shell.theme-classic .stats-grid {
+  border: 2px solid;
+  border-color: #fff #404040 #404040 #fff;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080;
+}
+
+.app-shell.theme-classic .scene-panel {
+  background: #808080;
+  box-shadow:
+    inset 2px 2px 0 #404040,
+    inset -2px -2px 0 #dfdfdf;
+}
+
+.app-shell.theme-classic .side-panel {
+  scrollbar-color: #808080 #c0c0c0;
+}
+
+.app-shell.theme-classic .status-header {
+  padding: 4px 5px;
+  border: 2px solid;
+  border-color: #fff #404040 #404040 #fff;
+  color: #fff;
+  background: linear-gradient(90deg, #000080, #1084d0);
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080;
+}
+
+.app-shell.theme-classic .eyebrow,
+.app-shell.theme-classic .status-card span,
+.app-shell.theme-classic .settings-toggle-main span,
+.app-shell.theme-classic .settings-toggle-status,
+.app-shell.theme-classic .sound-toggle-main span,
+.app-shell.theme-classic .sound-toggle-status,
+.app-shell.theme-classic .sessions-toggle-status,
+.app-shell.theme-classic .task-cabinet-toggle-status,
+.app-shell.theme-classic .launcher-toggle-status,
+.app-shell.theme-classic .debug-toggle-status,
+.app-shell.theme-classic .room-context-overlay span,
+.app-shell.theme-classic .room-stats-overlay span,
+.app-shell.theme-classic .room-growth-overlay span,
+.app-shell.theme-classic .section-heading span,
+.app-shell.theme-classic .meta-list dt,
+.app-shell.theme-classic .inventory-heading,
+.app-shell.theme-classic .audio-control span,
+.app-shell.theme-classic .launcher-field span,
+.app-shell.theme-classic .task-cabinet-field span,
+.app-shell.theme-classic .session-card span,
+.app-shell.theme-classic .session-card small,
+.app-shell.theme-classic .session-context-meter span,
+.app-shell.theme-classic .session-command-hint span,
+.app-shell.theme-classic .growth-trait-svg-label,
+.app-shell.theme-classic .memory-list span,
+.app-shell.theme-classic .idle-bubble-heading,
+.app-shell.theme-classic .idle-bubble-language > span,
+.app-shell.theme-classic .decor-surface-group p,
+.app-shell.theme-classic .asset-field,
+.app-shell.theme-classic .asset-size-row label,
+.app-shell.theme-classic .asset-anchor-row label {
+  color: #000080;
+  text-shadow: none;
+}
+
+.app-shell.theme-classic .status-header .eyebrow,
+.app-shell.theme-classic .status-header h1 {
+  color: #fff;
+}
+
+.app-shell.theme-classic h1,
+.app-shell.theme-classic h2,
+.app-shell.theme-classic .status-card strong,
+.app-shell.theme-classic .settings-toggle-main b,
+.app-shell.theme-classic .sound-toggle-main b,
+.app-shell.theme-classic .sessions-toggle-main b,
+.app-shell.theme-classic .task-cabinet-toggle-main b,
+.app-shell.theme-classic .launcher-toggle-main b,
+.app-shell.theme-classic .growth-toggle-main b,
+.app-shell.theme-classic .debug-toggle-main b,
+.app-shell.theme-classic .audio-control b,
+.app-shell.theme-classic .growth-toggle-progress,
+.app-shell.theme-classic .growth-xp-row,
+.app-shell.theme-classic .session-card strong,
+.app-shell.theme-classic .session-context-meter strong,
+.app-shell.theme-classic .room-context-overlay strong,
+.app-shell.theme-classic .room-stats-overlay b,
+.app-shell.theme-classic .room-growth-overlay b,
+.app-shell.theme-classic .room-growth-overlay strong,
+.app-shell.theme-classic .idle-bubble-heading b {
+  color: #000;
+}
+
+.app-shell.theme-classic .status-card p,
+.app-shell.theme-classic .asset-editor-entry p,
+.app-shell.theme-classic .asset-editor p,
+.app-shell.theme-classic .stat-row,
+.app-shell.theme-classic .launcher-message,
+.app-shell.theme-classic .launcher-option,
+.app-shell.theme-classic .task-cabinet-hint,
+.app-shell.theme-classic .task-cabinet-message,
+.app-shell.theme-classic .task-cabinet-empty,
+.app-shell.theme-classic .task-cabinet-path,
+.app-shell.theme-classic .task-cabinet-schedule-next,
+.app-shell.theme-classic .session-card p,
+.app-shell.theme-classic .session-empty,
+.app-shell.theme-classic .session-context-meter small,
+.app-shell.theme-classic .session-command-hint,
+.app-shell.theme-classic .memory-list,
+.app-shell.theme-classic .idle-bubble-empty,
+.app-shell.theme-classic .empty-shop-category,
+.app-shell.theme-classic .debug-message,
+.app-shell.theme-classic .meta-list,
+.app-shell.theme-classic .audio-control-hint,
+.app-shell.theme-classic .placement-panel p,
+.app-shell.theme-classic .edit-panel p {
+  color: #000;
+}
+
+.app-shell.theme-classic .status-dot {
+  border-color: #fff #404040 #404040 #fff;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080;
+}
+
+.app-shell.theme-classic .settings-toggle,
+.app-shell.theme-classic .sound-toggle,
+.app-shell.theme-classic .sessions-toggle,
+.app-shell.theme-classic .task-cabinet-toggle,
+.app-shell.theme-classic .launcher-toggle,
+.app-shell.theme-classic .growth-toggle,
+.app-shell.theme-classic .debug-toggle {
+  border: 0;
+  border-left: 0;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow: none;
+}
+
+.app-shell.theme-classic .settings-toggle:hover,
+.app-shell.theme-classic .settings-toggle.active,
+.app-shell.theme-classic .sound-toggle:hover,
+.app-shell.theme-classic .sound-toggle.active,
+.app-shell.theme-classic .sessions-toggle:hover,
+.app-shell.theme-classic .sessions-toggle.active,
+.app-shell.theme-classic .task-cabinet-toggle:hover,
+.app-shell.theme-classic .task-cabinet-toggle.active,
+.app-shell.theme-classic .launcher-toggle:hover,
+.app-shell.theme-classic .launcher-toggle.active,
+.app-shell.theme-classic .growth-toggle:hover,
+.app-shell.theme-classic .growth-toggle.active,
+.app-shell.theme-classic .debug-toggle:hover,
+.app-shell.theme-classic .debug-toggle.active {
+  color: #fff;
+  background: linear-gradient(90deg, #000080, #1084d0);
+  box-shadow: none;
+}
+
+.app-shell.theme-classic .settings-toggle:hover span,
+.app-shell.theme-classic .settings-toggle.active span,
+.app-shell.theme-classic .settings-toggle:hover b,
+.app-shell.theme-classic .settings-toggle.active b,
+.app-shell.theme-classic .sound-toggle:hover span,
+.app-shell.theme-classic .sound-toggle.active span,
+.app-shell.theme-classic .sound-toggle:hover b,
+.app-shell.theme-classic .sound-toggle.active b,
+.app-shell.theme-classic .sessions-toggle:hover span,
+.app-shell.theme-classic .sessions-toggle.active span,
+.app-shell.theme-classic .sessions-toggle:hover b,
+.app-shell.theme-classic .sessions-toggle.active b,
+.app-shell.theme-classic .task-cabinet-toggle:hover span,
+.app-shell.theme-classic .task-cabinet-toggle.active span,
+.app-shell.theme-classic .task-cabinet-toggle:hover b,
+.app-shell.theme-classic .task-cabinet-toggle.active b,
+.app-shell.theme-classic .launcher-toggle:hover span,
+.app-shell.theme-classic .launcher-toggle.active span,
+.app-shell.theme-classic .launcher-toggle:hover b,
+.app-shell.theme-classic .launcher-toggle.active b,
+.app-shell.theme-classic .growth-toggle:hover span,
+.app-shell.theme-classic .growth-toggle.active span,
+.app-shell.theme-classic .growth-toggle:hover b,
+.app-shell.theme-classic .growth-toggle.active b,
+.app-shell.theme-classic .debug-toggle:hover span,
+.app-shell.theme-classic .debug-toggle.active span,
+.app-shell.theme-classic .debug-toggle:hover b,
+.app-shell.theme-classic .debug-toggle.active b {
+  color: #fff;
+}
+
+.app-shell.theme-classic .language-button,
+.app-shell.theme-classic .theme-button,
+.app-shell.theme-classic .pixel-button,
+.app-shell.theme-classic .path-picker-button,
+.app-shell.theme-classic .debug-button,
+.app-shell.theme-classic .asset-editor-locked-button,
+.app-shell.theme-classic .asset-mini-button,
+.app-shell.theme-classic .asset-frame-tab,
+.app-shell.theme-classic .shop-category-tab,
+.app-shell.theme-classic .decor-surface-tab,
+.app-shell.theme-classic .idle-bubble-language-button,
+.app-shell.theme-classic .idle-bubble-pill,
+.app-shell.theme-classic .idle-bubble-candidate,
+.app-shell.theme-classic .session-clear-button,
+.app-shell.theme-classic .session-follow-button,
+.app-shell.theme-classic .session-disconnect-button,
+.app-shell.theme-classic .launcher-agent-choice button,
+.app-shell.theme-classic .launcher-start,
+.app-shell.theme-classic .task-cabinet-remove,
+.app-shell.theme-classic .decor-toggle-button {
+  border: 2px solid;
+  border-color: #fff #404040 #404040 #fff;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080;
+}
+
+.app-shell.theme-classic .language-button:hover,
+.app-shell.theme-classic .language-button.active,
+.app-shell.theme-classic .theme-button:hover,
+.app-shell.theme-classic .theme-button.active,
+.app-shell.theme-classic .pixel-button:hover:not(:disabled),
+.app-shell.theme-classic .path-picker-button:hover,
+.app-shell.theme-classic .debug-button:hover,
+.app-shell.theme-classic .asset-mini-button:hover,
+.app-shell.theme-classic .asset-mini-button.active,
+.app-shell.theme-classic .asset-frame-tab:hover,
+.app-shell.theme-classic .asset-frame-tab.active,
+.app-shell.theme-classic .shop-category-tab:hover,
+.app-shell.theme-classic .shop-category-tab.active,
+.app-shell.theme-classic .decor-surface-tab:hover,
+.app-shell.theme-classic .decor-surface-tab.active,
+.app-shell.theme-classic .idle-bubble-language-button:hover,
+.app-shell.theme-classic .idle-bubble-language-button.active,
+.app-shell.theme-classic .idle-bubble-pill:hover,
+.app-shell.theme-classic .idle-bubble-candidate:hover:not(:disabled),
+.app-shell.theme-classic .session-clear-button:hover,
+.app-shell.theme-classic .session-follow-button:hover:not(:disabled),
+.app-shell.theme-classic .launcher-agent-choice button:hover,
+.app-shell.theme-classic .launcher-agent-choice button.active,
+.app-shell.theme-classic .launcher-start:hover:not(:disabled) {
+  border-color: #000 #dfdfdf #dfdfdf #000;
+  color: #fff;
+  background: #000080;
+  box-shadow:
+    inset 1px 1px 0 #404040,
+    inset -1px -1px 0 #fff;
+}
+
+.app-shell.theme-classic .session-disconnect-button:hover:not(:disabled),
+.app-shell.theme-classic .danger-button:hover:not(:disabled),
+.app-shell.theme-classic .task-cabinet-remove:hover:not(:disabled) {
+  border-color: #000 #dfdfdf #dfdfdf #000;
+  color: #fff;
+  background: #800000;
+}
+
+.app-shell.theme-classic .pixel-button:disabled,
+.app-shell.theme-classic .asset-editor-locked-button:disabled,
+.app-shell.theme-classic .session-follow-button:disabled,
+.app-shell.theme-classic .session-disconnect-button:disabled,
+.app-shell.theme-classic .launcher-start:disabled,
+.app-shell.theme-classic .task-cabinet-remove:disabled {
+  border-color: #808080 #fff #fff #808080;
+  color: #808080;
+  background: #c0c0c0;
+  box-shadow: none;
+}
+
+.app-shell.theme-classic .settings-toggle-chevron,
+.app-shell.theme-classic .sound-toggle-chevron,
+.app-shell.theme-classic .sessions-toggle-chevron,
+.app-shell.theme-classic .task-cabinet-toggle-chevron,
+.app-shell.theme-classic .launcher-toggle-chevron,
+.app-shell.theme-classic .growth-toggle-chevron,
+.app-shell.theme-classic .debug-toggle-chevron,
+.app-shell.theme-classic .side-panel-edge-toggle {
+  border: 2px solid;
+  border-color: #fff #404040 #404040 #fff;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080;
+}
+
+.app-shell.theme-classic .settings-toggle:hover .settings-toggle-chevron,
+.app-shell.theme-classic .settings-toggle.active .settings-toggle-chevron,
+.app-shell.theme-classic .sound-toggle:hover .sound-toggle-chevron,
+.app-shell.theme-classic .sound-toggle.active .sound-toggle-chevron,
+.app-shell.theme-classic .sessions-toggle:hover .sessions-toggle-chevron,
+.app-shell.theme-classic .sessions-toggle.active .sessions-toggle-chevron,
+.app-shell.theme-classic .task-cabinet-toggle:hover .task-cabinet-toggle-chevron,
+.app-shell.theme-classic .task-cabinet-toggle.active .task-cabinet-toggle-chevron,
+.app-shell.theme-classic .launcher-toggle:hover .launcher-toggle-chevron,
+.app-shell.theme-classic .launcher-toggle.active .launcher-toggle-chevron,
+.app-shell.theme-classic .growth-toggle:hover .growth-toggle-chevron,
+.app-shell.theme-classic .growth-toggle.active .growth-toggle-chevron,
+.app-shell.theme-classic .debug-toggle:hover .debug-toggle-chevron,
+.app-shell.theme-classic .debug-toggle.active .debug-toggle-chevron,
+.app-shell.theme-classic .side-panel-edge-toggle:hover {
+  border-color: #000 #dfdfdf #dfdfdf #000;
+  color: #fff;
+  background: #000080;
+}
+
+.app-shell.theme-classic .side-panel-edge-toggle.expanded .side-panel-edge-icon {
+  border-right-color: #000;
+}
+
+.app-shell.theme-classic .side-panel-edge-toggle.expanded:hover .side-panel-edge-icon {
+  border-right-color: #fff;
+}
+
+.app-shell.theme-classic .side-panel-edge-toggle.collapsed .side-panel-edge-icon {
+  border-left-color: #000;
+}
+
+.app-shell.theme-classic .side-panel-edge-toggle.collapsed:hover .side-panel-edge-icon {
+  border-left-color: #fff;
+}
+
+.app-shell.theme-classic input,
+.app-shell.theme-classic select,
+.app-shell.theme-classic .name-editor input,
+.app-shell.theme-classic .settings-submenu .name-editor input,
+.app-shell.theme-classic .settings-submenu .audio-control select,
+.app-shell.theme-classic .audio-control select,
+.app-shell.theme-classic .launcher-field input,
+.app-shell.theme-classic .task-cabinet-field input,
+.app-shell.theme-classic .task-cabinet-field select,
+.app-shell.theme-classic .asset-field input,
+.app-shell.theme-classic .asset-size-row input,
+.app-shell.theme-classic .asset-anchor-row input {
+  border: 2px solid;
+  border-color: #404040 #fff #fff #404040;
+  color: #000;
+  background: #fff;
+  box-shadow: inset 1px 1px 0 #808080;
+  outline: none;
+}
+
+.app-shell.theme-classic input:focus,
+.app-shell.theme-classic select:focus,
+.app-shell.theme-classic .name-editor input:focus,
+.app-shell.theme-classic .launcher-field input:focus,
+.app-shell.theme-classic .task-cabinet-field input:focus,
+.app-shell.theme-classic .task-cabinet-field select:focus {
+  outline: 1px dotted #000;
+  outline-offset: -4px;
+}
+
+.app-shell.theme-classic input[type="range"],
+.app-shell.theme-classic .settings-submenu .audio-control input,
+.app-shell.theme-classic .audio-control input {
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  appearance: none;
+  accent-color: #000080;
+}
+
+.app-shell.theme-classic input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+  box-shadow: inset 1px 1px 0 #404040;
+}
+
+.app-shell.theme-classic input[type="range"]::-webkit-slider-thumb {
+  width: 10px;
+  height: 14px;
+  margin-top: -6px;
+  border: 2px solid;
+  border-color: #fff #404040 #404040 #fff;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080;
+  appearance: none;
+}
+
+.app-shell.theme-classic input[type="range"]::-moz-range-track {
+  height: 4px;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+  box-shadow: inset 1px 1px 0 #404040;
+}
+
+.app-shell.theme-classic input[type="range"]::-moz-range-thumb {
+  width: 10px;
+  height: 14px;
+  border: 2px solid;
+  border-color: #fff #404040 #404040 #fff;
+  border-radius: 0;
+  background: #c0c0c0;
+}
+
+.app-shell.theme-classic input[type="checkbox"],
+.app-shell.theme-classic .settings-submenu .audio-control input[type="checkbox"],
+.app-shell.theme-classic .audio-control input[type="checkbox"] {
+  appearance: auto;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  margin: 0;
+  padding: 0;
+  border: initial;
+  background: initial;
+  box-shadow: none;
+  accent-color: #000080;
+  justify-self: start;
+}
+
+.app-shell.theme-classic .settings-submenu,
+.app-shell.theme-classic .sound-submenu,
+.app-shell.theme-classic .sessions-submenu,
+.app-shell.theme-classic .task-cabinet-submenu,
+.app-shell.theme-classic .launcher-submenu,
+.app-shell.theme-classic .growth-submenu,
+.app-shell.theme-classic .debug-submenu,
+.app-shell.theme-classic .decor-surface-group,
+.app-shell.theme-classic .idle-bubble-editor,
+.app-shell.theme-classic .session-context-meter,
+.app-shell.theme-classic .session-command-hint,
+.app-shell.theme-classic .task-cabinet-schedule,
+.app-shell.theme-classic .settings-submenu .name-editor,
+.app-shell.theme-classic .settings-submenu .audio-control,
+.app-shell.theme-classic .audio-control {
+  border: 2px solid;
+  border-color: #808080 #fff #fff #808080;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow: inset 1px 1px 0 #404040;
+}
+
+.app-shell.theme-classic .room-context-overlay,
+.app-shell.theme-classic .room-stats-overlay,
+.app-shell.theme-classic .room-growth-overlay,
+.app-shell.theme-classic .scene-context-menu {
+  border: 2px solid;
+  border-color: #fff #404040 #404040 #fff;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080,
+    3px 3px 0 rgba(0, 0, 0, 0.38);
+}
+
+.app-shell.theme-classic .scene-context-menu span,
+.app-shell.theme-classic .scene-context-control b {
+  color: #000080;
+}
+
+.app-shell.theme-classic .scene-context-button,
+.app-shell.theme-classic .scene-context-stop-button {
+  border: 2px solid;
+  border-color: #fff #404040 #404040 #fff;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080;
+}
+
+.app-shell.theme-classic .scene-context-button:hover {
+  border-color: #000 #dfdfdf #dfdfdf #000;
+  color: #fff;
+  background: #000080;
+}
+
+.app-shell.theme-classic .scene-context-stop-button:hover {
+  background: #800000;
+}
+
+.app-shell.theme-classic .scene-context-control {
+  border: 2px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #c0c0c0;
+}
+
+.app-shell.theme-classic .session-card,
+.app-shell.theme-classic .task-cabinet-entry {
+  border: 2px solid;
+  border-color: #fff #404040 #404040 #fff;
+  border-left: 4px solid #000080;
+  color: #000;
+  background: #dfdfdf;
+  box-shadow:
+    inset 1px 1px 0 #fff,
+    inset -1px -1px 0 #808080;
+}
+
+.app-shell.theme-classic .session-card.current,
+.app-shell.theme-classic .session-card.active,
+.app-shell.theme-classic .session-card.connected,
+.app-shell.theme-classic .session-card.active.connected {
+  background: #e8e8e8;
+  box-shadow:
+    inset 1px 1px 0 #fff,
+    inset -1px -1px 0 #808080,
+    0 0 0 1px #000080;
+}
+
+.app-shell.theme-classic .session-card.status-thinking,
+.app-shell.theme-classic .task-cabinet-entry.task-running {
+  border-left-color: #808000;
+}
+
+.app-shell.theme-classic .session-card.status-executing {
+  border-left-color: #000080;
+}
+
+.app-shell.theme-classic .session-card.status-waiting_for_user {
+  border-left-color: #ff8000;
+}
+
+.app-shell.theme-classic .session-card.status-error,
+.app-shell.theme-classic .task-cabinet-entry.task-failed {
+  border-left-color: #800000;
+}
+
+.app-shell.theme-classic .session-card.status-complete,
+.app-shell.theme-classic .task-cabinet-entry.task-completed {
+  border-left-color: #008000;
+}
+
+.app-shell.theme-classic .session-card .session-usage,
+.app-shell.theme-classic .boost-active,
+.app-shell.theme-classic .decor-clear-button,
+.app-shell.theme-classic .task-cabinet-error,
+.app-shell.theme-classic .idle-bubble-pill b {
+  color: #800000;
+}
+
+.app-shell.theme-classic .sessions-toggle-context-bar,
+.app-shell.theme-classic .session-context-bar,
+.app-shell.theme-classic .room-context-bar,
+.app-shell.theme-classic meter::-webkit-meter-bar {
+  border: 2px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+}
+
+.app-shell.theme-classic .sessions-toggle-context-fill,
+.app-shell.theme-classic .session-context-fill,
+.app-shell.theme-classic .room-context-fill,
+.app-shell.theme-classic meter::-webkit-meter-optimum-value {
+  background: #000080;
+}
+
+.app-shell.theme-classic .sessions-toggle-context.warm .sessions-toggle-context-fill,
+.app-shell.theme-classic .session-context-meter.warm .session-context-fill,
+.app-shell.theme-classic .room-context-overlay.warm .room-context-fill {
+  background: #808000;
+}
+
+.app-shell.theme-classic .sessions-toggle-context.high .sessions-toggle-context-fill,
+.app-shell.theme-classic .session-context-meter.high .session-context-fill,
+.app-shell.theme-classic .room-context-overlay.high .room-context-fill {
+  background: #800000;
+}
+
+.app-shell.theme-classic .growth-trait-hex,
+.app-shell.theme-classic .asset-canvas,
+.app-shell.theme-classic .asset-preview-row canvas,
+.app-shell.theme-classic .asset-room-reference,
+.app-shell.theme-classic .decor-surface-preview {
+  border: 2px solid;
+  border-color: #404040 #fff #fff #404040;
+  background-color: #fff;
+  box-shadow: inset 1px 1px 0 #808080;
+}
+
+.app-shell.theme-classic .growth-trait-grid {
+  stroke: #808080;
+}
+
+.app-shell.theme-classic .growth-trait-grid.grid-0,
+.app-shell.theme-classic .growth-trait-outline {
+  stroke: #000080;
+}
+
+.app-shell.theme-classic .growth-trait-axis {
+  stroke: #404040;
+}
+
+.app-shell.theme-classic .growth-trait-fill {
+  fill: rgba(0, 0, 128, 0.18);
+}
+
+.app-shell.theme-classic .growth-trait-dot {
+  fill: #c0c0c0;
+  stroke: #000080;
+}
+
+.app-shell.theme-classic .growth-trait-hover:hover .growth-trait-dot,
+.app-shell.theme-classic .growth-trait-hover:focus .growth-trait-dot {
+  fill: #000080;
+  stroke: #fff;
+}
+
+.app-shell.theme-classic .idle-bubble-candidate.llm,
+.app-shell.theme-classic .idle-bubble-candidate.agent-claude-code:not(.llm),
+.app-shell.theme-classic .idle-bubble-candidate.agent-codex:not(.llm),
+.app-shell.theme-classic .idle-bubble-candidate.llm:disabled {
+  border-color: #fff #404040 #404040 #fff;
+  color: #000;
+  background: #dfdfdf;
+  box-shadow:
+    inset 1px 1px 0 #fff,
+    inset -1px -1px 0 #808080;
+}
+
+.app-shell.theme-classic .idle-bubble-candidate .idle-bubble-source,
+.app-shell.theme-classic .idle-bubble-candidate .idle-bubble-source.llm,
+.app-shell.theme-classic .idle-bubble-candidate:disabled .idle-bubble-source {
+  border-color: #000;
+  color: #fff;
+  background: #000080;
 }
 
 @media (prefers-reduced-motion: reduce) {

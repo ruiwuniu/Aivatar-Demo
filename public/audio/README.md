@@ -153,3 +153,24 @@ animation starts. The game console audio plays at half of the global SFX volume.
 
 This older single-track Game Console file is retained for now but is not part of
 the current random playback pool.
+
+## bach-invention-4.wav
+
+- Source: NES baroque music (Bach's Invention 4)
+- Author: Haley Halcyon
+- URL: https://opengameart.org/content/nes-baroque-music-bachs-invention-4
+- License: CC-BY 4.0
+- Original file: `invention4-1loop.wav`
+- Attribution notice: `"Invention 4" by Johann Sebastian Bach Chiptune rendition by Haley Halcyon`
+
+Aivatar uses this as a Record Player BGM track.
+
+## nes-bach-bwv-565.ogg
+
+- Source: NES - Bach - BWV 565
+- Author: TheOuterLinux
+- URL: https://opengameart.org/content/nes-bach-bwv-565
+- License: CC0 1.0 Universal
+- Original file: `NES - Bach - BWV 565.ogg`
+
+Aivatar uses this as a Record Player BGM track.
