@@ -91,6 +91,22 @@
         }
       },
       {
+        "id": "gray-tech-floor",
+        "name": "Gray Tech Floor",
+        "palette": {
+          "border": "#2d343c",
+          "base": "#909aa3",
+          "plankA": "#aeb8c0",
+          "plankB": "#8b969f",
+          "plankC": "#6f7a83",
+          "plankD": "#c4ccd2",
+          "seam": "#58636c",
+          "highlight": "#e2edf2",
+          "grainDark": "#4d5861",
+          "grainLight": "#aeeaf2"
+        }
+      },
+      {
         "id": "tatami-mat-floor",
         "name": "Tatami Mat Floor",
         "palette": {
@@ -219,6 +235,22 @@
           "grainDark": "#c8b99d",
           "grainLight": "#f8f0df"
         }
+      },
+      {
+        "id": "white-tech-wallpaper",
+        "name": "White Tech Wallpaper",
+        "palette": {
+          "border": "#b9c6ce",
+          "base": "#f6f9fa",
+          "plankA": "#ffffff",
+          "plankB": "#edf4f7",
+          "plankC": "#d9e3e8",
+          "plankD": "#c9f0ff",
+          "seam": "#c6d1d8",
+          "highlight": "#ffffff",
+          "grainDark": "#aebdc6",
+          "grainLight": "#dff8ff"
+        }
       }
     ],
     "windows": [
@@ -244,6 +276,15 @@
         "id": "ocean-window",
         "name": "Ocean Window",
         "kind": "ocean-window",
+        "x": 146,
+        "y": 30,
+        "width": 188,
+        "height": 96
+      },
+      {
+        "id": "cyberpunk-city-window",
+        "name": "Cyberpunk City Window",
+        "kind": "cyberpunk-city-window",
         "x": 146,
         "y": 30,
         "width": 188,
@@ -409,7 +450,7 @@
       "id": "blue-persian-rug",
       "name": "Blue Persian Rug",
       "kind": "decor",
-      "tags": ["item", "rug", "one-time"],
+      "tags": ["item", "rug"],
       "price": 520,
       "placementSurfaces": ["floor"],
       "placement": "floor",
@@ -614,6 +655,14 @@
       "effect": { "mood": 10 }
     },
     {
+      "id": "cyberpunk-city-window",
+      "name": "Cyberpunk City Window",
+      "kind": "window",
+      "tags": ["window"],
+      "price": 12000,
+      "effect": { "mood": 12 }
+    },
+    {
       "id": "purple-bubble-wallpaper",
       "name": "Purple Bubble Wallpaper",
       "kind": "decor",
@@ -654,6 +703,14 @@
       "effect": { "mood": 5 }
     },
     {
+      "id": "white-tech-wallpaper",
+      "name": "White Tech Wallpaper",
+      "kind": "decor",
+      "tags": ["wall-surface"],
+      "price": 88,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
       "id": "polished-cement-floor",
       "name": "Polished Cement Floor",
       "kind": "decor",
@@ -668,6 +725,14 @@
       "tags": ["floor-surface"],
       "price": 68,
       "effect": { "mood": 3, "energy": 2 }
+    },
+    {
+      "id": "gray-tech-floor",
+      "name": "Gray Tech Floor",
+      "kind": "decor",
+      "tags": ["floor-surface"],
+      "price": 88,
+      "effect": { "mood": 4, "energy": 3 }
     },
     {
       "id": "tatami-mat-floor",
@@ -739,7 +804,7 @@
       "id": "blue-persian-rug",
       "name": "Blue Persian Rug",
       "kind": "decor",
-      "tags": ["item", "rug", "one-time"],
+      "tags": ["item", "rug"],
       "price": 520,
       "placementSurfaces": ["floor"],
       "placement": "floor",
@@ -934,6 +999,14 @@
         "effect": { "mood": 10 }
       },
       {
+        "id": "cyberpunk-city-window",
+        "name": "Cyberpunk City Window",
+        "kind": "window",
+        "tags": ["window"],
+        "price": 12000,
+        "effect": { "mood": 12 }
+      },
+      {
         "id": "purple-bubble-wallpaper",
         "name": "Purple Bubble Wallpaper",
         "kind": "decor",
@@ -974,6 +1047,14 @@
         "effect": { "mood": 5 }
       },
       {
+        "id": "white-tech-wallpaper",
+        "name": "White Tech Wallpaper",
+        "kind": "decor",
+        "tags": ["wall-surface"],
+        "price": 88,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
         "id": "polished-cement-floor",
         "name": "Polished Cement Floor",
         "kind": "decor",
@@ -988,6 +1069,14 @@
         "tags": ["floor-surface"],
         "price": 68,
         "effect": { "mood": 3, "energy": 2 }
+      },
+      {
+        "id": "gray-tech-floor",
+        "name": "Gray Tech Floor",
+        "kind": "decor",
+        "tags": ["floor-surface"],
+        "price": 88,
+        "effect": { "mood": 4, "energy": 3 }
       },
       {
         "id": "tatami-mat-floor",

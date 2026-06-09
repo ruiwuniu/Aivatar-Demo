@@ -3251,6 +3251,16 @@ meter::-webkit-meter-optimum-value {
     linear-gradient(135deg, #fffaf0, #f3ead8 60%, #eadfc9);
 }
 
+.surface-preview-white-tech-wallpaper {
+  background:
+    radial-gradient(circle at 8px 7px, #ffffff 0 1px, #c9f0ff 1px 3px, transparent 4px),
+    radial-gradient(circle at 22px 18px, #ffffff 0 1px, #c9f0ff 1px 3px, transparent 4px),
+    linear-gradient(90deg, transparent 0 9px, #dff8ff 9px 10px, transparent 10px 28px),
+    linear-gradient(0deg, transparent 0 11px, #c6d1d8 11px 12px, transparent 12px 24px),
+    repeating-linear-gradient(90deg, transparent 0 13px, #c6d1d8 13px 14px, transparent 14px 28px),
+    repeating-linear-gradient(0deg, #ffffff 0 8px, #edf4f7 8px 16px, #f6f9fa 16px 24px);
+}
+
 .surface-preview-checker-tile-floor {
   background-color: #f4f1e8;
   background-image:
@@ -3273,6 +3283,16 @@ meter::-webkit-meter-optimum-value {
     radial-gradient(circle at 20px 16px, #c1ccd3 0 1px, transparent 2px),
     repeating-linear-gradient(90deg, transparent 0 8px, #20262d 8px 10px),
     repeating-linear-gradient(0deg, #65717b 0 6px, #3f4851 6px 12px, #2d343c 12px 18px);
+}
+
+.surface-preview-gray-tech-floor {
+  background:
+    radial-gradient(circle at 7px 7px, #9f8cff 0 1px, transparent 2px),
+    radial-gradient(circle at 22px 18px, #e2edf2 0 1px, transparent 2px),
+    linear-gradient(90deg, transparent 0 7px, #6fdce8 7px 8px, transparent 8px 27px),
+    linear-gradient(0deg, transparent 0 10px, #7eb8c4 10px 11px, transparent 11px 24px),
+    repeating-linear-gradient(90deg, transparent 0 15px, #58636c 15px 16px, transparent 16px 32px),
+    repeating-linear-gradient(0deg, #aeb8c0 0 9px, #909aa3 9px 18px, #8b969f 18px 27px);
 }
 
 .surface-preview-tatami-mat-floor {
@@ -3494,6 +3514,30 @@ meter::-webkit-meter-optimum-value {
   border-color: #ff8fa3;
   background: #ffe66d;
   box-shadow: inset -3px -3px 0 #f2a65a, 0 0 0 2px #ff8fa3;
+}
+
+.window-time-control {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 4px;
+  padding: 5px;
+  border: 2px solid #6d7794;
+  color: #d8fff7;
+  background: #101421;
+  box-shadow: inset -3px -3px 0 #0a0e18;
+  font-size: 11px;
+}
+
+.window-time-control input {
+  width: 100%;
+  accent-color: #ffe66d;
+}
+
+.window-time-presets {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
 }
 
 .pixel-button:disabled {
@@ -4021,6 +4065,46 @@ meter::-webkit-meter-optimum-value {
   height: 2px;
   background: #8f4e38;
   box-shadow: 2px -3px 0 #fff7d6;
+}
+
+.item-thumb-cyberpunk-city-window .item-thumb-shape {
+  left: 2px;
+  top: 4px;
+  width: 15px;
+  height: 12px;
+  background: linear-gradient(to bottom, #bf6f86 0 42%, #101826 42% 100%);
+  border: 2px solid #b15c3a;
+}
+
+.item-thumb-cyberpunk-city-window .item-thumb-accent {
+  left: 5px;
+  top: 7px;
+  width: 1px;
+  height: 1px;
+  background: #ffd36f;
+  box-shadow:
+    4px 1px 0 #ff8a3a,
+    8px 2px 0 #ffd36f,
+    2px 5px 0 #ff6d2f,
+    7px 6px 0 #ffa64d;
+}
+
+.item-thumb-cyberpunk-city-window .item-thumb-detail {
+  left: 9px;
+  top: 4px;
+  width: 2px;
+  height: 12px;
+  background: #26364d;
+  box-shadow: 0 -3px 0 #8f5a63, -6px 5px 0 #1f2c36, 5px 4px 0 #1f2c36;
+}
+
+.item-thumb-cyberpunk-city-window .item-thumb-detail-two {
+  left: 4px;
+  top: 10px;
+  width: 2px;
+  height: 1px;
+  background: #ff973a;
+  box-shadow: 8px -2px 0 #d92c24, 10px 3px 0 #ffbd58;
 }
 
 .danger-button {

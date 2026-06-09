@@ -2244,7 +2244,9 @@ export const App = () => {
   } = useCodexStatus();
   const [debugStatus, setDebugStatus] = useState<CodexStatusMessage | null>(null);
   const [windowTimePreview, setWindowTimePreview] = useState(false);
+  const [windowPreviewHour, setWindowPreviewHour] = useState<number | null>(null);
   const windowTimePreviewRef = useRef(false);
+  const windowPreviewHourRef = useRef<number | null>(null);
   const navDebugOverlayRef = useRef(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [bridgeStartMessage, setBridgeStartMessage] = useState("");
@@ -2844,6 +2846,10 @@ export const App = () => {
   }, [windowTimePreview]);
 
   useEffect(() => {
+    windowPreviewHourRef.current = windowPreviewHour;
+  }, [windowPreviewHour]);
+
+  useEffect(() => {
     navDebugOverlayRef.current = navDebugOverlay;
   }, [navDebugOverlay]);
 
@@ -2852,8 +2858,16 @@ export const App = () => {
     taskCabinetEntriesRef.current = taskCabinetEntries;
   }, [taskCabinetEntries]);
 
-  const getWindowTimeMs = (frame: number) =>
-    windowTimePreviewRef.current ? Date.now() + frame * 60000 : Date.now();
+  const getWindowTimeMs = (frame: number) => {
+    const previewHour = windowPreviewHourRef.current;
+    if (previewHour !== null) {
+      const previewDate = new Date(Date.now());
+      previewDate.setHours(previewHour, 0, 0, 0);
+      return previewDate.getTime();
+    }
+
+    return windowTimePreviewRef.current ? Date.now() + frame * 60000 : Date.now();
+  };
 
   useLayoutEffect(() => {
     if (canvasRef.current) {
@@ -7211,6 +7225,9 @@ export const App = () => {
     );
   };
 
+  const windowPreviewDisplayHour = windowPreviewHour ?? new Date(nowMs).getHours();
+  const windowPreviewTimeLabel = `${String(windowPreviewDisplayHour).padStart(2, "0")}:00`;
+
   return (
     <main
       className={`app-shell ${
@@ -8108,9 +8125,61 @@ export const App = () => {
                 <button
                   type="button"
                   className={`pixel-button${windowTimePreview ? " debug-live-active" : ""}`}
-                  onClick={() => setWindowTimePreview((current) => !current)}
+                  onClick={() => {
+                    windowPreviewHourRef.current = null;
+                    setWindowPreviewHour(null);
+                    setWindowTimePreview((current) => !current);
+                  }}
                 >
                   {ui("debug.windowPreview")}
+                </button>
+                <label className="window-time-control">
+                  <span>
+                    {ui("debug.windowTime")} {windowPreviewTimeLabel}
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="23"
+                    step="1"
+                    value={windowPreviewDisplayHour}
+                    onChange={(event) => {
+                      const hour = Number(event.currentTarget.value);
+                      windowPreviewHourRef.current = hour;
+                      windowTimePreviewRef.current = false;
+                      setWindowPreviewHour(hour);
+                      setWindowTimePreview(false);
+                    }}
+                  />
+                </label>
+                <div className="window-time-presets" aria-label={ui("debug.windowTime")}>
+                  {[6, 12, 18, 22].map((hour) => (
+                    <button
+                      key={hour}
+                      type="button"
+                      className={`pixel-button${windowPreviewHour === hour ? " debug-live-active" : ""}`}
+                      onClick={() => {
+                        windowPreviewHourRef.current = hour;
+                        windowTimePreviewRef.current = false;
+                        setWindowPreviewHour(hour);
+                        setWindowTimePreview(false);
+                      }}
+                    >
+                      {String(hour).padStart(2, "0")}:00
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className={`pixel-button${windowPreviewHour === null && !windowTimePreview ? " debug-live-active" : ""}`}
+                  onClick={() => {
+                    windowPreviewHourRef.current = null;
+                    windowTimePreviewRef.current = false;
+                    setWindowPreviewHour(null);
+                    setWindowTimePreview(false);
+                  }}
+                >
+                  {ui("debug.windowRealTime")}
                 </button>
                 <button
                   type="button"

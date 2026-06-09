@@ -1750,14 +1750,15 @@ const drawFurniture = (
       drawPixelRect(ctx, catX + 3, catY + 29, 18, 4, "rgba(4, 5, 8, 0.86)");
       drawPixelRect(ctx, catX + 5, catY + 30, 5, 5, "rgba(4, 5, 8, 0.88)");
       drawPixelRect(ctx, catX + 12, catY + 30, 5, 5, "rgba(4, 5, 8, 0.88)");
-      const eyeCycle = (frame + item.x * 3 + item.y * 5) % 3600;
-      if (eyeCycle > 98 && eyeCycle < 164) {
-        const drawShadowEye = (x: number) => {
-          drawPixelRect(ctx, x - 1, eyeY - 1, 4, 4, "#080a0d");
-          drawPixelRect(ctx, x - 1, eyeY, 3, 1, "#8f611c");
-          drawPixelRect(ctx, x, eyeY, 1, 1, "#ffe66d");
-          drawPixelRect(ctx, x, eyeY + 1, 1, 1, "#ffe66d");
-        };
+      const eyeCycle = (frame + item.x * 3 + item.y * 5) % 1200;
+      const eyesOpen = eyeCycle > 98 && eyeCycle < 164;
+      const drawShadowEye = (x: number) => {
+        drawPixelRect(ctx, x - 1, eyeY - 1, 4, 4, "#080a0d");
+        drawPixelRect(ctx, x - 1, eyeY, 3, 1, "#8f611c");
+        drawPixelRect(ctx, x, eyeY, 1, 1, "#ffe66d");
+        drawPixelRect(ctx, x, eyeY + 1, 1, 1, "#ffe66d");
+      };
+      if (eyesOpen) {
         drawShadowEye(eyeX);
         drawShadowEye(eyeX + 7);
       }
@@ -1832,15 +1833,16 @@ const drawFurniture = (
       drawPixelRect(ctx, shadowBlobX + 1, shadowBlobY + 9, 22, 2, "rgba(5, 7, 10, 0.78)");
       drawPixelRect(ctx, shadowBlobX + 4, shadowBlobY + 11, 16, 2, "rgba(5, 7, 10, 0.72)");
       drawPixelRect(ctx, shadowBlobX + 7, shadowBlobY + 13, 10, 1, "rgba(5, 7, 10, 0.56)");
-      const classicEyeCycle = (frame + item.x * 5 + item.y * 7) % 3600;
-      if (classicEyeCycle > 98 && classicEyeCycle < 164) {
-        const classicEyeY = shadowBlobY + 6;
-        const drawClassicShadowEye = (x: number) => {
-          drawPixelRect(ctx, x - 1, classicEyeY - 1, 4, 4, "#080a0d");
-          drawPixelRect(ctx, x - 1, classicEyeY, 3, 1, "#8f611c");
-          drawPixelRect(ctx, x, classicEyeY, 1, 1, "#ffe66d");
-          drawPixelRect(ctx, x, classicEyeY + 1, 1, 1, "#ffe66d");
-        };
+      const classicEyeCycle = (frame + item.x * 5 + item.y * 7) % 1200;
+      const classicEyesOpen = classicEyeCycle > 98 && classicEyeCycle < 164;
+      const classicEyeY = shadowBlobY + 6;
+      const drawClassicShadowEye = (x: number) => {
+        drawPixelRect(ctx, x - 1, classicEyeY - 1, 4, 4, "#080a0d");
+        drawPixelRect(ctx, x - 1, classicEyeY, 3, 1, "#8f611c");
+        drawPixelRect(ctx, x, classicEyeY, 1, 1, "#ffe66d");
+        drawPixelRect(ctx, x, classicEyeY + 1, 1, 1, "#ffe66d");
+      };
+      if (classicEyesOpen) {
         drawClassicShadowEye(shadowBlobX + 8);
         drawClassicShadowEye(shadowBlobX + 15);
       }
@@ -4732,6 +4734,133 @@ const drawIndustrialMetalFloor = (
   }
 };
 
+const drawGrayTechFloor = (
+  ctx: CanvasRenderingContext2D,
+  surface: RoomSurfaceDefinition,
+) => {
+  const palette = surface.palette;
+  const accent = "#6fdce8";
+  const accentDim = "#7eb8c4";
+  const node = "#9f8cff";
+  const plateWidth = 82;
+  const plateHeight = 44;
+
+  drawPixelRect(ctx, 70, 128, 340, 184, palette.border);
+  drawPixelRect(ctx, 76, 132, 328, 174, palette.base);
+  drawPixelRect(ctx, 76, 132, 328, 3, palette.highlight);
+  drawPixelRect(ctx, 76, 303, 328, 3, palette.grainDark);
+
+  const drawOctagonalPlate = (
+    plateX: number,
+    plateY: number,
+    width: number,
+    height: number,
+    fill: string,
+  ) => {
+    const chamfer = Math.min(7, Math.floor(width / 4), Math.floor(height / 3));
+
+    for (let row = 0; row < height; row += 1) {
+      const topInset = row < chamfer ? chamfer - row : 0;
+      const bottomInset =
+        row >= height - chamfer ? row - (height - chamfer) + 1 : 0;
+      const inset = Math.max(topInset, bottomInset);
+      drawPixelRect(ctx, plateX + inset, plateY + row, width - inset * 2, 1, fill);
+    }
+
+    drawPixelRect(ctx, plateX + chamfer, plateY, width - chamfer * 2, 1, palette.highlight);
+    drawPixelRect(ctx, plateX, plateY + chamfer, 1, height - chamfer * 2, palette.plankD);
+    drawPixelRect(
+      ctx,
+      plateX + width - 1,
+      plateY + chamfer,
+      1,
+      height - chamfer * 2,
+      palette.grainDark,
+    );
+    drawPixelRect(
+      ctx,
+      plateX + chamfer,
+      plateY + height - 1,
+      width - chamfer * 2,
+      1,
+      palette.seam,
+    );
+
+    for (let step = 0; step < chamfer; step += 1) {
+      const upperInset = chamfer - step;
+      const lowerInset = step + 1;
+      const upperY = plateY + step;
+      const lowerY = plateY + height - chamfer + step;
+
+      drawPixelRect(ctx, plateX + upperInset, upperY, 1, 1, palette.plankD);
+      drawPixelRect(ctx, plateX + width - upperInset - 1, upperY, 1, 1, palette.grainDark);
+      drawPixelRect(ctx, plateX + lowerInset - 1, lowerY, 1, 1, palette.seam);
+      drawPixelRect(ctx, plateX + width - lowerInset, lowerY, 1, 1, palette.grainDark);
+
+      if (step > 1 && step < chamfer - 1 && step % 2 === 0) {
+        drawPixelRect(ctx, plateX + upperInset + 2, upperY + 1, 3, 1, palette.highlight);
+        drawPixelRect(ctx, plateX + width - upperInset - 5, upperY + 1, 3, 1, palette.seam);
+        drawPixelRect(ctx, plateX + lowerInset + 1, lowerY - 1, 3, 1, palette.plankD);
+        drawPixelRect(ctx, plateX + width - lowerInset - 4, lowerY - 1, 3, 1, palette.grainDark);
+      }
+    }
+  };
+
+  for (let y = 132; y < 306; y += plateHeight) {
+    for (let x = 76; x < 404; x += plateWidth) {
+      const width = Math.min(plateWidth - 1, 404 - x);
+      const height = Math.min(plateHeight - 1, 306 - y);
+      const index = Math.floor((x - 76) / plateWidth) + Math.floor((y - 132) / plateHeight);
+      const fill = index % 3 === 0 ? palette.plankA : index % 3 === 1 ? palette.plankB : palette.base;
+
+      drawOctagonalPlate(x, y, width, height, fill);
+
+      drawPixelRect(ctx, x + 12, y + 12, Math.max(14, Math.floor(width * 0.36)), 1, accentDim);
+      drawPixelRect(ctx, x + 12, y + 12, 1, Math.max(8, Math.floor(height * 0.42)), accentDim);
+      drawPixelRect(ctx, x + 14, y + 14, Math.max(10, Math.floor(width * 0.24)), 1, accent);
+
+      if (index % 2 === 0) {
+        drawPixelRect(ctx, x + width - 28, y + 11, 16, 1, palette.grainLight);
+        drawPixelRect(ctx, x + width - 13, y + 11, 1, 11, palette.grainLight);
+        drawPixelRect(ctx, x + width - 16, y + 22, 7, 1, accent);
+      } else {
+        drawPixelRect(ctx, x + 34, y + height - 15, 18, 1, palette.grainLight);
+        drawPixelRect(ctx, x + 51, y + height - 22, 1, 8, palette.grainLight);
+        drawPixelRect(ctx, x + 52, y + height - 22, 8, 1, accent);
+      }
+
+      [
+        { rx: 10, ry: 9, color: node },
+        { rx: width - 16, ry: 9, color: palette.highlight },
+        { rx: 10, ry: height - 15, color: palette.grainLight },
+        { rx: width - 16, ry: height - 15, color: node },
+      ].forEach((light) => {
+        drawPixelRect(ctx, x + light.rx, y + light.ry, 5, 5, palette.grainDark);
+        drawPixelRect(ctx, x + light.rx + 1, y + light.ry + 1, 3, 3, light.color);
+        drawPixelRect(ctx, x + light.rx + 2, y + light.ry + 1, 1, 1, "#ffffff");
+      });
+
+      for (let notch = 0; notch < 3; notch += 1) {
+        const notchX = x + 20 + notch * 18 + ((index + notch) % 2) * 3;
+        const notchY = y + 27 + ((index * 5 + notch * 7) % 8);
+        drawPixelRect(ctx, notchX, notchY, 10, 1, palette.grainDark);
+        drawPixelRect(ctx, notchX + 2, notchY + 2, 6, 1, palette.plankD);
+      }
+    }
+  }
+
+  [
+    { x: 122, y: 150, width: 72 },
+    { x: 222, y: 195, width: 92 },
+    { x: 112, y: 266, width: 58 },
+    { x: 292, y: 278, width: 70 },
+  ].forEach((trace, index) => {
+    drawPixelRect(ctx, trace.x, trace.y, trace.width, 1, index % 2 === 0 ? accent : palette.grainLight);
+    drawPixelRect(ctx, trace.x + trace.width - 1, trace.y, 1, 8 + index * 2, index % 2 === 0 ? accent : accentDim);
+    drawPixelRect(ctx, trace.x + trace.width - 4, trace.y + 7 + index * 2, 8, 1, index % 2 === 0 ? accent : accentDim);
+  });
+};
+
 const drawTatamiMatFloor = (
   ctx: CanvasRenderingContext2D,
   surface: RoomSurfaceDefinition,
@@ -4810,6 +4939,11 @@ const drawFloor = (
 
   if (surface.id === "industrial-metal-floor") {
     drawIndustrialMetalFloor(ctx, surface);
+    return;
+  }
+
+  if (surface.id === "gray-tech-floor") {
+    drawGrayTechFloor(ctx, surface);
     return;
   }
 
@@ -5105,6 +5239,156 @@ const drawIvoryWallpaper = (
   }
 };
 
+const drawWhiteTechWallpaper = (
+  ctx: CanvasRenderingContext2D,
+  surface: RoomSurfaceDefinition,
+) => {
+  const palette = surface.palette;
+  const traces: Array<Array<{ x: number; y: number }>> = [
+    [
+      { x: 92, y: 42 },
+      { x: 128, y: 42 },
+      { x: 128, y: 54 },
+      { x: 154, y: 54 },
+    ],
+    [
+      { x: 174, y: 34 },
+      { x: 174, y: 62 },
+      { x: 210, y: 62 },
+      { x: 210, y: 78 },
+      { x: 240, y: 78 },
+    ],
+    [
+      { x: 258, y: 40 },
+      { x: 292, y: 40 },
+      { x: 292, y: 30 },
+      { x: 326, y: 30 },
+      { x: 326, y: 54 },
+    ],
+    [
+      { x: 104, y: 94 },
+      { x: 144, y: 94 },
+      { x: 144, y: 106 },
+      { x: 188, y: 106 },
+    ],
+    [
+      { x: 222, y: 100 },
+      { x: 252, y: 100 },
+      { x: 252, y: 88 },
+      { x: 300, y: 88 },
+      { x: 300, y: 106 },
+      { x: 348, y: 106 },
+    ],
+    [
+      { x: 338, y: 70 },
+      { x: 374, y: 70 },
+      { x: 374, y: 92 },
+      { x: 392, y: 92 },
+    ],
+  ];
+  const panels = [
+    { x: 82, y: 26, width: 66, height: 28 },
+    { x: 154, y: 26, width: 74, height: 42 },
+    { x: 236, y: 26, width: 76, height: 32 },
+    { x: 318, y: 26, width: 78, height: 44 },
+    { x: 82, y: 62, width: 84, height: 50 },
+    { x: 174, y: 74, width: 70, height: 42 },
+    { x: 252, y: 66, width: 86, height: 50 },
+    { x: 344, y: 78, width: 50, height: 38 },
+  ];
+  const nodes = [
+    { x: 128, y: 42, size: 5 },
+    { x: 154, y: 54, size: 4 },
+    { x: 174, y: 62, size: 4 },
+    { x: 240, y: 78, size: 5 },
+    { x: 292, y: 40, size: 4 },
+    { x: 326, y: 54, size: 5 },
+    { x: 144, y: 94, size: 4 },
+    { x: 188, y: 106, size: 5 },
+    { x: 252, y: 100, size: 4 },
+    { x: 300, y: 88, size: 5 },
+    { x: 348, y: 106, size: 4 },
+    { x: 374, y: 70, size: 5 },
+  ];
+
+  const drawTrace = (points: Array<{ x: number; y: number }>, color: string) => {
+    points.slice(1).forEach((point, index) => {
+      const previous = points[index];
+      if (previous.x === point.x) {
+        drawPixelRect(ctx, point.x, Math.min(previous.y, point.y), 1, Math.abs(point.y - previous.y) + 1, color);
+        return;
+      }
+      drawPixelRect(ctx, Math.min(previous.x, point.x), point.y, Math.abs(point.x - previous.x) + 1, 1, color);
+    });
+  };
+
+  drawPixelRect(ctx, 70, 14, 340, 120, palette.border);
+  drawPixelRect(ctx, 76, 20, 328, 106, palette.base);
+  drawPixelRect(ctx, 76, 20, 328, 4, palette.highlight);
+  drawPixelRect(ctx, 76, 24, 4, 96, palette.grainDark);
+  drawPixelRect(ctx, 400, 24, 4, 96, palette.grainDark);
+
+  panels.forEach((panel, index) => {
+    const fill = index % 3 === 0 ? palette.plankA : index % 3 === 1 ? palette.plankB : palette.base;
+    drawPixelRect(ctx, panel.x, panel.y, panel.width, panel.height, fill);
+    drawPixelRect(ctx, panel.x, panel.y, panel.width, 1, palette.highlight);
+    drawPixelRect(ctx, panel.x, panel.y, 1, panel.height, palette.highlight);
+    drawPixelRect(ctx, panel.x + panel.width - 1, panel.y + 1, 1, panel.height - 1, palette.grainDark);
+    drawPixelRect(ctx, panel.x + 1, panel.y + panel.height - 1, panel.width - 1, 1, palette.seam);
+    if (index % 2 === 0) {
+      drawPixelRect(ctx, panel.x + 8, panel.y + 8, Math.min(34, panel.width - 18), 1, palette.grainLight);
+      drawPixelRect(ctx, panel.x + 10, panel.y + 12, Math.min(20, panel.width - 20), 1, palette.plankD);
+    }
+  });
+
+  [132, 230, 314].forEach((x) => {
+    drawPixelRect(ctx, x, 24, 1, 94, palette.seam);
+    drawPixelRect(ctx, x + 1, 26, 1, 90, palette.highlight);
+  });
+  [60, 116].forEach((y) => {
+    drawPixelRect(ctx, 82, y, 314, 1, palette.seam);
+    drawPixelRect(ctx, 84, y + 1, 310, 1, palette.highlight);
+  });
+
+  traces.forEach((trace, index) => drawTrace(trace, index % 2 === 0 ? palette.grainLight : palette.seam));
+
+  nodes.forEach((node, index) => {
+    const offset = Math.floor(node.size / 2);
+    drawPixelRect(ctx, node.x - offset - 1, node.y - offset - 1, node.size + 2, node.size + 2, palette.highlight);
+    drawPixelRect(ctx, node.x - offset, node.y - offset, node.size, node.size, palette.plankD);
+    drawPixelRect(ctx, node.x - offset + 1, node.y - offset + 1, Math.max(1, node.size - 2), Math.max(1, node.size - 2), index % 3 === 0 ? "#ffffff" : palette.grainLight);
+  });
+
+  [
+    { x: 356, y: 34 },
+    { x: 362, y: 34 },
+    { x: 368, y: 34 },
+    { x: 112, y: 72 },
+    { x: 118, y: 72 },
+    { x: 124, y: 72 },
+    { x: 276, y: 110 },
+    { x: 282, y: 110 },
+    { x: 288, y: 110 },
+  ].forEach((light) => {
+    drawPixelRect(ctx, light.x, light.y, 4, 2, palette.plankD);
+    drawPixelRect(ctx, light.x + 1, light.y, 2, 1, "#ffffff");
+  });
+
+  for (let x = 88; x < 392; x += 42) {
+    const y = 36 + ((x * 7) % 68);
+    drawPixelRect(ctx, x, y, 2, 2, palette.grainDark);
+    drawPixelRect(ctx, x + 10, y + 8, 3, 1, palette.highlight);
+  }
+
+  drawPixelRect(ctx, 76, 118, 328, 10, palette.seam);
+  drawPixelRect(ctx, 76, 118, 328, 2, palette.highlight);
+  drawPixelRect(ctx, 84, 122, 72, 2, palette.plankB);
+  drawPixelRect(ctx, 188, 122, 92, 2, palette.plankB);
+  drawPixelRect(ctx, 314, 122, 72, 2, palette.plankB);
+  drawPixelRect(ctx, 206, 119, 28, 4, palette.plankD);
+  drawPixelRect(ctx, 212, 120, 16, 1, "#ffffff");
+};
+
 const drawWall = (
   ctx: CanvasRenderingContext2D,
   surface: RoomSurfaceDefinition,
@@ -5126,6 +5410,11 @@ const drawWall = (
 
   if (surface.id === "warm-ivory-wallpaper") {
     drawIvoryWallpaper(ctx, surface);
+    return;
+  }
+
+  if (surface.id === "white-tech-wallpaper") {
+    drawWhiteTechWallpaper(ctx, surface);
     return;
   }
 
@@ -5823,6 +6112,519 @@ const drawOceanWindow = (
   drawPixelRect(ctx, x + frameSize, y + height - frameSize - 3, glassWidth, 3, "#5a2d16");
 };
 
+const drawCyberpunkCityWindow = (
+  ctx: CanvasRenderingContext2D,
+  windowDefinition: RoomWindowDefinition,
+  animationFrame: number,
+  windowTimeMs: number,
+) => {
+  const { x, y, width, height } = windowDefinition;
+  const frameSize = Math.max(5, Math.round(Math.min(width, height) * 0.07));
+  const glassX = x + frameSize;
+  const glassY = y + frameSize;
+  const glassWidth = width - frameSize * 2;
+  const glassHeight = height - frameSize * 2;
+  const windowDate = new Date(windowTimeMs);
+  const hour = windowDate.getHours() + windowDate.getMinutes() / 60;
+  const isDay = hour >= 7 && hour < 17.2;
+  const isDawn = hour >= 5 && hour < 7.4;
+  const isDusk = hour >= 17.2 && hour < 20.2;
+  const trafficLightsOn = hour >= 17.8 || hour < 5.6;
+  const dayWindowAmount = dayWindowVisibilityAtHour(hour);
+  const interiorLightAmount = interiorLightActivityAtHour(hour);
+  const interiorLightVisualAlpha =
+    hour >= 5 && hour < 7.5 ? 1 - smoothRange(hour, 5, 7.5) : 1;
+  const morningGoldAmount =
+    hour >= 5 && hour < 9.2
+      ? hour < 6.9
+        ? smoothRange(hour, 5, 6.9)
+        : 1 - smoothRange(hour, 6.9, 9.2)
+      : 0;
+  const duskRoseAmount =
+    hour >= 16.3 && hour < 20.3
+      ? hour < 18.4
+        ? smoothRange(hour, 16.3, 18.4)
+        : 1 - smoothRange(hour, 18.4, 20.3)
+      : 0;
+  const skylineBottom = glassY + glassHeight;
+  const skyBase = colorAtHour(hour, [
+    { hour: 0, color: "#0c132a" },
+    { hour: 5.2, color: "#26345d" },
+    { hour: 6.4, color: "#f29a64" },
+    { hour: 8, color: "#8dccec" },
+    { hour: 12, color: "#78badb" },
+    { hour: 16.8, color: "#5e7fb1" },
+    { hour: 18.4, color: "#bd6d86" },
+    { hour: 20.3, color: "#17264a" },
+  ]);
+  const skyBand = colorAtHour(hour, [
+    { hour: 0, color: "#18234a" },
+    { hour: 5.4, color: "#5a6088" },
+    { hour: 6.5, color: "#ffd08a" },
+    { hour: 9, color: "#d8f5ff" },
+    { hour: 14, color: "#b9e7f7" },
+    { hour: 17.4, color: "#ffaf89" },
+    { hour: 19.6, color: "#4b3b73" },
+    { hour: 22, color: "#111b3b" },
+  ]);
+  const farMetalColor = colorAtHour(hour, [
+    { hour: 0, color: "#151d31" },
+    { hour: 6.3, color: "#46546a" },
+    { hour: 8.2, color: "#253545" },
+    { hour: 13, color: "#1f2d3a" },
+    { hour: 18.3, color: "#5b3e4d" },
+    { hour: 20.2, color: "#151c31" },
+  ]);
+  const midMetalColor = colorAtHour(hour, [
+    { hour: 0, color: "#101826" },
+    { hour: 6.3, color: "#536276" },
+    { hour: 8.2, color: "#22313e" },
+    { hour: 13, color: "#1c2934" },
+    { hour: 18.3, color: "#704a55" },
+    { hour: 20.2, color: "#121927" },
+  ]);
+  const nearMetalColor = colorAtHour(hour, [
+    { hour: 0, color: "#0b111c" },
+    { hour: 6.3, color: "#445061" },
+    { hour: 8.2, color: "#182531" },
+    { hour: 13, color: "#15222d" },
+    { hour: 18.3, color: "#5d3d45" },
+    { hour: 20.2, color: "#0d121d" },
+  ]);
+  const detailColor = colorAtHour(hour, [
+    { hour: 0, color: "#26324e" },
+    { hour: 6.5, color: "#d19b70" },
+    { hour: 8.5, color: "#3d5265" },
+    { hour: 13, color: "#304555" },
+    { hour: 18.5, color: "#c07672" },
+    { hour: 21, color: "#1d2945" },
+  ]);
+  const edgeWarmColor = morningGoldAmount >= duskRoseAmount ? "#ffd178" : "#ff9d87";
+  const bridgeColor = colorAtHour(hour, [
+    { hour: 0, color: "#1b253c" },
+    { hour: 7, color: "#415766" },
+    { hour: 13, color: "#334653" },
+    { hour: 18.4, color: "#8f5a63" },
+    { hour: 21, color: "#172137" },
+  ]);
+  const glint = Math.floor(animationFrame / 30) % 2;
+
+  const drawPixelWithAlpha = (
+    targetCtx: CanvasRenderingContext2D,
+    pixelX: number,
+    pixelY: number,
+    pixelWidth: number,
+    pixelHeight: number,
+    color: string,
+    alpha: number,
+  ) => {
+    if (alpha <= 0) return;
+
+    targetCtx.save();
+    targetCtx.globalAlpha *= clamp01(alpha);
+    drawPixelRect(targetCtx, pixelX, pixelY, pixelWidth, pixelHeight, color);
+    targetCtx.restore();
+  };
+
+  const cyberHash = (hashX: number, hashY: number, salt: number) =>
+    Math.abs((Math.round(hashX) * 73856093) ^ (Math.round(hashY) * 19349663) ^ (salt * 83492791));
+
+  const drawCloud = (cloudX: number, cloudY: number, cloudWidth: number, alpha = 0.92) => {
+    const cloudColor = colorAtHour(hour, [
+      { hour: 0, color: "#25345d" },
+      { hour: 5.9, color: "#f3b08b" },
+      { hour: 8, color: "#eafdff" },
+      { hour: 13, color: "#f4fdff" },
+      { hour: 18.1, color: "#d78396" },
+      { hour: 21, color: "#24345b" },
+    ]);
+    const cloudShadow = colorAtHour(hour, [
+      { hour: 0, color: "#172541" },
+      { hour: 6, color: "#b87b82" },
+      { hour: 9, color: "#bddfec" },
+      { hour: 17.8, color: "#9a5775" },
+      { hour: 21, color: "#172540" },
+    ]);
+
+    drawPixelWithAlpha(ctx, cloudX, cloudY + 5, cloudWidth, 5, cloudShadow, alpha);
+    drawPixelWithAlpha(ctx, cloudX + 4, cloudY + 2, Math.floor(cloudWidth * 0.42), 5, cloudColor, alpha);
+    drawPixelWithAlpha(
+      ctx,
+      cloudX + Math.floor(cloudWidth * 0.34),
+      cloudY,
+      Math.floor(cloudWidth * 0.42),
+      7,
+      cloudColor,
+      alpha,
+    );
+    drawPixelWithAlpha(
+      ctx,
+      cloudX + Math.floor(cloudWidth * 0.68),
+      cloudY + 3,
+      Math.floor(cloudWidth * 0.26),
+      5,
+      cloudColor,
+      alpha,
+    );
+  };
+
+  type CyberTower = {
+    offset: number;
+    width: number;
+    height: number;
+    topInset?: number;
+    spire?: number;
+    crown?: "needle" | "fork" | "flat";
+    beacon?: boolean;
+  };
+
+  const drawCyberTower = (
+    tower: CyberTower,
+    index: number,
+    color: string,
+    depth: number,
+  ) => {
+    const towerWidth = Math.max(5, Math.round(glassWidth * tower.width));
+    const towerHeight = Math.max(16, Math.round(glassHeight * tower.height));
+    const towerX = glassX + Math.round(glassWidth * tower.offset);
+    const towerY = skylineBottom - towerHeight;
+    const topInset = tower.topInset ?? (index % 3 === 0 ? 0.18 : 0.1);
+    const shoulderHeight = Math.round(towerHeight * (index % 2 === 0 ? 0.16 : 0.1));
+    const insetPixels = Math.max(1, Math.round(towerWidth * topInset));
+    const upperWidth = Math.max(3, towerWidth - insetPixels * 2);
+    const upperX = towerX + Math.round((towerWidth - upperWidth) / 2);
+    const warmEdgeAlpha = Math.max(morningGoldAmount, duskRoseAmount * 0.92) * (0.45 + depth * 0.42);
+    const sideShade = depth > 0.72 ? "#080d16" : "#11192b";
+    const paneStepX = depth > 0.72 ? 4 : 3;
+    const paneStepY = depth > 0.72 ? 5 : 4;
+    const paneWidth = depth > 0.72 ? 2 : 1;
+    const paneHeight = depth > 0.72 ? 2 : 1;
+    const lightDensity = depth > 0.72 ? 116 : 94;
+
+    drawPixelRect(ctx, towerX, towerY + shoulderHeight, towerWidth, towerHeight - shoulderHeight, color);
+    drawPixelRect(ctx, upperX, towerY, upperWidth, shoulderHeight + 2, color);
+    drawPixelWithAlpha(ctx, towerX, towerY + shoulderHeight, 2, towerHeight - shoulderHeight, edgeWarmColor, warmEdgeAlpha);
+    drawPixelWithAlpha(ctx, upperX, towerY, 2, shoulderHeight + 2, edgeWarmColor, warmEdgeAlpha);
+    drawPixelWithAlpha(ctx, towerX + towerWidth - 2, towerY + 4, 2, towerHeight - 4, sideShade, 0.48);
+    drawPixelRect(ctx, towerX + 2, towerY + shoulderHeight + 2, Math.max(1, towerWidth - 4), 1, detailColor);
+
+    if (tower.crown === "fork") {
+      drawPixelRect(ctx, upperX + 1, towerY - 7, 1, 7, detailColor);
+      drawPixelRect(ctx, upperX + upperWidth - 2, towerY - 6, 1, 6, detailColor);
+    } else if (tower.crown === "needle" || tower.spire) {
+      const spireHeight = tower.spire ?? 9;
+      const spireX = upperX + Math.floor(upperWidth / 2);
+      drawPixelRect(ctx, spireX, towerY - spireHeight, 1 + (depth > 0.75 ? 1 : 0), spireHeight, detailColor);
+    }
+
+    if (tower.beacon && (isDusk || trafficLightsOn)) {
+      const pulse = Math.floor((animationFrame + index * 11) / 18) % 4;
+      const beaconColor = pulse === 0 ? "#ff3b45" : pulse === 1 ? "#ff6a36" : "#7e1f2a";
+      drawPixelRect(ctx, upperX + Math.floor(upperWidth / 2), towerY - (tower.spire ?? 4) - 2, 2, 2, beaconColor);
+    }
+
+    for (let bandY = towerY + shoulderHeight + 8; bandY < skylineBottom - 3; bandY += 11) {
+      drawPixelWithAlpha(ctx, towerX + 2, bandY, towerWidth - 4, 1, detailColor, 0.55);
+    }
+
+    for (let ribX = towerX + 4; ribX < towerX + towerWidth - 3; ribX += Math.max(7, paneStepX * 2)) {
+      drawPixelWithAlpha(ctx, ribX, towerY + shoulderHeight + 3, 1, towerHeight - shoulderHeight - 5, detailColor, 0.42);
+    }
+
+    for (let moduleY = towerY + shoulderHeight + 5; moduleY < skylineBottom - 6; moduleY += 13 + (index % 3)) {
+      const moduleSeed = cyberHash(towerX + index, moduleY, 43);
+      const moduleInset = 2 + (moduleSeed % Math.max(2, Math.floor(towerWidth * 0.22)));
+      const moduleWidth = Math.max(3, Math.floor(towerWidth * (0.26 + (moduleSeed % 4) * 0.08)));
+      drawPixelWithAlpha(ctx, towerX + moduleInset, moduleY, moduleWidth, 1, detailColor, 0.34 + depth * 0.18);
+    }
+
+    for (let shaftY = towerY + shoulderHeight + 10; shaftY < skylineBottom - 8; shaftY += 17) {
+      const leftClamp = towerX + 1 + ((shaftY + index) % 3);
+      const rightClamp = towerX + towerWidth - 3 - ((shaftY + index) % 2);
+      drawPixelWithAlpha(ctx, leftClamp, shaftY, 1, Math.min(7, skylineBottom - shaftY - 3), detailColor, 0.3);
+      drawPixelWithAlpha(ctx, rightClamp, shaftY + 3, 1, Math.min(6, skylineBottom - shaftY - 6), sideShade, 0.38);
+    }
+
+    if (towerWidth >= 12) {
+      for (let terraceY = towerY + shoulderHeight + 14 + (index % 4); terraceY < skylineBottom - 8; terraceY += 22) {
+        const terraceSide = (terraceY + index) % 2 === 0 ? -1 : 1;
+        const terraceX = terraceSide < 0 ? towerX - 2 : towerX + towerWidth - 1;
+        drawPixelWithAlpha(ctx, terraceX, terraceY, 3, 1, detailColor, 0.42);
+      }
+    }
+
+    for (let paneY = towerY + shoulderHeight + 6; paneY < skylineBottom - 4; paneY += paneStepY) {
+      for (let paneX = towerX + 3; paneX < towerX + towerWidth - 3; paneX += paneStepX) {
+        const seed = cyberHash(paneX, paneY, index + 3);
+        if (seed % 29 === 0) continue;
+
+        if (dayWindowAmount > 0 && seed % 4 !== 0) {
+          const dayPaneColors = ["#4f6b80", "#617f91", "#7895a5", "#4e665d"];
+          drawPixelWithAlpha(
+            ctx,
+            paneX,
+            paneY,
+            paneWidth,
+            paneHeight,
+            dayPaneColors[seed % dayPaneColors.length],
+            dayWindowAmount * (0.34 + depth * 0.24),
+          );
+        }
+
+        const lightRank = cyberHash(paneX + index * 5, paneY, index + 13) % 100;
+        if (lightRank < interiorLightAmount * lightDensity) {
+          const lightColors = ["#ffd36f", "#ffad55", "#ff8a3a", "#f7d088", "#ff6f32"];
+          drawPixelWithAlpha(
+            ctx,
+            paneX,
+            paneY,
+            paneWidth,
+            paneHeight,
+            lightColors[(seed + index) % lightColors.length],
+            interiorLightVisualAlpha,
+          );
+        }
+      }
+    }
+  };
+
+  const drawFlyingTraffic = () => {
+    const drawTrafficPixel = (
+      trafficX: number,
+      trafficY: number,
+      pixelWidth: number,
+      pixelHeight: number,
+      color: string,
+      alpha: number,
+    ) => {
+      if (alpha <= 0) return;
+
+      ctx.save();
+      ctx.globalAlpha *= clamp01(alpha);
+      ctx.fillStyle = color;
+      ctx.fillRect(trafficX, Math.round(trafficY), pixelWidth, pixelHeight);
+      ctx.restore();
+    };
+
+    const laneYs = [18, 27, 36, 45, 54, 63, 72];
+    laneYs.forEach((laneY, lane) => {
+      const cycle = 87500 + lane * 10500;
+      const direction = lane % 2 === 0 ? 1 : -1;
+      const totalTravel = glassWidth + 34;
+      const dotCount = lane < 4 ? 13 : 17;
+
+      for (let dot = 0; dot < dotCount; dot += 1) {
+        const progress = ((windowTimeMs + dot * (cycle / dotCount) + lane * 14731) % cycle) / cycle;
+        const trafficX =
+          direction === 1
+            ? glassX - 16 + totalTravel * progress
+            : glassX + glassWidth + 16 - totalTravel * progress;
+        const trafficPhase = progress * Math.PI * 2 + lane * 0.7 + dot * 0.19;
+        const trafficY = glassY + laneY + Math.sin(trafficPhase) * 1.4;
+        const seed = cyberHash(dot * 17 + lane * 31, laneY, lane + 71);
+        const dotWidth = trafficLightsOn
+          ? seed % 5 === 0
+            ? 3
+            : 2
+          : seed % 6 === 0
+            ? 2
+            : 1.5;
+
+        if (trafficLightsOn) {
+          const trafficColors = ["#ff6d2f", "#ff973a", "#d92c24", "#ffbd58"];
+          const trafficColor = trafficColors[seed % trafficColors.length];
+          drawTrafficPixel(trafficX, trafficY, dotWidth, 1, trafficColor, 0.9);
+          if (seed % 3 === 0) {
+            drawTrafficPixel(trafficX - direction * 2, trafficY, 1.5, 1, "#5a1d25", 0.22);
+          }
+        } else {
+          const trafficColors = ["#1f2c36", "#2f3d48", "#3d4f5a", "#263642"];
+          drawTrafficPixel(
+            trafficX,
+            trafficY,
+            dotWidth,
+            1,
+            trafficColors[seed % trafficColors.length],
+            0.78,
+          );
+          if (seed % 7 === 0) {
+            drawTrafficPixel(trafficX + 1, trafficY - 1, 1, 1, "#9fb7c5", 0.35);
+          }
+        }
+      }
+    });
+  };
+
+  const drawNeonBillboard = () => {
+    const signX = glassX + Math.floor(glassWidth * 0.62);
+    const signY = glassY + Math.floor(glassHeight * 0.58);
+    const signWidth = 6;
+    const signHeight = 24;
+    const pulse = (Math.sin(animationFrame / 9) + 1) / 2;
+    const scanY = signY + (animationFrame % signHeight);
+    const neonAlpha = trafficLightsOn || isDusk ? 0.72 + pulse * 0.28 : 0.26;
+
+    drawPixelWithAlpha(ctx, signX, signY, signWidth, signHeight, "#10091f", 0.92);
+    drawPixelWithAlpha(ctx, signX - 1, signY + 1, 1, signHeight - 2, "#4b164b", neonAlpha * 0.45);
+    drawPixelWithAlpha(ctx, signX, signY, 1, signHeight, "#ff4fd8", neonAlpha);
+    drawPixelWithAlpha(ctx, signX + signWidth - 1, signY, 1, signHeight, "#33f4ff", neonAlpha);
+    drawPixelWithAlpha(ctx, signX + 1, signY, signWidth - 2, 1, "#9d6bff", neonAlpha * 0.78);
+    drawPixelWithAlpha(ctx, signX + 1, signY + signHeight - 1, signWidth - 2, 1, "#ff9d3f", neonAlpha * 0.76);
+    drawPixelWithAlpha(ctx, signX + 1, scanY, signWidth - 2, 1, "#fff0a8", neonAlpha);
+
+    for (let dash = 3; dash < signHeight - 2; dash += 5) {
+      const dashOn = Math.floor(animationFrame / 16 + dash) % 2 === 0;
+      drawPixelWithAlpha(
+        ctx,
+        signX + 2,
+        signY + dash,
+        2,
+        2,
+        dashOn ? "#ff9d3f" : "#7040ff",
+        neonAlpha,
+      );
+    }
+  };
+
+  const farTowers: CyberTower[] = [
+    { offset: -0.03, width: 0.08, height: 0.44, crown: "needle", spire: 7 },
+    { offset: 0.06, width: 0.08, height: 0.9, crown: "needle", spire: 18 },
+    { offset: 0.18, width: 0.06, height: 0.48, crown: "flat" },
+    { offset: 0.27, width: 0.08, height: 0.62, crown: "fork" },
+    { offset: 0.4, width: 0.07, height: 0.8, crown: "needle", spire: 14 },
+    { offset: 0.53, width: 0.06, height: 0.58, crown: "flat" },
+    { offset: 0.65, width: 0.07, height: 0.72, crown: "needle", spire: 10 },
+    { offset: 0.78, width: 0.07, height: 0.86, crown: "needle", spire: 13 },
+    { offset: 0.91, width: 0.06, height: 0.52, crown: "fork" },
+  ];
+  const midTowers: CyberTower[] = [
+    { offset: -0.01, width: 0.1, height: 0.72, topInset: 0.12, crown: "needle", spire: 11, beacon: true },
+    { offset: 0.12, width: 0.08, height: 0.34, topInset: 0.08 },
+    { offset: 0.25, width: 0.09, height: 0.6, crown: "fork" },
+    { offset: 0.39, width: 0.11, height: 0.88, topInset: 0.16, crown: "needle", spire: 16, beacon: true },
+    { offset: 0.5, width: 0.1, height: 0.96, topInset: 0.22, crown: "needle", spire: 18, beacon: true },
+    { offset: 0.62, width: 0.08, height: 0.64, crown: "flat" },
+    { offset: 0.72, width: 0.11, height: 0.8, topInset: 0.18, crown: "needle", spire: 12, beacon: true },
+    { offset: 0.88, width: 0.09, height: 0.56, topInset: 0.08 },
+  ];
+  const nearTowers: CyberTower[] = [
+    { offset: -0.05, width: 0.12, height: 0.88, topInset: 0.08, crown: "needle", spire: 10, beacon: true },
+    { offset: 0.14, width: 0.12, height: 0.28, topInset: 0.06 },
+    { offset: 0.34, width: 0.08, height: 0.34, topInset: 0.12 },
+    { offset: 0.48, width: 0.09, height: 0.44, topInset: 0.18 },
+    { offset: 0.66, width: 0.08, height: 0.38, topInset: 0.1 },
+    { offset: 0.84, width: 0.16, height: 0.5, topInset: 0.08, beacon: true },
+  ];
+
+  const drawRoundedPixelRect = (
+    rectX: number,
+    rectY: number,
+    rectWidth: number,
+    rectHeight: number,
+    radius: number,
+    color: string,
+  ) => {
+    const roundedRadius = Math.max(0, Math.min(radius, rectWidth / 2, rectHeight / 2));
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(Math.round(rectX + roundedRadius), Math.round(rectY));
+    ctx.lineTo(Math.round(rectX + rectWidth - roundedRadius), Math.round(rectY));
+    ctx.quadraticCurveTo(
+      Math.round(rectX + rectWidth),
+      Math.round(rectY),
+      Math.round(rectX + rectWidth),
+      Math.round(rectY + roundedRadius),
+    );
+    ctx.lineTo(Math.round(rectX + rectWidth), Math.round(rectY + rectHeight - roundedRadius));
+    ctx.quadraticCurveTo(
+      Math.round(rectX + rectWidth),
+      Math.round(rectY + rectHeight),
+      Math.round(rectX + rectWidth - roundedRadius),
+      Math.round(rectY + rectHeight),
+    );
+    ctx.lineTo(Math.round(rectX + roundedRadius), Math.round(rectY + rectHeight));
+    ctx.quadraticCurveTo(
+      Math.round(rectX),
+      Math.round(rectY + rectHeight),
+      Math.round(rectX),
+      Math.round(rectY + rectHeight - roundedRadius),
+    );
+    ctx.lineTo(Math.round(rectX), Math.round(rectY + roundedRadius));
+    ctx.quadraticCurveTo(
+      Math.round(rectX),
+      Math.round(rectY),
+      Math.round(rectX + roundedRadius),
+      Math.round(rectY),
+    );
+    ctx.closePath();
+    ctx.fill();
+  };
+
+  drawRoundedPixelRect(x, y, width, height, 10, "#68727b");
+  drawRoundedPixelRect(x + 2, y + 2, width - 4, height - 4, 8, "#b7c1c8");
+  drawRoundedPixelRect(x + 5, y + 5, width - 10, height - 10, 5, "#45515b");
+  drawPixelRect(ctx, glassX, glassY, glassWidth, glassHeight, skyBase);
+  drawPixelRect(ctx, glassX, glassY, glassWidth, Math.max(10, Math.floor(glassHeight * 0.26)), skyBand);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(glassX, glassY, glassWidth, glassHeight);
+  ctx.clip();
+
+  const celestialProgress =
+    isDay || isDawn || isDusk
+      ? clamp01((hour - 5.1) / 14.8)
+      : hour >= 20.2
+        ? clamp01((hour - 20.2) / 9.3)
+        : clamp01((hour + 4.5) / 9.3);
+  const celestialX = glassX + 8 + Math.round((glassWidth - 24) * celestialProgress);
+  const celestialArc = Math.sin(celestialProgress * Math.PI);
+  const celestialY = glassY + 34 - Math.round(celestialArc * 27);
+
+  if (isDay || isDawn || isDusk) {
+    drawPixelWithAlpha(ctx, celestialX - 5, celestialY - 5, 11, 11, "#fff2a0", 0.94);
+    drawPixelWithAlpha(ctx, celestialX - 9, celestialY + 6, 18, 2, "#ffd27d", 0.86);
+  } else {
+    drawPixelWithAlpha(ctx, celestialX - 3, celestialY - 3, 8, 8, "#f5eec1", 0.82);
+    drawPixelRect(ctx, celestialX + 1, celestialY - 3, 5, 7, skyBase);
+  }
+
+  if (isDawn || isDusk) {
+    const glowColor = isDawn ? "#ffd083" : "#ff8d7b";
+    drawPixelWithAlpha(ctx, glassX + 4, glassY + Math.floor(glassHeight * 0.45), Math.floor(glassWidth * 0.58), 2, glowColor, 0.78);
+    drawPixelWithAlpha(ctx, glassX + 18, glassY + Math.floor(glassHeight * 0.54), Math.floor(glassWidth * 0.36), 1, "#ffe6a7", 0.65);
+  }
+
+  farTowers.forEach((tower, index) => drawCyberTower(tower, index, farMetalColor, 0.42));
+
+  const cloudTravel = glassWidth + 88;
+  const cloudDrift = (windowTimeMs / 98000) % cloudTravel;
+  drawCloud(glassX + ((cloudDrift + 6) % cloudTravel) - 44, glassY + 28, 42, 0.78);
+  drawCloud(glassX + ((cloudDrift + Math.floor(glassWidth * 0.45)) % cloudTravel) - 50, glassY + 42, 52, 0.86);
+  drawCloud(glassX + ((cloudDrift + Math.floor(glassWidth * 0.78)) % cloudTravel) - 46, glassY + 26, 34, 0.72);
+
+  midTowers.forEach((tower, index) => drawCyberTower(tower, index + 23, midMetalColor, 0.66));
+
+  drawPixelWithAlpha(ctx, glassX + Math.floor(glassWidth * 0.58), glassY + Math.floor(glassHeight * 0.42), 52, 2, bridgeColor, 0.86);
+  drawPixelWithAlpha(ctx, glassX + Math.floor(glassWidth * 0.2), glassY + Math.floor(glassHeight * 0.6), 38, 2, bridgeColor, 0.72);
+
+  drawFlyingTraffic();
+
+  nearTowers.forEach((tower, index) => drawCyberTower(tower, index + 47, nearMetalColor, 0.86));
+
+  drawNeonBillboard();
+
+  drawPixelWithAlpha(ctx, glassX + 7 + glint, glassY + 5, Math.floor(glassWidth * 0.34), 3, isDay ? "#e8fbff" : "#45669b", 0.72);
+  drawPixelWithAlpha(ctx, glassX + glassWidth - 24, glassY + 8, 1, Math.floor(glassHeight * 0.3), isDay ? "#c8eefb" : "#2b4776", 0.72);
+  ctx.restore();
+
+  drawPixelRect(ctx, x + frameSize, y + frameSize, glassWidth, 2, "#edf7fb");
+  drawPixelRect(ctx, x + frameSize, y + height - frameSize - 3, glassWidth, 3, "#5e6872");
+  drawPixelRect(ctx, x + frameSize - 1, y + frameSize, 2, glassHeight, "#d5e1e7");
+  drawPixelRect(ctx, x + width - frameSize - 1, y + frameSize, 2, glassHeight, "#3b4650");
+};
+
 const drawRoomWindow = (
   ctx: CanvasRenderingContext2D,
   windowDefinition: RoomWindowDefinition,
@@ -5836,6 +6638,11 @@ const drawRoomWindow = (
 
   if (windowDefinition.kind === "ocean-window") {
     drawOceanWindow(ctx, windowDefinition, frame, windowTimeMs);
+    return;
+  }
+
+  if (windowDefinition.kind === "cyberpunk-city-window") {
+    drawCyberpunkCityWindow(ctx, windowDefinition, frame, windowTimeMs);
     return;
   }
 

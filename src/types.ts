@@ -293,7 +293,7 @@ export interface RoomSurfaceDefinition {
 export interface RoomWindowDefinition {
   id: string;
   name: string;
-  kind: "cozy-window" | "city-night-window" | "ocean-window";
+  kind: "cozy-window" | "city-night-window" | "ocean-window" | "cyberpunk-city-window";
   x: number;
   y: number;
   width: number;
