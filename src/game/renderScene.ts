@@ -1840,6 +1840,64 @@ const drawBentoEatPose = (
   drawPixelRect(ctx, x - 4, y - 11, 10, 3, body);
 };
 
+const drawCookieEatPose = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  frame: number,
+  facing: AvatarRuntime["facing"],
+  body: string,
+  bodyLight: string,
+  ink: string,
+) => {
+  if (facing === "back") return;
+
+  const chew = Math.round(Math.sin(frame / 4));
+  const crumb = Math.round(Math.sin(frame / 5));
+  const cookie = "#c48650";
+  const cookieLight = "#f0c276";
+  const cookieDark = "#8c4a16";
+  const chip = "#5b2a10";
+
+  if (facing === "left" || facing === "right") {
+    const sideDirection = facing === "left" ? -1 : 1;
+    const cookieX = x + sideDirection * 13;
+    const cookieY = y - 9;
+
+    drawPixelRect(ctx, x + sideDirection * 8, y - 7, 10, 5, body);
+    drawPixelRect(ctx, x + sideDirection * 12, y - 6, 5, 3, bodyLight);
+    drawPixelRect(ctx, cookieX - 3, cookieY - 2, 6, 7, ink);
+    drawPixelRect(ctx, cookieX - 2, cookieY - 3, 5, 7, cookie);
+    drawPixelRect(ctx, cookieX - 1, cookieY - 2, 2, 1, cookieLight);
+    drawPixelRect(ctx, cookieX + sideDirection, cookieY - 3, 2, 2, "#21131b");
+    drawPixelRect(ctx, cookieX - 1, cookieY + 1, 1, 1, chip);
+    drawPixelRect(ctx, cookieX + 1, cookieY + 3, 1, 1, chip);
+    drawPixelRect(ctx, x + sideDirection * 8, y - 14 + chew, 3, 2, cookie);
+    drawPixelRect(ctx, x + sideDirection * 11, y - 13 + chew, 1, 1, chip);
+    drawPixelRect(ctx, x + sideDirection * 16, y - 15 + crumb, 2, 2, cookieLight);
+    return;
+  }
+
+  const cookieX = x;
+  const cookieY = y - 8;
+  drawPixelRect(ctx, x - 16, y - 7, 12, 6, body);
+  drawPixelRect(ctx, x + 8, y - 7, 12, 6, body);
+  drawPixelRect(ctx, x - 13, y - 5, 8, 3, bodyLight);
+  drawPixelRect(ctx, x + 9, y - 5, 8, 3, bodyLight);
+  drawPixelRect(ctx, cookieX - 5, cookieY - 3, 10, 8, ink);
+  drawPixelRect(ctx, cookieX - 4, cookieY - 4, 9, 7, cookie);
+  drawPixelRect(ctx, cookieX - 3, cookieY - 3, 4, 1, cookieLight);
+  drawPixelRect(ctx, cookieX + 2, cookieY - 4, 3, 3, "#21131b");
+  drawPixelRect(ctx, cookieX - 2, cookieY, 1, 1, chip);
+  drawPixelRect(ctx, cookieX + 1, cookieY + 2, 1, 1, chip);
+  drawPixelRect(ctx, cookieX + 3, cookieY + 1, 1, 1, cookieDark);
+  drawPixelRect(ctx, x - 3, y - 14 + chew, 4, 2, cookie);
+  drawPixelRect(ctx, x + 1, y - 13 + chew, 1, 1, chip);
+  drawPixelRect(ctx, x + 8, y - 15 + crumb, 2, 2, cookieLight);
+  drawPixelRect(ctx, x - 9, y - 13 - crumb, 2, 2, cookieDark);
+  drawPixelRect(ctx, x - 4, y - 11, 10, 2, ink);
+};
+
 const drawPhonePose = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -2274,6 +2332,10 @@ const drawAvatar = (
 
   if (avatar.behavior === "bento") {
     drawBentoEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
+  }
+
+  if (avatar.behavior === "cookie") {
+    drawCookieEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
 
   if (avatar.behavior === "phone") {

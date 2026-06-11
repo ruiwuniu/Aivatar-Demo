@@ -17,6 +17,7 @@ const GAME_CONSOLE_ITEM_ID = "game-console";
 const RECORD_PLAYER_ITEM_ID = "record-player";
 const EASEL_ITEM_ID = "oil-easel";
 const TASK_CABINET_ITEM_ID = "file-cabinet";
+const COOKIE_ITEM_ID = "cookie";
 const NAV_GRID_SIZE = 8;
 const NAV_ROOM_MIN_X = 84;
 const NAV_ROOM_MAX_X = 396;
@@ -60,6 +61,7 @@ const ARRIVAL_GATED_BEHAVIORS: BehaviorName[] = [
   "coffee",
   "cola",
   "bento",
+  "cookie",
   "brew",
   "relax",
   "admire",
@@ -764,7 +766,7 @@ const behaviorInteractionAlternates = (
     return table ? getFurnitureInteractionStandpoints(table, content, behavior) : undefined;
   }
 
-  if (behavior === "bento") {
+  if (behavior === "bento" || behavior === COOKIE_ITEM_ID) {
     const table = content.room.furniture.find((item) => item.id === "table");
     const fridge = content.room.furniture.find((item) => item.id === "fridge");
     const target = table ?? fridge;
@@ -913,7 +915,7 @@ export const targetForBehavior = (
     return targetNearFurniture(table, { targetX: 246, targetY: 202 });
   }
 
-  if (behavior === "bento") {
+  if (behavior === "bento" || behavior === COOKIE_ITEM_ID) {
     const table = content.room.furniture.find((item) => item.id === "table");
     const fridge = content.room.furniture.find((item) => item.id === "fridge");
     return targetNearFurniture(table ?? fridge, { targetX: 246, targetY: 202 });
@@ -1014,6 +1016,7 @@ export const expressionForBehavior = (
     case "coffee":
     case "cola":
     case "bento":
+    case "cookie":
     case "fetch_task_file":
     case "carry_task_file":
       return "happy";
@@ -1052,6 +1055,7 @@ const shouldFaceFrontAtTarget = (behavior: BehaviorName) =>
     "coffee",
     "cola",
     "bento",
+    "cookie",
     "snack",
     "brew",
     "paint",
@@ -1123,6 +1127,7 @@ const interactionStopDistanceForBehavior = (behavior: BehaviorName) => {
       "coffee",
       "cola",
       "bento",
+      "cookie",
       "snack",
       "brew",
       "paint",
@@ -2012,6 +2017,8 @@ const activityLabelForBehavior = (behavior: BehaviorName): string => {
       return "Drinking cola";
     case "bento":
       return "Eating bento";
+    case "cookie":
+      return "Eating cookie";
     case "admire":
       return "Admiring decor";
     case "relax":

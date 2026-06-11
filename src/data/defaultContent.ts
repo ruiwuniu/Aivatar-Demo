@@ -313,6 +313,7 @@ export const defaultContent: AivatarContent = {
   inventory: [
     { itemId: "coffee", quantity: 2 },
     { itemId: "bento", quantity: 1 },
+    { itemId: "cookie", quantity: 2 },
     { itemId: "repair-kit", quantity: 1 },
   ],
   placedItems: [
@@ -360,6 +361,14 @@ export const defaultContent: AivatarContent = {
       tags: ["consumable"],
       price: 14,
       effect: { energy: 10, mood: 8, hunger: 24 },
+    },
+    {
+      id: "cookie",
+      name: "Cookie",
+      kind: "food",
+      tags: ["consumable"],
+      price: 6,
+      effect: { energy: 4, mood: 12, hunger: 10 },
     },
     {
       id: "cola",
@@ -607,6 +616,14 @@ export const defaultContent: AivatarContent = {
         tags: ["consumable"],
         price: 14,
         effect: { energy: 10, mood: 8, hunger: 24 },
+      },
+      {
+        id: "cookie",
+        name: "Cookie",
+        kind: "food",
+        tags: ["consumable"],
+        price: 6,
+        effect: { energy: 4, mood: 12, hunger: 10 },
       },
       {
         id: "cola",

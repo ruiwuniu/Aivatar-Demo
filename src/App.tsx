@@ -113,6 +113,7 @@ const COFFEE_CUP_ITEM_ID = "coffee-cup";
 const COFFEE_ITEM_ID = "coffee";
 const COLA_ITEM_ID = "cola";
 const BENTO_ITEM_ID = "bento";
+const COOKIE_ITEM_ID = "cookie";
 const COFFEE_MAX_QUANTITY = 6;
 const TABLE_FURNITURE_ID = "table";
 const EMPTY_TABLE_COFFEE_CAPACITY = 0;
@@ -191,6 +192,7 @@ const BGM_TRACKS = [
     id: DEFAULT_BGM_TRACK_ID,
     copyKey: "audio.bgmTrack.pixelParlor",
     kind: "programmatic",
+    volumeScale: 1,
     stepMs: 210,
     pattern: [
       523.25, 659.25, 783.99, 659.25, 587.33, 698.46, 880, 698.46,
@@ -202,24 +204,49 @@ const BGM_TRACKS = [
     copyKey: "audio.bgmTrack.bachFugue577",
     kind: "audio",
     src: "/audio/bach-fugue-bwv-577-the-jig.ogg",
+    volumeScale: 0.58,
   },
   {
     id: "bach-invention-4",
     copyKey: "audio.bgmTrack.bachInvention4",
     kind: "audio",
     src: "/audio/bach-invention-4.wav",
+    volumeScale: 0.42,
   },
   {
     id: "nes-bach-bwv-565",
     copyKey: "audio.bgmTrack.nesBachBwv565",
     kind: "audio",
     src: "/audio/nes-bach-bwv-565.ogg",
+    volumeScale: 1,
+  },
+  {
+    id: "c64-bach-wtk2-prelude2",
+    copyKey: "audio.bgmTrack.c64BachWtk2Prelude2",
+    kind: "audio",
+    src: "/audio/c64-bach-wtk2-prelude2.ogg",
+    volumeScale: 1.6,
+  },
+  {
+    id: "nes-chopin-op25-no2",
+    copyKey: "audio.bgmTrack.nesChopinOp25No2",
+    kind: "audio",
+    src: "/audio/nes-chopin-op25-no2.ogg",
+    volumeScale: 0.74,
+  },
+  {
+    id: "synth-chopin-fantaisie-impromptu",
+    copyKey: "audio.bgmTrack.synthChopinFantaisieImpromptu",
+    kind: "audio",
+    src: "/audio/synth-chopin-fantaisie-impromptu.ogg",
+    volumeScale: 1.13,
   },
   {
     id: "cyberpunk-moonlight-sonata",
     copyKey: "audio.bgmTrack.cyberpunkMoonlight",
     kind: "audio",
     src: "/audio/cyberpunk-moonlight-sonata.mp3",
+    volumeScale: 1,
   },
 ] as const;
 const COFFEE_MACHINE_BREW_AUDIO_VOLUME_MULTIPLIER = 0.45;
@@ -247,6 +274,7 @@ const DEMO_BEHAVIORS: BehaviorName[] = [
   "coffee",
   "cola",
   "bento",
+  "cookie",
   "brew",
   "relax",
   "admire",
@@ -271,7 +299,8 @@ type DecorSurfaceCategoryId = "wallpaper" | "flooring";
 
 type LauncherAgentId = "codex" | "claude-code";
 type UiThemeId = "classic" | "terminal" | "terminal-amber";
-type BgmTrackId = (typeof BGM_TRACKS)[number]["id"];
+type BgmTrack = (typeof BGM_TRACKS)[number];
+type BgmTrackId = BgmTrack["id"];
 type AvatarAppearanceId = "octopus";
 
 type SaveSlotSummary = {
@@ -597,6 +626,8 @@ const memoryIdleBubbleCandidates = (memory: AivatarMemory): string[] => {
     add("气泡还在跳", "Fizz keeps dancing");
   } else if (memory.preferences.favoriteRecovery === "bento") {
     add("便当补一口", "Snack power ready");
+  } else if (memory.preferences.favoriteRecovery === "cookie") {
+    add("曲奇还香着", "Cookie crumb comfort");
   } else if (memory.preferences.favoriteRecovery === "sleep") {
     add("刚睡醒软软的", "Soft after sleep");
   } else if (memory.preferences.favoriteRecovery === "play") {
@@ -624,6 +655,8 @@ const memoryIdleBubbleCandidates = (memory: AivatarMemory): string[] => {
       add("气泡还在跳", "Fizz break");
     } else if (event.behavior === "bento" || event.itemId === BENTO_ITEM_ID) {
       add("便当补一口", "Snack power ready");
+    } else if (event.behavior === "cookie" || event.itemId === COOKIE_ITEM_ID) {
+      add("曲奇还香着", "Cookie crumb comfort");
     } else if (event.behavior === "sleep") {
       add("刚睡醒软软的", "Rest counts too");
     } else if (event.behavior === "play") {
@@ -1080,6 +1113,7 @@ const recordLifeMemory = (
         event.behavior === "coffee" ||
         event.behavior === "cola" ||
         event.behavior === "bento" ||
+        event.behavior === "cookie" ||
         event.behavior === "sleep" ||
         event.behavior === "play" ||
         event.behavior === "paint"
@@ -1154,6 +1188,7 @@ const traitChangesForConsumable = (
   if (item.id === COFFEE_ITEM_ID) return { focus: 1, warmth: 1 };
   if (item.id === COLA_ITEM_ID) return { efficiency: 1, warmth: 1 };
   if (item.id === BENTO_ITEM_ID) return { resilience: 1, warmth: 1 };
+  if (item.id === COOKIE_ITEM_ID) return { creativity: 1, warmth: 1 };
   return { resilience: 1, warmth: 1 };
 };
 
@@ -1164,7 +1199,43 @@ const behaviorForConsumable = (item: Pick<ItemDefinition, "id">): BehaviorName =
       ? "cola"
       : item.id === BENTO_ITEM_ID
         ? "bento"
+        : item.id === COOKIE_ITEM_ID
+          ? "cookie"
         : "interact";
+
+const foodPreferenceScoreForConsumable = (
+  item: Pick<ItemDefinition, "id" | "kind">,
+  memory: AivatarMemory | undefined,
+) => {
+  if (item.kind !== "food") return 0;
+
+  const normalized = memory ? normalizeMemory(memory) : undefined;
+  const traits = normalized?.growth.traits;
+  const affinity = normalized?.preferences.itemAffinities[item.id] ?? 0;
+
+  if (item.id === COOKIE_ITEM_ID) {
+    return (
+      (traits?.creativity ?? 0) +
+      (traits?.curiosity ?? 0) * 0.85 +
+      (traits?.warmth ?? 0) * 0.25 +
+      affinity * 8 +
+      1
+    );
+  }
+
+  if (item.id === BENTO_ITEM_ID) {
+    return (
+      (traits?.resilience ?? 0) +
+      (traits?.focus ?? 0) * 0.65 +
+      (traits?.efficiency ?? 0) * 0.5 +
+      (traits?.warmth ?? 0) * 0.15 +
+      affinity * 8 +
+      2
+    );
+  }
+
+  return affinity * 8;
+};
 
 const traitChangesForPurchase = (
   item: Pick<ItemDefinition, "kind" | "tags">,
@@ -3057,6 +3128,16 @@ export const App = () => {
     }
   };
 
+  const currentBgmTrack = () =>
+    BGM_TRACKS.find((track) => track.id === bgmTrackIdRef.current) ??
+    BGM_TRACKS[0];
+
+  const scaledBgmAudioVolume = (track: BgmTrack) =>
+    Math.min(1, Math.max(0, bgmVolume * track.volumeScale));
+
+  const scaledBgmGainValue = (track: BgmTrack) =>
+    Math.min(0.22, Math.max(0, bgmVolume * 0.22 * track.volumeScale));
+
   const ensureBgmAudioContext = () => {
     if (bgmAudioContextRef.current && bgmGainRef.current) {
       return {
@@ -3067,7 +3148,7 @@ export const App = () => {
     const AudioContextConstructor = window.AudioContext;
     const context = new AudioContextConstructor();
     const gain = context.createGain();
-    gain.gain.value = Math.min(0.22, Math.max(0, bgmVolume * 0.22));
+    gain.gain.value = scaledBgmGainValue(currentBgmTrack());
     gain.connect(context.destination);
     bgmAudioContextRef.current = context;
     bgmGainRef.current = gain;
@@ -3106,10 +3187,6 @@ export const App = () => {
     stopProgrammaticBgm();
     stopAudioBgm();
   };
-
-  const currentBgmTrack = () =>
-    BGM_TRACKS.find((track) => track.id === bgmTrackIdRef.current) ??
-    BGM_TRACKS[0];
 
   const playNextBgmStep = () => {
     if (!bgmPlayingRef.current) return;
@@ -3155,7 +3232,7 @@ export const App = () => {
         audio.load();
       }
       audio.loop = true;
-      audio.volume = Math.min(1, Math.max(0, bgmVolume));
+      audio.volume = scaledBgmAudioVolume(track);
       if (audio.paused) {
         void audio.play().catch(() => undefined);
       }
@@ -3163,7 +3240,7 @@ export const App = () => {
     }
     stopAudioBgm();
     const { gain } = ensureBgmAudioContext();
-    gain.gain.value = Math.min(0.22, Math.max(0, bgmVolume * 0.22));
+    gain.gain.value = scaledBgmGainValue(track);
     if (bgmPlayingRef.current) return;
     bgmPlayingRef.current = true;
     playNextBgmStep();
@@ -3978,10 +4055,10 @@ export const App = () => {
   useEffect(() => {
     localStorage.setItem(BGM_VOLUME_KEY, String(bgmVolume));
     if (bgmGainRef.current) {
-      bgmGainRef.current.gain.value = Math.min(0.22, Math.max(0, bgmVolume * 0.22));
+      bgmGainRef.current.gain.value = scaledBgmGainValue(currentBgmTrack());
     }
     if (bgmAudioRef.current) {
-      bgmAudioRef.current.volume = Math.min(1, Math.max(0, bgmVolume));
+      bgmAudioRef.current.volume = scaledBgmAudioVolume(currentBgmTrack());
     }
     if (bgmVolume <= 0) stopRecordPlayerBgm();
   }, [bgmVolume]);
@@ -4040,7 +4117,7 @@ export const App = () => {
     const isRecordPlayerAnimating = isRecordPlayerAnimatingForAudio();
     const isColaSipping = activeBehavior === "cola";
     const isCoffeeSipping = activeBehavior === "coffee";
-    const isBentoEating = activeBehavior === "bento";
+    const isFoodEating = activeBehavior === "bento" || activeBehavior === "cookie";
 
     if (isGameConsoleAnimating && !gameConsoleAnimatingRef.current) {
       prepareGameConsoleAudioForNewPlay();
@@ -4112,7 +4189,7 @@ export const App = () => {
       );
     }
 
-    if (!isBentoEating) {
+    if (!isFoodEating) {
       bentoEatingAudioRef.current = false;
       pauseAudio(bentoEatAudioRef.current);
     } else if (canPlayAudio && !bentoEatingAudioRef.current) {
@@ -6310,7 +6387,12 @@ export const App = () => {
       wallet: { bits: current.wallet.bits + 500 },
       inventory: addInventoryItem(
         addInventoryItem(
-          addInventoryItem(current.inventory, COFFEE_ITEM_ID, 6, 24),
+          addInventoryItem(
+            addInventoryItem(current.inventory, COFFEE_ITEM_ID, 6, 24),
+            COOKIE_ITEM_ID,
+            6,
+            24,
+          ),
           "bento",
           6,
           24,
@@ -7164,7 +7246,12 @@ export const App = () => {
       currentContent.placedItems,
     );
 
-    if (furniture.id === TABLE_FURNITURE_ID && coffeeDefinition && tableCoffeeCount > 0) {
+    if (
+      furniture.id === TABLE_FURNITURE_ID &&
+      (!preferredItemId || preferredItemId === COFFEE_ITEM_ID) &&
+      coffeeDefinition &&
+      tableCoffeeCount > 0
+    ) {
       setSave((current) => ({
         ...current,
         furnitureStorage: consumeFurnitureStorageItem(
@@ -7235,6 +7322,23 @@ export const App = () => {
           if (left.item.id === COFFEE_ITEM_ID) return -1;
           if (right.item.id === COFFEE_ITEM_ID) return 1;
         }
+        if (left.item.kind === "food" && right.item.kind === "food") {
+          const leftScore = foodPreferenceScoreForConsumable(
+            left.item,
+            saveRef.current.memory,
+          );
+          const rightScore = foodPreferenceScoreForConsumable(
+            right.item,
+            saveRef.current.memory,
+          );
+          if (leftScore !== rightScore) return rightScore - leftScore;
+          if (left.item.id === BENTO_ITEM_ID && right.item.id === COOKIE_ITEM_ID) {
+            return -1;
+          }
+          if (left.item.id === COOKIE_ITEM_ID && right.item.id === BENTO_ITEM_ID) {
+            return 1;
+          }
+        }
         if (left.item.kind === right.item.kind) return 0;
         return left.item.kind === "food" ? -1 : 1;
       })[0];
@@ -7281,14 +7385,7 @@ export const App = () => {
     });
 
     runtimeRef.current = setFurnitureBehavior(runtimeRef.current, furniture, 4, {
-      behavior:
-        consumable.item.id === COFFEE_ITEM_ID
-          ? "coffee"
-          : consumable.item.id === COLA_ITEM_ID
-            ? "cola"
-            : consumable.item.id === BENTO_ITEM_ID
-              ? "bento"
-              : "interact",
+      behavior: behaviorForConsumable(consumable.item),
       content: contentRef.current,
       startImmediately: true,
     });
@@ -7304,7 +7401,11 @@ export const App = () => {
       startedAt: performance.now(),
       endsAt: performance.now() + INTERACTION_FEEDBACK_SECONDS * 1000,
       bubbleText:
-        consumable.item.kind === "food" ? ui("thought.food") : ui("thought.drink"),
+        consumable.item.id === COOKIE_ITEM_ID
+          ? ui("thought.cookie")
+          : consumable.item.kind === "food"
+            ? ui("thought.food")
+            : ui("thought.drink"),
     });
   };
 

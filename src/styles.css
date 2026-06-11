@@ -4606,6 +4606,35 @@ meter::-webkit-meter-optimum-value {
   background: #ff8fa3;
 }
 
+.item-thumb-cookie .item-thumb-shape {
+  left: 3px;
+  top: 5px;
+  width: 14px;
+  height: 14px;
+  background: #c48650;
+  border: 2px solid #5b2a10;
+  border-radius: 0;
+  box-shadow: inset 2px 2px 0 #f0c276;
+}
+
+.item-thumb-cookie .item-thumb-accent {
+  left: 12px;
+  top: 5px;
+  width: 5px;
+  height: 5px;
+  background: #1e1418;
+  box-shadow: -5px 5px 0 #5b2a10, -1px 10px 0 #8c4a16;
+}
+
+.item-thumb-cookie .item-thumb-detail {
+  left: 5px;
+  top: 9px;
+  width: 2px;
+  height: 2px;
+  background: #5b2a10;
+  box-shadow: 5px 4px 0 #5b2a10, 9px 8px 0 #8c4a16;
+}
+
 .item-thumb-cola .item-thumb-shape {
   left: 6px;
   top: 5px;

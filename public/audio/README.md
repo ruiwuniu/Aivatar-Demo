@@ -88,7 +88,8 @@ starts the `coffee` drinking action.
 - Original file: `audio_eafefc49df.mp3`
 
 Aivatar uses this as a one-shot crunching and munching sound when the avatar
-starts the `bento` eating action. Playback stops when the `bento` action ends.
+starts the `bento` or `cookie` eating action. Playback stops when the food
+action ends.
 
 ## Game Console random pool
 
@@ -174,3 +175,36 @@ Aivatar uses this as a Record Player BGM track.
 - Original file: `NES - Bach - BWV 565.ogg`
 
 Aivatar uses this as a Record Player BGM track.
+
+## c64-bach-wtk2-prelude2.ogg
+
+- Source: C64 - Bach - wtk2-prelude2
+- Author: TheOuterLinux
+- URL: https://opengameart.org/content/c64-bach-wtk2-prelude2
+- License: CC0 1.0 Universal
+- Original file: `C64 - Bach - wtk2-prelude2.ogg`
+
+Aivatar uses this C64-style Bach BWV 871 rendering as a Record Player BGM
+track.
+
+## nes-chopin-op25-no2.ogg
+
+- Source: NES - Chopin - Op. 25 No. 2 - 140BPM
+- Author: TheOuterLinux
+- URL: https://opengameart.org/content/nes-chopin-op-25-no-2-140bpm
+- License: CC0 1.0 Universal
+- Original file: `NES - Chopin - Op. 25, No. 2 - 140BPM.ogg`
+
+Aivatar uses this NES-style Chopin Etude Op. 25 No. 2 rendering as a Record
+Player BGM track.
+
+## synth-chopin-fantaisie-impromptu.ogg
+
+- Source: Synth - Chopin - Fantaisie-impromptu - 120BPM
+- Author: TheOuterLinux
+- URL: https://opengameart.org/content/synth-chopin-fantaisie-impromptu-120bpm
+- License: CC0 1.0 Universal
+- Original file: `Synth - Chopin - Fantaisie-impromptu - 120BPM.ogg`
+
+Aivatar uses this synth-style Chopin Fantaisie-Impromptu Op. 66 rendering as a
+Record Player BGM track.

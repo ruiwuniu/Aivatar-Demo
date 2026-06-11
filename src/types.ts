@@ -76,6 +76,7 @@ export type BehaviorName =
   | "coffee"
   | "cola"
   | "bento"
+  | "cookie"
   | "brew"
   | "relax"
   | "admire"
@@ -154,7 +155,7 @@ export interface AivatarGrowth {
 export type IdleBubbleLanguagePreference = "auto" | "zh" | "en" | "mixed";
 
 export interface AivatarPreferences {
-  favoriteRecovery?: "coffee" | "cola" | "bento" | "sleep" | "play" | "paint";
+  favoriteRecovery?: "coffee" | "cola" | "bento" | "cookie" | "sleep" | "play" | "paint";
   favoriteActivity?: BehaviorName;
   idleBubbleLanguage?: IdleBubbleLanguagePreference;
   idleBubblePhrases?: string[];

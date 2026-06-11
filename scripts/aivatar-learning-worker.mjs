@@ -211,11 +211,21 @@ const compactText = (value, limit) =>
     .trim()
     .slice(0, limit);
 
+const normalizeBubblePhrase = (value) => {
+  const compact = compactText(value, 80);
+  if (!compact || /\[(?:url|path|email|secret)\]/i.test(compact)) return "";
+  if (/[{}()[\];=<>]{3,}/.test(compact)) return "";
+  return compact
+    .replace(/['’]/g, "")
+    .replace(/[\p{P}\p{S}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
 const safePhrase = (value) => {
-  const phrase = compactText(value, 80);
+  const phrase = normalizeBubblePhrase(value);
   const length = Array.from(phrase).length;
   if (length < 2 || length > 28) return null;
-  if (/[{}()[\];=<>]{3,}/.test(phrase)) return null;
   return phrase;
 };
 
@@ -357,7 +367,9 @@ Extract only low-sensitivity, pet-appropriate learning from this session digest.
 Rules:
 - Do not preserve source code, secrets, full filesystem paths, email addresses, URLs, stack traces, or private data.
 - Do not invent technical facts beyond the digest.
-- Keep bubbles short, warm, and suitable for an idle desktop pet.
+- For idleBubbleCandidates, write each bubble as one complete short sentence, not keywords, labels, slogans, or clipped fragments.
+- Do not use punctuation in idleBubbleCandidates at all: no periods, commas, exclamation marks, question marks, colons, quotes, brackets, emoji, or decorative symbols.
+- Make idleBubbleCandidates sound like something a real gentle human companion might say in one breath.
 - ${languageInstruction(detectSessionLanguage(options, digest))}
 - Match the bubble voice to Aivatar's current trait snapshot when available.
 - Trait changes must be tiny integers from -3 to 3.
