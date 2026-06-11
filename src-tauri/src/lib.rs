@@ -3,7 +3,10 @@ use std::sync::{
     Arc,
 };
 
-use tauri::{Emitter, Manager, Size};
+use tauri::{path::BaseDirectory, Emitter, Manager, Size};
+
+mod codex_discovery;
+mod local_bridge;
 
 #[derive(serde::Serialize)]
 struct BridgeStartResult {
@@ -51,6 +54,106 @@ fn project_root() -> Result<std::path::PathBuf, String> {
         .ok_or_else(|| "Could not resolve Aivatar project root.".to_string())
 }
 
+fn development_project_root() -> Option<std::path::PathBuf> {
+    let root = project_root().ok()?;
+    let package_json = root.join("package.json");
+    let bridge_script = root.join("scripts").join("codex-status-bridge.mjs");
+    package_json.is_file().then_some(())?;
+    bridge_script.is_file().then_some(())?;
+    Some(root)
+}
+
+fn connector_root(app: Option<&tauri::AppHandle>) -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("AIVATAR_SESSION_PLUGIN_ROOT").map(std::path::PathBuf::from)
+    {
+        if path.join("scripts").join("aivatar-heartbeat.mjs").is_file() {
+            return Some(path);
+        }
+    }
+
+    if let Ok(root) = project_root() {
+        let path = root.join("plugins").join("aivatar-session-bridge");
+        if path.join("scripts").join("aivatar-heartbeat.mjs").is_file() {
+            return Some(path);
+        }
+    }
+
+    let Some(app) = app else {
+        return None;
+    };
+
+    let mut candidates = Vec::new();
+    if let Ok(path) = app
+        .path()
+        .resolve("../plugins/aivatar-session-bridge", BaseDirectory::Resource)
+    {
+        candidates.push(path);
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(
+            resource_dir
+                .join("_up_")
+                .join("plugins")
+                .join("aivatar-session-bridge"),
+        );
+        candidates.push(resource_dir.join("plugins").join("aivatar-session-bridge"));
+        candidates.push(resource_dir.join("aivatar-session-bridge"));
+    }
+
+    candidates
+        .into_iter()
+        .find(|path| path.join("scripts").join("aivatar-heartbeat.mjs").is_file())
+}
+
+fn scripts_root(app: Option<&tauri::AppHandle>) -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("AIVATAR_SCRIPTS_ROOT").map(std::path::PathBuf::from) {
+        if path.join("aivatar-connected-run.mjs").is_file() {
+            return Some(path);
+        }
+    }
+
+    if let Some(root) = development_project_root() {
+        let path = root.join("scripts");
+        if path.join("aivatar-connected-run.mjs").is_file() {
+            return Some(path);
+        }
+    }
+
+    let Some(app) = app else {
+        return None;
+    };
+
+    let mut candidates = Vec::new();
+    if let Ok(path) = app.path().resolve("../scripts", BaseDirectory::Resource) {
+        candidates.push(path);
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("_up_").join("scripts"));
+        candidates.push(resource_dir.join("scripts"));
+    }
+
+    candidates
+        .into_iter()
+        .find(|path| path.join("aivatar-connected-run.mjs").is_file())
+}
+
+fn command_exists(command: &str) -> bool {
+    let lookup = if cfg!(target_os = "windows") {
+        ("where.exe", vec![command.to_string()])
+    } else {
+        ("which", vec![command.to_string()])
+    };
+
+    std::process::Command::new(lookup.0)
+        .args(lookup.1)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 fn is_status_bridge_running() -> bool {
     std::net::TcpStream::connect_timeout(
         &std::net::SocketAddr::from(([127, 0, 0, 1], 38988)),
@@ -59,49 +162,32 @@ fn is_status_bridge_running() -> bool {
     .is_ok()
 }
 
-fn spawn_hidden_npm_script(root: &std::path::Path, script: &str) -> Result<(), String> {
-    let mut command = std::process::Command::new("npm.cmd");
-    command
-        .args(["run", script])
-        .current_dir(root)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("Could not start {script}: {error}"))
-}
-
-fn start_status_bridge_inner() -> Result<BridgeStartResult, String> {
-    let root = project_root()?;
+fn start_status_bridge_inner(app: Option<&tauri::AppHandle>) -> Result<BridgeStartResult, String> {
+    let connector = connector_root(app);
     if is_status_bridge_running() {
-        let _ = spawn_hidden_npm_script(&root, "status:discover");
+        let _ = codex_discovery::start();
         return Ok(BridgeStartResult {
             status: "already-running".to_string(),
             message: "Bridge already running.".to_string(),
         });
     }
 
-    spawn_hidden_npm_script(&root, "status:bridge")?;
-    let _ = spawn_hidden_npm_script(&root, "status:discover");
+    local_bridge::start()?;
+    let _ = codex_discovery::start();
 
     Ok(BridgeStartResult {
         status: "started".to_string(),
-        message: "Bridge started.".to_string(),
+        message: if connector.is_some() {
+            "Native bridge started with bundled connector available.".to_string()
+        } else {
+            "Native bridge started. Connector was not found.".to_string()
+        },
     })
 }
 
 #[tauri::command]
-fn start_status_bridge() -> Result<BridgeStartResult, String> {
-    start_status_bridge_inner()
+fn start_status_bridge(app: tauri::AppHandle) -> Result<BridgeStartResult, String> {
+    start_status_bridge_inner(Some(&app))
 }
 
 fn run_windows_picker(script: &str) -> Result<Option<String>, String> {
@@ -181,7 +267,10 @@ fn powershell_single_quote(value: &str) -> String {
 }
 
 #[tauri::command]
-fn start_agent_cli(request: AgentCliLaunchRequest) -> Result<AgentCliLaunchResult, String> {
+fn start_agent_cli(
+    app: tauri::AppHandle,
+    request: AgentCliLaunchRequest,
+) -> Result<AgentCliLaunchResult, String> {
     let cwd = std::path::PathBuf::from(request.cwd.trim());
     if !cwd.is_dir() {
         return Err("Working directory does not exist.".to_string());
@@ -193,11 +282,27 @@ fn start_agent_cli(request: AgentCliLaunchRequest) -> Result<AgentCliLaunchResul
         _ => return Err("Unsupported agent.".to_string()),
     };
 
-    let _ = start_status_bridge_inner()?;
+    if !command_exists(command) {
+        return Err(format!(
+            "{agent} CLI was not found on PATH. Install it first, then restart Aivatar."
+        ));
+    }
+    if !command_exists("node") {
+        return Err(
+            "Node.js was not found on PATH. Install Node.js first, then restart Aivatar."
+                .to_string(),
+        );
+    }
 
-    let runner = project_root()?
-        .join("scripts")
-        .join("aivatar-connected-run.mjs");
+    let _ = start_status_bridge_inner(Some(&app))?;
+
+    let Some(scripts) = scripts_root(Some(&app)) else {
+        return Err(
+            "Aivatar connected CLI runner was not found in the app resources.".to_string(),
+        );
+    };
+
+    let runner = scripts.join("aivatar-connected-run.mjs");
     let extra_args = request
         .args
         .as_deref()
@@ -271,7 +376,10 @@ fn safe_prompt_file_name(session_id: &str) -> String {
 }
 
 #[tauri::command]
-fn start_task_agent(request: TaskAgentLaunchRequest) -> Result<TaskAgentLaunchResult, String> {
+fn start_task_agent(
+    app: tauri::AppHandle,
+    request: TaskAgentLaunchRequest,
+) -> Result<TaskAgentLaunchResult, String> {
     let cwd = std::path::PathBuf::from(request.cwd.trim());
     if !cwd.is_dir() {
         return Err("Working directory does not exist.".to_string());
@@ -296,6 +404,18 @@ fn start_task_agent(request: TaskAgentLaunchRequest) -> Result<TaskAgentLaunchRe
         _ => return Err("Unsupported agent.".to_string()),
     };
 
+    if !command_exists(command) {
+        return Err(format!(
+            "{agent} CLI was not found on PATH. Install it first, then restart Aivatar."
+        ));
+    }
+    if !command_exists("node") {
+        return Err(
+            "Node.js was not found on PATH. Install Node.js first, then restart Aivatar."
+                .to_string(),
+        );
+    }
+
     let task_content = std::fs::read_to_string(&task_path)
         .map_err(|error| format!("Could not read task file: {error}"))?;
     let task_prompt_chars = task_content.chars().count();
@@ -312,11 +432,15 @@ fn start_task_agent(request: TaskAgentLaunchRequest) -> Result<TaskAgentLaunchRe
     std::fs::write(&prompt_path, task_content)
         .map_err(|error| format!("Could not create task prompt copy: {error}"))?;
 
-    let _ = start_status_bridge_inner()?;
+    let _ = start_status_bridge_inner(Some(&app))?;
 
-    let runner = project_root()?
-        .join("scripts")
-        .join("aivatar-connected-run.mjs");
+    let Some(scripts) = scripts_root(Some(&app)) else {
+        return Err(
+            "Aivatar connected task runner was not found in the app resources.".to_string(),
+        );
+    };
+
+    let runner = scripts.join("aivatar-connected-run.mjs");
     let extra_args = request
         .args
         .as_deref()
@@ -432,7 +556,8 @@ pub fn run() {
                     }
                 });
             }
-            let _ = start_status_bridge_inner();
+            let app_handle = app.handle().clone();
+            let _ = start_status_bridge_inner(Some(&app_handle));
             Ok(())
         })
         .run(tauri::generate_context!())

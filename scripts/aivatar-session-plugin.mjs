@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import { access } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const defaultPluginRoot = "C:\\Users\\rniu\\plugins\\aivatar-session-bridge";
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = dirname(scriptDir);
+const defaultPluginRoot = join(repoRoot, "plugins", "aivatar-session-bridge");
 const pluginRoot = process.env.AIVATAR_SESSION_PLUGIN_ROOT ?? defaultPluginRoot;
 
 const commands = {
@@ -22,9 +25,9 @@ const usage = () => {
   console.log(`Usage: node scripts/aivatar-session-plugin.mjs <setup|connect|disconnect> [args...]
 
 Environment:
-  AIVATAR_SESSION_PLUGIN_ROOT  Override plugin path.
+  AIVATAR_SESSION_PLUGIN_ROOT  Path to an installed aivatar-session-bridge plugin.
 
-Default plugin path:
+Fallback plugin path:
   ${defaultPluginRoot}`);
 };
 

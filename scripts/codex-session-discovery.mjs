@@ -7,11 +7,12 @@ import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = dirname(scriptDir);
 const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
 const sessionsRoot = process.env.CODEX_SESSIONS_ROOT ?? join(codexHome, "sessions");
 const pluginRoot =
   process.env.AIVATAR_SESSION_PLUGIN_ROOT ??
-  "C:\\Users\\rniu\\plugins\\aivatar-session-bridge";
+  join(repoRoot, "plugins", "aivatar-session-bridge");
 const heartbeatScript = join(pluginRoot, "scripts", "aivatar-heartbeat.mjs");
 const watcherScript = join(pluginRoot, "scripts", "aivatar-watch.mjs");
 const presenceEndpoint =

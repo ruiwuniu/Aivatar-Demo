@@ -1,0 +1,33 @@
+{
+  "name": "aivatar-session-bridge",
+  "version": "0.1.0",
+  "description": "Report Codex session presence and task status to the local Aivatar bridge.",
+  "author": {
+    "name": "Aivatar",
+    "email": "",
+    "url": ""
+  },
+  "homepage": "",
+  "repository": "",
+  "license": "MIT",
+  "keywords": ["aivatar", "codex", "session", "status", "bridge"],
+  "skills": "./skills/",
+  "hooks": "./hooks.json",
+  "interface": {
+    "displayName": "Aivatar Session Bridge",
+    "shortDescription": "Connect Codex session status to Aivatar.",
+    "longDescription": "Reports the current Codex thread as an Aivatar agent session through the local HTTP bridge, including presence, task state, and tool-activity heartbeat updates.",
+    "developerName": "Aivatar",
+    "category": "Productivity",
+    "capabilities": ["Automation", "Status"],
+    "websiteURL": "",
+    "privacyPolicyURL": "",
+    "termsOfServiceURL": "",
+    "defaultPrompt": [
+      "Connect this Codex session to Aivatar.",
+      "Report this task's status to Aivatar.",
+      "Set my Aivatar session active."
+    ],
+    "brandColor": "#9EE6FF"
+  }
+}

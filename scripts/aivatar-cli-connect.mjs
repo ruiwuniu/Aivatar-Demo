@@ -12,9 +12,10 @@ const activeEndpoint =
   process.env.AIVATAR_ACTIVE_ENDPOINT ?? "http://127.0.0.1:38988/agent-active";
 const presenceEndpoint =
   process.env.AIVATAR_PRESENCE_ENDPOINT ?? "http://127.0.0.1:38988/agent-presence";
-const defaultPluginRoot = "C:\\Users\\rniu\\plugins\\aivatar-session-bridge";
-const pluginRoot = process.env.AIVATAR_SESSION_PLUGIN_ROOT ?? defaultPluginRoot;
 const scriptDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = dirname(scriptDir);
+const defaultPluginRoot = join(repoRoot, "plugins", "aivatar-session-bridge");
+const pluginRoot = process.env.AIVATAR_SESSION_PLUGIN_ROOT ?? defaultPluginRoot;
 const heartbeatScript = join(pluginRoot, "scripts", "aivatar-heartbeat.mjs");
 const watcherScript = join(pluginRoot, "scripts", "aivatar-watch.mjs");
 const watchdogScript = join(scriptDir, "aivatar-cli-watchdog.mjs");

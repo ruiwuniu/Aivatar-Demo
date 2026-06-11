@@ -2,15 +2,15 @@
 
 The local Aivatar session plugin connects the current Codex Desktop session to the Aivatar status bridge. It marks the current session active, keeps presence alive through a heartbeat, watches the current Codex Desktop rollout JSONL for per-turn activity, and can report token usage deltas when a Codex session completes.
 
-## Plugin Location
+## Connector Location
 
-The current local plugin lives outside this repo:
+The Aivatar session connector is bundled in this repo:
 
 ```text
-C:\Users\rniu\plugins\aivatar-session-bridge
+plugins\aivatar-session-bridge
 ```
 
-Project npm scripts use this path by default. If the plugin moves, set:
+Project npm scripts use this path by default. Developers can override it with:
 
 ```powershell
 $env:AIVATAR_SESSION_PLUGIN_ROOT = "C:\path\to\aivatar-session-bridge"
@@ -86,10 +86,10 @@ For normal Codex Desktop work, use the session plugin for connection and disconn
 Manual status updates are still useful for explicit milestones, errors, or older clients:
 
 ```powershell
-node C:\Users\rniu\plugins\aivatar-session-bridge\scripts\aivatar-status.mjs executing "Applying changes"
-node C:\Users\rniu\plugins\aivatar-session-bridge\scripts\aivatar-status.mjs waiting_for_user "Need confirmation"
-node C:\Users\rniu\plugins\aivatar-session-bridge\scripts\aivatar-status.mjs complete "Task finished"
-node C:\Users\rniu\plugins\aivatar-session-bridge\scripts\aivatar-status.mjs error "Task failed"
+node .\plugins\aivatar-session-bridge\scripts\aivatar-status.mjs executing "Applying changes"
+node .\plugins\aivatar-session-bridge\scripts\aivatar-status.mjs waiting_for_user "Need confirmation"
+node .\plugins\aivatar-session-bridge\scripts\aivatar-status.mjs complete "Task finished"
+node .\plugins\aivatar-session-bridge\scripts\aivatar-status.mjs error "Task failed"
 ```
 
 Token baseline behavior:
@@ -106,4 +106,4 @@ The existing PostToolUse hook remains installed as a fallback activity signal, b
 - `aivatar-connect` is not recognized: run `npm.cmd run aivatar:session:setup`, then open a new terminal. Or use `npm.cmd run aivatar:connect`.
 - Aivatar does not show the session: make sure the bridge is running with the Tauri app or `npm.cmd run status:bridge`.
 - Old session still appears connected: run `npm.cmd run aivatar:disconnect -- --session OLD_SESSION_ID`. If an old heartbeat terminal is still open, stop it with `Ctrl+C`.
-- Plugin path changed: set `AIVATAR_SESSION_PLUGIN_ROOT` before running the npm command.
+- Connector path changed: set `AIVATAR_SESSION_PLUGIN_ROOT` before running the npm command.
