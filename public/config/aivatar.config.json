@@ -594,6 +594,15 @@
       "effect": { "mood": 5, "energy": 2 }
     },
     {
+      "id": "space-white-deep-gray-bed-skin",
+      "name": "Space White Deep Gray Bed Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "bed"],
+      "targetFurnitureId": "bed",
+      "price": 300,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
       "id": "industrial-desk-skin",
       "name": "Industrial Desk Skin",
       "kind": "decor",
@@ -605,6 +614,15 @@
     {
       "id": "rococo-ivory-desk-skin",
       "name": "Rococo Ivory Desk Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "desk"],
+      "targetFurnitureId": "desk",
+      "price": 340,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
+      "id": "transparent-acrylic-desk-skin",
+      "name": "Transparent Acrylic Desk Skin",
       "kind": "decor",
       "tags": ["furniture-skin", "desk"],
       "targetFurnitureId": "desk",
@@ -630,6 +648,15 @@
       "effect": { "mood": 4, "energy": 1 }
     },
     {
+      "id": "white-tech-table-skin",
+      "name": "White Tech Table Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "table"],
+      "targetFurnitureId": "table",
+      "price": 340,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
       "id": "ivory-fridge-skin",
       "name": "Ivory Fridge Skin",
       "kind": "decor",
@@ -637,6 +664,24 @@
       "targetFurnitureId": "fridge",
       "price": 300,
       "effect": { "mood": 4, "energy": 2 }
+    },
+    {
+      "id": "red-retro-fridge-skin",
+      "name": "Red Retro Fridge Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "fridge"],
+      "targetFurnitureId": "fridge",
+      "price": 340,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
+      "id": "white-tech-fridge-skin",
+      "name": "White Tech Fridge Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "fridge"],
+      "targetFurnitureId": "fridge",
+      "price": 340,
+      "effect": { "mood": 5, "energy": 2 }
     },
     {
       "id": "city-night-window",
@@ -938,6 +983,15 @@
         "effect": { "mood": 5, "energy": 2 }
       },
       {
+        "id": "space-white-deep-gray-bed-skin",
+        "name": "Space White Deep Gray Bed Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "bed"],
+        "targetFurnitureId": "bed",
+        "price": 300,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
         "id": "industrial-desk-skin",
         "name": "Industrial Desk Skin",
         "kind": "decor",
@@ -949,6 +1003,15 @@
       {
         "id": "rococo-ivory-desk-skin",
         "name": "Rococo Ivory Desk Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "desk"],
+        "targetFurnitureId": "desk",
+        "price": 340,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "transparent-acrylic-desk-skin",
+        "name": "Transparent Acrylic Desk Skin",
         "kind": "decor",
         "tags": ["furniture-skin", "desk"],
         "targetFurnitureId": "desk",
@@ -974,6 +1037,15 @@
         "effect": { "mood": 4, "energy": 1 }
       },
       {
+        "id": "white-tech-table-skin",
+        "name": "White Tech Table Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "table"],
+        "targetFurnitureId": "table",
+        "price": 340,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
         "id": "ivory-fridge-skin",
         "name": "Ivory Fridge Skin",
         "kind": "decor",
@@ -981,6 +1053,24 @@
         "targetFurnitureId": "fridge",
         "price": 300,
         "effect": { "mood": 4, "energy": 2 }
+      },
+      {
+        "id": "red-retro-fridge-skin",
+        "name": "Red Retro Fridge Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "fridge"],
+        "targetFurnitureId": "fridge",
+        "price": 340,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "white-tech-fridge-skin",
+        "name": "White Tech Fridge Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "fridge"],
+        "targetFurnitureId": "fridge",
+        "price": 340,
+        "effect": { "mood": 5, "energy": 2 }
       },
       {
         "id": "city-night-window",

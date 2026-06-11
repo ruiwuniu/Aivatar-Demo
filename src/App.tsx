@@ -101,11 +101,16 @@ const BED_INDUSTRIAL_SKIN_ID = "industrial-bed-skin";
 const BED_WOOD_RED_SKIN_ID = "wood-red-bed-skin";
 const BED_IVORY_PINK_PLAID_SKIN_ID = "ivory-pink-plaid-bed-skin";
 const BED_MODERN_MINIMAL_SKIN_ID = "modern-minimal-bed-skin";
+const BED_SPACE_WHITE_DEEP_GRAY_SKIN_ID = "space-white-deep-gray-bed-skin";
 const DESK_INDUSTRIAL_SKIN_ID = "industrial-desk-skin";
 const DESK_ROCOCO_IVORY_SKIN_ID = "rococo-ivory-desk-skin";
+const DESK_TRANSPARENT_ACRYLIC_SKIN_ID = "transparent-acrylic-desk-skin";
 const TABLE_ROCOCO_IVORY_SKIN_ID = "rococo-ivory-table-skin";
 const TABLE_DARK_OAK_SKIN_ID = "dark-oak-table-skin";
+const TABLE_WHITE_TECH_SKIN_ID = "white-tech-table-skin";
 const FRIDGE_IVORY_SKIN_ID = "ivory-fridge-skin";
+const FRIDGE_RED_RETRO_SKIN_ID = "red-retro-fridge-skin";
+const FRIDGE_WHITE_TECH_SKIN_ID = "white-tech-fridge-skin";
 const COFFEE_MAX_QUANTITY = 6;
 const TABLE_FURNITURE_ID = "table";
 const EMPTY_TABLE_COFFEE_CAPACITY = 0;
@@ -6968,6 +6973,58 @@ export const App = () => {
       );
     }
 
+    if (itemId === BED_SPACE_WHITE_DEEP_GRAY_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 2,
+              top: 5,
+              width: 14,
+              height: 10,
+              background: "#252b34",
+              border: "2px solid #e8eef2",
+              boxShadow: "inset 0 3px 0 #414a56",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 1,
+              top: 4,
+              width: 3,
+              height: 13,
+              background: "#fbfdfd",
+              boxShadow: "13px 0 0 #fbfdfd",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 4,
+              width: 8,
+              height: 3,
+              background: "#f5f8f8",
+              boxShadow: "0 7px 0 #414a56",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 13,
+              top: 8,
+              width: 2,
+              height: 2,
+              background: "#ffffff",
+              boxShadow: "-7px 5px 0 #303844",
+            }}
+          />
+        </span>
+      );
+    }
+
     if (itemId === DESK_INDUSTRIAL_SKIN_ID) {
       return (
         <span className="item-button-thumbnail" aria-hidden="true">
@@ -7003,6 +7060,47 @@ export const App = () => {
               height: 2,
               background: "#68717d",
               boxShadow: "0 -8px 0 #a8b0ba",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === DESK_TRANSPARENT_ACRYLIC_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 5,
+              background: "rgba(218, 248, 255, 0.62)",
+              border: "2px solid #88dff0",
+              boxShadow: "inset 0 2px 0 #ffffff, 0 2px 0 #27333b",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 4,
+              top: 11,
+              width: 3,
+              height: 7,
+              background: "#171b22",
+              boxShadow: "9px 0 0 #171b22",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 6,
+              width: 10,
+              height: 1,
+              background: "#ffffff",
+              boxShadow: "2px 3px 0 #88dff0, 4px 8px 0 #b7d8e3",
             }}
           />
         </span>
@@ -7162,6 +7260,58 @@ export const App = () => {
       );
     }
 
+    if (itemId === TABLE_WHITE_TECH_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 6,
+              background: "#f6fbfd",
+              border: "2px solid #8fa0aa",
+              boxShadow: "inset 0 2px 0 #ffffff",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 4,
+              top: 12,
+              width: 3,
+              height: 6,
+              background: "#3d4a55",
+              boxShadow: "8px 0 0 #3d4a55, 2px 4px 0 #151b23, 6px 4px 0 #151b23",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 7,
+              width: 9,
+              height: 1,
+              background: "#88dfff",
+              boxShadow: "2px 4px 0 #d5f7ff",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 13,
+              top: 9,
+              width: 2,
+              height: 2,
+              background: "#bdf1ff",
+              boxShadow: "-8px 3px 0 #bdf1ff",
+            }}
+          />
+        </span>
+      );
+    }
+
     if (itemId === FRIDGE_IVORY_SKIN_ID) {
       return (
         <span className="item-button-thumbnail" aria-hidden="true">
@@ -7207,6 +7357,119 @@ export const App = () => {
               width: 1,
               height: 12,
               background: "#cdb58a",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === FRIDGE_RED_RETRO_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 6,
+              top: 1,
+              width: 8,
+              height: 18,
+              background: "#4a1119",
+              boxShadow: "-2px 2px 0 #4a1119, 2px 2px 0 #4a1119, -3px 6px 0 #4a1119, 3px 6px 0 #4a1119",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 6,
+              top: 3,
+              width: 8,
+              height: 14,
+              background: "#c81724",
+              boxShadow: "-1px 2px 0 #e1262f, 1px 2px 0 #bd1420, -2px 6px 0 #e1262f, 2px 6px 0 #bd1420",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 7,
+              top: 5,
+              width: 4,
+              height: 1,
+              background: "#f7fbff",
+              boxShadow: "0 6px 0 #f7fbff",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 13,
+              top: 5,
+              width: 1,
+              height: 10,
+              background: "#8d111b",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 8,
+              width: 5,
+              height: 1,
+              background: "#4a1119",
+              boxShadow: "0 5px 0 #4a1119",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === FRIDGE_WHITE_TECH_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 5,
+              top: 2,
+              width: 10,
+              height: 16,
+              background: "#f7fbff",
+              border: "2px solid #aebdc8",
+              boxShadow: "inset 2px 2px 0 #ffffff, inset -2px 0 0 #d4e4ec",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 7,
+              top: 8,
+              width: 6,
+              height: 1,
+              background: "#7fe6ff",
+              boxShadow: "0 5px 0 #7fe6ff",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 12,
+              top: 5,
+              width: 2,
+              height: 5,
+              background: "#314252",
+              boxShadow: "0 7px 0 #dff7ff",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 4,
+              width: 4,
+              height: 1,
+              background: "#ffffff",
+              boxShadow: "0 11px 0 #ffffff",
             }}
           />
         </span>

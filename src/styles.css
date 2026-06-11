@@ -3272,8 +3272,10 @@ meter::-webkit-meter-optimum-value {
 
 .surface-preview-polished-cement-floor {
   background:
-    linear-gradient(135deg, rgba(215, 219, 221, 0.8) 0 12%, transparent 12% 45%, rgba(96, 103, 108, 0.5) 45% 48%, transparent 48%),
-    repeating-linear-gradient(0deg, rgba(85, 91, 96, 0.35) 0 1px, transparent 1px 6px),
+    radial-gradient(ellipse at 32% 34%, rgba(244, 247, 248, 0.28) 0 16%, transparent 48%),
+    linear-gradient(155deg, transparent 0 28%, rgba(230, 235, 237, 0.18) 34%, transparent 52%),
+    linear-gradient(160deg, transparent 0 58%, rgba(83, 91, 97, 0.12) 72%, transparent 84%),
+    repeating-linear-gradient(0deg, rgba(242, 246, 248, 0.08) 0 1px, transparent 1px 5px),
     linear-gradient(135deg, #a7adb1, #8f969b 55%, #737a7f);
 }
 
@@ -3287,12 +3289,14 @@ meter::-webkit-meter-optimum-value {
 
 .surface-preview-gray-tech-floor {
   background:
-    radial-gradient(circle at 7px 7px, #9f8cff 0 1px, transparent 2px),
-    radial-gradient(circle at 22px 18px, #e2edf2 0 1px, transparent 2px),
-    linear-gradient(90deg, transparent 0 7px, #6fdce8 7px 8px, transparent 8px 27px),
-    linear-gradient(0deg, transparent 0 10px, #7eb8c4 10px 11px, transparent 11px 24px),
-    repeating-linear-gradient(90deg, transparent 0 15px, #58636c 15px 16px, transparent 16px 32px),
-    repeating-linear-gradient(0deg, #aeb8c0 0 9px, #909aa3 9px 18px, #8b969f 18px 27px);
+    linear-gradient(90deg, transparent 0 16px, rgba(78, 167, 255, 0.16) 16px 22px, transparent 22px),
+    linear-gradient(0deg, transparent 0 14px, rgba(78, 167, 255, 0.16) 14px 20px, transparent 20px),
+    linear-gradient(90deg, transparent 0 18px, rgba(31, 79, 116, 0.46) 18px 19px, #4ea7ff 19px 20px, transparent 20px),
+    linear-gradient(0deg, transparent 0 16px, rgba(31, 79, 116, 0.46) 16px 17px, #4ea7ff 17px 18px, transparent 18px),
+    radial-gradient(circle at 8px 8px, rgba(236, 243, 245, 0.28) 0 1px, transparent 2px),
+    radial-gradient(circle at 29px 20px, rgba(54, 64, 72, 0.22) 0 1px, transparent 2px),
+    linear-gradient(135deg, rgba(226, 237, 242, 0.2), transparent 32%, rgba(54, 64, 72, 0.16) 72%, transparent),
+    linear-gradient(135deg, #a5afb7, #909aa3 54%, #78848d);
 }
 
 .surface-preview-tatami-mat-floor {

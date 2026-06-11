@@ -61,10 +61,23 @@ type BedSkinId =
   | "industrial-bed-skin"
   | "wood-red-bed-skin"
   | "ivory-pink-plaid-bed-skin"
-  | "modern-minimal-bed-skin";
-type DeskSkinId = "classic" | "industrial-desk-skin" | "rococo-ivory-desk-skin";
-type TableSkinId = "classic" | "rococo-ivory-table-skin" | "dark-oak-table-skin";
-type FridgeSkinId = "classic" | "ivory-fridge-skin";
+  | "modern-minimal-bed-skin"
+  | "space-white-deep-gray-bed-skin";
+type DeskSkinId =
+  | "classic"
+  | "industrial-desk-skin"
+  | "rococo-ivory-desk-skin"
+  | "transparent-acrylic-desk-skin";
+type TableSkinId =
+  | "classic"
+  | "rococo-ivory-table-skin"
+  | "dark-oak-table-skin"
+  | "white-tech-table-skin";
+type FridgeSkinId =
+  | "classic"
+  | "ivory-fridge-skin"
+  | "red-retro-fridge-skin"
+  | "white-tech-fridge-skin";
 
 type DominantTrait = keyof AivatarMemory["growth"]["traits"];
 type MoodBand = "high" | "normal" | "low" | "depleted";
@@ -936,7 +949,8 @@ const bedSkinId = (item: FurnitureDefinition): BedSkinId =>
   item.skinId === "industrial-bed-skin" ||
   item.skinId === "wood-red-bed-skin" ||
   item.skinId === "ivory-pink-plaid-bed-skin" ||
-  item.skinId === "modern-minimal-bed-skin"
+  item.skinId === "modern-minimal-bed-skin" ||
+  item.skinId === "space-white-deep-gray-bed-skin"
     ? item.skinId
     : "classic";
 
@@ -1034,6 +1048,30 @@ const bedPalette = (item: FurnitureDefinition) =>
           handle: "#2e3335",
           handleLight: "#6d7475",
         }
+    : bedSkinId(item) === "space-white-deep-gray-bed-skin"
+      ? {
+          shadow: "#15191f",
+          frameDark: "#8f9ca7",
+          frame: "#e8eef2",
+          frameLight: "#fbfdfd",
+          frameBright: "#ffffff",
+          frameAccent: "#c7d2da",
+          slatDark: "#6e7b86",
+          pillow: "#f5f8f8",
+          pillowLight: "#ffffff",
+          pillowShade: "#cbd5dc",
+          sheet: "#e9eef1",
+          sheetLight: "#ffffff",
+          blanket: "#252b34",
+          blanketLight: "#414a56",
+          blanketMid: "#303844",
+          blanketLow: "#1d232c",
+          blanketDark: "#111720",
+          blanketSpark: "#414a56",
+          bolt: "#88d6ff",
+          handle: "#202833",
+          handleLight: "#5f6d7a",
+        }
     : {
         shadow: "#151321",
         frameDark: "#5a2b1c",
@@ -1056,7 +1094,9 @@ const bedPalette = (item: FurnitureDefinition) =>
       };
 
 const deskSkinId = (item: FurnitureDefinition): DeskSkinId =>
-  item.skinId === "industrial-desk-skin" || item.skinId === "rococo-ivory-desk-skin"
+  item.skinId === "industrial-desk-skin" ||
+  item.skinId === "rococo-ivory-desk-skin" ||
+  item.skinId === "transparent-acrylic-desk-skin"
     ? item.skinId
     : "classic";
 
@@ -1080,6 +1120,25 @@ const deskPalette = (item: FurnitureDefinition) =>
         handle: "#2f3842",
         handleLight: "#6f7d8a",
       }
+    : deskSkinId(item) === "transparent-acrylic-desk-skin"
+      ? {
+          shadow: "rgba(9, 18, 24, 0.54)",
+          topDark: "rgba(105, 177, 204, 0.38)",
+          top: "rgba(215, 246, 255, 0.46)",
+          topMid: "rgba(157, 220, 238, 0.42)",
+          topLight: "rgba(249, 254, 255, 0.82)",
+          topEdge: "rgba(63, 170, 204, 0.68)",
+          padDark: "rgba(69, 145, 170, 0.42)",
+          pad: "rgba(199, 244, 255, 0.58)",
+          padLight: "rgba(255, 255, 255, 0.78)",
+          metalDark: "#080b0f",
+          metal: "#151b22",
+          metalMid: "#2c3740",
+          metalLight: "#b7d8e3",
+          bolt: "#dff8ff",
+          handle: "#22303a",
+          handleLight: "#9fe6f6",
+        }
     : deskSkinId(item) === "rococo-ivory-desk-skin"
       ? {
           shadow: "#2c231c",
@@ -1119,12 +1178,18 @@ const deskPalette = (item: FurnitureDefinition) =>
       };
 
 const tableSkinId = (item: FurnitureDefinition): TableSkinId =>
-  item.skinId === "rococo-ivory-table-skin" || item.skinId === "dark-oak-table-skin"
+  item.skinId === "rococo-ivory-table-skin" ||
+  item.skinId === "dark-oak-table-skin" ||
+  item.skinId === "white-tech-table-skin"
     ? item.skinId
     : "classic";
 
 const fridgeSkinId = (item: FurnitureDefinition): FridgeSkinId =>
-  item.skinId === "ivory-fridge-skin" ? "ivory-fridge-skin" : "classic";
+  item.skinId === "ivory-fridge-skin" ||
+  item.skinId === "red-retro-fridge-skin" ||
+  item.skinId === "white-tech-fridge-skin"
+    ? item.skinId
+    : "classic";
 
 const drawBedFootboard = (
   ctx: CanvasRenderingContext2D,
@@ -1152,6 +1217,23 @@ const drawBedFootboard = (
   if (highlight === "selected") {
     drawFurnitureCollisionRange(ctx, item);
   }
+};
+
+const drawBedFootboardAvatarOcclusion = (
+  ctx: CanvasRenderingContext2D,
+  item: FurnitureDefinition,
+  avatar: AvatarRuntime,
+) => {
+  const clipLeft = Math.max(item.x - 2, Math.round(avatar.x - 16));
+  const clipRight = Math.min(item.x + item.width + 2, Math.round(avatar.x + 16));
+  if (clipRight <= clipLeft) return;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(clipLeft, item.y + item.height - 20, clipRight - clipLeft, 24);
+  ctx.clip();
+  drawBedFootboard(ctx, item, "none");
+  ctx.restore();
 };
 
 const isPlacedItemInFrontOfAvatar = (
@@ -1452,7 +1534,9 @@ const drawFurniture = (
     const palette = bedPalette(item);
     const industrial = bedSkinId(item) === "industrial-bed-skin";
     const pinkPlaid = bedSkinId(item) === "ivory-pink-plaid-bed-skin";
-    const modernMinimal = bedSkinId(item) === "modern-minimal-bed-skin";
+    const modernMinimal =
+      bedSkinId(item) === "modern-minimal-bed-skin" ||
+      bedSkinId(item) === "space-white-deep-gray-bed-skin";
 
     drawPixelRect(ctx, item.x + 8, item.y + 10, item.width, item.height, palette.shadow);
     if (!modernMinimal) {
@@ -1608,8 +1692,11 @@ const drawFurniture = (
 
   if (item.id === "desk") {
     const palette = deskPalette(item);
-    const industrial = deskSkinId(item) === "industrial-desk-skin";
-    const rococo = deskSkinId(item) === "rococo-ivory-desk-skin";
+    const skinId = deskSkinId(item);
+    const industrial = skinId === "industrial-desk-skin";
+    const acrylic = skinId === "transparent-acrylic-desk-skin";
+    const industrialFrame = industrial || acrylic;
+    const rococo = skinId === "rococo-ivory-desk-skin";
 
     drawPixelRect(
       ctx,
@@ -1617,7 +1704,7 @@ const drawFurniture = (
       item.y + 9,
       item.width,
       item.height + 19,
-      industrial
+      industrialFrame
         ? "rgba(16, 18, 23, 0.9)"
         : "rgba(21, 19, 33, 0.9)",
     );
@@ -1632,7 +1719,7 @@ const drawFurniture = (
       item.y - 5,
       4,
       29,
-      industrial ? "#6c3e2a" : rococo ? "#fff4d8" : "#c06f4d",
+      acrylic ? "rgba(230, 252, 255, 0.72)" : industrial ? "#6c3e2a" : rococo ? "#fff4d8" : "#c06f4d",
     );
     drawPixelRect(ctx, item.x - 2, item.y + 23, item.width + 4, 3, palette.topEdge);
     if (industrial) {
@@ -1646,6 +1733,17 @@ const drawFurniture = (
       drawPixelRect(ctx, item.x + 5, item.y + 18, item.width - 18, 1, "#7c4a31");
       drawPixelRect(ctx, item.x + 28, item.y + 20, 20, 1, "#a66c4a");
       drawPixelRect(ctx, item.x + item.width - 43, item.y + 20, 17, 1, "#8b573b");
+    } else if (acrylic) {
+      drawPixelRect(ctx, item.x + 7, item.y - 1, item.width - 16, 2, "rgba(255, 255, 255, 0.72)");
+      drawPixelRect(ctx, item.x + 9, item.y + 3, item.width - 24, 1, "rgba(142, 231, 255, 0.68)");
+      drawPixelRect(ctx, item.x + 14, item.y + 7, 28, 1, "rgba(255, 255, 255, 0.58)");
+      drawPixelRect(ctx, item.x + 49, item.y + 8, 22, 1, "rgba(90, 204, 232, 0.5)");
+      drawPixelRect(ctx, item.x + 18, item.y + 11, 10, 1, "rgba(255, 255, 255, 0.78)");
+      drawPixelRect(ctx, item.x + 32, item.y + 12, 4, 1, "rgba(142, 231, 255, 0.82)");
+      drawPixelRect(ctx, item.x + item.width - 34, item.y + 13, 15, 1, "rgba(255, 255, 255, 0.56)");
+      drawPixelRect(ctx, item.x + 13, item.y + 17, item.width - 30, 1, "rgba(71, 185, 215, 0.52)");
+      drawPixelRect(ctx, item.x + 24, item.y + 20, 5, 2, "rgba(230, 252, 255, 0.76)");
+      drawPixelRect(ctx, item.x + item.width - 30, item.y + 20, 5, 2, "rgba(230, 252, 255, 0.76)");
     } else if (rococo) {
       drawPixelRect(ctx, item.x + 6, item.y - 1, item.width - 14, 2, "#fffbea");
       drawPixelRect(ctx, item.x + 11, item.y + 3, item.width - 24, 1, "#f4d98a");
@@ -1670,6 +1768,19 @@ const drawFurniture = (
       drawPixelRect(ctx, item.x + 52, item.y + 18, 22, 1, "#3b2116");
       drawPixelRect(ctx, item.x + 37, item.y + 13, 3, 2, "#3a2015");
       drawPixelRect(ctx, item.x + 38, item.y + 14, 1, 1, "#6f432b");
+    } else if (acrylic) {
+      drawPixelRect(ctx, item.x + 8, item.y + 1, item.width - 16, 1, "rgba(255, 255, 255, 0.62)");
+      drawPixelRect(ctx, item.x + 6, item.y - 2, item.width - 18, 1, "rgba(179, 237, 250, 0.66)");
+      drawPixelRect(ctx, item.x + 12, item.y + 5, 17, 1, "rgba(94, 202, 228, 0.48)");
+      drawPixelRect(ctx, item.x + 35, item.y + 6, 24, 1, "rgba(255, 255, 255, 0.44)");
+      drawPixelRect(ctx, item.x + item.width - 34, item.y + 5, 14, 1, "rgba(97, 214, 240, 0.48)");
+      drawPixelRect(ctx, item.x + 10, item.y + 11, 25, 1, "rgba(255, 255, 255, 0.5)");
+      drawPixelRect(ctx, item.x + 44, item.y + 12, 17, 1, "rgba(75, 186, 215, 0.44)");
+      drawPixelRect(ctx, item.x + item.width - 28, item.y + 13, 12, 1, "rgba(255, 255, 255, 0.48)");
+      drawPixelRect(ctx, item.x + 21, item.y + 18, 15, 1, "rgba(96, 210, 238, 0.56)");
+      drawPixelRect(ctx, item.x + 51, item.y + 18, 22, 1, "rgba(255, 255, 255, 0.42)");
+      drawPixelRect(ctx, item.x + 38, item.y + 9, 1, 6, "rgba(214, 249, 255, 0.54)");
+      drawPixelRect(ctx, item.x + 39, item.y + 14, 6, 1, "rgba(214, 249, 255, 0.54)");
     } else if (rococo) {
       drawPixelRect(ctx, item.x + 12, item.y + 1, item.width - 24, 21, palette.padDark);
       drawPixelRect(ctx, item.x + 15, item.y + 3, item.width - 30, 17, palette.padLight);
@@ -1699,7 +1810,7 @@ const drawFurniture = (
       drawPixelRect(ctx, x + width / 2 - 3, y + 6, 6, 3, palette.handleLight);
     };
 
-    if (industrial) {
+    if (industrialFrame) {
       const drawIndustrialLeg = (
         x: number,
         y: number,
@@ -1707,16 +1818,16 @@ const drawFurniture = (
         front = false,
       ) => {
         drawPixelRect(ctx, x, y, 8, height, palette.metalDark);
-        drawPixelRect(ctx, x + 1, y + 1, 6, height - 3, front ? "#20262d" : "#171c22");
-        drawPixelRect(ctx, x + 2, y + 2, 4, height - 5, front ? "#333b45" : "#252c34");
-        drawPixelRect(ctx, x + 2, y + 4, 1, height - 10, front ? "#747f8b" : "#4c5660");
+        drawPixelRect(ctx, x + 1, y + 1, 6, height - 3, front ? (acrylic ? "#24313a" : "#20262d") : "#171c22");
+        drawPixelRect(ctx, x + 2, y + 2, 4, height - 5, front ? (acrylic ? "#3d4d58" : "#333b45") : "#252c34");
+        drawPixelRect(ctx, x + 2, y + 4, 1, height - 10, front ? (acrylic ? "#b7d8e3" : "#747f8b") : "#4c5660");
         if (front) {
-          drawPixelRect(ctx, x + 4, y + 7, 1, Math.max(4, height - 16), "#3f4852");
+          drawPixelRect(ctx, x + 4, y + 7, 1, Math.max(4, height - 16), acrylic ? "#5d7c89" : "#3f4852");
         }
         drawPixelRect(ctx, x + 6, y + 2, 1, height - 5, front ? "#171c22" : "#0b0d10");
         drawPixelRect(ctx, x - 1, y + height - 3, 10, 3, palette.metalDark);
         drawPixelRect(ctx, x + 1, y + height - 4, 6, 1, palette.metalLight);
-        drawPixelRect(ctx, x, y + height - 2, 3, 1, front ? "#5d6873" : "#4c5660");
+        drawPixelRect(ctx, x, y + height - 2, 3, 1, front ? (acrylic ? "#9fe6f6" : "#5d6873") : "#4c5660");
         drawPixelRect(ctx, x + 5, y + height - 2, 3, 1, front ? "#333b45" : "#252c34");
       };
 
@@ -1730,10 +1841,10 @@ const drawFurniture = (
       drawPixelRect(ctx, item.x + 10, frontFootY - 2, item.width - 20, 3, "rgba(15, 18, 22, 0.38)");
       drawPixelRect(ctx, leftX, drawerTop + 6, 4, frontFootY - drawerTop - 3, "rgba(8, 10, 13, 0.46)");
       drawPixelRect(ctx, rightX + stackWidth - 1, drawerTop + 6, 4, frontFootY - drawerTop - 3, "rgba(8, 10, 13, 0.46)");
-      drawPixelRect(ctx, leftX + 1, drawerTop - 1, 1, 34, "#747f8b");
-      drawPixelRect(ctx, leftX + 2, drawerTop + 3, 1, 25, "#3f4852");
-      drawPixelRect(ctx, rightX + stackWidth - 5, drawerTop - 1, 1, 34, "#747f8b");
-      drawPixelRect(ctx, rightX + stackWidth - 4, drawerTop + 3, 1, 25, "#3f4852");
+      drawPixelRect(ctx, leftX + 1, drawerTop - 1, 1, 34, acrylic ? "#b7d8e3" : "#747f8b");
+      drawPixelRect(ctx, leftX + 2, drawerTop + 3, 1, 25, acrylic ? "#5d7c89" : "#3f4852");
+      drawPixelRect(ctx, rightX + stackWidth - 5, drawerTop - 1, 1, 34, acrylic ? "#b7d8e3" : "#747f8b");
+      drawPixelRect(ctx, rightX + stackWidth - 4, drawerTop + 3, 1, 25, acrylic ? "#5d7c89" : "#3f4852");
       const eyeY = drawerTop + 15;
       const eyeX = Math.round(item.x + item.width / 2 - 3);
       const catX = eyeX - 7;
@@ -1764,12 +1875,12 @@ const drawFurniture = (
       }
 
       drawPixelRect(ctx, item.x - 2, drawerTop - 5, item.width + 4, 9, palette.topEdge);
-      drawPixelRect(ctx, item.x + 2, drawerTop - 4, item.width - 4, 3, "#2f1a12");
-      drawPixelRect(ctx, item.x + 6, drawerTop - 1, item.width - 13, 1, "#6c3e2a");
+      drawPixelRect(ctx, item.x + 2, drawerTop - 4, item.width - 4, 3, acrylic ? "rgba(224, 250, 255, 0.54)" : "#2f1a12");
+      drawPixelRect(ctx, item.x + 6, drawerTop - 1, item.width - 13, 1, acrylic ? "rgba(255, 255, 255, 0.68)" : "#6c3e2a");
       drawPixelRect(ctx, item.x + 1, drawerTop - 4, 3, 7, palette.topLight);
-      drawPixelRect(ctx, item.x + 4, drawerTop - 4, 9, 1, "#8a5638");
-      drawPixelRect(ctx, item.x + item.width - 5, drawerTop - 4, 3, 7, "#6c3e2a");
-      drawPixelRect(ctx, item.x + item.width - 14, drawerTop - 4, 9, 1, "#8a5638");
+      drawPixelRect(ctx, item.x + 4, drawerTop - 4, 9, 1, acrylic ? "rgba(130, 224, 245, 0.72)" : "#8a5638");
+      drawPixelRect(ctx, item.x + item.width - 5, drawerTop - 4, 3, 7, acrylic ? "rgba(105, 177, 204, 0.5)" : "#6c3e2a");
+      drawPixelRect(ctx, item.x + item.width - 14, drawerTop - 4, 9, 1, acrylic ? "rgba(130, 224, 245, 0.72)" : "#8a5638");
     } else if (rococo) {
       const drawRococoDrawer = (x: number, y: number, width: number, height: number) => {
         drawPixelRect(ctx, x - 1, y - 1, width + 2, height + 2, palette.metalDark);
@@ -1934,6 +2045,7 @@ const drawFurniture = (
   if (item.id === "table") {
     const rococo = tableSkinId(item) === "rococo-ivory-table-skin";
     const darkOak = tableSkinId(item) === "dark-oak-table-skin";
+    const whiteTech = tableSkinId(item) === "white-tech-table-skin";
 
     drawPixelRect(ctx, item.x + 5, item.y + 10, item.width, 50, "rgba(21, 19, 33, 0.9)");
 
@@ -2047,6 +2159,62 @@ const drawFurniture = (
       return;
     }
 
+    if (whiteTech) {
+      drawPixelRect(ctx, item.x - 3, item.y - 3, item.width + 6, 33, "#8fa0aa");
+      drawPixelRect(ctx, item.x, item.y - 1, item.width, 29, "#dfe8ed");
+      drawPixelRect(ctx, item.x + 2, item.y + 1, item.width - 4, 24, "#f6fbfd");
+      drawPixelRect(ctx, item.x + 5, item.y + 3, item.width - 12, 3, "#ffffff");
+      drawPixelRect(ctx, item.x + 6, item.y + 24, item.width - 12, 4, "#aab9c2");
+      drawPixelRect(ctx, item.x + 8, item.y + 25, item.width - 18, 1, "#f9feff");
+      drawPixelRect(ctx, item.x + 10, item.y + 9, item.width - 24, 1, "#88dfff");
+      drawPixelRect(ctx, item.x + 10, item.y + 9, 1, 9, "#88dfff");
+      drawPixelRect(ctx, item.x + 12, item.y + 11, 16, 1, "#c7f3ff");
+      drawPixelRect(ctx, item.x + 28, item.y + 11, 1, 5, "#88dfff");
+      drawPixelRect(ctx, item.x + 30, item.y + 16, 18, 1, "#88dfff");
+      drawPixelRect(ctx, item.x + item.width - 35, item.y + 8, 24, 1, "#bdf1ff");
+      drawPixelRect(ctx, item.x + item.width - 12, item.y + 8, 1, 8, "#88dfff");
+      drawPixelRect(ctx, item.x + item.width - 28, item.y + 16, 17, 1, "#88dfff");
+      drawPixelRect(ctx, item.x + 17, item.y + 18, 4, 4, "#bdf1ff");
+      drawPixelRect(ctx, item.x + 18, item.y + 19, 2, 2, "#ffffff");
+      drawPixelRect(ctx, item.x + item.width - 23, item.y + 18, 4, 4, "#bdf1ff");
+      drawPixelRect(ctx, item.x + item.width - 22, item.y + 19, 2, 2, "#ffffff");
+      drawPixelRect(ctx, item.x + item.width / 2 - 8, item.y + 13, 16, 2, "#d5f7ff");
+      drawPixelRect(ctx, item.x + item.width / 2 - 5, item.y + 16, 10, 1, "#88dfff");
+
+      drawPixelRect(ctx, item.x - 1, item.y + 29, item.width + 2, 5, "#7d8e9a");
+      drawPixelRect(ctx, item.x + 3, item.y + 30, item.width - 6, 2, "#d7e2e8");
+      drawPixelRect(ctx, item.x + 14, item.y + 32, item.width - 28, 1, "#f9feff");
+
+      const drawTechLeg = (x: number, y: number) => {
+        drawPixelRect(ctx, x, y, 7, 27, "#202832");
+        drawPixelRect(ctx, x + 1, y + 1, 5, 24, "#3d4a55");
+        drawPixelRect(ctx, x + 2, y + 2, 2, 20, "#9fb0b9");
+        drawPixelRect(ctx, x + 4, y + 5, 1, 14, "#88dfff");
+        drawPixelRect(ctx, x - 1, y + 25, 9, 4, "#151b23");
+        drawPixelRect(ctx, x + 1, y + 26, 5, 1, "#7d8e9a");
+      };
+
+      drawTechLeg(item.x + 8, item.y + 34);
+      drawTechLeg(item.x + item.width - 15, item.y + 34);
+      drawPixelRect(ctx, item.x + 6, item.y + 59, 9, 3, "#151b23");
+      drawPixelRect(ctx, item.x + item.width - 15, item.y + 59, 9, 3, "#151b23");
+
+      if (highlight !== "none") {
+        ctx.strokeStyle = highlight === "selected" ? "#ffe66d" : "#9ee6ff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          Math.round(item.x - 4),
+          Math.round(item.y - 5),
+          Math.round(item.width + 8),
+          68,
+        );
+      }
+      if (highlight === "selected") {
+        drawFurnitureCollisionRange(ctx, item);
+      }
+      return;
+    }
+
     drawPixelRect(ctx, item.x - 2, item.y - 2, item.width + 4, 32, "#2c3030");
     drawPixelRect(ctx, item.x, item.y, item.width, 28, "#747a78");
     const metalRows = [
@@ -2095,7 +2263,61 @@ const drawFurniture = (
   }
 
   if (item.id === "fridge") {
-    const ivory = fridgeSkinId(item) === "ivory-fridge-skin";
+    const skinId = fridgeSkinId(item);
+    const redRetro = skinId === "red-retro-fridge-skin";
+    const whiteTech = skinId === "white-tech-fridge-skin";
+    const fridgePalette =
+      skinId === "ivory-fridge-skin"
+        ? {
+            outline: "#9f8b67",
+            body: "#eadbbd",
+            panel: "#f1e4c9",
+            inset: "#dfcfad",
+            seam: "#9f8b67",
+            seamLight: "#fff4d8",
+            handle: "#b99a5f",
+            handleLight: "#ffe8a4",
+            sideShade: "#cdb58a",
+            foot: "#9f8b67",
+          }
+        : whiteTech
+          ? {
+              outline: "#aebdc8",
+              body: "#f7fbff",
+              panel: "#e7f0f5",
+              inset: "#d4e4ec",
+              seam: "#7f96a5",
+              seamLight: "#bff2ff",
+              handle: "#dff7ff",
+              handleLight: "#ffffff",
+              sideShade: "#bdcbd4",
+              foot: "#7f96a5",
+            }
+        : redRetro
+          ? {
+              outline: "#4a1119",
+              body: "#c81724",
+              panel: "#e1262f",
+              inset: "#bd1420",
+              seam: "#4a1119",
+              seamLight: "#ffd7bd",
+              handle: "#c8d0d8",
+              handleLight: "#f7fbff",
+              sideShade: "#8d111b",
+              foot: "#2d1720",
+            }
+          : {
+              outline: "#2d241f",
+              body: "#6f9560",
+              panel: "#789e68",
+              inset: "#719962",
+              seam: "#2d241f",
+              seamLight: "#9ab580",
+              handle: "#d2d3c0",
+              handleLight: "#eef0dc",
+              sideShade: "#5f8455",
+              foot: "#2d241f",
+            };
     const fridgeDoorOpenMs = 650;
     const fridgeDoorHoldMs = 2950;
     const fridgeDoorCloseMs = 900;
@@ -2132,40 +2354,127 @@ const drawFurniture = (
     drawPixelRect(ctx, item.x + 4, item.y + item.height + 1, item.width - 8, 5, "#151321");
     drawPixelRect(ctx, item.x + 9, item.y + item.height + 4, item.width - 18, 3, "#0f1422");
 
-    drawPixelRect(ctx, item.x - 4, item.y - 30, item.width + 8, 32, "#2d241f");
-    drawPixelRect(ctx, item.x - 3, item.y - 27, item.width + 6, 25, "#6d2637");
-    drawPixelRect(ctx, item.x - 2, item.y - 24, item.width + 4, 10, "#8d3447");
-    drawPixelRect(ctx, item.x, item.y - 20, item.width, 5, "#b84d63");
-    drawPixelRect(ctx, item.x - 4, item.y - 8, item.width + 8, 10, "#3b1723");
-    drawPixelRect(ctx, item.x, item.y - 5, item.width - 2, 4, "#7a2c3e");
-    drawPixelRect(ctx, item.x + 1, item.y - 26, 14, 18, "#2b1f28");
-    drawPixelRect(ctx, item.x + 4, item.y - 22, 9, 10, "#c1b8a2");
-    drawPixelRect(ctx, item.x + 5, item.y - 19, 6, 5, "#6d6f70");
-    drawPixelRect(ctx, item.x + 25, item.y - 25, 16, 20, "#f1e4ad");
-    drawPixelRect(ctx, item.x + 29, item.y - 15, 3, 9, "#4f7796");
-    drawPixelRect(ctx, item.x + 37, item.y - 15, 3, 9, "#4f7796");
-    drawPixelRect(ctx, item.x + item.width - 11, item.y - 28, 9, 14, "#2b1f28");
-    drawPixelRect(ctx, item.x + item.width - 9, item.y - 25, 7, 5, "#a55b63");
-    drawPixelRect(ctx, item.x + item.width - 12, item.y - 15, 9, 12, "#263a25");
-    drawPixelRect(ctx, item.x + item.width - 13, item.y - 8, 13, 22, "#536b38");
-    drawPixelRect(ctx, item.x + item.width - 9, item.y + 1, 6, 6, "#f0c178");
+    if (redRetro) {
+      drawPixelRect(ctx, item.x + 5, item.y - 30, item.width - 10, 4, "#2d241f");
+      drawPixelRect(ctx, item.x + 1, item.y - 27, item.width - 2, 5, "#2d241f");
+      drawPixelRect(ctx, item.x - 2, item.y - 23, item.width + 4, 15, "#2d241f");
+      drawPixelRect(ctx, item.x + 1, item.y - 8, item.width - 2, 10, "#3b1723");
+      drawPixelRect(ctx, item.x + 6, item.y - 27, item.width - 12, 4, "#6d2637");
+      drawPixelRect(ctx, item.x + 2, item.y - 24, item.width - 4, 8, "#6d2637");
+      drawPixelRect(ctx, item.x, item.y - 18, item.width, 10, "#6d2637");
+      drawPixelRect(ctx, item.x + 2, item.y - 24, item.width - 4, 5, "#8d3447");
+      drawPixelRect(ctx, item.x + 4, item.y - 20, item.width - 8, 4, "#b84d63");
+      drawPixelRect(ctx, item.x + 3, item.y - 5, item.width - 6, 4, "#7a2c3e");
+    } else if (whiteTech) {
+      drawPixelRect(ctx, item.x - 4, item.y - 30, item.width + 8, 32, "#8ea2af");
+      drawPixelRect(ctx, item.x - 3, item.y - 27, item.width + 6, 25, "#e9f3f8");
+      drawPixelRect(ctx, item.x - 2, item.y - 24, item.width + 4, 10, "#f7fbff");
+      drawPixelRect(ctx, item.x, item.y - 20, item.width, 5, "#ffffff");
+      drawPixelRect(ctx, item.x - 4, item.y - 8, item.width + 8, 10, "#aebdc8");
+      drawPixelRect(ctx, item.x, item.y - 5, item.width - 2, 4, "#d4e4ec");
+    } else {
+      drawPixelRect(ctx, item.x - 4, item.y - 30, item.width + 8, 32, "#2d241f");
+      drawPixelRect(ctx, item.x - 3, item.y - 27, item.width + 6, 25, "#6d2637");
+      drawPixelRect(ctx, item.x - 2, item.y - 24, item.width + 4, 10, "#8d3447");
+      drawPixelRect(ctx, item.x, item.y - 20, item.width, 5, "#b84d63");
+      drawPixelRect(ctx, item.x - 4, item.y - 8, item.width + 8, 10, "#3b1723");
+      drawPixelRect(ctx, item.x, item.y - 5, item.width - 2, 4, "#7a2c3e");
+    }
+    if (whiteTech) {
+      drawPixelRect(ctx, item.x + 1, item.y - 26, 15, 18, "#6f8797");
+      drawPixelRect(ctx, item.x + 4, item.y - 23, 10, 12, "#dff7ff");
+      drawPixelRect(ctx, item.x + 5, item.y - 20, 7, 1, "#7fe6ff");
+      drawPixelRect(ctx, item.x + 5, item.y - 16, 7, 1, "#ffffff");
+      drawPixelRect(ctx, item.x + 25, item.y - 25, 16, 20, "#eef7fb");
+      drawPixelRect(ctx, item.x + 28, item.y - 21, 10, 2, "#7fe6ff");
+      drawPixelRect(ctx, item.x + 30, item.y - 14, 2, 6, "#8ea2af");
+      drawPixelRect(ctx, item.x + 36, item.y - 14, 2, 6, "#8ea2af");
+      drawPixelRect(ctx, item.x + item.width - 12, item.y - 28, 10, 15, "#6f8797");
+      drawPixelRect(ctx, item.x + item.width - 10, item.y - 25, 7, 4, "#dff7ff");
+      drawPixelRect(ctx, item.x + item.width - 12, item.y - 15, 9, 12, "#d4e4ec");
+      drawPixelRect(ctx, item.x + item.width - 13, item.y - 8, 13, 22, "#f7fbff");
+      drawPixelRect(ctx, item.x + item.width - 10, item.y - 3, 7, 2, "#7fe6ff");
+      drawPixelRect(ctx, item.x + item.width - 8, item.y + 3, 3, 3, "#ffffff");
+    } else {
+      drawPixelRect(ctx, item.x + 1, item.y - 26, 14, 18, "#2b1f28");
+      drawPixelRect(ctx, item.x + 4, item.y - 22, 9, 10, "#c1b8a2");
+      drawPixelRect(ctx, item.x + 5, item.y - 19, 6, 5, "#6d6f70");
+      drawPixelRect(ctx, item.x + 25, item.y - 25, 16, 20, "#f1e4ad");
+      drawPixelRect(ctx, item.x + 29, item.y - 15, 3, 9, "#4f7796");
+      drawPixelRect(ctx, item.x + 37, item.y - 15, 3, 9, "#4f7796");
+      drawPixelRect(ctx, item.x + item.width - 11, item.y - 28, 9, 14, "#2b1f28");
+      drawPixelRect(ctx, item.x + item.width - 9, item.y - 25, 7, 5, "#a55b63");
+      drawPixelRect(ctx, item.x + item.width - 12, item.y - 15, 9, 12, "#263a25");
+      drawPixelRect(ctx, item.x + item.width - 13, item.y - 8, 13, 22, "#536b38");
+      drawPixelRect(ctx, item.x + item.width - 9, item.y + 1, 6, 6, "#f0c178");
+    }
 
-    drawPixelRect(ctx, item.x - 2, item.y - 2, item.width + 4, item.height + 5, ivory ? "#9f8b67" : "#2d241f");
-    drawPixelRect(ctx, item.x, item.y, item.width, item.height, ivory ? "#eadbbd" : "#6f9560");
-    drawPixelRect(ctx, item.x + 3, item.y + 3, item.width - 7, item.height - 8, ivory ? "#f1e4c9" : "#789e68");
-    drawPixelRect(ctx, item.x + 7, item.y + 8, item.width - 16, item.height - 18, ivory ? "#dfcfad" : "#719962");
-    drawPixelRect(ctx, item.x + 3, fridgeSplitY - 2, item.width - 7, 4, ivory ? "#9f8b67" : "#2d241f");
-    drawPixelRect(ctx, item.x + 3, fridgeSplitY + 1, item.width - 7, 3, ivory ? "#fff4d8" : "#9ab580");
+    if (redRetro) {
+      drawPixelRect(ctx, item.x + 4, item.y - 2, item.width - 8, item.height + 5, fridgePalette.outline);
+      drawPixelRect(ctx, item.x, item.y, item.width, item.height + 1, fridgePalette.outline);
+      drawPixelRect(ctx, item.x - 2, item.y + 7, item.width + 4, item.height - 12, fridgePalette.outline);
+      drawPixelRect(ctx, item.x + 4, item.y, item.width - 8, item.height + 1, fridgePalette.body);
+      drawPixelRect(ctx, item.x + 1, item.y + 2, item.width - 2, item.height - 1, fridgePalette.body);
+      drawPixelRect(ctx, item.x, item.y + 8, item.width, item.height - 12, fridgePalette.body);
+      drawPixelRect(ctx, item.x + 5, item.y + 3, item.width - 10, item.height - 8, fridgePalette.panel);
+      drawPixelRect(ctx, item.x + 3, item.y + 10, item.width - 6, item.height - 20, fridgePalette.panel);
+      drawPixelRect(ctx, item.x + 8, item.y + 9, item.width - 18, item.height - 20, fridgePalette.inset);
+    } else {
+      drawPixelRect(ctx, item.x - 2, item.y - 2, item.width + 4, item.height + 5, fridgePalette.outline);
+      drawPixelRect(ctx, item.x, item.y, item.width, item.height, fridgePalette.body);
+      drawPixelRect(ctx, item.x + 3, item.y + 3, item.width - 7, item.height - 8, fridgePalette.panel);
+      drawPixelRect(ctx, item.x + 7, item.y + 8, item.width - 16, item.height - 18, fridgePalette.inset);
+    }
+    if (redRetro) {
+      drawPixelRect(ctx, item.x + 8, item.y + 4, item.width - 16, 2, "#ffd7bd");
+      drawPixelRect(ctx, item.x + 5, item.y + 11, 4, item.height - 24, "#ff6f5f");
+      drawPixelRect(ctx, item.x + 10, item.y + item.height - 10, item.width - 20, 2, "#89111b");
+    } else if (whiteTech) {
+      drawPixelRect(ctx, item.x + 5, item.y + 4, item.width - 12, 2, "#ffffff");
+      drawPixelRect(ctx, item.x + 7, item.y + 10, item.width - 18, 1, "#bff2ff");
+      drawPixelRect(ctx, item.x + 7, item.y + item.height - 12, item.width - 18, 1, "#bff2ff");
+      drawPixelRect(ctx, item.x + item.width - 10, item.y + 10, 4, 12, "#314252");
+      drawPixelRect(ctx, item.x + item.width - 9, item.y + 12, 2, 2, "#7fe6ff");
+      drawPixelRect(ctx, item.x + item.width - 9, item.y + 17, 2, 1, "#ffffff");
+      drawPixelRect(ctx, item.x + 9, item.y + 14, 2, 2, "#7fe6ff");
+      drawPixelRect(ctx, item.x + 14, item.y + 14, 1, 8, "#aebdc8");
+      drawPixelRect(ctx, item.x + 18, item.y + 23, 10, 1, "#dff7ff");
+      drawPixelRect(ctx, item.x + 7, item.y + item.height - 8, 4, 2, "#ffffff");
+      drawPixelRect(ctx, item.x + item.width - 16, item.y + item.height - 8, 4, 2, "#ffffff");
+    }
+    drawPixelRect(
+      ctx,
+      item.x + (redRetro ? 5 : 3),
+      fridgeSplitY - 2,
+      item.width - (redRetro ? 10 : 7),
+      4,
+      fridgePalette.seam,
+    );
+    drawPixelRect(
+      ctx,
+      item.x + (redRetro ? 6 : 3),
+      fridgeSplitY + 1,
+      item.width - (redRetro ? 12 : 7),
+      3,
+      fridgePalette.seamLight,
+    );
     const handleX = item.x + 7;
     const handleWidth = 16;
     const handleHeight = 4;
-    drawPixelRect(ctx, handleX, fridgeSplitY - 12, handleWidth, handleHeight, ivory ? "#b99a5f" : "#d2d3c0");
-    drawPixelRect(ctx, handleX, fridgeSplitY + 8, handleWidth, handleHeight, ivory ? "#b99a5f" : "#d2d3c0");
-    drawPixelRect(ctx, handleX + 2, fridgeSplitY - 11, handleWidth - 4, 1, ivory ? "#ffe8a4" : "#eef0dc");
-    drawPixelRect(ctx, handleX + 2, fridgeSplitY + 9, handleWidth - 4, 1, ivory ? "#ffe8a4" : "#eef0dc");
-    drawPixelRect(ctx, item.x + item.width - 5, item.y + 5, 2, item.height - 12, ivory ? "#cdb58a" : "#5f8455");
-    drawPixelRect(ctx, item.x + 5, item.y + item.height + 1, 8, 4, ivory ? "#9f8b67" : "#2d241f");
-    drawPixelRect(ctx, item.x + item.width - 13, item.y + item.height + 1, 8, 4, ivory ? "#9f8b67" : "#2d241f");
+    drawPixelRect(ctx, handleX, fridgeSplitY - 12, handleWidth, handleHeight, fridgePalette.handle);
+    drawPixelRect(ctx, handleX, fridgeSplitY + 8, handleWidth, handleHeight, fridgePalette.handle);
+    drawPixelRect(ctx, handleX + 2, fridgeSplitY - 11, handleWidth - 4, 1, fridgePalette.handleLight);
+    drawPixelRect(ctx, handleX + 2, fridgeSplitY + 9, handleWidth - 4, 1, fridgePalette.handleLight);
+    drawPixelRect(
+      ctx,
+      item.x + item.width - 5,
+      item.y + (redRetro ? 9 : 5),
+      2,
+      item.height - (redRetro ? 20 : 12),
+      fridgePalette.sideShade,
+    );
+    drawPixelRect(ctx, item.x + 5, item.y + item.height + 1, 8, 4, fridgePalette.foot);
+    drawPixelRect(ctx, item.x + item.width - 13, item.y + item.height + 1, 8, 4, fridgePalette.foot);
 
     if (openWidth > 0) {
       drawPixelRect(ctx, upperDoor.x, upperDoor.y, upperDoor.width, upperDoor.height, "#c9f4ff");
@@ -2176,10 +2485,17 @@ const drawFurniture = (
       const hingeX = upperDoor.x + upperDoor.width;
       const doorWidth = Math.max(8, upperDoor.width - openWidth);
       const doorX = hingeX - doorWidth + Math.round(openWidth * 0.55);
-      drawPixelRect(ctx, doorX, upperDoor.y, doorWidth, upperDoor.height, ivory ? "#9f8b67" : "#2d241f");
-      drawPixelRect(ctx, doorX + 2, upperDoor.y + 2, Math.max(2, doorWidth - 4), upperDoor.height - 4, ivory ? "#dfcfad" : "#5f8455");
-      drawPixelRect(ctx, doorX + 4, upperDoor.y + 6, Math.max(2, doorWidth - 8), 7, ivory ? "#f1e4c9" : "#789e68");
-      drawPixelRect(ctx, doorX + 3, upperDoor.y + 17, 3, 10, ivory ? "#b99a5f" : "#d2d3c0");
+      drawPixelRect(ctx, doorX, upperDoor.y, doorWidth, upperDoor.height, fridgePalette.outline);
+      drawPixelRect(ctx, doorX + 2, upperDoor.y + 2, Math.max(2, doorWidth - 4), upperDoor.height - 4, fridgePalette.inset);
+      drawPixelRect(ctx, doorX + 4, upperDoor.y + 6, Math.max(2, doorWidth - 8), 7, fridgePalette.panel);
+      if (redRetro) {
+        drawPixelRect(ctx, doorX + 4, upperDoor.y + 4, Math.max(2, doorWidth - 8), 1, "#ffd7bd");
+      } else if (whiteTech) {
+        drawPixelRect(ctx, doorX + 4, upperDoor.y + 4, Math.max(2, doorWidth - 8), 1, "#ffffff");
+        drawPixelRect(ctx, doorX + Math.max(3, doorWidth - 7), upperDoor.y + 7, 2, 7, "#7fe6ff");
+      }
+      drawPixelRect(ctx, doorX + 3, upperDoor.y + 17, 3, 10, fridgePalette.handle);
+      drawPixelRect(ctx, doorX + 4, upperDoor.y + 18, 1, 8, fridgePalette.handleLight);
     }
 
     if (highlight !== "none") {
@@ -2868,7 +3184,9 @@ const drawSleepBlanketOverlay = (
   const palette = bedPalette(bed);
   const industrial = bedSkinId(bed) === "industrial-bed-skin";
   const pinkPlaid = bedSkinId(bed) === "ivory-pink-plaid-bed-skin";
-  const modernMinimal = bedSkinId(bed) === "modern-minimal-bed-skin";
+  const modernMinimal =
+    bedSkinId(bed) === "modern-minimal-bed-skin" ||
+    bedSkinId(bed) === "space-white-deep-gray-bed-skin";
 
   if (modernMinimal) {
     drawPixelRect(ctx, bed.x + 2, bed.y + 31, 3, bed.height - 36, palette.frameAccent);
@@ -4618,50 +4936,46 @@ const drawPolishedCementFloor = (
 
   drawPixelRect(ctx, 70, 128, 340, 184, palette.border);
   drawPixelRect(ctx, 76, 132, 328, 174, palette.base);
-  drawPixelRect(ctx, 76, 132, 328, 4, palette.highlight);
-  drawPixelRect(ctx, 76, 302, 328, 4, palette.grainDark);
+  drawPixelRect(ctx, 76, 132, 328, 2, "rgba(234, 238, 240, 0.22)");
+  drawPixelRect(ctx, 76, 304, 328, 2, "rgba(61, 67, 72, 0.26)");
 
-  for (let y = 136; y < 303; y += 5) {
-    for (let x = 82; x < 400; x += 9) {
+  for (let y = 136; y < 303; y += 4) {
+    for (let x = 82; x < 400; x += 8) {
       const speck = (x * 13 + y * 17) % 9;
       const color =
         speck <= 1
-          ? palette.grainLight
+          ? "rgba(234, 238, 240, 0.14)"
           : speck <= 3
-            ? palette.plankA
+            ? "rgba(195, 200, 203, 0.12)"
             : speck === 4
-              ? palette.plankD
-              : palette.base;
+              ? "rgba(80, 87, 93, 0.10)"
+              : "rgba(143, 150, 155, 0.08)";
       if (speck < 5) {
-        drawPixelRect(ctx, x + ((y * 2) % 5), y, 1, 1, color);
+        drawPixelRect(ctx, x + ((y * 2) % 5), y, speck === 4 ? 2 : 1, 1, color);
       }
     }
   }
 
-  for (let y = 140; y < 300; y += 11) {
-    const offset = (y * 7) % 43;
-    drawPixelRect(ctx, 82 + offset, y, 72, 1, palette.grainLight);
-    drawPixelRect(ctx, 186 + offset / 3, y + 3, 94, 1, palette.plankA);
-    drawPixelRect(ctx, 112 + offset / 2, y + 6, 58, 1, palette.plankB);
-    drawPixelRect(ctx, 244 - offset / 4, y + 8, 76, 1, palette.plankA);
+  for (let y = 140; y < 300; y += 9) {
+    const offset = (y * 7) % 39;
+    drawPixelRect(ctx, 84 + offset, y, 62 + (offset % 34), 1, "rgba(223, 228, 231, 0.10)");
+    drawPixelRect(ctx, 174 + offset / 3, y + 2, 82 + (offset % 29), 1, "rgba(112, 120, 126, 0.08)");
+    drawPixelRect(ctx, 108 + offset / 2, y + 5, 46 + (offset % 25), 1, "rgba(206, 211, 214, 0.09)");
+    drawPixelRect(ctx, 246 - offset / 4, y + 7, 66 + (offset % 21), 1, "rgba(78, 85, 91, 0.07)");
   }
 
   [
-    { x: 94, y: 172, width: 118 },
-    { x: 184, y: 218, width: 162 },
-    { x: 248, y: 152, width: 104 },
-  ].forEach((gloss) => {
-    drawPixelRect(ctx, gloss.x, gloss.y, gloss.width, 1, palette.plankD);
-    drawPixelRect(ctx, gloss.x + 16, gloss.y + 3, gloss.width - 32, 1, palette.highlight);
-    drawPixelRect(ctx, gloss.x + 34, gloss.y + 6, gloss.width - 68, 1, palette.grainLight);
-  });
-
-  [
-    { x: 122, y: 194, width: 42 },
-    { x: 284, y: 266, width: 52 },
-  ].forEach((shine) => {
-    drawPixelRect(ctx, shine.x, shine.y, shine.width, 1, palette.plankD);
-    drawPixelRect(ctx, shine.x + 8, shine.y + 4, Math.max(12, shine.width - 16), 1, palette.highlight);
+    { x: 92, y: 166, width: 128 },
+    { x: 176, y: 214, width: 176 },
+    { x: 244, y: 150, width: 116 },
+    { x: 118, y: 264, width: 86 },
+  ].forEach((gloss, index) => {
+    const lift = index % 2;
+    drawPixelRect(ctx, gloss.x + 12, gloss.y, gloss.width - 24, 1, "rgba(242, 246, 248, 0.16)");
+    drawPixelRect(ctx, gloss.x, gloss.y + 2 + lift, gloss.width, 1, "rgba(232, 237, 239, 0.11)");
+    drawPixelRect(ctx, gloss.x + 26, gloss.y + 4 + lift, gloss.width - 58, 1, "rgba(242, 246, 248, 0.13)");
+    drawPixelRect(ctx, gloss.x + 42, gloss.y + 7, Math.max(26, gloss.width - 88), 1, "rgba(196, 202, 205, 0.10)");
+    drawPixelRect(ctx, gloss.x + 8, gloss.y + 10, gloss.width - 20, 1, "rgba(77, 84, 90, 0.06)");
   });
 };
 
@@ -4734,131 +5048,259 @@ const drawIndustrialMetalFloor = (
   }
 };
 
+const grayTechFloorLayout = {
+  floorX: 76,
+  floorY: 132,
+  floorWidth: 328,
+  floorHeight: 174,
+  splitOffsetX: 139,
+  splitOffsetY: 98,
+};
+
+const grayTechFloorLedPalette = {
+  ledBlue: "#4ea7ff",
+  ledBlueBright: "#bfe8ff",
+  ledBlueBed: "#1f4f74",
+};
+
+interface GlowBlockerRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const furnitureGlowBlockers = (item: FurnitureDefinition): GlowBlockerRect[] => {
+  if (item.id === "desk") {
+    const drawerTop = item.y + 32;
+    const leftX = item.x - 2;
+    const stackWidth = 30;
+    const rightX = item.x + item.width - stackWidth + 2;
+    const centerX = Math.round(item.x + item.width / 2);
+    const skinId = deskSkinId(item);
+    const topBlockers = [
+      { x: item.x - 5, y: item.y - 7, width: item.width + 10, height: 35 },
+      { x: item.x - 2, y: drawerTop - 5, width: item.width + 4, height: 9 },
+    ];
+
+    if (skinId === "industrial-desk-skin" || skinId === "transparent-acrylic-desk-skin") {
+      const catX = centerX - 10;
+      const catY = drawerTop + 5;
+
+      return [
+        ...topBlockers,
+        { x: leftX - 2, y: drawerTop - 2, width: 14, height: 39 },
+        { x: rightX + stackWidth - 10, y: drawerTop - 2, width: 14, height: 39 },
+        { x: catX + 3, y: catY + 2, width: 2, height: 3 },
+        { x: catX + 4, y: catY + 4, width: 3, height: 3 },
+        { x: catX + 15, y: catY + 2, width: 2, height: 3 },
+        { x: catX + 13, y: catY + 4, width: 3, height: 3 },
+        { x: catX + 3, y: catY + 7, width: 14, height: 10 },
+        { x: catX + 1, y: catY + 10, width: 18, height: 7 },
+        { x: catX + 4, y: catY + 16, width: 14, height: 4 },
+        { x: catX + 2, y: catY + 18, width: 20, height: 10 },
+        { x: catX, y: catY + 23, width: 22, height: 8 },
+        { x: catX + 3, y: catY + 29, width: 18, height: 4 },
+        { x: catX + 5, y: catY + 30, width: 5, height: 5 },
+        { x: catX + 12, y: catY + 30, width: 5, height: 5 },
+      ];
+    }
+
+    const sideAndCenterBlockers = [
+      { x: leftX - 3, y: drawerTop - 3, width: stackWidth + 6, height: 43 },
+      { x: rightX - 3, y: drawerTop - 3, width: stackWidth + 6, height: 43 },
+      { x: centerX - 18, y: drawerTop - 2, width: 36, height: 19 },
+    ];
+
+    if (skinId === "rococo-ivory-desk-skin") {
+      return [...topBlockers, ...sideAndCenterBlockers];
+    }
+
+    const shadowBlobX = centerX - 12;
+    const shadowBlobY = drawerTop + 16;
+
+    return [
+      ...topBlockers,
+      ...sideAndCenterBlockers,
+      { x: shadowBlobX + 6, y: shadowBlobY, width: 12, height: 1 },
+      { x: shadowBlobX + 3, y: shadowBlobY + 1, width: 18, height: 2 },
+      { x: shadowBlobX + 1, y: shadowBlobY + 3, width: 22, height: 3 },
+      { x: shadowBlobX, y: shadowBlobY + 6, width: 24, height: 3 },
+      { x: shadowBlobX + 1, y: shadowBlobY + 9, width: 22, height: 2 },
+      { x: shadowBlobX + 4, y: shadowBlobY + 11, width: 16, height: 2 },
+      { x: shadowBlobX + 7, y: shadowBlobY + 13, width: 10, height: 1 },
+    ];
+  }
+
+  if (item.id === "table") {
+    return [
+      { x: item.x - 3, y: item.y - 3, width: item.width + 6, height: 37 },
+      { x: item.x + 5, y: item.y + 28, width: 13, height: 35 },
+      { x: item.x + item.width - 18, y: item.y + 28, width: 13, height: 35 },
+    ];
+  }
+
+  if (item.id === "bed") {
+    return [{ x: item.x - 6, y: item.y - 15, width: item.width + 12, height: item.height + 26 }];
+  }
+
+  if (item.id === "fridge") {
+    return [{ x: item.x - 8, y: item.y - 31, width: item.width + 16, height: item.height + 40 }];
+  }
+
+  if (item.id === "file-cabinet") {
+    return [{ x: item.x - 5, y: item.y - 8, width: item.width + 10, height: item.height + 16 }];
+  }
+
+  return [{ x: item.x - 2, y: item.y - 2, width: item.width + 8, height: item.height + 10 }];
+};
+
+const avatarGlowBlockers = (avatar: AvatarRuntime): GlowBlockerRect[] => {
+  const x = Math.round(avatar.x);
+  const y = Math.round(avatar.y);
+
+  return [
+    { x: x - 22, y: y - 39, width: 44, height: 43 },
+    { x: x - 25, y: y - 6, width: 50, height: 18 },
+    { x: x - 20, y: y + 8, width: 40, height: 13 },
+  ];
+};
+
+const floorGlowOcclusionRects = (
+  content: AivatarContent,
+  avatar: AvatarRuntime,
+): GlowBlockerRect[] => {
+  const placedItemBlockers = (content.placedItems ?? [])
+    .filter((item) => !isWallPlacedItem(content, item))
+    .map(placedItemBounds);
+
+  return [
+    ...content.room.furniture.flatMap(furnitureGlowBlockers),
+    ...placedItemBlockers,
+    ...avatarGlowBlockers(avatar),
+  ];
+};
+
 const drawGrayTechFloor = (
   ctx: CanvasRenderingContext2D,
   surface: RoomSurfaceDefinition,
 ) => {
   const palette = surface.palette;
-  const accent = "#6fdce8";
-  const accentDim = "#7eb8c4";
-  const node = "#9f8cff";
-  const plateWidth = 82;
-  const plateHeight = 44;
+  const { floorX, floorY, floorWidth, floorHeight, splitOffsetX, splitOffsetY } =
+    grayTechFloorLayout;
+  const splitX = floorX + splitOffsetX;
+  const splitY = floorY + splitOffsetY;
+  const { ledBlue, ledBlueBright, ledBlueBed } = grayTechFloorLedPalette;
 
   drawPixelRect(ctx, 70, 128, 340, 184, palette.border);
-  drawPixelRect(ctx, 76, 132, 328, 174, palette.base);
-  drawPixelRect(ctx, 76, 132, 328, 3, palette.highlight);
-  drawPixelRect(ctx, 76, 303, 328, 3, palette.grainDark);
-
-  const drawOctagonalPlate = (
-    plateX: number,
-    plateY: number,
-    width: number,
-    height: number,
-    fill: string,
-  ) => {
-    const chamfer = Math.min(7, Math.floor(width / 4), Math.floor(height / 3));
-
-    for (let row = 0; row < height; row += 1) {
-      const topInset = row < chamfer ? chamfer - row : 0;
-      const bottomInset =
-        row >= height - chamfer ? row - (height - chamfer) + 1 : 0;
-      const inset = Math.max(topInset, bottomInset);
-      drawPixelRect(ctx, plateX + inset, plateY + row, width - inset * 2, 1, fill);
-    }
-
-    drawPixelRect(ctx, plateX + chamfer, plateY, width - chamfer * 2, 1, palette.highlight);
-    drawPixelRect(ctx, plateX, plateY + chamfer, 1, height - chamfer * 2, palette.plankD);
-    drawPixelRect(
-      ctx,
-      plateX + width - 1,
-      plateY + chamfer,
-      1,
-      height - chamfer * 2,
-      palette.grainDark,
-    );
-    drawPixelRect(
-      ctx,
-      plateX + chamfer,
-      plateY + height - 1,
-      width - chamfer * 2,
-      1,
-      palette.seam,
-    );
-
-    for (let step = 0; step < chamfer; step += 1) {
-      const upperInset = chamfer - step;
-      const lowerInset = step + 1;
-      const upperY = plateY + step;
-      const lowerY = plateY + height - chamfer + step;
-
-      drawPixelRect(ctx, plateX + upperInset, upperY, 1, 1, palette.plankD);
-      drawPixelRect(ctx, plateX + width - upperInset - 1, upperY, 1, 1, palette.grainDark);
-      drawPixelRect(ctx, plateX + lowerInset - 1, lowerY, 1, 1, palette.seam);
-      drawPixelRect(ctx, plateX + width - lowerInset, lowerY, 1, 1, palette.grainDark);
-
-      if (step > 1 && step < chamfer - 1 && step % 2 === 0) {
-        drawPixelRect(ctx, plateX + upperInset + 2, upperY + 1, 3, 1, palette.highlight);
-        drawPixelRect(ctx, plateX + width - upperInset - 5, upperY + 1, 3, 1, palette.seam);
-        drawPixelRect(ctx, plateX + lowerInset + 1, lowerY - 1, 3, 1, palette.plankD);
-        drawPixelRect(ctx, plateX + width - lowerInset - 4, lowerY - 1, 3, 1, palette.grainDark);
-      }
-    }
-  };
-
-  for (let y = 132; y < 306; y += plateHeight) {
-    for (let x = 76; x < 404; x += plateWidth) {
-      const width = Math.min(plateWidth - 1, 404 - x);
-      const height = Math.min(plateHeight - 1, 306 - y);
-      const index = Math.floor((x - 76) / plateWidth) + Math.floor((y - 132) / plateHeight);
-      const fill = index % 3 === 0 ? palette.plankA : index % 3 === 1 ? palette.plankB : palette.base;
-
-      drawOctagonalPlate(x, y, width, height, fill);
-
-      drawPixelRect(ctx, x + 12, y + 12, Math.max(14, Math.floor(width * 0.36)), 1, accentDim);
-      drawPixelRect(ctx, x + 12, y + 12, 1, Math.max(8, Math.floor(height * 0.42)), accentDim);
-      drawPixelRect(ctx, x + 14, y + 14, Math.max(10, Math.floor(width * 0.24)), 1, accent);
-
-      if (index % 2 === 0) {
-        drawPixelRect(ctx, x + width - 28, y + 11, 16, 1, palette.grainLight);
-        drawPixelRect(ctx, x + width - 13, y + 11, 1, 11, palette.grainLight);
-        drawPixelRect(ctx, x + width - 16, y + 22, 7, 1, accent);
-      } else {
-        drawPixelRect(ctx, x + 34, y + height - 15, 18, 1, palette.grainLight);
-        drawPixelRect(ctx, x + 51, y + height - 22, 1, 8, palette.grainLight);
-        drawPixelRect(ctx, x + 52, y + height - 22, 8, 1, accent);
-      }
-
-      [
-        { rx: 10, ry: 9, color: node },
-        { rx: width - 16, ry: 9, color: palette.highlight },
-        { rx: 10, ry: height - 15, color: palette.grainLight },
-        { rx: width - 16, ry: height - 15, color: node },
-      ].forEach((light) => {
-        drawPixelRect(ctx, x + light.rx, y + light.ry, 5, 5, palette.grainDark);
-        drawPixelRect(ctx, x + light.rx + 1, y + light.ry + 1, 3, 3, light.color);
-        drawPixelRect(ctx, x + light.rx + 2, y + light.ry + 1, 1, 1, "#ffffff");
-      });
-
-      for (let notch = 0; notch < 3; notch += 1) {
-        const notchX = x + 20 + notch * 18 + ((index + notch) % 2) * 3;
-        const notchY = y + 27 + ((index * 5 + notch * 7) % 8);
-        drawPixelRect(ctx, notchX, notchY, 10, 1, palette.grainDark);
-        drawPixelRect(ctx, notchX + 2, notchY + 2, 6, 1, palette.plankD);
-      }
-    }
-  }
+  drawPixelRect(ctx, floorX, floorY, floorWidth, floorHeight, palette.base);
 
   [
-    { x: 122, y: 150, width: 72 },
-    { x: 222, y: 195, width: 92 },
-    { x: 112, y: 266, width: 58 },
-    { x: 292, y: 278, width: 70 },
-  ].forEach((trace, index) => {
-    drawPixelRect(ctx, trace.x, trace.y, trace.width, 1, index % 2 === 0 ? accent : palette.grainLight);
-    drawPixelRect(ctx, trace.x + trace.width - 1, trace.y, 1, 8 + index * 2, index % 2 === 0 ? accent : accentDim);
-    drawPixelRect(ctx, trace.x + trace.width - 4, trace.y + 7 + index * 2, 8, 1, index % 2 === 0 ? accent : accentDim);
+    { x: floorX, y: floorY, width: floorWidth, height: 22, color: "rgba(226, 237, 242, 0.11)" },
+    { x: floorX + 6, y: floorY + 24, width: 134, height: 54, color: "rgba(196, 204, 210, 0.15)" },
+    { x: floorX + 146, y: floorY + 15, width: 112, height: 58, color: "rgba(129, 140, 149, 0.18)" },
+    { x: floorX + 238, y: floorY + 34, width: 84, height: 72, color: "rgba(196, 204, 210, 0.13)" },
+    { x: floorX + 18, y: floorY + 92, width: 118, height: 58, color: "rgba(116, 126, 136, 0.14)" },
+    { x: floorX + 142, y: floorY + 82, width: 174, height: 74, color: "rgba(226, 237, 242, 0.09)" },
+  ].forEach((patch) => {
+    drawPixelRect(ctx, patch.x, patch.y, patch.width, patch.height, patch.color);
+    drawPixelRect(ctx, patch.x + 5, patch.y + 4, patch.width - 10, 1, "rgba(238, 246, 248, 0.08)");
+    drawPixelRect(ctx, patch.x + 6, patch.y + patch.height - 5, patch.width - 12, 1, "rgba(54, 64, 72, 0.10)");
   });
+
+  for (let y = floorY + 5; y < floorY + floorHeight - 5; y += 7) {
+    const offset = (y * 5) % 19;
+    const length = floorWidth - 16 - ((y * 3) % 31);
+    const color = y % 3 === 0 ? "rgba(232, 239, 242, 0.09)" : "rgba(65, 74, 82, 0.10)";
+    drawPixelRect(ctx, floorX + 8 + offset, y, Math.max(64, length), 1, color);
+  }
+
+  for (let i = 0; i < 34; i += 1) {
+    const speckX = floorX + 10 + ((i * 37) % (floorWidth - 24));
+    const speckY = floorY + 9 + ((i * 23) % (floorHeight - 20));
+    const speckWidth = 2 + (i % 4);
+    const speckColor = i % 2 === 0 ? "rgba(236, 243, 245, 0.13)" : "rgba(52, 62, 70, 0.12)";
+    drawPixelRect(ctx, speckX, speckY, speckWidth, 1, speckColor);
+  }
+
+  drawPixelRect(ctx, splitX - 1, floorY + 6, 4, floorHeight - 12, "rgba(35, 46, 56, 0.32)");
+  drawPixelRect(ctx, splitX, floorY + 8, 2, floorHeight - 16, ledBlueBed);
+  drawPixelRect(ctx, splitX, floorY + 8, 1, floorHeight - 16, ledBlue);
+  drawPixelRect(ctx, splitX + 1, floorY + 9, 1, floorHeight - 18, ledBlueBright);
+
+  drawPixelRect(ctx, floorX, splitY - 1, floorWidth, 4, "rgba(35, 46, 56, 0.32)");
+  drawPixelRect(ctx, floorX, splitY, floorWidth, 2, ledBlueBed);
+  drawPixelRect(ctx, floorX, splitY, floorWidth, 1, ledBlue);
+  drawPixelRect(ctx, floorX + 1, splitY + 1, floorWidth - 2, 1, ledBlueBright);
+
+  drawPixelRect(ctx, splitX - 1, splitY - 1, 4, 4, "rgba(22, 36, 48, 0.48)");
+  drawPixelRect(ctx, splitX, splitY, 2, 2, ledBlue);
+  drawPixelRect(ctx, splitX + 1, splitY + 1, 1, 1, ledBlueBright);
+
+  drawPixelRect(ctx, floorX, floorY, floorWidth, 2, "rgba(238, 246, 248, 0.16)");
+  drawPixelRect(ctx, floorX, floorY + floorHeight - 3, floorWidth, 3, "rgba(47, 56, 64, 0.34)");
+  drawPixelRect(ctx, floorX, floorY, 2, floorHeight, "rgba(226, 237, 242, 0.08)");
+  drawPixelRect(ctx, floorX + floorWidth - 2, floorY, 2, floorHeight, "rgba(47, 56, 64, 0.26)");
+};
+
+const drawGrayTechFloorLedGlow = (
+  ctx: CanvasRenderingContext2D,
+  content: AivatarContent,
+  avatar: AvatarRuntime,
+) => {
+  const { floorX, floorY, floorWidth, floorHeight, splitOffsetX, splitOffsetY } =
+    grayTechFloorLayout;
+  const splitX = floorX + splitOffsetX;
+  const splitY = floorY + splitOffsetY;
+
+  const glowCanvas = ctx.canvas.ownerDocument.createElement("canvas");
+  glowCanvas.width = ctx.canvas.width;
+  glowCanvas.height = ctx.canvas.height;
+  const glowCtx = glowCanvas.getContext("2d");
+  if (!glowCtx) return;
+  glowCtx.imageSmoothingEnabled = false;
+
+  drawPixelRect(glowCtx, splitX - 4, floorY + 6, 10, floorHeight - 12, "rgba(78, 167, 255, 0.10)");
+  drawPixelRect(glowCtx, splitX - 2, floorY + 7, 6, floorHeight - 14, "rgba(78, 167, 255, 0.16)");
+  drawPixelRect(glowCtx, splitX, floorY + 8, 2, floorHeight - 16, "rgba(191, 232, 255, 0.42)");
+
+  drawPixelRect(glowCtx, floorX, splitY - 4, floorWidth, 10, "rgba(78, 167, 255, 0.10)");
+  drawPixelRect(glowCtx, floorX, splitY - 2, floorWidth, 6, "rgba(78, 167, 255, 0.16)");
+  drawPixelRect(glowCtx, floorX, splitY, floorWidth, 2, "rgba(191, 232, 255, 0.42)");
+
+  drawPixelRect(glowCtx, splitX - 4, splitY - 4, 10, 10, "rgba(78, 167, 255, 0.16)");
+  drawPixelRect(glowCtx, splitX - 2, splitY - 2, 6, 6, "rgba(191, 232, 255, 0.26)");
+  drawPixelRect(glowCtx, splitX, splitY, 2, 2, "rgba(255, 255, 255, 0.40)");
+
+  glowCtx.globalCompositeOperation = "destination-out";
+  floorGlowOcclusionRects(content, avatar).forEach((rect) => {
+    drawPixelRect(
+      glowCtx,
+      Math.round(rect.x),
+      Math.round(rect.y),
+      Math.round(rect.width),
+      Math.round(rect.height),
+      "#000000",
+    );
+  });
+  glowCtx.globalCompositeOperation = "destination-in";
+  drawPixelRect(glowCtx, floorX, floorY, floorWidth, floorHeight, "#000000");
+
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.drawImage(glowCanvas, 0, 0);
+  ctx.restore();
+};
+
+const drawFloorLightOverlay = (
+  ctx: CanvasRenderingContext2D,
+  surface: RoomSurfaceDefinition,
+  content: AivatarContent,
+  avatar: AvatarRuntime,
+) => {
+  if (surface.id === "gray-tech-floor") {
+    drawGrayTechFloorLedGlow(ctx, content, avatar);
+  }
 };
 
 const drawTatamiMatFloor = (
@@ -6845,6 +7287,12 @@ export const renderScene = (
   canvas.height = sceneSize.height;
   ctx.imageSmoothingEnabled = false;
 
+  const floorSurface = resolveSurface(
+    content.room.floorSurfaces,
+    content.room.floorSurfaceId,
+    fallbackFloorPalette,
+  );
+
   drawRoom(
     ctx,
     content,
@@ -6908,8 +7356,13 @@ export const renderScene = (
           ? "hover"
           : "none";
     if (item.id === "bed") {
-      if (bedSkinId(item) === "modern-minimal-bed-skin") return;
-      drawBedFootboard(ctx, item, highlight);
+      if (
+        bedSkinId(item) === "modern-minimal-bed-skin" ||
+        bedSkinId(item) === "space-white-deep-gray-bed-skin"
+      ) {
+        return;
+      }
+      drawBedFootboardAvatarOcclusion(ctx, item, avatar);
       return;
     }
     drawFurniture(
@@ -6945,6 +7398,7 @@ export const renderScene = (
       );
     }
   });
+  drawFloorLightOverlay(ctx, floorSurface, content, avatar);
   drawSleepBlanketOverlay(ctx, content, avatar);
   if (status.status === "thinking") {
     drawCodexThinkingBubble(ctx, avatar, status, memory, uiTheme);
