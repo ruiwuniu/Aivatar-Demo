@@ -91,6 +91,22 @@
         }
       },
       {
+        "id": "gray-tech-floor",
+        "name": "Gray Tech Floor",
+        "palette": {
+          "border": "#2d343c",
+          "base": "#909aa3",
+          "plankA": "#aeb8c0",
+          "plankB": "#8b969f",
+          "plankC": "#6f7a83",
+          "plankD": "#c4ccd2",
+          "seam": "#58636c",
+          "highlight": "#e2edf2",
+          "grainDark": "#4d5861",
+          "grainLight": "#aeeaf2"
+        }
+      },
+      {
         "id": "tatami-mat-floor",
         "name": "Tatami Mat Floor",
         "palette": {
@@ -219,6 +235,22 @@
           "grainDark": "#c8b99d",
           "grainLight": "#f8f0df"
         }
+      },
+      {
+        "id": "white-tech-wallpaper",
+        "name": "White Tech Wallpaper",
+        "palette": {
+          "border": "#b9c6ce",
+          "base": "#f6f9fa",
+          "plankA": "#ffffff",
+          "plankB": "#edf4f7",
+          "plankC": "#d9e3e8",
+          "plankD": "#c9f0ff",
+          "seam": "#c6d1d8",
+          "highlight": "#ffffff",
+          "grainDark": "#aebdc6",
+          "grainLight": "#dff8ff"
+        }
       }
     ],
     "windows": [
@@ -244,6 +276,15 @@
         "id": "ocean-window",
         "name": "Ocean Window",
         "kind": "ocean-window",
+        "x": 146,
+        "y": 30,
+        "width": 188,
+        "height": 96
+      },
+      {
+        "id": "cyberpunk-city-window",
+        "name": "Cyberpunk City Window",
+        "kind": "cyberpunk-city-window",
         "x": 146,
         "y": 30,
         "width": 188,
@@ -415,6 +456,16 @@
       "effect": { "mood": 7 }
     },
     {
+      "id": "blue-persian-rug",
+      "name": "Blue Persian Rug",
+      "kind": "decor",
+      "tags": ["item", "rug"],
+      "price": 520,
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 8 }
+    },
+    {
       "id": "desk-lamp",
       "name": "Desk Lamp",
       "kind": "decor",
@@ -443,6 +494,16 @@
       "placementSurfaces": ["wall"],
       "placement": "wall",
       "effect": { "mood": 4 }
+    },
+    {
+      "id": "sky-sentinel-poster",
+      "name": "Sky Sentinel Poster",
+      "kind": "decor",
+      "tags": ["hanging"],
+      "price": 88,
+      "placementSurfaces": ["wall"],
+      "placement": "wall",
+      "effect": { "mood": 8 }
     },
     {
       "id": "digital-wall-clock",
@@ -516,6 +577,132 @@
       "effect": { "mood": 4, "energy": 2 }
     },
     {
+      "id": "industrial-bed-skin",
+      "name": "Industrial Bed Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "bed"],
+      "targetFurnitureId": "bed",
+      "price": 240,
+      "effect": { "mood": 3, "energy": 1 }
+    },
+    {
+      "id": "wood-red-bed-skin",
+      "name": "Wood Red Bed Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "bed"],
+      "targetFurnitureId": "bed",
+      "price": 260,
+      "effect": { "mood": 4, "energy": 1 }
+    },
+    {
+      "id": "ivory-pink-plaid-bed-skin",
+      "name": "Ivory Pink Plaid Bed Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "bed"],
+      "targetFurnitureId": "bed",
+      "price": 280,
+      "effect": { "mood": 5, "energy": 1 }
+    },
+    {
+      "id": "modern-minimal-bed-skin",
+      "name": "Modern Minimal Bed Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "bed"],
+      "targetFurnitureId": "bed",
+      "price": 300,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
+      "id": "space-white-deep-gray-bed-skin",
+      "name": "Space White Deep Gray Bed Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "bed"],
+      "targetFurnitureId": "bed",
+      "price": 300,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
+      "id": "industrial-desk-skin",
+      "name": "Industrial Desk Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "desk"],
+      "targetFurnitureId": "desk",
+      "price": 280,
+      "effect": { "mood": 3, "energy": 2 }
+    },
+    {
+      "id": "rococo-ivory-desk-skin",
+      "name": "Rococo Ivory Desk Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "desk"],
+      "targetFurnitureId": "desk",
+      "price": 340,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
+      "id": "transparent-acrylic-desk-skin",
+      "name": "Transparent Acrylic Desk Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "desk"],
+      "targetFurnitureId": "desk",
+      "price": 340,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
+      "id": "rococo-ivory-table-skin",
+      "name": "Rococo Ivory Table Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "table"],
+      "targetFurnitureId": "table",
+      "price": 320,
+      "effect": { "mood": 5, "energy": 1 }
+    },
+    {
+      "id": "dark-oak-table-skin",
+      "name": "Dark Oak Table Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "table"],
+      "targetFurnitureId": "table",
+      "price": 260,
+      "effect": { "mood": 4, "energy": 1 }
+    },
+    {
+      "id": "white-tech-table-skin",
+      "name": "White Tech Table Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "table"],
+      "targetFurnitureId": "table",
+      "price": 340,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
+      "id": "ivory-fridge-skin",
+      "name": "Ivory Fridge Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "fridge"],
+      "targetFurnitureId": "fridge",
+      "price": 300,
+      "effect": { "mood": 4, "energy": 2 }
+    },
+    {
+      "id": "red-retro-fridge-skin",
+      "name": "Red Retro Fridge Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "fridge"],
+      "targetFurnitureId": "fridge",
+      "price": 340,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
+      "id": "white-tech-fridge-skin",
+      "name": "White Tech Fridge Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "fridge"],
+      "targetFurnitureId": "fridge",
+      "price": 340,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
       "id": "city-night-window",
       "name": "City Night Window",
       "kind": "window",
@@ -530,6 +717,14 @@
       "tags": ["window"],
       "price": 8888,
       "effect": { "mood": 10 }
+    },
+    {
+      "id": "cyberpunk-city-window",
+      "name": "Cyberpunk City Window",
+      "kind": "window",
+      "tags": ["window"],
+      "price": 12000,
+      "effect": { "mood": 12 }
     },
     {
       "id": "purple-bubble-wallpaper",
@@ -572,6 +767,14 @@
       "effect": { "mood": 5 }
     },
     {
+      "id": "white-tech-wallpaper",
+      "name": "White Tech Wallpaper",
+      "kind": "decor",
+      "tags": ["wall-surface"],
+      "price": 88,
+      "effect": { "mood": 5, "energy": 2 }
+    },
+    {
       "id": "polished-cement-floor",
       "name": "Polished Cement Floor",
       "kind": "decor",
@@ -586,6 +789,14 @@
       "tags": ["floor-surface"],
       "price": 68,
       "effect": { "mood": 3, "energy": 2 }
+    },
+    {
+      "id": "gray-tech-floor",
+      "name": "Gray Tech Floor",
+      "kind": "decor",
+      "tags": ["floor-surface"],
+      "price": 88,
+      "effect": { "mood": 4, "energy": 3 }
     },
     {
       "id": "tatami-mat-floor",
@@ -662,6 +873,16 @@
       "effect": { "mood": 7 }
     },
     {
+      "id": "blue-persian-rug",
+      "name": "Blue Persian Rug",
+      "kind": "decor",
+      "tags": ["item", "rug"],
+      "price": 520,
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "effect": { "mood": 8 }
+    },
+    {
       "id": "desk-lamp",
       "name": "Desk Lamp",
         "kind": "decor",
@@ -690,6 +911,16 @@
         "placementSurfaces": ["wall"],
       "placement": "wall",
       "effect": { "mood": 4 }
+    },
+    {
+      "id": "sky-sentinel-poster",
+      "name": "Sky Sentinel Poster",
+      "kind": "decor",
+      "tags": ["hanging"],
+      "price": 88,
+      "placementSurfaces": ["wall"],
+      "placement": "wall",
+      "effect": { "mood": 8 }
     },
     {
       "id": "digital-wall-clock",
@@ -753,6 +984,132 @@
         "effect": { "mood": 4, "energy": 2 }
       },
       {
+        "id": "industrial-bed-skin",
+        "name": "Industrial Bed Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "bed"],
+        "targetFurnitureId": "bed",
+        "price": 240,
+        "effect": { "mood": 3, "energy": 1 }
+      },
+      {
+        "id": "wood-red-bed-skin",
+        "name": "Wood Red Bed Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "bed"],
+        "targetFurnitureId": "bed",
+        "price": 260,
+        "effect": { "mood": 4, "energy": 1 }
+      },
+      {
+        "id": "ivory-pink-plaid-bed-skin",
+        "name": "Ivory Pink Plaid Bed Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "bed"],
+        "targetFurnitureId": "bed",
+        "price": 280,
+        "effect": { "mood": 5, "energy": 1 }
+      },
+      {
+        "id": "modern-minimal-bed-skin",
+        "name": "Modern Minimal Bed Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "bed"],
+        "targetFurnitureId": "bed",
+        "price": 300,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "space-white-deep-gray-bed-skin",
+        "name": "Space White Deep Gray Bed Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "bed"],
+        "targetFurnitureId": "bed",
+        "price": 300,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "industrial-desk-skin",
+        "name": "Industrial Desk Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "desk"],
+        "targetFurnitureId": "desk",
+        "price": 280,
+        "effect": { "mood": 3, "energy": 2 }
+      },
+      {
+        "id": "rococo-ivory-desk-skin",
+        "name": "Rococo Ivory Desk Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "desk"],
+        "targetFurnitureId": "desk",
+        "price": 340,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "transparent-acrylic-desk-skin",
+        "name": "Transparent Acrylic Desk Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "desk"],
+        "targetFurnitureId": "desk",
+        "price": 340,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "rococo-ivory-table-skin",
+        "name": "Rococo Ivory Table Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "table"],
+        "targetFurnitureId": "table",
+        "price": 320,
+        "effect": { "mood": 5, "energy": 1 }
+      },
+      {
+        "id": "dark-oak-table-skin",
+        "name": "Dark Oak Table Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "table"],
+        "targetFurnitureId": "table",
+        "price": 260,
+        "effect": { "mood": 4, "energy": 1 }
+      },
+      {
+        "id": "white-tech-table-skin",
+        "name": "White Tech Table Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "table"],
+        "targetFurnitureId": "table",
+        "price": 340,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "ivory-fridge-skin",
+        "name": "Ivory Fridge Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "fridge"],
+        "targetFurnitureId": "fridge",
+        "price": 300,
+        "effect": { "mood": 4, "energy": 2 }
+      },
+      {
+        "id": "red-retro-fridge-skin",
+        "name": "Red Retro Fridge Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "fridge"],
+        "targetFurnitureId": "fridge",
+        "price": 340,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "white-tech-fridge-skin",
+        "name": "White Tech Fridge Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "fridge"],
+        "targetFurnitureId": "fridge",
+        "price": 340,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
         "id": "city-night-window",
         "name": "City Night Window",
         "kind": "window",
@@ -767,6 +1124,14 @@
         "tags": ["window"],
         "price": 8888,
         "effect": { "mood": 10 }
+      },
+      {
+        "id": "cyberpunk-city-window",
+        "name": "Cyberpunk City Window",
+        "kind": "window",
+        "tags": ["window"],
+        "price": 12000,
+        "effect": { "mood": 12 }
       },
       {
         "id": "purple-bubble-wallpaper",
@@ -809,6 +1174,14 @@
         "effect": { "mood": 5 }
       },
       {
+        "id": "white-tech-wallpaper",
+        "name": "White Tech Wallpaper",
+        "kind": "decor",
+        "tags": ["wall-surface"],
+        "price": 88,
+        "effect": { "mood": 5, "energy": 2 }
+      },
+      {
         "id": "polished-cement-floor",
         "name": "Polished Cement Floor",
         "kind": "decor",
@@ -823,6 +1196,14 @@
         "tags": ["floor-surface"],
         "price": 68,
         "effect": { "mood": 3, "energy": 2 }
+      },
+      {
+        "id": "gray-tech-floor",
+        "name": "Gray Tech Floor",
+        "kind": "decor",
+        "tags": ["floor-surface"],
+        "price": 88,
+        "effect": { "mood": 4, "energy": 3 }
       },
       {
         "id": "tatami-mat-floor",

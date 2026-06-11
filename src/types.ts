@@ -190,6 +190,7 @@ export type ContentTag =
   | "window"
   | "wall-surface"
   | "floor-surface"
+  | "furniture-skin"
   | "bed"
   | "desk"
   | "table"
@@ -204,7 +205,8 @@ export type ContentTag =
   | "easel"
   | "coffee-cup"
   | "coffee-storage"
-  | "file-cabinet";
+  | "file-cabinet"
+  | "one-time";
 
 export type PlacementSurface = "floor" | "furnitureTop" | "wall";
 
@@ -219,6 +221,7 @@ export interface ItemDefinition {
   effect?: ConsumableEffect;
   placement?: "floor" | "desktop" | "wall";
   rotatable?: boolean;
+  targetFurnitureId?: string;
 }
 
 export interface InventoryEntry {
@@ -261,6 +264,7 @@ export interface FurnitureDefinition {
   width: number;
   height: number;
   color: string;
+  skinId?: string;
   interaction: BehaviorName;
   collision?: {
     x: number;
@@ -292,7 +296,7 @@ export interface RoomSurfaceDefinition {
 export interface RoomWindowDefinition {
   id: string;
   name: string;
-  kind: "cozy-window" | "city-night-window" | "ocean-window";
+  kind: "cozy-window" | "city-night-window" | "ocean-window" | "cyberpunk-city-window";
   x: number;
   y: number;
   width: number;
@@ -414,6 +418,7 @@ export interface AivatarSaveState {
   activeWindowId?: string;
   floorSurfaceId?: string;
   wallSurfaceId?: string;
+  activeFurnitureSkinIds?: Record<string, string>;
   windowPlacements?: RoomWindowPlacement[];
   furniturePlacements?: FurniturePlacement[];
 }

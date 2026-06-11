@@ -114,6 +114,20 @@ const COFFEE_ITEM_ID = "coffee";
 const COLA_ITEM_ID = "cola";
 const BENTO_ITEM_ID = "bento";
 const COOKIE_ITEM_ID = "cookie";
+const BED_INDUSTRIAL_SKIN_ID = "industrial-bed-skin";
+const BED_WOOD_RED_SKIN_ID = "wood-red-bed-skin";
+const BED_IVORY_PINK_PLAID_SKIN_ID = "ivory-pink-plaid-bed-skin";
+const BED_MODERN_MINIMAL_SKIN_ID = "modern-minimal-bed-skin";
+const BED_SPACE_WHITE_DEEP_GRAY_SKIN_ID = "space-white-deep-gray-bed-skin";
+const DESK_INDUSTRIAL_SKIN_ID = "industrial-desk-skin";
+const DESK_ROCOCO_IVORY_SKIN_ID = "rococo-ivory-desk-skin";
+const DESK_TRANSPARENT_ACRYLIC_SKIN_ID = "transparent-acrylic-desk-skin";
+const TABLE_ROCOCO_IVORY_SKIN_ID = "rococo-ivory-table-skin";
+const TABLE_DARK_OAK_SKIN_ID = "dark-oak-table-skin";
+const TABLE_WHITE_TECH_SKIN_ID = "white-tech-table-skin";
+const FRIDGE_IVORY_SKIN_ID = "ivory-fridge-skin";
+const FRIDGE_RED_RETRO_SKIN_ID = "red-retro-fridge-skin";
+const FRIDGE_WHITE_TECH_SKIN_ID = "white-tech-fridge-skin";
 const COFFEE_MAX_QUANTITY = 6;
 const TABLE_FURNITURE_ID = "table";
 const EMPTY_TABLE_COFFEE_CAPACITY = 0;
@@ -291,6 +305,7 @@ const DEMO_BEHAVIORS: BehaviorName[] = [
 
 type ShopCategoryId =
   | "furniture"
+  | "furniture-skins"
   | "windows"
   | "supplies"
   | "hangings";
@@ -400,6 +415,7 @@ const DECOR_SURFACE_CATEGORIES: Array<{ id: DecorSurfaceCategoryId; copyKey: str
 
 const SHOP_CATEGORIES: Array<{ id: ShopCategoryId; copyKey: string }> = [
   { id: "furniture", copyKey: "shop.furniture" },
+  { id: "furniture-skins", copyKey: "shop.furnitureSkins" },
   { id: "windows", copyKey: "shop.windows" },
   { id: "supplies", copyKey: "shop.supplies" },
   { id: "hangings", copyKey: "shop.hangings" },
@@ -416,8 +432,12 @@ const isSurfaceItem = (item: ItemDefinition) =>
 
 const isWindowItem = (item: ItemDefinition) => item.kind === "window";
 
+const isFurnitureSkinItem = (item: ItemDefinition) =>
+  item.tags?.includes("furniture-skin") ?? false;
+
 const getShopCategoryId = (item: ItemDefinition): ShopCategoryId => {
   if (item.kind === "window") return "windows";
+  if (isFurnitureSkinItem(item)) return "furniture-skins";
   if (item.kind === "food" || item.kind === "drink" || item.kind === "tool") {
     return "supplies";
   }
@@ -438,6 +458,8 @@ const isUniqueShopItemOwned = (save: AivatarSaveState, item: ItemDefinition) =>
   item.id === TASK_CABINET_FURNITURE_ID
     ? save.inventory.some((entry) => entry.itemId === item.id && entry.quantity > 0) ||
       save.placedItems.some((placedItem) => placedItem.itemId === item.id)
+    : item.tags?.includes("one-time")
+      ? save.purchasedItemIds.includes(item.id)
     : false;
 
 const clampQuantity = (entry: InventoryEntry): InventoryEntry => ({
@@ -2026,6 +2048,19 @@ const normalizeAvatarAppearanceId = (appearanceId: unknown): AvatarAppearanceId 
 
 const saveSlotStorageKey = (slotId: string) => `${SAVE_SLOT_KEY_PREFIX}${slotId}`;
 
+const normalizeFurnitureSkinIds = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      (entry): entry is [string, string] =>
+        entry[0].trim().length > 0 &&
+        typeof entry[1] === "string" &&
+        entry[1].trim().length > 0,
+    ),
+  );
+};
+
 const saveFromContent = (
   content: AivatarContent,
   options: {
@@ -2048,6 +2083,7 @@ const saveFromContent = (
   ...loadDefaultLayout(content),
   wallet: content.wallet,
   purchasedItemIds: [],
+  activeFurnitureSkinIds: {},
 });
 
 const normalizeSavePayload = (
@@ -2082,6 +2118,7 @@ const normalizeSavePayload = (
     furnitureStorage: normalizeFurnitureStorage(parsed.furnitureStorage),
     memory: normalizeMemory(parsed.memory),
     navMemory: normalizeNavMemory(parsed.navMemory),
+    activeFurnitureSkinIds: normalizeFurnitureSkinIds(parsed.activeFurnitureSkinIds),
     placedItems,
     furniturePlacements,
     layoutVersion: SAVE_LAYOUT_VERSION,
@@ -2755,7 +2792,9 @@ export const App = () => {
   } = useCodexStatus();
   const [debugStatus, setDebugStatus] = useState<CodexStatusMessage | null>(null);
   const [windowTimePreview, setWindowTimePreview] = useState(false);
+  const [windowPreviewHour, setWindowPreviewHour] = useState<number | null>(null);
   const windowTimePreviewRef = useRef(false);
+  const windowPreviewHourRef = useRef<number | null>(null);
   const navDebugOverlayRef = useRef(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [bridgeStartMessage, setBridgeStartMessage] = useState("");
@@ -2791,7 +2830,13 @@ export const App = () => {
       const furniturePlacements = withoutLegacyTerminalFurniturePlacements(
         save.furniturePlacements,
       );
-      const baseFurniture = furnitureWithPlacements(contentBase, furniturePlacements);
+      const activeFurnitureSkinIds = save.activeFurnitureSkinIds ?? {};
+      const baseFurniture = furnitureWithPlacements(contentBase, furniturePlacements).map(
+        (item) => {
+          const skinId = activeFurnitureSkinIds[item.id];
+          return skinId ? { ...item, skinId } : item;
+        },
+      );
       const taskCabinetPlacedItem = save.placedItems.find(
         (item) => item.itemId === TASK_CABINET_FURNITURE_ID,
       );
@@ -3745,6 +3790,10 @@ export const App = () => {
   }, [windowTimePreview]);
 
   useEffect(() => {
+    windowPreviewHourRef.current = windowPreviewHour;
+  }, [windowPreviewHour]);
+
+  useEffect(() => {
     navDebugOverlayRef.current = navDebugOverlay;
   }, [navDebugOverlay]);
 
@@ -3753,8 +3802,16 @@ export const App = () => {
     taskCabinetEntriesRef.current = taskCabinetEntries;
   }, [taskCabinetEntries]);
 
-  const getWindowTimeMs = (frame: number) =>
-    windowTimePreviewRef.current ? Date.now() + frame * 60000 : Date.now();
+  const getWindowTimeMs = (frame: number) => {
+    const previewHour = windowPreviewHourRef.current;
+    if (previewHour !== null) {
+      const previewDate = new Date(Date.now());
+      previewDate.setHours(previewHour, 0, 0, 0);
+      return previewDate.getTime();
+    }
+
+    return windowTimePreviewRef.current ? Date.now() + frame * 60000 : Date.now();
+  };
 
   useLayoutEffect(() => {
     if (canvasRef.current) {
@@ -7858,6 +7915,111 @@ export const App = () => {
     });
   };
 
+  const buyOrApplyFurnitureSkin = (item: ItemDefinition) => {
+    const targetFurnitureId = item.targetFurnitureId;
+    const targetFurniture = targetFurnitureId
+      ? contentRef.current.room.furniture.find(
+          (candidate) => candidate.id === targetFurnitureId,
+        )
+      : null;
+
+    if (!targetFurnitureId || !targetFurniture) {
+      updateActiveInteraction({
+        kind: "blocked",
+        furnitureId: "furniture-skin",
+        furnitureName: item.name,
+        message: ui("message.windowMissing", { name: item.name }),
+        startedAt: performance.now(),
+        bubbleText: ui("bubble.missing"),
+      });
+      return;
+    }
+
+    setSave((current) => {
+      const purchased = current.purchasedItemIds.includes(item.id);
+      const alreadyApplied = current.activeFurnitureSkinIds?.[targetFurnitureId] === item.id;
+      if (alreadyApplied) return current;
+      if (!purchased && current.wallet.bits < item.price) return current;
+
+      return {
+        ...current,
+        wallet: purchased ? current.wallet : { bits: current.wallet.bits - item.price },
+        purchasedItemIds: purchased
+          ? current.purchasedItemIds
+          : Array.from(new Set([...current.purchasedItemIds, item.id])),
+        activeFurnitureSkinIds: {
+          ...(current.activeFurnitureSkinIds ?? {}),
+          [targetFurnitureId]: item.id,
+        },
+        memory: purchased
+          ? current.memory
+          : recordLifeMemory(
+              current.memory,
+              {
+                type: "item_bought",
+                summary: `Bought ${item.name}`,
+                itemId: item.id,
+              },
+              traitChangesForPurchase(item),
+            ),
+      };
+    });
+
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: targetFurnitureId,
+      furnitureName: targetFurniture.name,
+      message: ui("message.furnitureSkinApplied", {
+        name: item.name,
+        furniture: targetFurniture.name,
+      }),
+      startedAt: performance.now(),
+      bubbleText: ui("bubble.skin"),
+    });
+  };
+
+  const clearAppliedFurnitureSkin = (item: ItemDefinition) => {
+    const targetFurnitureId = item.targetFurnitureId;
+    const targetFurniture = targetFurnitureId
+      ? contentRef.current.room.furniture.find(
+          (candidate) => candidate.id === targetFurnitureId,
+        )
+      : null;
+
+    if (!targetFurnitureId || !targetFurniture) {
+      updateActiveInteraction({
+        kind: "blocked",
+        furnitureId: "furniture-skin",
+        furnitureName: item.name,
+        message: ui("message.windowMissing", { name: item.name }),
+        startedAt: performance.now(),
+        bubbleText: ui("bubble.missing"),
+      });
+      return;
+    }
+
+    setSave((current) => {
+      if (current.activeFurnitureSkinIds?.[targetFurnitureId] !== item.id) return current;
+      const nextActiveFurnitureSkinIds = { ...(current.activeFurnitureSkinIds ?? {}) };
+      delete nextActiveFurnitureSkinIds[targetFurnitureId];
+      return {
+        ...current,
+        activeFurnitureSkinIds: nextActiveFurnitureSkinIds,
+      };
+    });
+
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: targetFurnitureId,
+      furnitureName: targetFurniture.name,
+      message: ui("message.furnitureSkinCleared", {
+        furniture: targetFurniture.name,
+      }),
+      startedAt: performance.now(),
+      bubbleText: ui("bubble.skin"),
+    });
+  };
+
   const buyOrApplySurface = (item: ItemDefinition) => {
     const isWallSurface = isWallSurfaceItem(item);
     const surface = isWallSurface
@@ -8196,16 +8358,696 @@ export const App = () => {
       : sceneContextMenu
         ? behaviorLabel(locale, sceneContextMenu.target.furniture.interaction)
         : "";
-  const ItemThumbnail = ({ itemId }: { itemId: string }) => (
-    <span className={`item-button-thumbnail item-thumb-${itemId}`} aria-hidden="true">
-      <span className="item-thumb-steam steam-left" />
-      <span className="item-thumb-steam steam-right" />
-      <span className="item-thumb-shape" />
-      <span className="item-thumb-accent" />
-      <span className="item-thumb-detail" />
-      <span className="item-thumb-detail-two" />
-    </span>
-  );
+  const ItemThumbnail = ({ itemId }: { itemId: string }) => {
+    if (itemId === BED_INDUSTRIAL_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 2,
+              top: 5,
+              width: 14,
+              height: 10,
+              background: "#2f343b",
+              border: "2px solid #222933",
+              boxShadow: "inset 0 3px 0 #4a5058",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 1,
+              top: 3,
+              width: 3,
+              height: 14,
+              background: "#8d98a6",
+              boxShadow: "13px 0 0 #8d98a6",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 4,
+              width: 8,
+              height: 3,
+              background: "#d7dce0",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === BED_WOOD_RED_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 2,
+              top: 5,
+              width: 14,
+              height: 10,
+              background: "#9d1f2f",
+              border: "2px solid #4d2614",
+              boxShadow: "inset 0 3px 0 #d6454b",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 1,
+              top: 3,
+              width: 3,
+              height: 14,
+              background: "#c47a3c",
+              boxShadow: "13px 0 0 #c47a3c",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 4,
+              width: 8,
+              height: 3,
+              background: "#f5e6d0",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === BED_IVORY_PINK_PLAID_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 2,
+              top: 5,
+              width: 14,
+              height: 10,
+              background: "#f4a1bd",
+              border: "2px solid #efe2c7",
+              boxShadow: "inset 0 3px 0 #ffd2df",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 1,
+              top: 3,
+              width: 3,
+              height: 14,
+              background: "#fff7df",
+              boxShadow: "13px 0 0 #fff7df",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 4,
+              width: 8,
+              height: 3,
+              background: "#fff0f4",
+              boxShadow: "0 5px 0 #bd4d78, 4px 3px 0 #ffd2df",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 8,
+              width: 2,
+              height: 8,
+              background: "#bd4d78",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === BED_MODERN_MINIMAL_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 2,
+              top: 5,
+              width: 14,
+              height: 10,
+              background: "#7c998b",
+              border: "2px solid #b9824d",
+              boxShadow: "inset 0 3px 0 #a7bdaf",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 1,
+              top: 4,
+              width: 3,
+              height: 13,
+              background: "#2e3335",
+              boxShadow: "13px 0 0 #2e3335",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 4,
+              width: 8,
+              height: 3,
+              background: "#f4efe5",
+              boxShadow: "0 7px 0 #d8b46a",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === BED_SPACE_WHITE_DEEP_GRAY_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 2,
+              top: 5,
+              width: 14,
+              height: 10,
+              background: "#252b34",
+              border: "2px solid #e8eef2",
+              boxShadow: "inset 0 3px 0 #414a56",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 1,
+              top: 4,
+              width: 3,
+              height: 13,
+              background: "#fbfdfd",
+              boxShadow: "13px 0 0 #fbfdfd",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 4,
+              width: 8,
+              height: 3,
+              background: "#f5f8f8",
+              boxShadow: "0 7px 0 #414a56",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 13,
+              top: 8,
+              width: 2,
+              height: 2,
+              background: "#ffffff",
+              boxShadow: "-7px 5px 0 #303844",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === DESK_INDUSTRIAL_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 5,
+              background: "#3f4650",
+              border: "2px solid #171b22",
+              boxShadow: "inset 0 2px 0 #68717d",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 4,
+              top: 11,
+              width: 3,
+              height: 7,
+              background: "#171b22",
+              boxShadow: "9px 0 0 #171b22",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 6,
+              top: 14,
+              width: 8,
+              height: 2,
+              background: "#68717d",
+              boxShadow: "0 -8px 0 #a8b0ba",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === DESK_TRANSPARENT_ACRYLIC_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 5,
+              background: "rgba(218, 248, 255, 0.62)",
+              border: "2px solid #88dff0",
+              boxShadow: "inset 0 2px 0 #ffffff, 0 2px 0 #27333b",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 4,
+              top: 11,
+              width: 3,
+              height: 7,
+              background: "#171b22",
+              boxShadow: "9px 0 0 #171b22",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 6,
+              width: 10,
+              height: 1,
+              background: "#ffffff",
+              boxShadow: "2px 3px 0 #88dff0, 4px 8px 0 #b7d8e3",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === DESK_ROCOCO_IVORY_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 5,
+              background: "#eadbbd",
+              border: "2px solid #aa9777",
+              boxShadow: "inset 0 2px 0 #fff4d8",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 3,
+              top: 11,
+              width: 3,
+              height: 7,
+              background: "#d8c59b",
+              boxShadow: "10px 0 0 #d8c59b, 2px 5px 0 #a88442, 8px 5px 0 #a88442",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 6,
+              width: 9,
+              height: 2,
+              background: "#ffe8a4",
+              boxShadow: "2px 7px 0 #fff6df",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 13,
+              width: 2,
+              height: 2,
+              background: "#a88442",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === TABLE_ROCOCO_IVORY_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 6,
+              background: "#eadbbd",
+              border: "2px solid #aa9777",
+              boxShadow: "inset 0 2px 0 #fff4d8",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 4,
+              top: 12,
+              width: 3,
+              height: 6,
+              background: "#d8c59b",
+              boxShadow: "8px 0 0 #d8c59b, 2px 4px 0 #a88442, 6px 4px 0 #a88442",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 7,
+              width: 9,
+              height: 1,
+              background: "#ffe8a4",
+              boxShadow: "2px 4px 0 #fff6df",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 10,
+              width: 3,
+              height: 1,
+              background: "#a88442",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === TABLE_DARK_OAK_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 6,
+              background: "#5d3321",
+              border: "2px solid #2a1710",
+              boxShadow: "inset 0 2px 0 #815136",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 4,
+              top: 12,
+              width: 3,
+              height: 6,
+              background: "#4a2618",
+              boxShadow: "8px 0 0 #4a2618, 2px 4px 0 #1b0f0a, 6px 4px 0 #1b0f0a",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 7,
+              width: 9,
+              height: 1,
+              background: "#a66c4a",
+              boxShadow: "2px 4px 0 #815136",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 10,
+              width: 3,
+              height: 1,
+              background: "#2a1710",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === TABLE_WHITE_TECH_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 1,
+              top: 5,
+              width: 16,
+              height: 6,
+              background: "#f6fbfd",
+              border: "2px solid #8fa0aa",
+              boxShadow: "inset 0 2px 0 #ffffff",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 4,
+              top: 12,
+              width: 3,
+              height: 6,
+              background: "#3d4a55",
+              boxShadow: "8px 0 0 #3d4a55, 2px 4px 0 #151b23, 6px 4px 0 #151b23",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 5,
+              top: 7,
+              width: 9,
+              height: 1,
+              background: "#88dfff",
+              boxShadow: "2px 4px 0 #d5f7ff",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 13,
+              top: 9,
+              width: 2,
+              height: 2,
+              background: "#bdf1ff",
+              boxShadow: "-8px 3px 0 #bdf1ff",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === FRIDGE_IVORY_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 5,
+              top: 2,
+              width: 10,
+              height: 16,
+              background: "#eadbbd",
+              border: "2px solid #9f8b67",
+              boxShadow: "inset 2px 2px 0 #f1e4c9",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 7,
+              top: 8,
+              width: 6,
+              height: 1,
+              background: "#9f8b67",
+              boxShadow: "0 5px 0 #9f8b67",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 7,
+              top: 5,
+              width: 4,
+              height: 1,
+              background: "#ffe8a4",
+              boxShadow: "0 6px 0 #ffe8a4",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 13,
+              top: 4,
+              width: 1,
+              height: 12,
+              background: "#cdb58a",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === FRIDGE_RED_RETRO_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 6,
+              top: 1,
+              width: 8,
+              height: 18,
+              background: "#4a1119",
+              boxShadow: "-2px 2px 0 #4a1119, 2px 2px 0 #4a1119, -3px 6px 0 #4a1119, 3px 6px 0 #4a1119",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 6,
+              top: 3,
+              width: 8,
+              height: 14,
+              background: "#c81724",
+              boxShadow: "-1px 2px 0 #e1262f, 1px 2px 0 #bd1420, -2px 6px 0 #e1262f, 2px 6px 0 #bd1420",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 7,
+              top: 5,
+              width: 4,
+              height: 1,
+              background: "#f7fbff",
+              boxShadow: "0 6px 0 #f7fbff",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 13,
+              top: 5,
+              width: 1,
+              height: 10,
+              background: "#8d111b",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 8,
+              width: 5,
+              height: 1,
+              background: "#4a1119",
+              boxShadow: "0 5px 0 #4a1119",
+            }}
+          />
+        </span>
+      );
+    }
+
+    if (itemId === FRIDGE_WHITE_TECH_SKIN_ID) {
+      return (
+        <span className="item-button-thumbnail" aria-hidden="true">
+          <span
+            className="item-thumb-shape"
+            style={{
+              left: 5,
+              top: 2,
+              width: 10,
+              height: 16,
+              background: "#f7fbff",
+              border: "2px solid #aebdc8",
+              boxShadow: "inset 2px 2px 0 #ffffff, inset -2px 0 0 #d4e4ec",
+            }}
+          />
+          <span
+            className="item-thumb-accent"
+            style={{
+              left: 7,
+              top: 8,
+              width: 6,
+              height: 1,
+              background: "#7fe6ff",
+              boxShadow: "0 5px 0 #7fe6ff",
+            }}
+          />
+          <span
+            className="item-thumb-detail"
+            style={{
+              left: 12,
+              top: 5,
+              width: 2,
+              height: 5,
+              background: "#314252",
+              boxShadow: "0 7px 0 #dff7ff",
+            }}
+          />
+          <span
+            className="item-thumb-detail-two"
+            style={{
+              left: 8,
+              top: 4,
+              width: 4,
+              height: 1,
+              background: "#ffffff",
+              boxShadow: "0 11px 0 #ffffff",
+            }}
+          />
+        </span>
+      );
+    }
+
+    return (
+      <span className={`item-button-thumbnail item-thumb-${itemId}`} aria-hidden="true">
+        <span className="item-thumb-steam steam-left" />
+        <span className="item-thumb-steam steam-right" />
+        <span className="item-thumb-shape" />
+        <span className="item-thumb-accent" />
+        <span className="item-thumb-detail" />
+        <span className="item-thumb-detail-two" />
+      </span>
+    );
+  };
+
+  const windowPreviewDisplayHour = windowPreviewHour ?? new Date(nowMs).getHours();
+  const windowPreviewTimeLabel = `${String(windowPreviewDisplayHour).padStart(2, "0")}:00`;
 
   return (
     <main
@@ -9567,9 +10409,61 @@ export const App = () => {
                 <button
                   type="button"
                   className={`pixel-button${windowTimePreview ? " debug-live-active" : ""}`}
-                  onClick={() => setWindowTimePreview((current) => !current)}
+                  onClick={() => {
+                    windowPreviewHourRef.current = null;
+                    setWindowPreviewHour(null);
+                    setWindowTimePreview((current) => !current);
+                  }}
                 >
                   {ui("debug.windowPreview")}
+                </button>
+                <label className="window-time-control">
+                  <span>
+                    {ui("debug.windowTime")} {windowPreviewTimeLabel}
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="23"
+                    step="1"
+                    value={windowPreviewDisplayHour}
+                    onChange={(event) => {
+                      const hour = Number(event.currentTarget.value);
+                      windowPreviewHourRef.current = hour;
+                      windowTimePreviewRef.current = false;
+                      setWindowPreviewHour(hour);
+                      setWindowTimePreview(false);
+                    }}
+                  />
+                </label>
+                <div className="window-time-presets" aria-label={ui("debug.windowTime")}>
+                  {[6, 12, 18, 22].map((hour) => (
+                    <button
+                      key={hour}
+                      type="button"
+                      className={`pixel-button${windowPreviewHour === hour ? " debug-live-active" : ""}`}
+                      onClick={() => {
+                        windowPreviewHourRef.current = hour;
+                        windowTimePreviewRef.current = false;
+                        setWindowPreviewHour(hour);
+                        setWindowTimePreview(false);
+                      }}
+                    >
+                      {String(hour).padStart(2, "0")}:00
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className={`pixel-button${windowPreviewHour === null && !windowTimePreview ? " debug-live-active" : ""}`}
+                  onClick={() => {
+                    windowPreviewHourRef.current = null;
+                    windowTimePreviewRef.current = false;
+                    setWindowPreviewHour(null);
+                    setWindowTimePreview(false);
+                  }}
+                >
+                  {ui("debug.windowRealTime")}
                 </button>
                 <button
                   type="button"
@@ -9924,11 +10818,25 @@ export const App = () => {
               const levelLocked = growth.level < unlockLevel;
               const purchasedWindow =
                 isWindowItem(item) && save.purchasedItemIds.includes(item.id);
+              const furnitureSkin = isFurnitureSkinItem(item);
+              const furnitureSkinTargetId = item.targetFurnitureId ?? "";
+              const purchasedFurnitureSkin =
+                furnitureSkin && save.purchasedItemIds.includes(item.id);
+              const appliedFurnitureSkin =
+                furnitureSkin &&
+                save.activeFurnitureSkinIds?.[furnitureSkinTargetId] === item.id;
+              const uniqueShopItemOwned = isUniqueShopItemOwned(save, item);
               const label = levelLocked
                 ? `${item.name} ${ui("growth.level", { value: unlockLevel })}`
-                : purchasedWindow
-                  ? `${item.name} ${ui("state.owned")}`
-                  : `${item.name} ${item.price}`;
+                : appliedFurnitureSkin
+                  ? `${item.name} ${ui("action.clearApplied")}`
+                  : purchasedFurnitureSkin
+                    ? `${item.name} ${ui("action.apply")}`
+                    : purchasedWindow
+                      ? `${item.name} ${ui("state.owned")}`
+                      : uniqueShopItemOwned
+                        ? `${item.name} ${ui("state.owned")}`
+                      : `${item.name} ${item.price}`;
 
               return (
                 <button
@@ -9938,12 +10846,19 @@ export const App = () => {
                   disabled={
                     levelLocked ||
                     purchasedWindow ||
-                    save.wallet.bits < item.price
+                    uniqueShopItemOwned ||
+                    (!purchasedFurnitureSkin && save.wallet.bits < item.price)
                   }
                   aria-label={label}
                   title={label}
                   onClick={() =>
-                    isWindowItem(item) ? buyOrApplyWindow(item) : buyItem(item)
+                    isWindowItem(item)
+                      ? buyOrApplyWindow(item)
+                      : isFurnitureSkinItem(item)
+                        ? appliedFurnitureSkin
+                          ? clearAppliedFurnitureSkin(item)
+                          : buyOrApplyFurnitureSkin(item)
+                        : buyItem(item)
                   }
                 >
                   <span className="item-button-content">
@@ -9951,7 +10866,13 @@ export const App = () => {
                     <span>
                       {levelLocked
                         ? ui("growth.level", { value: unlockLevel })
-                        : item.price}
+                        : appliedFurnitureSkin
+                          ? ui("action.clearApplied")
+                          : purchasedFurnitureSkin
+                            ? ui("action.apply")
+                            : uniqueShopItemOwned
+                              ? ui("state.owned")
+                            : item.price}
                     </span>
                   </span>
                 </button>
