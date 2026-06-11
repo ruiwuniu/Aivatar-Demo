@@ -166,6 +166,7 @@ const COFFEE_MACHINE_BREW_AUDIO_SRC = "/audio/coffee-machine-brew-loop.ogg";
 const FRIDGE_DOOR_OPEN_AUDIO_SRC = "/audio/fridge-door-open.mp3";
 const FRIDGE_DOOR_CLOSE_AUDIO_SRC = "/audio/fridge-door-close.mp3";
 const AGENT_COMPLETE_AUDIO_SRC = "/audio/agent-complete-success.ogg";
+const BITS_SPEND_AUDIO_SRC = "/audio/bits-spend.wav";
 const COLA_CAN_OPEN_AUDIO_SRC = "/audio/cola-can-open.mp3";
 const COLA_DRINK_AUDIO_SRC = "/audio/cola-drink.mp3";
 const COFFEE_DRINK_AUDIO_SRC = "/audio/coffee-drink-slurping.mp3";
@@ -219,6 +220,8 @@ const FRIDGE_DOOR_AUDIO_VOLUME_MULTIPLIER = 0.65;
 const FRIDGE_DOOR_CLOSE_AUDIO_DELAY_MS = 3650;
 const GAME_CONSOLE_AUDIO_VOLUME_MULTIPLIER = 0.5;
 const AGENT_COMPLETE_AUDIO_VOLUME_MULTIPLIER = 0.65;
+const BITS_SPEND_AUDIO_VOLUME_MULTIPLIER = 0.55;
+const COFFEE_BREW_SPEND_AUDIO_VOLUME_MULTIPLIER = 0.35;
 const STARTUP_SOUND_AUDIO_VOLUME_MULTIPLIER = 0.28;
 const COLA_CAN_OPEN_AUDIO_VOLUME_MULTIPLIER = 0.55;
 const COLA_CAN_OPEN_AFTER_FRIDGE_DELAY_MS = 550;
@@ -2341,6 +2344,7 @@ export const App = () => {
     closePlayed: boolean;
   } | null>(null);
   const agentCompleteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const bitsSpendAudioRef = useRef<HTMLAudioElement | null>(null);
   const gameConsoleAudioRef = useRef<HTMLAudioElement | null>(null);
   const gameConsoleAudioSourceRef = useRef(GAME_CONSOLE_AUDIO_SOURCES[0]);
   const gameConsoleAnimatingRef = useRef(false);
@@ -2720,6 +2724,12 @@ export const App = () => {
     audio.currentTime = 0;
     audio.volume = Math.min(1, Math.max(0, audioVolume * volumeMultiplier));
     void audio.play().catch(() => undefined);
+  };
+
+  const playBitsSpendSound = (
+    volumeMultiplier = BITS_SPEND_AUDIO_VOLUME_MULTIPLIER,
+  ) => {
+    playOneShotAudio(bitsSpendAudioRef.current, volumeMultiplier);
   };
 
   const pauseAudio = (audio: HTMLAudioElement | null) => {
@@ -3386,6 +3396,11 @@ export const App = () => {
     agentCompleteAudio.volume = audioVolume;
     agentCompleteAudioRef.current = agentCompleteAudio;
 
+    const bitsSpendAudio = new Audio(BITS_SPEND_AUDIO_SRC);
+    bitsSpendAudio.preload = "auto";
+    bitsSpendAudio.volume = audioVolume;
+    bitsSpendAudioRef.current = bitsSpendAudio;
+
     const colaCanOpenAudio = new Audio(COLA_CAN_OPEN_AUDIO_SRC);
     colaCanOpenAudio.preload = "auto";
     colaCanOpenAudio.volume = audioVolume;
@@ -3424,6 +3439,7 @@ export const App = () => {
       fridgeDoorOpenAudio.pause();
       fridgeDoorCloseAudio.pause();
       agentCompleteAudio.pause();
+      bitsSpendAudio.pause();
       colaCanOpenAudio.pause();
       colaDrinkAudio.pause();
       coffeeDrinkAudio.pause();
@@ -3443,6 +3459,7 @@ export const App = () => {
       fridgeDoorOpenAudioRef.current = null;
       fridgeDoorCloseAudioRef.current = null;
       agentCompleteAudioRef.current = null;
+      bitsSpendAudioRef.current = null;
       colaCanOpenAudioRef.current = null;
       colaDrinkAudioRef.current = null;
       coffeeDrinkAudioRef.current = null;
@@ -3460,6 +3477,7 @@ export const App = () => {
       fridgeDoorOpenAudioRef.current,
       fridgeDoorCloseAudioRef.current,
       agentCompleteAudioRef.current,
+      bitsSpendAudioRef.current,
       colaCanOpenAudioRef.current,
       colaDrinkAudioRef.current,
       coffeeDrinkAudioRef.current,
@@ -4653,30 +4671,53 @@ export const App = () => {
               bubbleText: ui("bubble.bits"),
             });
           } else {
-          setSave((current) => {
-            const coffeeCount = getInventoryQuantity(current.inventory, COFFEE_ITEM_ID);
-            const tableCoffeeCapacity = getTableCoffeeCapacity(current.placedItems);
-            const tableCoffeeCount = getTableCoffeeQuantity(
-              current.furnitureStorage,
-              current.placedItems,
-            );
-            if (tableCoffeeCount >= tableCoffeeCapacity && coffeeCount >= COFFEE_MAX_QUANTITY) {
-              return current;
-            }
-            if (current.wallet.bits < COFFEE_BREW_BIT_COST) {
-              return current;
-            }
+            playBitsSpendSound(COFFEE_BREW_SPEND_AUDIO_VOLUME_MULTIPLIER);
+            setSave((current) => {
+              const coffeeCount = getInventoryQuantity(current.inventory, COFFEE_ITEM_ID);
+              const tableCoffeeCapacity = getTableCoffeeCapacity(current.placedItems);
+              const tableCoffeeCount = getTableCoffeeQuantity(
+                current.furnitureStorage,
+                current.placedItems,
+              );
+              if (tableCoffeeCount >= tableCoffeeCapacity && coffeeCount >= COFFEE_MAX_QUANTITY) {
+                return current;
+              }
+              if (current.wallet.bits < COFFEE_BREW_BIT_COST) {
+                return current;
+              }
 
-            if (tableCoffeeCount < tableCoffeeCapacity) {
+              if (tableCoffeeCount < tableCoffeeCapacity) {
+                return {
+                  ...current,
+                  wallet: { bits: current.wallet.bits - COFFEE_BREW_BIT_COST },
+                  furnitureStorage: addFurnitureStorageItem(
+                    current.furnitureStorage,
+                    TABLE_FURNITURE_ID,
+                    COFFEE_ITEM_ID,
+                    1,
+                    tableCoffeeCapacity,
+                  ),
+                  memory: recordLifeMemory(
+                    current.memory,
+                    {
+                      type: "recovery_used",
+                      summary: "Brewed Coffee for later",
+                      behavior: "brew",
+                      itemId: COFFEE_ITEM_ID,
+                    },
+                    { efficiency: 1 },
+                  ),
+                };
+              }
+
               return {
                 ...current,
                 wallet: { bits: current.wallet.bits - COFFEE_BREW_BIT_COST },
-                furnitureStorage: addFurnitureStorageItem(
-                  current.furnitureStorage,
-                  TABLE_FURNITURE_ID,
+                inventory: addInventoryItem(
+                  current.inventory,
                   COFFEE_ITEM_ID,
                   1,
-                  tableCoffeeCapacity,
+                  COFFEE_MAX_QUANTITY,
                 ),
                 memory: recordLifeMemory(
                   current.memory,
@@ -4689,53 +4730,31 @@ export const App = () => {
                   { efficiency: 1 },
                 ),
               };
-            }
-
-            return {
-              ...current,
-              wallet: { bits: current.wallet.bits - COFFEE_BREW_BIT_COST },
-              inventory: addInventoryItem(
-                current.inventory,
-                COFFEE_ITEM_ID,
-                1,
-                COFFEE_MAX_QUANTITY,
-              ),
-              memory: recordLifeMemory(
-                current.memory,
-                {
-                  type: "recovery_used",
-                  summary: "Brewed Coffee for later",
-                  behavior: "brew",
-                  itemId: COFFEE_ITEM_ID,
-                },
-                { efficiency: 1 },
-              ),
+            });
+            autonomousCoffeeCooldownUntilRef.current =
+              now + COFFEE_AUTONOMOUS_COOLDOWN_SECONDS * 1000;
+            runtimeRef.current = {
+              ...runtimeRef.current,
+              targetX: runtimeRef.current.x,
+              targetY: runtimeRef.current.y,
+              behavior: "idle",
+              behaviorTimer: 2,
+              expression: "calm",
+              activityLabel: undefined,
+              actionIntent: undefined,
+              actionActivityLabel: undefined,
+              interactionTargetAlternates: undefined,
             };
-          });
-          autonomousCoffeeCooldownUntilRef.current =
-            now + COFFEE_AUTONOMOUS_COOLDOWN_SECONDS * 1000;
-          runtimeRef.current = {
-            ...runtimeRef.current,
-            targetX: runtimeRef.current.x,
-            targetY: runtimeRef.current.y,
-            behavior: "idle",
-            behaviorTimer: 2,
-            expression: "calm",
-            activityLabel: undefined,
-            actionIntent: undefined,
-            actionActivityLabel: undefined,
-            interactionTargetAlternates: undefined,
-          };
-          setAvatar(runtimeRef.current);
-          updateActiveInteraction({
-            kind: "brew",
-            furnitureId: coffeeMachine?.id ?? COFFEE_MACHINE_ITEM_ID,
-            furnitureName: coffeeMachineName,
-            message: ui("message.coffeeBrewedLater", { name: coffeeMachineName }),
-            startedAt: now,
-            endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
-            bubbleText: ui("thought.brew"),
-          });
+            setAvatar(runtimeRef.current);
+            updateActiveInteraction({
+              kind: "brew",
+              furnitureId: coffeeMachine?.id ?? COFFEE_MACHINE_ITEM_ID,
+              furnitureName: coffeeMachineName,
+              message: ui("message.coffeeBrewedLater", { name: coffeeMachineName }),
+              startedAt: now,
+              endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
+              bubbleText: ui("thought.brew"),
+            });
           }
         }
       } else {
@@ -6898,6 +6917,7 @@ export const App = () => {
         { efficiency: 1 },
       ),
     }));
+    playBitsSpendSound(COFFEE_BREW_SPEND_AUDIO_VOLUME_MULTIPLIER);
 
     runtimeRef.current = setBehavior(
       runtimeRef.current,
@@ -7104,6 +7124,13 @@ export const App = () => {
   };
 
   const buyItem = (item: ItemDefinition) => {
+    const currentSave = saveRef.current;
+    if (isUniqueShopItemOwned(currentSave, item)) return;
+    if (normalizeMemory(currentSave.memory).growth.level < getShopItemUnlockLevel(item)) {
+      return;
+    }
+    if (currentSave.wallet.bits < item.price) return;
+
     setSave((current) => {
       if (isUniqueShopItemOwned(current, item)) return current;
       if (normalizeMemory(current.memory).growth.level < getShopItemUnlockLevel(item)) {
@@ -7152,6 +7179,7 @@ export const App = () => {
         ),
       };
     });
+    playBitsSpendSound();
   };
 
   const buyOrApplyWindow = (item: ItemDefinition) => {
@@ -7172,6 +7200,7 @@ export const App = () => {
       });
       return;
     }
+    if (saveRef.current.wallet.bits < item.price) return;
 
     setSave((current) => {
       const purchased = current.purchasedItemIds.includes(item.id);
@@ -7215,6 +7244,7 @@ export const App = () => {
             ),
       };
     });
+    playBitsSpendSound();
 
     updateSelectedWindow(windowDefinition);
     updateMovingWindow(null);
@@ -7237,6 +7267,16 @@ export const App = () => {
       ? contentRef.current.room.wallSurfaces?.find((candidate) => candidate.id === item.id)
       : contentRef.current.room.floorSurfaces?.find((candidate) => candidate.id === item.id);
     if (!surface) return;
+
+    const currentSave = saveRef.current;
+    const currentlyPurchased = currentSave.purchasedItemIds.includes(item.id);
+    const currentlyApplied = isWallSurface
+      ? (currentSave.wallSurfaceId ?? contentRef.current.room.wallSurfaceId) === surface.id
+      : (currentSave.floorSurfaceId ?? contentRef.current.room.floorSurfaceId) === surface.id;
+    const currentSpendCost =
+      (currentlyPurchased ? 0 : item.price) +
+      (currentlyApplied ? 0 : SURFACE_APPLY_COST);
+    if (currentSpendCost <= 0 || currentSave.wallet.bits < currentSpendCost) return;
 
     setSave((current) => {
       const purchased = current.purchasedItemIds.includes(item.id);
@@ -7269,6 +7309,7 @@ export const App = () => {
           : { floorSurfaceId: surface.id }),
       };
     });
+    playBitsSpendSound();
 
     updateActiveInteraction({
       kind: "none",
