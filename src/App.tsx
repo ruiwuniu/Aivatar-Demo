@@ -83,6 +83,7 @@ const DEFAULT_LAYOUT_KEY = "aivatar.defaultLayout.v1";
 const TASK_CABINET_STORAGE_KEY = "aivatar.taskCabinet.v1";
 const UI_THEME_KEY = "aivatar.uiTheme.v1";
 const AUDIO_VOLUME_KEY = "aivatar.audioVolume.v1";
+const GAME_CONSOLE_VOLUME_KEY = "aivatar.gameConsoleVolume.v1";
 const STARTUP_SOUND_KEY = "aivatar.startupSound.v1";
 const BGM_VOLUME_KEY = "aivatar.bgmVolume.v1";
 const BGM_TRACK_KEY = "aivatar.bgmTrack.v1";
@@ -164,6 +165,7 @@ const TASK_CABINET_READ_HANDOFF_MS = 1200;
 const NAV_MEMORY_CELL_COUNT_LIMIT = 9999;
 const NAV_LEARNING_RECORD_INTERVAL_SECONDS = 2.5;
 const DEFAULT_AUDIO_VOLUME = 0.45;
+const DEFAULT_GAME_CONSOLE_VOLUME = 0.5;
 const DEFAULT_BGM_VOLUME = 0.25;
 const DEFAULT_BGM_TRACK_ID = "pixel-parlor";
 const KEYBOARD_TYPING_AUDIO_SRC = "/audio/keyboard-typing-loop.wav";
@@ -223,7 +225,6 @@ const BGM_TRACKS = [
 const COFFEE_MACHINE_BREW_AUDIO_VOLUME_MULTIPLIER = 0.45;
 const FRIDGE_DOOR_AUDIO_VOLUME_MULTIPLIER = 0.65;
 const FRIDGE_DOOR_CLOSE_AUDIO_DELAY_MS = 3650;
-const GAME_CONSOLE_AUDIO_VOLUME_MULTIPLIER = 0.5;
 const AGENT_COMPLETE_AUDIO_VOLUME_MULTIPLIER = 0.65;
 const BITS_SPEND_AUDIO_VOLUME_MULTIPLIER = 0.55;
 const COFFEE_BREW_SPEND_AUDIO_VOLUME_MULTIPLIER = 0.35;
@@ -305,13 +306,20 @@ const UI_THEME_OPTIONS: Array<{ id: UiThemeId; copyKey: string }> = [
 const loadInitialUiTheme = (): UiThemeId => {
   const saved = localStorage.getItem(UI_THEME_KEY);
   if (saved === "terminal-amber") return "terminal-amber";
-  return saved === "terminal" ? "terminal" : "classic";
+  if (saved === "classic" || saved === "terminal") return saved;
+  return "terminal";
 };
 
 const loadInitialAudioVolume = () => {
   const saved = Number(localStorage.getItem(AUDIO_VOLUME_KEY));
   if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
   return DEFAULT_AUDIO_VOLUME;
+};
+
+const loadInitialGameConsoleVolume = () => {
+  const saved = Number(localStorage.getItem(GAME_CONSOLE_VOLUME_KEY));
+  if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
+  return DEFAULT_GAME_CONSOLE_VOLUME;
 };
 
 const loadInitialStartupSoundEnabled = () =>
@@ -2615,6 +2623,9 @@ export const App = () => {
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
   const [uiTheme, setUiTheme] = useState<UiThemeId>(() => loadInitialUiTheme());
   const [audioVolume, setAudioVolume] = useState(() => loadInitialAudioVolume());
+  const [gameConsoleVolume, setGameConsoleVolume] = useState(() =>
+    loadInitialGameConsoleVolume(),
+  );
   const [startupSoundEnabled, setStartupSoundEnabled] = useState(() =>
     loadInitialStartupSoundEnabled(),
   );
@@ -3881,7 +3892,7 @@ export const App = () => {
     const gameAudio = new Audio(gameConsoleAudioSourceRef.current);
     gameAudio.loop = true;
     gameAudio.preload = "auto";
-    gameAudio.volume = audioVolume;
+    gameAudio.volume = Math.min(1, Math.max(0, audioVolume * gameConsoleVolume));
     gameConsoleAudioRef.current = gameAudio;
 
     const bgmAudio = new Audio();
@@ -3949,6 +3960,16 @@ export const App = () => {
       }
     });
   }, [audioVolume]);
+
+  useEffect(() => {
+    localStorage.setItem(GAME_CONSOLE_VOLUME_KEY, String(gameConsoleVolume));
+    const audio = gameConsoleAudioRef.current;
+    if (!audio) return;
+    audio.volume = Math.min(1, Math.max(0, audioVolume * gameConsoleVolume));
+    if (audioVolume <= 0 || gameConsoleVolume <= 0) {
+      pauseAudio(audio);
+    }
+  }, [audioVolume, gameConsoleVolume]);
 
   useEffect(() => {
     localStorage.setItem(STARTUP_SOUND_KEY, String(startupSoundEnabled));
@@ -4110,11 +4131,19 @@ export const App = () => {
     );
     setAudioPlaying(
       gameConsoleAudioRef.current,
-      isGameConsoleAnimating && canPlayAudio,
-      GAME_CONSOLE_AUDIO_VOLUME_MULTIPLIER,
+      isGameConsoleAnimating && canPlayAudio && gameConsoleVolume > 0,
+      gameConsoleVolume,
     );
     setRecordPlayerBgmPlaying(isRecordPlayerAnimating && canPlayAudio);
-  }, [activeInteraction, activeRecordPlayerId, audioVolume, bgmTrackId, bgmVolume, avatar]);
+  }, [
+    activeInteraction,
+    activeRecordPlayerId,
+    audioVolume,
+    bgmTrackId,
+    bgmVolume,
+    gameConsoleVolume,
+    avatar,
+  ]);
 
   useEffect(() => {
     if (!bridgeStartMessage) return;
@@ -8009,6 +8038,11 @@ export const App = () => {
     sceneContextMenu.target.placedItem.itemId === RECORD_PLAYER_ITEM_ID
       ? sceneContextMenu.target.placedItem
       : null;
+  const sceneContextGameConsole =
+    sceneContextMenu?.target.kind === "placed-item" &&
+    sceneContextMenu.target.placedItem.itemId === "game-console"
+      ? sceneContextMenu.target.placedItem
+      : null;
   const stopSceneContextRecordPlayer = () => {
     if (
       !sceneContextRecordPlayer ||
@@ -8411,6 +8445,31 @@ export const App = () => {
                 />
               </label>
             ) : null}
+            {sceneContextGameConsole ? (
+              <label className="scene-context-control">
+                <span>
+                  {ui("audio.gameConsoleVolume")}
+                  <b>
+                    {gameConsoleVolume <= 0
+                      ? ui("audio.muted")
+                      : `${Math.round(gameConsoleVolume * 100)}%`}
+                  </b>
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={Math.round(gameConsoleVolume * 100)}
+                  onPointerDown={unlockAppAudio}
+                  onKeyDown={unlockAppAudio}
+                  onChange={(event) =>
+                    setGameConsoleVolume(Number(event.target.value) / 100)
+                  }
+                  aria-label={ui("audio.gameConsoleVolume")}
+                />
+              </label>
+            ) : null}
             {sceneContextRecordPlayer &&
             activeRecordPlayerId === sceneContextRecordPlayer.id ? (
               <button
@@ -8554,6 +8613,30 @@ export const App = () => {
                   onChange={(event) => setStartupSoundEnabled(event.target.checked)}
                   aria-label={ui("audio.startupSound")}
                   style={{ width: "auto", justifySelf: "start" }}
+                />
+              </label>
+
+              <label className="audio-control">
+                <span>
+                  {ui("audio.gameConsoleVolume")}
+                  <b>
+                    {gameConsoleVolume <= 0
+                      ? ui("audio.muted")
+                      : `${Math.round(gameConsoleVolume * 100)}%`}
+                  </b>
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={Math.round(gameConsoleVolume * 100)}
+                  onPointerDown={unlockAppAudio}
+                  onKeyDown={unlockAppAudio}
+                  onChange={(event) =>
+                    setGameConsoleVolume(Number(event.target.value) / 100)
+                  }
+                  aria-label={ui("audio.gameConsoleVolume")}
                 />
               </label>
 

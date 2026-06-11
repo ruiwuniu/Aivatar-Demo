@@ -4511,10 +4511,12 @@ meter::-webkit-meter-optimum-value {
 }
 
 .item-button-content {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 5px;
+  width: 100%;
+  min-width: 44px;
 }
 
 .item-button-thumbnail {
@@ -4795,6 +4797,46 @@ meter::-webkit-meter-optimum-value {
   width: 6px;
   height: 3px;
   background: #8df7c4;
+}
+
+.item-thumb-record-player .item-thumb-shape {
+  left: 2px;
+  top: 8px;
+  width: 14px;
+  height: 8px;
+  background: #6b3d24;
+  border: 2px solid #2d1a12;
+  box-shadow: inset 0 2px 0 #a66a3d;
+}
+
+.item-thumb-record-player .item-thumb-accent {
+  left: 4px;
+  top: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #171c2b;
+  border: 2px solid #d6a94f;
+  box-shadow: inset 2px 2px 0 #30384e;
+}
+
+.item-thumb-record-player .item-thumb-detail {
+  left: 8px;
+  top: 7px;
+  width: 2px;
+  height: 2px;
+  background: #f4ead2;
+}
+
+.item-thumb-record-player .item-thumb-detail-two {
+  left: 11px;
+  top: 5px;
+  width: 5px;
+  height: 2px;
+  background: #f4ead2;
+  transform: rotate(-35deg);
+  transform-origin: left center;
+  box-shadow: 3px 3px 0 #2d1a12;
 }
 
 .item-thumb-oil-easel .item-thumb-shape {
