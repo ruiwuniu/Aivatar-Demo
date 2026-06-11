@@ -408,6 +408,78 @@ const drawTraitStatusMotif = (
   }
 };
 
+const drawTraitMicroExpression = (
+  ctx: CanvasRenderingContext2D,
+  trait: DominantTrait,
+  avatar: AvatarRuntime,
+  x: number,
+  y: number,
+  frame: number,
+  theme: TraitVisualTheme,
+) => {
+  if (avatar.behavior === "sleep") return;
+
+  const pulse = Math.round(Math.sin(frame / 8));
+  const sparkle = Math.round(Math.sin(frame / 5));
+  const sideDirection = avatar.facing === "left" ? -1 : 1;
+  const isSide = avatar.facing === "left" || avatar.facing === "right";
+
+  if (trait === "focus") {
+    drawPixelRect(ctx, x - 12, y - 30 + pulse, 4, 1, theme.accent);
+    drawPixelRect(ctx, x + 8, y - 32 - pulse, 5, 1, theme.accent);
+    drawPixelRect(ctx, x + (isSide ? sideDirection * 12 : 0), y - 37, 2, 2, theme.bodyLight);
+    return;
+  }
+
+  if (trait === "resilience") {
+    const fistX = x + (isSide ? sideDirection * 18 : 18);
+    const fistY = y - 9 + pulse;
+    drawPixelRect(ctx, fistX - 3, fistY, 7, 6, theme.accent);
+    drawPixelRect(ctx, fistX - 1, fistY - 3, 4, 3, theme.bodyLight);
+    drawPixelRect(ctx, fistX - 4, fistY + 3, 3, 5, theme.body);
+    return;
+  }
+
+  if (trait === "curiosity") {
+    drawPixelText(ctx, "?", x + (isSide ? sideDirection * 16 : 16), y - 41 + pulse, theme.accent);
+    drawPixelRect(ctx, x - 3, y - 30 - sparkle, 2, 2, theme.bodyLight);
+    drawPixelRect(ctx, x + 6, y - 33 + sparkle, 2, 2, theme.accent);
+    return;
+  }
+
+  if (trait === "efficiency") {
+    const markX = x + (isSide ? sideDirection * 15 : 14);
+    const markY = y - 34 + pulse;
+    drawPixelRect(ctx, markX - 4, markY + 4, 3, 3, theme.accent);
+    drawPixelRect(ctx, markX - 1, markY + 7, 3, 3, theme.accent);
+    drawPixelRect(ctx, markX + 2, markY + 4, 3, 3, theme.accent);
+    drawPixelRect(ctx, markX + 5, markY + 1, 3, 3, theme.bodyLight);
+    return;
+  }
+
+  if (trait === "creativity") {
+    drawPixelRect(ctx, x - 17, y - 37 + sparkle, 3, 3, theme.accent);
+    drawPixelRect(ctx, x - 19, y - 35 + sparkle, 7, 1, theme.accent);
+    drawPixelRect(ctx, x - 16, y - 38 + sparkle, 1, 7, theme.accent);
+    drawPixelRect(ctx, x + 15, y - 33 - sparkle, 3, 3, theme.bodyLight);
+    drawPixelRect(ctx, x + 19, y - 29 + sparkle, 2, 2, "#ff8fd5");
+    return;
+  }
+
+  if (trait === "warmth") {
+    const blushY = y - 15 + pulse;
+    if (avatar.facing === "front") {
+      drawPixelRect(ctx, x - 13, blushY, 4, 2, "#ffd6c2");
+      drawPixelRect(ctx, x + 11, blushY, 4, 2, "#ffd6c2");
+    } else if (isSide) {
+      drawPixelRect(ctx, x + sideDirection * 10, blushY, 4, 2, "#ffd6c2");
+    }
+    drawPixelRect(ctx, x + (isSide ? sideDirection * 17 : 17), y - 35 - pulse, 2, 2, theme.accent);
+    drawPixelRect(ctx, x + (isSide ? sideDirection * 19 : 19), y - 35 - pulse, 2, 2, theme.accent);
+    drawPixelRect(ctx, x + (isSide ? sideDirection * 18 : 18), y - 33 - pulse, 2, 2, theme.accent);
+  }
+};
+
 const compactStatusText = (status: CodexStatusMessage, fallback: string) =>
   [
     status.agent,
@@ -2236,6 +2308,7 @@ const drawAvatar = (
   }
 
   drawTraitStatusMotif(ctx, dominantTrait, avatar, x, y, frame, theme);
+  drawTraitMicroExpression(ctx, dominantTrait, avatar, x, y, frame, theme);
 };
 
 const drawSleepBlanketOverlay = (
