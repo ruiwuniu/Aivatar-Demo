@@ -76,6 +76,9 @@ import type {
 } from "./types";
 
 const SAVE_KEY = "aivatar.save.v1";
+const SAVE_SLOTS_KEY = "aivatar.saveSlots.v1";
+const ACTIVE_SAVE_SLOT_KEY = "aivatar.activeSaveSlot.v1";
+const SAVE_SLOT_KEY_PREFIX = "aivatar.saveSlot.v1.";
 const DEFAULT_LAYOUT_KEY = "aivatar.defaultLayout.v1";
 const TASK_CABINET_STORAGE_KEY = "aivatar.taskCabinet.v1";
 const UI_THEME_KEY = "aivatar.uiTheme.v1";
@@ -86,6 +89,8 @@ const BGM_TRACK_KEY = "aivatar.bgmTrack.v1";
 const AUTO_MUSIC_KEY = "aivatar.autoMusic.v1";
 const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
 const SAVE_LAYOUT_VERSION = 2;
+const MAX_SAVE_SLOTS = 4;
+const DEFAULT_AVATAR_APPEARANCE_ID = "octopus";
 const SLEEP_INTERACTION_SECONDS = 12;
 const SLEEP_RECOVERY_PER_TICK = 4;
 const SLEEP_RECOVERY_INTERVAL_SECONDS = 2;
@@ -263,6 +268,30 @@ type DecorSurfaceCategoryId = "wallpaper" | "flooring";
 type LauncherAgentId = "codex" | "claude-code";
 type UiThemeId = "classic" | "terminal" | "terminal-amber";
 type BgmTrackId = (typeof BGM_TRACKS)[number]["id"];
+type AvatarAppearanceId = "octopus";
+
+type SaveSlotSummary = {
+  id: string;
+  slotIndex: number;
+  avatarId: string;
+  roomId: string;
+  avatarName: string;
+  avatarAppearanceId: AvatarAppearanceId;
+  createdAt: string;
+  updatedAt: string;
+};
+
+const AVATAR_APPEARANCES: Array<{
+  id: AvatarAppearanceId;
+  copyKey: string;
+  descriptionKey: string;
+}> = [
+  {
+    id: DEFAULT_AVATAR_APPEARANCE_ID,
+    copyKey: "saveSlots.avatar.octopus",
+    descriptionKey: "saveSlots.avatar.octopusDescription",
+  },
+];
 
 const UI_THEME_OPTIONS: Array<{ id: UiThemeId; copyKey: string }> = [
   { id: "classic", copyKey: "theme.classic" },
@@ -1888,22 +1917,47 @@ const loadDefaultLayout = (content: AivatarContent): DefaultLayoutState => {
   }
 };
 
-const createAvatarId = () => {
+const createEntityId = (prefix: string) => {
   const randomId = globalThis.crypto?.randomUUID?.();
-  if (randomId) return `avatar-${randomId}`;
+  if (randomId) return `${prefix}-${randomId}`;
 
-  return `avatar-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 };
+
+const createAvatarId = () => createEntityId("avatar");
+const createRoomId = () => createEntityId("room");
+const createSaveSlotId = () => createEntityId("slot");
 
 const normalizeAvatarId = (avatarId: unknown) =>
   typeof avatarId === "string" && avatarId.trim().length > 0
     ? avatarId
     : createAvatarId();
 
-const saveFromContent = (content: AivatarContent): AivatarSaveState => ({
+const normalizeRoomId = (roomId: unknown) =>
+  typeof roomId === "string" && roomId.trim().length > 0 ? roomId : createRoomId();
+
+const isAvatarAppearanceId = (value: unknown): value is AvatarAppearanceId =>
+  AVATAR_APPEARANCES.some((appearance) => appearance.id === value);
+
+const normalizeAvatarAppearanceId = (appearanceId: unknown): AvatarAppearanceId =>
+  isAvatarAppearanceId(appearanceId) ? appearanceId : DEFAULT_AVATAR_APPEARANCE_ID;
+
+const saveSlotStorageKey = (slotId: string) => `${SAVE_SLOT_KEY_PREFIX}${slotId}`;
+
+const saveFromContent = (
+  content: AivatarContent,
+  options: {
+    avatarId?: string;
+    roomId?: string;
+    avatarAppearanceId?: AvatarAppearanceId;
+    avatarName?: string;
+  } = {},
+): AivatarSaveState => ({
   layoutVersion: SAVE_LAYOUT_VERSION,
-  avatarId: createAvatarId(),
-  avatarName: content.avatar.name,
+  avatarId: options.avatarId ?? createAvatarId(),
+  roomId: options.roomId ?? createRoomId(),
+  avatarAppearanceId: options.avatarAppearanceId ?? DEFAULT_AVATAR_APPEARANCE_ID,
+  avatarName: options.avatarName?.trim() || content.avatar.name,
   memory: defaultMemory(),
   navMemory: defaultNavMemory(),
   petStats: content.petStats,
@@ -1914,54 +1968,233 @@ const saveFromContent = (content: AivatarContent): AivatarSaveState => ({
   purchasedItemIds: [],
 });
 
-const loadSave = (content: AivatarContent): AivatarSaveState => {
+const normalizeSavePayload = (
+  content: AivatarContent,
+  parsed: Partial<AivatarSaveState>,
+): AivatarSaveState => {
+  const fallback: AivatarSaveState = {
+    ...saveFromContent(content),
+    purchasedItemIds: [],
+  };
+  const migratedLayout: Partial<DefaultLayoutState> =
+    parsed.layoutVersion === SAVE_LAYOUT_VERSION ? {} : loadDefaultLayout(content);
+  const layoutFurniturePlacements =
+    migratedLayout.furniturePlacements ?? parsed.furniturePlacements;
+
+  const furniturePlacements = withoutLegacyTerminalFurniturePlacements(
+    layoutFurniturePlacements ?? fallback.furniturePlacements,
+  );
+  const placedItems = withBuiltinTerminalPlacedItem(
+    content,
+    migratedLayout.placedItems ?? parsed.placedItems ?? fallback.placedItems,
+    layoutFurniturePlacements ?? furniturePlacements,
+  );
+
+  return {
+    ...fallback,
+    ...parsed,
+    ...migratedLayout,
+    avatarId: normalizeAvatarId(parsed.avatarId),
+    roomId: normalizeRoomId(parsed.roomId),
+    avatarAppearanceId: normalizeAvatarAppearanceId(parsed.avatarAppearanceId),
+    furnitureStorage: normalizeFurnitureStorage(parsed.furnitureStorage),
+    memory: normalizeMemory(parsed.memory),
+    navMemory: normalizeNavMemory(parsed.navMemory),
+    placedItems,
+    furniturePlacements,
+    layoutVersion: SAVE_LAYOUT_VERSION,
+  };
+};
+
+const loadSave = (content: AivatarContent, storageKey = SAVE_KEY): AivatarSaveState => {
   const fallback: AivatarSaveState = {
     ...saveFromContent(content),
     purchasedItemIds: [],
   };
 
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return fallback;
 
     const parsed = JSON.parse(raw) as Partial<AivatarSaveState>;
-    const migratedLayout: Partial<DefaultLayoutState> =
-      parsed.layoutVersion === SAVE_LAYOUT_VERSION ? {} : loadDefaultLayout(content);
-    const layoutFurniturePlacements =
-      migratedLayout.furniturePlacements ?? parsed.furniturePlacements;
-
-    const furniturePlacements = withoutLegacyTerminalFurniturePlacements(
-      layoutFurniturePlacements ?? fallback.furniturePlacements,
-    );
-    const placedItems = withBuiltinTerminalPlacedItem(
-      content,
-      migratedLayout.placedItems ?? parsed.placedItems ?? fallback.placedItems,
-      layoutFurniturePlacements ?? furniturePlacements,
-    );
-
-    return {
-      ...fallback,
-      ...parsed,
-      ...migratedLayout,
-      avatarId: normalizeAvatarId(parsed.avatarId),
-      furnitureStorage: normalizeFurnitureStorage(parsed.furnitureStorage),
-      memory: normalizeMemory(parsed.memory),
-      navMemory: normalizeNavMemory(parsed.navMemory),
-      placedItems,
-      furniturePlacements,
-      layoutVersion: SAVE_LAYOUT_VERSION,
-    };
+    return normalizeSavePayload(content, parsed);
   } catch {
     return fallback;
   }
 };
 
-const persistSave = (save: AivatarSaveState) => {
+const persistSave = (save: AivatarSaveState, storageKey = SAVE_KEY) => {
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+    localStorage.setItem(storageKey, JSON.stringify(save));
   } catch (error) {
     console.warn("Could not persist Aivatar save.", error);
   }
+};
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const parseImportedSave = (content: AivatarContent, raw: string): AivatarSaveState | null => {
+  const parsed = JSON.parse(raw);
+  if (!isPlainRecord(parsed)) return null;
+
+  const recognizableKeys = [
+    "avatarId",
+    "roomId",
+    "avatarName",
+    "petStats",
+    "inventory",
+    "placedItems",
+    "wallet",
+    "memory",
+  ];
+  if (!recognizableKeys.some((key) => key in parsed)) return null;
+
+  return normalizeSavePayload(content, parsed as Partial<AivatarSaveState>);
+};
+
+const normalizeSaveSlotIndex = (value: unknown, fallback: number) =>
+  typeof value === "number" &&
+  Number.isInteger(value) &&
+  value >= 0 &&
+  value < MAX_SAVE_SLOTS
+    ? value
+    : fallback;
+
+const normalizeSaveSlotDate = (value: unknown, fallback: string) =>
+  typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : fallback;
+
+const normalizeSaveSlotSummary = (
+  value: unknown,
+  fallbackIndex: number,
+): SaveSlotSummary | null => {
+  if (!isPlainRecord(value)) return null;
+
+  const now = new Date().toISOString();
+  const id = typeof value.id === "string" && value.id.trim() ? value.id : null;
+  const avatarId =
+    typeof value.avatarId === "string" && value.avatarId.trim() ? value.avatarId : null;
+  const roomId =
+    typeof value.roomId === "string" && value.roomId.trim() ? value.roomId : null;
+  if (!id || !avatarId || !roomId) return null;
+
+  const avatarName =
+    typeof value.avatarName === "string" && value.avatarName.trim()
+      ? value.avatarName.trim()
+      : "Codex";
+
+  return {
+    id,
+    slotIndex: normalizeSaveSlotIndex(value.slotIndex, fallbackIndex),
+    avatarId,
+    roomId,
+    avatarName,
+    avatarAppearanceId: normalizeAvatarAppearanceId(value.avatarAppearanceId),
+    createdAt: normalizeSaveSlotDate(value.createdAt, now),
+    updatedAt: normalizeSaveSlotDate(value.updatedAt, now),
+  };
+};
+
+const readSaveSlots = () => {
+  try {
+    const raw = localStorage.getItem(SAVE_SLOTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    const byIndex = new Map<number, SaveSlotSummary>();
+    parsed
+      .map((entry, index) => normalizeSaveSlotSummary(entry, index))
+      .filter((entry): entry is SaveSlotSummary => Boolean(entry))
+      .forEach((entry) => {
+        if (!byIndex.has(entry.slotIndex)) byIndex.set(entry.slotIndex, entry);
+      });
+
+    return [...byIndex.values()].sort((a, b) => a.slotIndex - b.slotIndex);
+  } catch {
+    return [];
+  }
+};
+
+const writeSaveSlots = (slots: SaveSlotSummary[]) => {
+  const sortedSlots = slots
+    .filter((slot) => slot.slotIndex >= 0 && slot.slotIndex < MAX_SAVE_SLOTS)
+    .sort((a, b) => a.slotIndex - b.slotIndex);
+
+  try {
+    localStorage.setItem(SAVE_SLOTS_KEY, JSON.stringify(sortedSlots));
+  } catch (error) {
+    console.warn("Could not persist Aivatar save slots.", error);
+  }
+};
+
+const createSaveSlotSummary = (
+  id: string,
+  slotIndex: number,
+  save: AivatarSaveState,
+  timestamp: string,
+): SaveSlotSummary => ({
+  id,
+  slotIndex,
+  avatarId: normalizeAvatarId(save.avatarId),
+  roomId: normalizeRoomId(save.roomId),
+  avatarName: save.avatarName?.trim() || "Codex",
+  avatarAppearanceId: normalizeAvatarAppearanceId(save.avatarAppearanceId),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+
+const updateSaveSlotSummaryFromSave = (
+  slot: SaveSlotSummary,
+  save: AivatarSaveState,
+  timestamp: string,
+): SaveSlotSummary => ({
+  ...slot,
+  avatarId: normalizeAvatarId(save.avatarId),
+  roomId: normalizeRoomId(save.roomId),
+  avatarName: save.avatarName?.trim() || slot.avatarName,
+  avatarAppearanceId: normalizeAvatarAppearanceId(save.avatarAppearanceId),
+  updatedAt: timestamp,
+});
+
+const resolveActiveSaveSlotId = (slots: SaveSlotSummary[]) => {
+  const activeSlotId = localStorage.getItem(ACTIVE_SAVE_SLOT_KEY);
+  if (activeSlotId && slots.some((slot) => slot.id === activeSlotId)) {
+    return activeSlotId;
+  }
+
+  return slots[0]?.id ?? null;
+};
+
+const persistActiveSaveSlotId = (slotId: string | null) => {
+  try {
+    if (slotId) {
+      localStorage.setItem(ACTIVE_SAVE_SLOT_KEY, slotId);
+    } else {
+      localStorage.removeItem(ACTIVE_SAVE_SLOT_KEY);
+    }
+  } catch (error) {
+    console.warn("Could not persist active Aivatar save slot.", error);
+  }
+};
+
+const ensureSaveSlotRegistry = (content: AivatarContent) => {
+  const existingSlots = readSaveSlots();
+  if (existingSlots.length > 0) return existingSlots;
+
+  const legacyRaw = localStorage.getItem(SAVE_KEY);
+  if (!legacyRaw) return [];
+
+  const slotId = createSaveSlotId();
+  const migratedSave = loadSave(content, SAVE_KEY);
+  const timestamp = new Date().toISOString();
+  const migratedSlot = createSaveSlotSummary(slotId, 0, migratedSave, timestamp);
+
+  persistSave(migratedSave, saveSlotStorageKey(slotId));
+  writeSaveSlots([migratedSlot]);
+  persistActiveSaveSlotId(slotId);
+
+  return [migratedSlot];
 };
 
 const isTaskCabinetStatus = (value: unknown): value is TaskCabinetStatus =>
@@ -2220,10 +2453,27 @@ export const App = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scenePanelRef = useRef<HTMLElement | null>(null);
   const roomEditPanelRef = useRef<HTMLElement | null>(null);
+  const initialSaveSlotsRef = useRef<SaveSlotSummary[] | null>(null);
+  const initialActiveSaveSlotIdRef = useRef<string | null>(null);
   const initialSaveRef = useRef<AivatarSaveState | null>(null);
+  const loadInitialSaveSlots = () => {
+    if (!initialSaveSlotsRef.current) {
+      initialSaveSlotsRef.current = ensureSaveSlotRegistry(defaultContent);
+      initialActiveSaveSlotIdRef.current = resolveActiveSaveSlotId(
+        initialSaveSlotsRef.current,
+      );
+    }
+    return initialSaveSlotsRef.current;
+  };
   const loadInitialSave = () => {
     if (!initialSaveRef.current) {
-      initialSaveRef.current = loadSave(defaultContent);
+      loadInitialSaveSlots();
+      initialSaveRef.current = initialActiveSaveSlotIdRef.current
+        ? loadSave(
+            defaultContent,
+            saveSlotStorageKey(initialActiveSaveSlotIdRef.current),
+          )
+        : saveFromContent(defaultContent);
     }
     return initialSaveRef.current;
   };
@@ -2293,7 +2543,24 @@ export const App = () => {
     y: number;
     valid: boolean;
   } | null>(null);
-  const hadSavedStateRef = useRef(localStorage.getItem(SAVE_KEY) !== null);
+  const activeSaveSlotIdRef = useRef<string | null>(initialActiveSaveSlotIdRef.current);
+  const hadSavedStateRef = useRef(initialActiveSaveSlotIdRef.current !== null);
+  const [saveSlots, setSaveSlots] = useState<SaveSlotSummary[]>(() =>
+    loadInitialSaveSlots(),
+  );
+  const saveSlotsRef = useRef(saveSlots);
+  const [activeSaveSlotId, setActiveSaveSlotId] = useState<string | null>(
+    () => initialActiveSaveSlotIdRef.current,
+  );
+  const [saveMenuOpen, setSaveMenuOpen] = useState(true);
+  const [creatingSaveSlotIndex, setCreatingSaveSlotIndex] = useState<number | null>(
+    saveSlots.length === 0 ? 0 : null,
+  );
+  const [selectedAvatarAppearanceId, setSelectedAvatarAppearanceId] =
+    useState<AvatarAppearanceId>(DEFAULT_AVATAR_APPEARANCE_ID);
+  const [newSaveAvatarName, setNewSaveAvatarName] = useState(defaultContent.avatar.name);
+  const [deleteSaveSlot, setDeleteSaveSlot] = useState<SaveSlotSummary | null>(null);
+  const [saveSlotMessage, setSaveSlotMessage] = useState("");
   const [contentBase, setContentBase] = useState(defaultContent);
   const [configState, setConfigState] = useState<"builtin" | "config" | "fallback">(
     "builtin",
@@ -2317,6 +2584,31 @@ export const App = () => {
   const sidePanelTimerRef = useRef<number | null>(null);
   const [save, setSave] = useState<AivatarSaveState>(() => loadInitialSave());
   const saveRef = useRef(save);
+  const updateSaveSlotSummary = (
+    slotId: string,
+    savedState: AivatarSaveState,
+    syncState = true,
+  ) => {
+    const timestamp = new Date().toISOString();
+    const nextSlots = saveSlotsRef.current.map((slot) =>
+      slot.id === slotId ? updateSaveSlotSummaryFromSave(slot, savedState, timestamp) : slot,
+    );
+
+    saveSlotsRef.current = nextSlots;
+    writeSaveSlots(nextSlots);
+    if (syncState) setSaveSlots(nextSlots);
+  };
+  const persistCurrentSaveSlot = (syncState = true) => {
+    const slotId = activeSaveSlotIdRef.current;
+    if (!slotId) return;
+
+    const savedState = {
+      ...saveRef.current,
+      avatarRuntime: runtimeRef.current,
+    };
+    persistSave(savedState, saveSlotStorageKey(slotId));
+    updateSaveSlotSummary(slotId, savedState, syncState);
+  };
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
   const [uiTheme, setUiTheme] = useState<UiThemeId>(() => loadInitialUiTheme());
   const [audioVolume, setAudioVolume] = useState(() => loadInitialAudioVolume());
@@ -3152,6 +3444,161 @@ export const App = () => {
     updateMovingFurniture(null);
   };
 
+  const applySaveSlotState = (slotId: string, nextSave: AivatarSaveState) => {
+    activeSaveSlotIdRef.current = slotId;
+    hadSavedStateRef.current = true;
+    setActiveSaveSlotId(slotId);
+    setSaveMenuOpen(false);
+    setCreatingSaveSlotIndex(null);
+    clearSelectedRoomObject();
+    updatePlacingItem(null);
+    updatePlacementPreview(null);
+    updateFurniturePlacementPreview(null);
+    clearPendingFurnitureInteraction();
+    updateActiveInteraction(null);
+    setActiveRecordPlayerId(null);
+    runtimeRef.current = nextSave.avatarRuntime ?? initialAvatarRuntime();
+    setAvatar(runtimeRef.current);
+    setSave(nextSave);
+  };
+
+  const selectSaveSlot = (slotId: string) => {
+    const slot = saveSlotsRef.current.find((entry) => entry.id === slotId);
+    if (!slot) return;
+
+    setSaveSlotMessage("");
+    persistCurrentSaveSlot();
+    const nextSave = loadSave(contentBase, saveSlotStorageKey(slot.id));
+    applySaveSlotState(slot.id, nextSave);
+  };
+
+  const startCreateSaveSlot = (slotIndex: number) => {
+    setSaveSlotMessage("");
+    setDeleteSaveSlot(null);
+    setCreatingSaveSlotIndex(slotIndex);
+    setSelectedAvatarAppearanceId(DEFAULT_AVATAR_APPEARANCE_ID);
+    setNewSaveAvatarName(contentBase.avatar.name);
+  };
+
+  const installSaveIntoSlot = (slotIndex: number, nextSave: AivatarSaveState) => {
+    if (saveSlotsRef.current.some((slot) => slot.slotIndex === slotIndex)) return;
+    persistCurrentSaveSlot();
+
+    const slotId = createSaveSlotId();
+    const timestamp = new Date().toISOString();
+    const nextSlot = createSaveSlotSummary(slotId, slotIndex, nextSave, timestamp);
+    const nextSlots = [...saveSlotsRef.current, nextSlot].sort(
+      (a, b) => a.slotIndex - b.slotIndex,
+    );
+
+    persistSave(nextSave, saveSlotStorageKey(slotId));
+    saveSlotsRef.current = nextSlots;
+    writeSaveSlots(nextSlots);
+    setSaveSlots(nextSlots);
+    applySaveSlotState(slotId, nextSave);
+  };
+
+  const createSaveSlot = () => {
+    if (creatingSaveSlotIndex === null) return;
+
+    const nextSave = saveFromContent(contentBase, {
+      avatarAppearanceId: selectedAvatarAppearanceId,
+      avatarName: newSaveAvatarName,
+    });
+    installSaveIntoSlot(creatingSaveSlotIndex, nextSave);
+  };
+
+  const readLocalSaveFromFiles = async (files: File[], fromFolder: boolean) => {
+    if (creatingSaveSlotIndex === null) return;
+    if (files.length === 0) {
+      setSaveSlotMessage(ui("saveSlots.importNoFile"));
+      return;
+    }
+
+    const saveFile = fromFolder
+      ? files.find((file) => file.name.toLowerCase() === "aivatar-save.json") ??
+        files.find((file) => file.name.toLowerCase() === "save.json")
+      : files[0];
+
+    if (!saveFile) {
+      setSaveSlotMessage(ui("saveSlots.importNoSaveFile"));
+      return;
+    }
+
+    try {
+      const importedSave = parseImportedSave(contentBase, await saveFile.text());
+      if (!importedSave) {
+        setSaveSlotMessage(ui("saveSlots.importInvalid"));
+        return;
+      }
+
+      installSaveIntoSlot(creatingSaveSlotIndex, importedSave);
+    } catch (error) {
+      console.warn("Could not import Aivatar save.", error);
+      setSaveSlotMessage(ui("saveSlots.importFailed"));
+    }
+  };
+
+  const openLocalSavePicker = (fromFolder: boolean) => {
+    if (creatingSaveSlotIndex === null) return;
+    if (saveSlotsRef.current.some((slot) => slot.slotIndex === creatingSaveSlotIndex)) {
+      return;
+    }
+
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.multiple = fromFolder;
+    if (fromFolder) {
+      input.setAttribute("webkitdirectory", "");
+      input.setAttribute("directory", "");
+    }
+    input.addEventListener("change", () => {
+      void readLocalSaveFromFiles(Array.from(input.files ?? []), fromFolder);
+    });
+    input.click();
+  };
+
+  const requestDeleteSaveSlot = (slot: SaveSlotSummary) => {
+    setSaveSlotMessage("");
+    setCreatingSaveSlotIndex(null);
+    setDeleteSaveSlot(slot);
+  };
+
+  const confirmDeleteSaveSlot = () => {
+    if (!deleteSaveSlot) return;
+
+    try {
+      localStorage.removeItem(saveSlotStorageKey(deleteSaveSlot.id));
+    } catch (error) {
+      console.warn("Could not delete Aivatar save slot.", error);
+    }
+
+    const nextSlots = saveSlotsRef.current.filter((slot) => slot.id !== deleteSaveSlot.id);
+    saveSlotsRef.current = nextSlots;
+    writeSaveSlots(nextSlots);
+    setSaveSlots(nextSlots);
+    setSaveSlotMessage(
+      ui("saveSlots.deleted", {
+        name: deleteSaveSlot.avatarName,
+      }),
+    );
+
+    if (activeSaveSlotIdRef.current === deleteSaveSlot.id) {
+      activeSaveSlotIdRef.current = null;
+      hadSavedStateRef.current = false;
+      persistActiveSaveSlotId(null);
+      setActiveSaveSlotId(null);
+      runtimeRef.current = initialAvatarRuntime();
+      setAvatar(runtimeRef.current);
+      setSave(saveFromContent(contentBase));
+      setSaveMenuOpen(true);
+      setCreatingSaveSlotIndex(nextSlots.length === 0 ? 0 : null);
+    }
+
+    setDeleteSaveSlot(null);
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -3280,12 +3727,25 @@ export const App = () => {
   }, [effectiveSource, effectiveStatus, endpoint]);
 
   useEffect(() => {
+    saveSlotsRef.current = saveSlots;
+  }, [saveSlots]);
+
+  useEffect(() => {
+    activeSaveSlotIdRef.current = activeSaveSlotId;
+    persistActiveSaveSlotId(activeSaveSlotId);
+  }, [activeSaveSlotId]);
+
+  useEffect(() => {
     saveRef.current = save;
-    persistSave({
+    if (!activeSaveSlotId) return;
+
+    const savedState = {
       ...save,
       avatarRuntime: runtimeRef.current,
-    });
-  }, [save]);
+    };
+    persistSave(savedState, saveSlotStorageKey(activeSaveSlotId));
+    updateSaveSlotSummary(activeSaveSlotId, savedState);
+  }, [activeSaveSlotId, save]);
 
   useEffect(() => {
     const currentMemory = normalizeMemory(save.memory);
@@ -3323,10 +3783,7 @@ export const App = () => {
 
   useEffect(() => {
     const flushSave = () => {
-      persistSave({
-        ...saveRef.current,
-        avatarRuntime: runtimeRef.current,
-      });
+      persistCurrentSaveSlot(false);
     };
     const flushOnVisibilityHidden = () => {
       if (document.visibilityState === "hidden") flushSave();
@@ -5833,9 +6290,17 @@ export const App = () => {
   };
 
   const clearSaveState = () => {
-    const freshSave = saveFromContent(contentBase);
-    localStorage.removeItem(SAVE_KEY);
-    hadSavedStateRef.current = false;
+    const activeSlotId = activeSaveSlotIdRef.current;
+    if (!activeSlotId) {
+      setSaveMenuOpen(true);
+      setCreatingSaveSlotIndex(0);
+      return;
+    }
+
+    const freshSave = saveFromContent(contentBase, {
+      avatarAppearanceId: normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
+    });
+    hadSavedStateRef.current = true;
     selectedFurnitureRef.current = null;
     setSelectedFurniture(null);
     updatePlacingItem(null);
@@ -5851,6 +6316,8 @@ export const App = () => {
     updateActiveInteraction(null);
     runtimeRef.current = initialAvatarRuntime();
     setAvatar(runtimeRef.current);
+    persistSave(freshSave, saveSlotStorageKey(activeSlotId));
+    updateSaveSlotSummary(activeSlotId, freshSave);
     setSave(freshSave);
   };
 
@@ -7521,6 +7988,22 @@ export const App = () => {
   const selectedBgmTrackLabel = ui(
     (BGM_TRACKS.find((track) => track.id === bgmTrackId) ?? BGM_TRACKS[0]).copyKey,
   );
+  const activeSaveSlot = activeSaveSlotId
+    ? saveSlots.find((slot) => slot.id === activeSaveSlotId)
+    : null;
+  const saveSlotCells = Array.from({ length: MAX_SAVE_SLOTS }, (_, index) => ({
+    index,
+    slot: saveSlots.find((entry) => entry.slotIndex === index) ?? null,
+  }));
+  const formatSaveSlotTimestamp = (timestamp: string) => {
+    const value = Date.parse(timestamp);
+    if (!Number.isFinite(value)) return "";
+
+    return new Intl.DateTimeFormat(locale, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(value);
+  };
   const sceneContextActionLabel =
     sceneContextMenu?.target.kind === "placed-item"
       ? sceneContextMenu.target.action === "brew"
@@ -7561,6 +8044,207 @@ export const App = () => {
           : undefined
       }
     >
+      {saveMenuOpen ? (
+        <section
+          className="save-slot-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={ui("saveSlots.title")}
+        >
+          <div className="save-slot-dialog">
+            <div className="save-slot-heading">
+              <div className="save-slot-heading-main">
+                <span>{ui("saveSlots.eyebrow")}</span>
+                <h1>{ui("saveSlots.title")}</h1>
+                <p>{ui("saveSlots.subtitle")}</p>
+              </div>
+              <div className="save-slot-language" aria-label={ui("app.language")}>
+                {localeOptions.map((option) => (
+                  <button
+                    key={option.locale}
+                    type="button"
+                    className={`language-button${locale === option.locale ? " active" : ""}`}
+                    onClick={() => setLocale(option.locale)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="save-slot-grid">
+              {saveSlotCells.map(({ index, slot }) => {
+                const slotSave = slot
+                  ? slot.id === activeSaveSlotId
+                    ? save
+                    : loadSave(contentBase, saveSlotStorageKey(slot.id))
+                  : null;
+
+                return slot ? (
+                  <article
+                    key={slot.id}
+                    className={`save-slot-card${slot.id === activeSaveSlotId ? " active" : ""}`}
+                  >
+                    <span className="save-slot-card-kicker">
+                      {ui("saveSlots.slot", { value: index + 1 })}
+                    </span>
+                    <span className={`save-avatar-preview avatar-preview-${slot.avatarAppearanceId}`}>
+                      <span aria-hidden="true" />
+                    </span>
+                    <strong>{slot.avatarName}</strong>
+                    <small>
+                      {ui("saveSlots.level", {
+                        value: slotSave?.memory?.growth.level ?? 1,
+                      })}
+                    </small>
+                    <small>
+                      {ui("saveSlots.bits", {
+                        value: slotSave?.wallet.bits ?? 0,
+                      })}
+                    </small>
+                    <small>{formatSaveSlotTimestamp(slot.updatedAt)}</small>
+                    <span className="save-slot-actions">
+                      <button
+                        type="button"
+                        className="pixel-button save-slot-enter-button"
+                        onClick={() => selectSaveSlot(slot.id)}
+                      >
+                        {ui("saveSlots.enter")}
+                      </button>
+                      <button
+                        type="button"
+                        className="pixel-button danger-button save-slot-delete-button"
+                        onClick={() => requestDeleteSaveSlot(slot)}
+                      >
+                        {ui("saveSlots.remove")}
+                      </button>
+                    </span>
+                  </article>
+                ) : (
+                  <button
+                    key={`empty-${index}`}
+                    type="button"
+                    className={`save-slot-card empty${
+                      creatingSaveSlotIndex === index ? " active" : ""
+                    }`}
+                    onClick={() => startCreateSaveSlot(index)}
+                  >
+                    <span className="save-slot-card-kicker">
+                      {ui("saveSlots.slot", { value: index + 1 })}
+                    </span>
+                    <span className="save-slot-empty-icon" aria-hidden="true">
+                      +
+                    </span>
+                    <strong>{ui("saveSlots.empty")}</strong>
+                    <small>{ui("saveSlots.newRoom")}</small>
+                  </button>
+                );
+              })}
+            </div>
+
+            {creatingSaveSlotIndex !== null ? (
+              <div className="save-create-panel">
+                <div className="save-create-heading">
+                  <h2>
+                    {ui("saveSlots.createTitle", { value: creatingSaveSlotIndex + 1 })}
+                  </h2>
+                  <span>{ui("saveSlots.character")}</span>
+                </div>
+                <label className="name-editor save-create-name-editor">
+                  <span>{ui("saveSlots.nameLabel")}</span>
+                  <input
+                    value={newSaveAvatarName}
+                    onChange={(event) => setNewSaveAvatarName(event.target.value)}
+                    placeholder={ui("saveSlots.namePlaceholder")}
+                    maxLength={32}
+                  />
+                </label>
+                <div className="avatar-choice-grid">
+                  {AVATAR_APPEARANCES.map((appearance) => (
+                    <button
+                      key={appearance.id}
+                      type="button"
+                      className={`avatar-choice-card${
+                        selectedAvatarAppearanceId === appearance.id ? " active" : ""
+                      }`}
+                      onClick={() => setSelectedAvatarAppearanceId(appearance.id)}
+                    >
+                      <span className={`save-avatar-preview avatar-preview-${appearance.id}`}>
+                        <span aria-hidden="true" />
+                      </span>
+                      <strong>{ui(appearance.copyKey)}</strong>
+                      <small>{ui(appearance.descriptionKey)}</small>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="pixel-button save-create-button"
+                  onClick={createSaveSlot}
+                >
+                  {ui("saveSlots.create")}
+                </button>
+                <div className="save-import-actions">
+                  <button
+                    type="button"
+                    className="pixel-button"
+                    onClick={() => openLocalSavePicker(false)}
+                  >
+                    {ui("saveSlots.importJson")}
+                  </button>
+                  <button
+                    type="button"
+                    className="pixel-button"
+                    onClick={() => openLocalSavePicker(true)}
+                  >
+                    {ui("saveSlots.importFolder")}
+                  </button>
+                </div>
+                <p className="save-slot-hint">{ui("saveSlots.importHint")}</p>
+              </div>
+            ) : activeSaveSlot ? (
+              <p className="save-slot-hint">
+                {ui("saveSlots.currentHint", {
+                  name: activeSaveSlot.avatarName,
+                })}
+              </p>
+            ) : null}
+            {saveSlotMessage ? <p className="save-slot-message">{saveSlotMessage}</p> : null}
+          </div>
+          {deleteSaveSlot ? (
+            <div
+              className="save-delete-dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-label={ui("saveSlots.deleteTitle")}
+            >
+              <h2>{ui("saveSlots.deleteTitle")}</h2>
+              <p>
+                {ui("saveSlots.deleteWarning", {
+                  name: deleteSaveSlot.avatarName,
+                })}
+              </p>
+              <div className="save-delete-actions">
+                <button
+                  type="button"
+                  className="pixel-button"
+                  onClick={() => setDeleteSaveSlot(null)}
+                >
+                  {ui("action.cancel")}
+                </button>
+                <button
+                  type="button"
+                  className="pixel-button danger-button"
+                  onClick={confirmDeleteSaveSlot}
+                >
+                  {ui("saveSlots.confirmDelete")}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <section ref={scenePanelRef} className="scene-panel" aria-label={ui("app.roomAria")}>
         <button
           type="button"

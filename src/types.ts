@@ -395,6 +395,8 @@ export interface AivatarNavMemory {
 export interface AivatarSaveState {
   layoutVersion?: number;
   avatarId?: string;
+  roomId?: string;
+  avatarAppearanceId?: string;
   avatarName?: string;
   avatarRuntime?: AvatarRuntime;
   memory?: AivatarMemory;

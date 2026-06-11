@@ -81,6 +81,321 @@ meter {
   min-width: 720px;
 }
 
+.save-slot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(8, 11, 20, 0.78);
+}
+
+.save-slot-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 18px;
+  border: 2px solid #52607d;
+  color: #f4ead2;
+  background: #111624;
+  box-shadow:
+    inset 0 0 0 3px #1e2639,
+    6px 6px 0 #080b14;
+}
+
+.save-slot-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+}
+
+.save-slot-heading-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.save-slot-language {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.save-slot-language .language-button {
+  min-width: 44px;
+  padding: 4px 6px;
+}
+
+.save-slot-heading span,
+.save-slot-card-kicker,
+.save-slot-card small,
+.avatar-choice-card small,
+.save-create-heading span,
+.save-slot-hint {
+  color: #9ee6ff;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.save-slot-heading h1,
+.save-create-heading h2 {
+  margin: 0;
+  color: #ffe66d;
+  font-size: 18px;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.save-slot-heading p,
+.save-slot-hint {
+  margin: 0;
+}
+
+.save-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.save-slot-card,
+.avatar-choice-card {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  min-height: 158px;
+  padding: 10px 8px;
+  border: 2px solid #52607d;
+  color: #f4ead2;
+  background: #202638;
+  box-shadow: inset -2px -2px 0 #111624;
+  cursor: default;
+}
+
+.save-slot-card.empty,
+.avatar-choice-card {
+  cursor: pointer;
+}
+
+.save-slot-card:hover,
+.save-slot-card.active,
+.avatar-choice-card:hover,
+.avatar-choice-card.active {
+  border-color: #ffe66d;
+  color: #141823;
+  background: #ffe66d;
+}
+
+.save-slot-card:hover small,
+.save-slot-card.active small,
+.save-slot-card:hover .save-slot-card-kicker,
+.save-slot-card.active .save-slot-card-kicker,
+.avatar-choice-card:hover small,
+.avatar-choice-card.active small {
+  color: #39445f;
+}
+
+.save-slot-card strong,
+.avatar-choice-card strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.save-slot-actions,
+.save-import-actions,
+.save-delete-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+
+.save-slot-actions {
+  margin-top: auto;
+}
+
+.save-slot-actions .pixel-button,
+.save-import-actions .pixel-button {
+  min-width: 0;
+  padding: 5px 4px;
+  font-size: 9px;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.save-slot-message {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid #52607d;
+  color: #ffe66d;
+  background: rgba(8, 11, 20, 0.48);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.save-slot-card.empty {
+  border-style: dashed;
+  color: #d8fff7;
+  background: rgba(32, 38, 56, 0.7);
+}
+
+.save-slot-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 2px solid currentColor;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.save-create-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #39445f;
+  background: rgba(8, 11, 20, 0.38);
+}
+
+.save-create-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.avatar-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.save-create-name-editor {
+  display: grid;
+  gap: 5px;
+}
+
+.avatar-choice-card {
+  min-height: 132px;
+}
+
+.save-create-button {
+  justify-self: end;
+}
+
+.save-delete-dialog {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 31;
+  display: grid;
+  gap: 10px;
+  width: min(360px, calc(100vw - 40px));
+  padding: 14px;
+  border: 2px solid #ff5c7a;
+  color: #f4ead2;
+  background: #111624;
+  box-shadow:
+    inset 0 0 0 2px #401321,
+    5px 5px 0 #080b14;
+  transform: translate(-50%, -50%);
+}
+
+.save-delete-dialog h2,
+.save-delete-dialog p {
+  margin: 0;
+}
+
+.save-delete-dialog h2 {
+  color: #ffb3c1;
+  font-size: 15px;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.save-delete-dialog p {
+  color: #f4ead2;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.save-avatar-preview {
+  position: relative;
+  display: block;
+  width: 58px;
+  height: 46px;
+}
+
+.save-avatar-preview > span {
+  position: absolute;
+  left: 13px;
+  top: 5px;
+  width: 32px;
+  height: 24px;
+  border: 2px solid #3b163f;
+  border-radius: 8px 8px 6px 6px;
+  background: #ed7bd4;
+  box-shadow:
+    inset 4px 0 0 #f5a6e5,
+    inset -4px -3px 0 #ad4fa0;
+}
+
+.save-avatar-preview > span::before {
+  position: absolute;
+  left: 7px;
+  top: 8px;
+  width: 4px;
+  height: 4px;
+  background: #191225;
+  box-shadow: 12px 0 0 #191225;
+  content: "";
+}
+
+.save-avatar-preview > span::after {
+  position: absolute;
+  left: -1px;
+  bottom: -11px;
+  width: 6px;
+  height: 9px;
+  border: 2px solid #3b163f;
+  border-top: 0;
+  background: #d45fbd;
+  box-shadow:
+    9px 2px 0 -1px #d45fbd,
+    9px 2px 0 1px #3b163f,
+    18px 0 0 -1px #d45fbd,
+    18px 0 0 1px #3b163f,
+    27px 2px 0 -1px #d45fbd,
+    27px 2px 0 1px #3b163f;
+  content: "";
+}
+
+@media (max-width: 620px) {
+  .save-slot-heading {
+    grid-template-columns: 1fr;
+  }
+
+  .save-slot-language {
+    justify-content: flex-start;
+  }
+
+  .save-slot-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .save-create-heading {
+    display: grid;
+  }
+}
+
 .scene-panel {
   position: relative;
   display: grid;
@@ -792,6 +1107,8 @@ meter {
 .app-shell.theme-terminal .asset-editor-entry,
 .app-shell.theme-terminal .asset-editor,
 .app-shell.theme-terminal .decor-panel,
+.app-shell.theme-terminal .save-slot-dialog,
+.app-shell.theme-terminal .save-delete-dialog,
 .app-shell.theme-terminal .placement-panel,
 .app-shell.theme-terminal .edit-panel {
   border-color: #4cff57;
@@ -974,6 +1291,8 @@ meter {
 .app-shell.theme-terminal .settings-toggle,
 .app-shell.theme-terminal .sound-toggle,
 .app-shell.theme-terminal .debug-toggle,
+.app-shell.theme-terminal .save-slot-card,
+.app-shell.theme-terminal .avatar-choice-card,
 .app-shell.theme-terminal .language-button,
 .app-shell.theme-terminal .theme-button,
 .app-shell.theme-terminal .pixel-button,
@@ -1004,6 +1323,10 @@ meter {
 .app-shell.theme-terminal .sound-toggle.active,
 .app-shell.theme-terminal .debug-toggle:hover,
 .app-shell.theme-terminal .debug-toggle.active,
+.app-shell.theme-terminal .save-slot-card:hover,
+.app-shell.theme-terminal .save-slot-card.active,
+.app-shell.theme-terminal .avatar-choice-card:hover,
+.app-shell.theme-terminal .avatar-choice-card.active,
 .app-shell.theme-terminal .language-button:hover,
 .app-shell.theme-terminal .language-button.active,
 .app-shell.theme-terminal .theme-button:hover,
@@ -1040,6 +1363,50 @@ meter {
     terminal-crt-grain 260ms steps(2, end) infinite,
     terminal-crt-jitter 720ms steps(2, end) infinite;
   text-shadow: none;
+}
+
+.app-shell.theme-terminal .save-slot-card:hover,
+.app-shell.theme-terminal .save-slot-card.active,
+.app-shell.theme-terminal .avatar-choice-card:hover,
+.app-shell.theme-terminal .avatar-choice-card.active {
+  color: #efffe9;
+  background:
+    linear-gradient(180deg, rgba(18, 74, 26, 0.72), rgba(4, 17, 8, 0.96)),
+    #041108;
+  animation: none;
+  text-shadow: none;
+}
+
+.app-shell.theme-terminal .save-slot-card:hover strong,
+.app-shell.theme-terminal .save-slot-card.active strong,
+.app-shell.theme-terminal .avatar-choice-card:hover strong,
+.app-shell.theme-terminal .avatar-choice-card.active strong {
+  color: #f2ffe9;
+  text-shadow: 1px 1px 0 #020804;
+}
+
+.app-shell.theme-terminal .save-slot-card:hover small,
+.app-shell.theme-terminal .save-slot-card.active small,
+.app-shell.theme-terminal .save-slot-card:hover .save-slot-card-kicker,
+.app-shell.theme-terminal .save-slot-card.active .save-slot-card-kicker,
+.app-shell.theme-terminal .avatar-choice-card:hover small,
+.app-shell.theme-terminal .avatar-choice-card.active small {
+  color: #caffb8;
+  text-shadow: 1px 1px 0 #020804;
+}
+
+.app-shell.theme-terminal .save-slot-message {
+  border-color: #1f7f2e;
+  color: #e8ffd8;
+  background: #031207;
+}
+
+.app-shell.theme-terminal .save-delete-dialog {
+  border-color: #ff5c7a;
+  background: #17070c;
+  box-shadow:
+    inset 0 0 0 2px #401321,
+    0 0 14px rgba(255, 92, 122, 0.18);
 }
 
 .app-shell.theme-terminal .sessions-toggle:hover span,
@@ -4887,6 +5254,83 @@ meter::-webkit-meter-optimum-value {
   box-shadow:
     inset 2px 2px 0 #404040,
     inset -2px -2px 0 #dfdfdf;
+}
+
+.app-shell.theme-classic .save-slot-overlay {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.app-shell.theme-classic .save-slot-dialog {
+  border-color: #fff #404040 #404040 #fff;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080,
+    4px 4px 0 rgba(0, 0, 0, 0.35);
+}
+
+.app-shell.theme-classic .save-delete-dialog {
+  border-color: #fff #404040 #404040 #fff;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080,
+    4px 4px 0 rgba(0, 0, 0, 0.35);
+}
+
+.app-shell.theme-classic .save-slot-heading h1,
+.app-shell.theme-classic .save-create-heading h2,
+.app-shell.theme-classic .save-delete-dialog h2 {
+  color: #000080;
+}
+
+.app-shell.theme-classic .save-slot-heading span,
+.app-shell.theme-classic .save-slot-card-kicker,
+.app-shell.theme-classic .save-slot-card small,
+.app-shell.theme-classic .avatar-choice-card small,
+.app-shell.theme-classic .save-create-heading span,
+.app-shell.theme-classic .save-slot-hint {
+  color: #404040;
+}
+
+.app-shell.theme-classic .save-slot-message {
+  border-color: #808080;
+  color: #000;
+  background: #dfdfdf;
+}
+
+.app-shell.theme-classic .save-delete-dialog p {
+  color: #000;
+}
+
+.app-shell.theme-classic .save-slot-card,
+.app-shell.theme-classic .avatar-choice-card,
+.app-shell.theme-classic .save-create-panel {
+  border-color: #fff #404040 #404040 #fff;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080;
+}
+
+.app-shell.theme-classic .save-slot-card:hover,
+.app-shell.theme-classic .save-slot-card.active,
+.app-shell.theme-classic .avatar-choice-card:hover,
+.app-shell.theme-classic .avatar-choice-card.active {
+  color: #fff;
+  background: #000080;
+}
+
+.app-shell.theme-classic .save-slot-card:hover small,
+.app-shell.theme-classic .save-slot-card.active small,
+.app-shell.theme-classic .save-slot-card:hover .save-slot-card-kicker,
+.app-shell.theme-classic .save-slot-card.active .save-slot-card-kicker,
+.app-shell.theme-classic .avatar-choice-card:hover small,
+.app-shell.theme-classic .avatar-choice-card.active small {
+  color: #dfdfdf;
 }
 
 .app-shell.theme-classic .side-panel {
