@@ -1,10 +1,10 @@
 use std::{
+    collections::hash_map::DefaultHasher,
     collections::{HashMap, HashSet},
-    hash::{Hash, Hasher},
     fs::File,
+    hash::{Hash, Hasher},
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
-    collections::hash_map::DefaultHasher,
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant, SystemTime},
@@ -43,6 +43,7 @@ struct WatchedSession {
     usage_baseline: Option<RawUsage>,
     digest_entries: Vec<DigestEntry>,
     last_learning_id: Option<String>,
+    terminal_turn_ended: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -91,20 +92,9 @@ fn discovery_loop() {
             if let Some(root) = sessions_root() {
                 for meta in discover_sessions(&root) {
                     refresh_presence(&meta);
-                    watched.entry(meta.session_id.clone()).or_insert_with(|| {
-                        submit_status(discovered_status(&meta));
-                        let latest_usage = read_latest_token_usage(&meta.path);
-                        WatchedSession {
-                            offset: file_len(&meta.path).unwrap_or(0),
-                            path: meta.path.clone(),
-                            cwd: meta.cwd.clone(),
-                            last_event_key: None,
-                            usage_baseline: latest_usage.as_ref().map(|usage| usage.total.clone()),
-                            latest_usage,
-                            digest_entries: Vec::new(),
-                            last_learning_id: None,
-                        }
-                    });
+                    watched
+                        .entry(meta.session_id.clone())
+                        .or_insert_with(|| initialize_watched_session(&meta));
                 }
             }
             last_scan = Instant::now();
@@ -112,12 +102,12 @@ fn discovery_loop() {
 
         let stale_paths: HashSet<String> = watched
             .iter_mut()
-            .filter_map(|(session_id, session)| {
-                match tail_session(session_id, session) {
+            .filter_map(
+                |(session_id, session)| match tail_session(session_id, session) {
                     Ok(()) => None,
                     Err(_) => Some(session_id.clone()),
-                }
-            })
+                },
+            )
             .collect();
         for session_id in stale_paths {
             watched.remove(&session_id);
@@ -125,6 +115,33 @@ fn discovery_loop() {
 
         thread::sleep(WATCH_INTERVAL);
     }
+}
+
+fn initialize_watched_session(meta: &SessionMeta) -> WatchedSession {
+    let mut session = WatchedSession {
+        offset: 0,
+        path: meta.path.clone(),
+        cwd: meta.cwd.clone(),
+        last_event_key: None,
+        usage_baseline: None,
+        latest_usage: None,
+        digest_entries: Vec::new(),
+        last_learning_id: None,
+        terminal_turn_ended: false,
+    };
+    let restored_status = restore_latest_status(&meta.session_id, &mut session);
+    session.offset = file_len(&meta.path).unwrap_or(0);
+
+    if let Some(status) = restored_status {
+        session.last_event_key = Some(status_event_key(&status));
+        submit_status(status);
+    } else {
+        let status = discovered_status(meta);
+        session.last_event_key = Some(status_event_key(&status));
+        submit_status(status);
+    }
+
+    session
 }
 
 fn sessions_root() -> Option<PathBuf> {
@@ -205,7 +222,8 @@ fn read_session_meta(path: PathBuf) -> Option<SessionMeta> {
             cwd: string_field(payload, "cwd")
                 .or_else(|| string_field(payload, "initial_cwd"))
                 .or_else(|| string_field(payload, "workspace")),
-            timestamp: string_field(payload, "timestamp").or_else(|| string_field(&record, "timestamp")),
+            timestamp: string_field(payload, "timestamp")
+                .or_else(|| string_field(&record, "timestamp")),
             session_id,
             path,
         });
@@ -272,6 +290,41 @@ fn tail_session(session_id: &str, session: &mut WatchedSession) -> Result<(), St
 }
 
 fn handle_record(session_id: &str, session: &mut WatchedSession, record: &Value) {
+    let status = status_from_record(session_id, session, record);
+
+    if let Some(status) = status {
+        let event_key = status_event_key(&status);
+        if session.last_event_key.as_deref() == Some(event_key.as_str()) {
+            return;
+        }
+        session.last_event_key = Some(event_key);
+        submit_status(status);
+    }
+}
+
+fn restore_latest_status(session_id: &str, session: &mut WatchedSession) -> Option<Value> {
+    let file = File::open(&session.path).ok()?;
+    let reader = BufReader::new(file);
+    let mut latest_status = None;
+    for line in reader.lines().map_while(Result::ok) {
+        if line.len() > MAX_LINE_CHARS || line.trim().is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(status) = status_from_record(session_id, session, &record) {
+            latest_status = Some(status);
+        }
+    }
+    latest_status
+}
+
+fn status_from_record(
+    session_id: &str,
+    session: &mut WatchedSession,
+    record: &Value,
+) -> Option<Value> {
     let record_type = record.get("type").and_then(Value::as_str);
     let payload = record.get("payload").unwrap_or(record);
     let payload_type = payload.get("type").and_then(Value::as_str);
@@ -280,10 +333,13 @@ fn handle_record(session_id: &str, session: &mut WatchedSession, record: &Value)
         .and_then(Value::as_str)
         .unwrap_or_default();
 
-    let status = match (record_type, payload_type, phase) {
+    match (record_type, payload_type, phase) {
         (Some("event_msg"), Some("token_count"), _) => {
             if let Some(snapshot) = usage_snapshot_from_record(record) {
                 session.latest_usage = Some(snapshot.clone());
+                if session.terminal_turn_ended {
+                    return None;
+                }
                 let usage = context_usage(&snapshot);
                 Some(build_status(
                     session_id,
@@ -294,13 +350,18 @@ fn handle_record(session_id: &str, session: &mut WatchedSession, record: &Value)
                     &session.cwd,
                     usage,
                     None,
+                    event_timestamp(record),
                 ))
             } else {
                 None
             }
         }
         (Some("event_msg"), Some("user_message"), _) => {
-            session.usage_baseline = session.latest_usage.as_ref().map(|usage| usage.total.clone());
+            session.terminal_turn_ended = false;
+            session.usage_baseline = session
+                .latest_usage
+                .as_ref()
+                .map(|usage| usage.total.clone());
             if let Some(text) = text_from_payload(payload) {
                 remember_digest(session, "user", &text);
             }
@@ -313,11 +374,16 @@ fn handle_record(session_id: &str, session: &mut WatchedSession, record: &Value)
                 &session.cwd,
                 None,
                 None,
+                event_timestamp(record),
             ))
         }
         (Some("response_item"), Some("function_call" | "custom_tool_call"), _) => {
+            session.terminal_turn_ended = false;
             if session.usage_baseline.is_none() {
-                session.usage_baseline = session.latest_usage.as_ref().map(|usage| usage.total.clone());
+                session.usage_baseline = session
+                    .latest_usage
+                    .as_ref()
+                    .map(|usage| usage.total.clone());
             }
             let tool_name = string_field(payload, "name")
                 .or_else(|| string_field(payload, "tool_name"))
@@ -331,15 +397,16 @@ fn handle_record(session_id: &str, session: &mut WatchedSession, record: &Value)
                 &session.cwd,
                 None,
                 None,
+                event_timestamp(record),
             ))
         }
-        (
-            Some("response_item"),
-            Some("function_call_output" | "custom_tool_call_output"),
-            _,
-        ) => {
+        (Some("response_item"), Some("function_call_output" | "custom_tool_call_output"), _) => {
+            session.terminal_turn_ended = false;
             if session.usage_baseline.is_none() {
-                session.usage_baseline = session.latest_usage.as_ref().map(|usage| usage.total.clone());
+                session.usage_baseline = session
+                    .latest_usage
+                    .as_ref()
+                    .map(|usage| usage.total.clone());
             }
             Some(build_status(
                 session_id,
@@ -350,15 +417,18 @@ fn handle_record(session_id: &str, session: &mut WatchedSession, record: &Value)
                 &session.cwd,
                 None,
                 None,
+                event_timestamp(record),
             ))
         }
         (Some("event_msg"), Some("agent_message"), "final" | "final_answer") => {
-            let final_text = text_from_payload(payload).unwrap_or_else(|| "Task finished".to_string());
+            let final_text =
+                text_from_payload(payload).unwrap_or_else(|| "Task finished".to_string());
             remember_digest(session, "assistant", &final_text);
             let usage = completion_usage(session);
             let learning = heuristic_learning(session_id, phase, &final_text, session);
             session.usage_baseline = None;
             session.digest_entries.clear();
+            session.terminal_turn_ended = true;
             Some(build_status(
                 session_id,
                 "complete",
@@ -368,18 +438,10 @@ fn handle_record(session_id: &str, session: &mut WatchedSession, record: &Value)
                 &session.cwd,
                 usage,
                 learning,
+                event_timestamp(record),
             ))
         }
         _ => None,
-    };
-
-    if let Some(status) = status {
-        let event_key = status_event_key(&status);
-        if session.last_event_key.as_deref() == Some(event_key.as_str()) {
-            return;
-        }
-        session.last_event_key = Some(event_key);
-        submit_status(status);
     }
 }
 
@@ -392,6 +454,7 @@ fn build_status(
     cwd: &Option<String>,
     usage: Option<Value>,
     learning: Option<Value>,
+    timestamp: String,
 ) -> Value {
     let summary = summarize(&message);
     let mut payload = json!({
@@ -404,11 +467,14 @@ fn build_status(
         "progress": progress,
         "message": summary,
         "severity": "info",
-        "timestamp": iso_now()
+        "timestamp": timestamp
     });
     if let Some(cwd) = cwd {
         if let Some(object) = payload.as_object_mut() {
-            object.insert("detail".to_string(), json!(format!("Codex session in {cwd}")));
+            object.insert(
+                "detail".to_string(),
+                json!(format!("Codex session in {cwd}")),
+            );
         }
     }
     if let Some(usage) = usage {
@@ -422,24 +488,6 @@ fn build_status(
         }
     }
     payload
-}
-
-fn read_latest_token_usage(path: &Path) -> Option<UsageSnapshot> {
-    let file = File::open(path).ok()?;
-    let reader = BufReader::new(file);
-    let mut latest = None;
-    for line in reader.lines().map_while(Result::ok) {
-        if line.len() > MAX_LINE_CHARS || line.trim().is_empty() {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if let Some(snapshot) = usage_snapshot_from_record(&record) {
-            latest = Some(snapshot);
-        }
-    }
-    latest
 }
 
 fn usage_snapshot_from_record(record: &Value) -> Option<UsageSnapshot> {
@@ -478,12 +526,14 @@ fn completion_usage(session: &WatchedSession) -> Option<Value> {
     } else {
         return None;
     };
-    (usage.total_tokens > 0).then(|| usage_to_aivatar(
-        &usage,
-        scope,
-        latest.last.as_ref(),
-        latest.model_context_window,
-    ))
+    (usage.total_tokens > 0).then(|| {
+        usage_to_aivatar(
+            &usage,
+            scope,
+            latest.last.as_ref(),
+            latest.model_context_window,
+        )
+    })
 }
 
 fn context_usage(snapshot: &UsageSnapshot) -> Option<Value> {
@@ -532,7 +582,10 @@ fn usage_to_aivatar(
         if context.total_tokens > 0 && model_context_window > 0 {
             if let Some(object) = value.as_object_mut() {
                 object.insert("contextTokens".to_string(), json!(context.total_tokens));
-                object.insert("modelContextWindow".to_string(), json!(model_context_window));
+                object.insert(
+                    "modelContextWindow".to_string(),
+                    json!(model_context_window),
+                );
             }
         }
     }
@@ -544,7 +597,9 @@ fn remember_digest(session: &mut WatchedSession, role: &'static str, text: &str)
     if clean.is_empty() {
         return;
     }
-    session.digest_entries.push(DigestEntry { role, text: clean });
+    session
+        .digest_entries
+        .push(DigestEntry { role, text: clean });
     if session.digest_entries.len() > DIGEST_ENTRY_LIMIT {
         let overflow = session.digest_entries.len() - DIGEST_ENTRY_LIMIT;
         session.digest_entries.drain(0..overflow);
@@ -642,7 +697,10 @@ fn replace_between(text: &str, delimiter: &str, replacement: &str) -> String {
 
 fn looks_like_path(word: &str) -> bool {
     let trimmed = word.trim_matches(|character: char| {
-        matches!(character, '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';')
+        matches!(
+            character,
+            '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
+        )
     });
     trimmed.contains(":\\")
         || trimmed.starts_with("\\\\")
@@ -661,9 +719,15 @@ fn learning_summary(digest: &str, final_text: &str) -> String {
     if clean.is_empty() {
         "Aivatar noticed this session and saved a small impression.".to_string()
     } else if has_han_text(&clean) {
-        format!("Aivatar记住了一轮关于“{}”的对话", summarize_to_chars(&clean, 46))
+        format!(
+            "Aivatar记住了一轮关于“{}”的对话",
+            summarize_to_chars(&clean, 46)
+        )
     } else {
-        format!("Aivatar noticed a session about {}", summarize_to_chars(&clean, 72))
+        format!(
+            "Aivatar noticed a session about {}",
+            summarize_to_chars(&clean, 72)
+        )
     }
 }
 
@@ -673,7 +737,12 @@ fn learning_trait_changes(digest: &str, final_text: &str) -> Value {
     if contains_any(&text, &["test", "build", "verify", "check", "review"]) {
         traits.insert("focus".to_string(), json!(1));
     }
-    if contains_any(&text, &["bug", "error", "failed", "failure", "fix", "repair", "debug"]) {
+    if contains_any(
+        &text,
+        &[
+            "bug", "error", "failed", "failure", "fix", "repair", "debug",
+        ],
+    ) {
         traits.insert("resilience".to_string(), json!(1));
     }
     if contains_any(&text, &["design", "ui", "visual", "style", "css", "canvas"]) {
@@ -682,7 +751,10 @@ fn learning_trait_changes(digest: &str, final_text: &str) -> Value {
     if contains_any(&text, &["learn", "research", "why", "explore", "discover"]) {
         traits.insert("curiosity".to_string(), json!(1));
     }
-    if contains_any(&text, &["complete", "done", "finished", "success", "release"]) {
+    if contains_any(
+        &text,
+        &["complete", "done", "finished", "success", "release"],
+    ) {
         traits.insert("efficiency".to_string(), json!(1));
     }
     if contains_any(&text, &["warm", "cozy", "companion", "pet", "gentle"]) {
@@ -698,30 +770,129 @@ fn idle_bubble_candidates(digest: &str, language: &str) -> Vec<String> {
     let text = digest.to_ascii_lowercase();
     let mut phrases = Vec::new();
     let zh = language == "zh";
-    if contains_any(&text, &["bug", "error", "failed", "failure", "fix", "repair", "debug"]) {
-        add_phrase(&mut phrases, if zh { "一点点修回来" } else { "Patch it back gently" });
-        add_phrase(&mut phrases, if zh { "先稳住现场" } else { "Steady hands" });
+    if contains_any(
+        &text,
+        &[
+            "bug", "error", "failed", "failure", "fix", "repair", "debug",
+        ],
+    ) {
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "一点点修回来"
+            } else {
+                "Patch it back gently"
+            },
+        );
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "先稳住现场"
+            } else {
+                "Steady hands"
+            },
+        );
     }
     if contains_any(&text, &["test", "build", "verify", "check", "review"]) {
-        add_phrase(&mut phrases, if zh { "稳稳过一遍" } else { "One steady pass" });
-        add_phrase(&mut phrases, if zh { "检查也算前进" } else { "Checks count too" });
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "稳稳过一遍"
+            } else {
+                "One steady pass"
+            },
+        );
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "检查也算前进"
+            } else {
+                "Checks count too"
+            },
+        );
     }
     if contains_any(&text, &["design", "ui", "visual", "style", "css", "canvas"]) {
-        add_phrase(&mut phrases, if zh { "小细节发光" } else { "Tiny details glow" });
-        add_phrase(&mut phrases, if zh { "让界面会呼吸" } else { "Let the UI breathe" });
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "小细节发光"
+            } else {
+                "Tiny details glow"
+            },
+        );
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "让界面会呼吸"
+            } else {
+                "Let the UI breathe"
+            },
+        );
     }
     if contains_any(&text, &["learn", "research", "why", "explore", "discover"]) {
-        add_phrase(&mut phrases, if zh { "线索在发光" } else { "A clue is glowing" });
-        add_phrase(&mut phrases, if zh { "我学到一点点" } else { "I learned a little" });
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "线索在发光"
+            } else {
+                "A clue is glowing"
+            },
+        );
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "我学到一点点"
+            } else {
+                "I learned a little"
+            },
+        );
     }
-    if contains_any(&text, &["complete", "done", "finished", "success", "release"]) {
-        add_phrase(&mut phrases, if zh { "干净收尾" } else { "Clean little finish" });
-        add_phrase(&mut phrases, if zh { "这个收好了" } else { "Win tucked away" });
+    if contains_any(
+        &text,
+        &["complete", "done", "finished", "success", "release"],
+    ) {
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "干净收尾"
+            } else {
+                "Clean little finish"
+            },
+        );
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "这个收好了"
+            } else {
+                "Win tucked away"
+            },
+        );
     }
     if phrases.is_empty() {
-        add_phrase(&mut phrases, if zh { "陪你慢慢想" } else { "Thinking beside you" });
-        add_phrase(&mut phrases, if zh { "把这轮记住啦" } else { "Session thoughts saved" });
-        add_phrase(&mut phrases, if zh { "小气泡收好" } else { "Tiny memory tucked away" });
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "陪你慢慢想"
+            } else {
+                "Thinking beside you"
+            },
+        );
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "把这轮记住啦"
+            } else {
+                "Session thoughts saved"
+            },
+        );
+        add_phrase(
+            &mut phrases,
+            if zh {
+                "小气泡收好"
+            } else {
+                "Tiny memory tucked away"
+            },
+        );
     }
     phrases.truncate(6);
     phrases
@@ -764,7 +935,11 @@ fn summarize_to_chars(text: &str, limit: usize) -> String {
     if clean.chars().count() <= limit {
         return clean;
     }
-    clean.chars().take(limit.saturating_sub(3)).collect::<String>() + "..."
+    clean
+        .chars()
+        .take(limit.saturating_sub(3))
+        .collect::<String>()
+        + "..."
 }
 
 fn submit_status(status: Value) {
@@ -778,6 +953,16 @@ fn status_event_key(status: &Value) -> String {
         status.get("phase").and_then(Value::as_str).unwrap_or(""),
         status.get("message").and_then(Value::as_str).unwrap_or("")
     )
+}
+
+fn event_timestamp(record: &Value) -> String {
+    string_field(record, "timestamp")
+        .or_else(|| {
+            record
+                .get("payload")
+                .and_then(|payload| string_field(payload, "timestamp"))
+        })
+        .unwrap_or_else(iso_now)
 }
 
 fn text_from_payload(payload: &Value) -> Option<String> {
