@@ -663,7 +663,13 @@ meter {
 .room-stat-mini meter,
 .room-growth-xp meter {
   width: 100%;
-  height: 8px;
+  height: 6px;
+}
+
+.room-stat-mini meter::-webkit-meter-bar,
+.room-growth-xp meter::-webkit-meter-bar {
+  height: 100%;
+  box-shadow: none;
 }
 
 .room-growth-overlay > div:first-child,
@@ -1753,7 +1759,7 @@ meter {
 
 .app-shell.theme-terminal .room-stat-mini meter,
 .app-shell.theme-terminal .room-growth-xp meter {
-  filter: drop-shadow(0 0 4px rgba(103, 255, 114, 0.35));
+  filter: none;
 }
 
 .app-shell.theme-terminal .session-card {
@@ -1972,6 +1978,20 @@ meter {
   color: #b8ff9c;
 }
 
+.app-shell.theme-terminal .launcher-field-hint,
+.app-shell.theme-terminal .decor-surface-cost {
+  color: #b8ff9c;
+}
+
+.app-shell.theme-terminal .decor-surface-state {
+  color: #d8ffd0;
+}
+
+.app-shell.theme-terminal .decor-surface-button.active .decor-surface-cost,
+.app-shell.theme-terminal .decor-surface-button.active .decor-surface-state {
+  color: #020804;
+}
+
 .app-shell.theme-terminal .side-panel p,
 .app-shell.theme-terminal .side-panel small,
 .app-shell.theme-terminal .side-panel label,
@@ -2051,7 +2071,9 @@ meter {
   background: #020804;
 }
 
-.app-shell.theme-terminal meter::-webkit-meter-optimum-value {
+.app-shell.theme-terminal meter::-webkit-meter-optimum-value,
+.app-shell.theme-terminal meter::-webkit-meter-suboptimum-value,
+.app-shell.theme-terminal meter::-webkit-meter-even-less-good-value {
   background:
     repeating-linear-gradient(
       90deg,
@@ -2059,6 +2081,32 @@ meter {
       transparent 1px 4px
     ),
     #67ff72;
+}
+
+.app-shell.theme-terminal input[type="range"]::-webkit-slider-runnable-track {
+  border-color: #1f7f2e;
+  background: #020804;
+  box-shadow: inset 0 0 0 1px rgba(103, 255, 114, 0.2);
+}
+
+.app-shell.theme-terminal input[type="range"]::-webkit-slider-thumb {
+  border-color: #38c947;
+  background: #80ff62;
+  box-shadow:
+    inset -2px -2px 0 #1f7f2e,
+    0 0 8px rgba(103, 255, 114, 0.28);
+}
+
+.app-shell.theme-terminal input[type="range"]::-moz-range-track {
+  border-color: #1f7f2e;
+  background: #020804;
+  box-shadow: inset 0 0 0 1px rgba(103, 255, 114, 0.2);
+}
+
+.app-shell.theme-terminal input[type="range"]::-moz-range-progress,
+.app-shell.theme-terminal input[type="range"]::-moz-range-thumb {
+  border-color: #38c947;
+  background: #80ff62;
 }
 
 .app-shell.theme-terminal .sessions-submenu,
@@ -2326,6 +2374,8 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .asset-editor-entry p,
 .app-shell.theme-terminal.theme-terminal-amber .asset-editor p,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-message,
+.app-shell.theme-terminal.theme-terminal-amber .launcher-field-hint,
+.app-shell.theme-terminal.theme-terminal-amber .decor-surface-cost,
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-hint,
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-message,
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-empty,
@@ -2343,6 +2393,15 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .side-panel > span,
 .app-shell.theme-terminal.theme-terminal-amber .session-card p {
   color: #ffd166;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .decor-surface-state {
+  color: #ffe4a3;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .decor-surface-button.active .decor-surface-cost,
+.app-shell.theme-terminal.theme-terminal-amber .decor-surface-button.active .decor-surface-state {
+  color: #160c03;
 }
 
 .app-shell.theme-terminal.theme-terminal-amber .audio-control {
@@ -2624,7 +2683,9 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle-context-fill,
 .app-shell.theme-terminal.theme-terminal-amber .session-context-fill,
 .app-shell.theme-terminal.theme-terminal-amber .room-context-fill,
-.app-shell.theme-terminal.theme-terminal-amber meter::-webkit-meter-optimum-value {
+.app-shell.theme-terminal.theme-terminal-amber meter::-webkit-meter-optimum-value,
+.app-shell.theme-terminal.theme-terminal-amber meter::-webkit-meter-suboptimum-value,
+.app-shell.theme-terminal.theme-terminal-amber meter::-webkit-meter-even-less-good-value {
   background:
     repeating-linear-gradient(
       90deg,
@@ -2632,6 +2693,32 @@ meter {
       transparent 1px 4px
     ),
     #ffb02e;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber input[type="range"]::-webkit-slider-runnable-track {
+  border-color: #7a3d08;
+  background: #090500;
+  box-shadow: inset 0 0 0 1px rgba(255, 176, 46, 0.22);
+}
+
+.app-shell.theme-terminal.theme-terminal-amber input[type="range"]::-webkit-slider-thumb {
+  border-color: #c97918;
+  background: #ffb23f;
+  box-shadow:
+    inset -2px -2px 0 #7a3d08,
+    0 0 8px rgba(255, 176, 46, 0.28);
+}
+
+.app-shell.theme-terminal.theme-terminal-amber input[type="range"]::-moz-range-track {
+  border-color: #7a3d08;
+  background: #090500;
+  box-shadow: inset 0 0 0 1px rgba(255, 176, 46, 0.22);
+}
+
+.app-shell.theme-terminal.theme-terminal-amber input[type="range"]::-moz-range-progress,
+.app-shell.theme-terminal.theme-terminal-amber input[type="range"]::-moz-range-thumb {
+  border-color: #c97918;
+  background: #ffb23f;
 }
 
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle-context.warm .sessions-toggle-context-fill,
@@ -2651,7 +2738,7 @@ meter {
 
 .app-shell.theme-terminal.theme-terminal-amber .room-stat-mini meter,
 .app-shell.theme-terminal.theme-terminal-amber .room-growth-xp meter {
-  filter: drop-shadow(0 0 4px rgba(255, 176, 46, 0.36));
+  filter: none;
 }
 
 .app-shell.theme-terminal.theme-terminal-amber .session-card.status-thinking,
@@ -3054,6 +3141,13 @@ h2 {
   font-size: 9px;
   line-height: 1.2;
   text-transform: uppercase;
+}
+
+.launcher-field-hint {
+  color: #9ee6ff;
+  font-size: 8px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .launcher-field input {
@@ -4051,18 +4145,99 @@ h2 {
   font-size: 11px;
 }
 
+.stats-grid meter,
+.growth-toggle-progress meter {
+  height: 6px;
+}
+
+.stats-grid meter::-webkit-meter-bar,
+.growth-toggle-progress meter::-webkit-meter-bar {
+  height: 100%;
+  box-shadow: none;
+}
+
 meter {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
   width: 100%;
   height: 12px;
 }
 
-meter::-webkit-meter-bar {
-  border: 1px solid #39445f;
-  background: #0f1422;
+meter::-webkit-meter-inner-element {
+  display: block;
 }
 
-meter::-webkit-meter-optimum-value {
+meter::-webkit-meter-bar {
+  border: 1px solid #39445f;
+  border-radius: 0;
+  background: #0f1422;
+  box-shadow: inset 0 0 0 1px rgba(17, 22, 36, 0.8);
+}
+
+meter::-webkit-meter-optimum-value,
+meter::-webkit-meter-suboptimum-value,
+meter::-webkit-meter-even-less-good-value {
+  border-radius: 0;
   background: #8df7c4;
+}
+
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  border: 2px solid #52607d;
+  border-radius: 0;
+  background: #111624;
+  box-shadow: inset 0 0 0 1px #0d1020;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 16px;
+  margin-top: -6px;
+  border: 2px solid #39445f;
+  border-radius: 0;
+  background: #ffe66d;
+  box-shadow: inset -2px -2px 0 #b68f1e;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 8px;
+  border: 2px solid #52607d;
+  border-radius: 0;
+  background: #111624;
+  box-shadow: inset 0 0 0 1px #0d1020;
+}
+
+input[type="range"]::-moz-range-progress {
+  height: 8px;
+  border-radius: 0;
+  background: #ffe66d;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 16px;
+  border: 2px solid #39445f;
+  border-radius: 0;
+  background: #ffe66d;
+  box-shadow: inset -2px -2px 0 #b68f1e;
 }
 
 .control-section {
@@ -4190,9 +4365,10 @@ meter::-webkit-meter-optimum-value {
 .decor-surface-button {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  place-items: center;
   align-items: center;
-  min-height: 42px;
+  justify-items: center;
+  gap: 3px;
+  min-height: 88px;
   padding: 5px;
   text-align: center;
 }
@@ -4206,10 +4382,42 @@ meter::-webkit-meter-optimum-value {
   image-rendering: pixelated;
 }
 
+.decor-surface-name,
+.decor-surface-cost,
+.decor-surface-state {
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.1;
+}
+
+.decor-surface-name {
+  color: currentColor;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.decor-surface-cost {
+  color: #cfc5a8;
+  font-size: 8px;
+}
+
+.decor-surface-state {
+  color: #ffe66d;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .decor-surface-button.active {
   color: #141823;
   background: #ffe66d;
   box-shadow: inset -3px -3px 0 #c8af79;
+}
+
+.decor-surface-button.active .decor-surface-cost,
+.decor-surface-button.active .decor-surface-state {
+  color: #141823;
 }
 
 .surface-preview-purple-bubble-wallpaper {
@@ -5652,7 +5860,10 @@ meter::-webkit-meter-optimum-value {
 .app-shell.theme-classic .asset-editor p,
 .app-shell.theme-classic .stat-row,
 .app-shell.theme-classic .launcher-message,
+.app-shell.theme-classic .launcher-field-hint,
 .app-shell.theme-classic .launcher-option,
+.app-shell.theme-classic .decor-surface-cost,
+.app-shell.theme-classic .decor-surface-state,
 .app-shell.theme-classic .task-cabinet-hint,
 .app-shell.theme-classic .task-cabinet-message,
 .app-shell.theme-classic .task-cabinet-empty,
@@ -5917,6 +6128,7 @@ meter::-webkit-meter-optimum-value {
   background: transparent;
   box-shadow: none;
   appearance: none;
+  -webkit-appearance: none;
   accent-color: #000080;
 }
 
@@ -5929,6 +6141,7 @@ meter::-webkit-meter-optimum-value {
 }
 
 .app-shell.theme-classic input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
   width: 10px;
   height: 14px;
   margin-top: -6px;
@@ -6108,7 +6321,9 @@ meter::-webkit-meter-optimum-value {
 .app-shell.theme-classic .sessions-toggle-context-fill,
 .app-shell.theme-classic .session-context-fill,
 .app-shell.theme-classic .room-context-fill,
-.app-shell.theme-classic meter::-webkit-meter-optimum-value {
+.app-shell.theme-classic meter::-webkit-meter-optimum-value,
+.app-shell.theme-classic meter::-webkit-meter-suboptimum-value,
+.app-shell.theme-classic meter::-webkit-meter-even-less-good-value {
   background: #000080;
 }
 

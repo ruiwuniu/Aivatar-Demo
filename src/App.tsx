@@ -165,8 +165,14 @@ const BUSY_RECOVERY_LOW_MOOD = 18;
 const BRIDGE_START_MESSAGE_SECONDS = 8;
 const COMPLETE_REWARD_FRESH_MS = 10000;
 const APP_HORIZONTAL_PADDING = 24;
-const COLLAPSED_WINDOW_MIN_WIDTH = 504;
+const APP_GRID_GAP = 12;
+const SIDE_PANEL_WIDTH = 224;
 const DEFAULT_EXPANDED_WINDOW_WIDTH = 760;
+const DEFAULT_SCENE_PANEL_WIDTH =
+  DEFAULT_EXPANDED_WINDOW_WIDTH - APP_HORIZONTAL_PADDING - APP_GRID_GAP - SIDE_PANEL_WIDTH;
+const COLLAPSED_WINDOW_MIN_WIDTH = DEFAULT_SCENE_PANEL_WIDTH + APP_HORIZONTAL_PADDING;
+const DEFAULT_WINDOW_HEIGHT = 520;
+const SHOW_DEBUG_CARD = false;
 const EXPANDED_WINDOW_MIN_WIDTH = 720;
 const MEMORY_RECENT_EVENT_LIMIT = 20;
 const BEHAVIOR_DEMO_SECONDS = 3;
@@ -3003,7 +3009,7 @@ export const App = () => {
       await invoke("resize_main_window_for_side_panel", {
         width: nextWidth,
         minWidth,
-        height: window.innerHeight,
+        height: DEFAULT_WINDOW_HEIGHT,
       });
     } catch {
       // Web preview has no native window to resize.
@@ -3020,12 +3026,10 @@ export const App = () => {
         DEFAULT_EXPANDED_WINDOW_WIDTH,
       );
     }
-    const sceneWidth = scenePanelRef.current?.getBoundingClientRect().width ?? 480;
-    const lockedSceneWidth = Math.round(sceneWidth);
-    const collapsedWidth = Math.max(
-      COLLAPSED_WINDOW_MIN_WIDTH,
-      lockedSceneWidth + APP_HORIZONTAL_PADDING,
-    );
+    const sceneWidth =
+      scenePanelRef.current?.getBoundingClientRect().width ?? DEFAULT_SCENE_PANEL_WIDTH;
+    const lockedSceneWidth = Math.max(Math.round(sceneWidth), DEFAULT_SCENE_PANEL_WIDTH);
+    const collapsedWidth = lockedSceneWidth + APP_HORIZONTAL_PADDING;
 
     if (sidePanelTimerRef.current) {
       window.clearTimeout(sidePanelTimerRef.current);
@@ -10281,7 +10285,7 @@ export const App = () => {
                     type="text"
                     value={launcherDirectory}
                     onChange={(event) => setLauncherDirectory(event.target.value)}
-                    placeholder="C:\\path\\to\\project"
+                    placeholder={ui("launcher.directoryPlaceholder")}
                   />
                   <button
                     type="button"
@@ -10291,6 +10295,9 @@ export const App = () => {
                     {ui("launcher.browse")}
                   </button>
                 </span>
+                <small className="launcher-field-hint">
+                  {ui("launcher.directoryHint")}
+                </small>
               </label>
               <div className="launcher-agent-choice" aria-label={ui("launcher.agent")}>
                 <button
@@ -10344,24 +10351,25 @@ export const App = () => {
           ) : null}
         </section>
 
-        <section className="debug-card" aria-label={ui("debug.title")}>
-          <button
-            type="button"
-            className={`debug-toggle${debugPanelOpen ? " active" : ""}`}
-            onClick={() => setDebugPanelOpen((current) => !current)}
-            aria-expanded={debugPanelOpen}
-          >
-            <span className="debug-toggle-main">
-              <span>{ui("debug.title")}</span>
-              <b>{sourceLabel}</b>
-            </span>
-            <span className="debug-toggle-status">
-              {debugStatus ? ui("debug.override") : ui("debug.live")}
-            </span>
-            <span className="debug-toggle-chevron" aria-hidden="true">
-              {debugPanelOpen ? "-" : "+"}
-            </span>
-          </button>
+        {SHOW_DEBUG_CARD ? (
+          <section className="debug-card" aria-label={ui("debug.title")}>
+            <button
+              type="button"
+              className={`debug-toggle${debugPanelOpen ? " active" : ""}`}
+              onClick={() => setDebugPanelOpen((current) => !current)}
+              aria-expanded={debugPanelOpen}
+            >
+              <span className="debug-toggle-main">
+                <span>{ui("debug.title")}</span>
+                <b>{sourceLabel}</b>
+              </span>
+              <span className="debug-toggle-status">
+                {debugStatus ? ui("debug.override") : ui("debug.live")}
+              </span>
+              <span className="debug-toggle-chevron" aria-hidden="true">
+                {debugPanelOpen ? "-" : "+"}
+              </span>
+            </button>
 
           {debugPanelOpen ? (
             <div className="debug-submenu">
@@ -10502,7 +10510,8 @@ export const App = () => {
               </dl>
             </div>
           ) : null}
-        </section>
+          </section>
+        ) : null}
 
         {placingItem ? (
           <section className="control-section placement-panel">
@@ -10737,6 +10746,15 @@ export const App = () => {
                     const surfaceActionCost = purchased
                       ? SURFACE_APPLY_COST
                       : item.price + SURFACE_APPLY_COST;
+                    const surfacePurchaseCostLabel = purchased
+                      ? null
+                      : ui("decor.surfacePurchaseCost", { value: item.price });
+                    const surfaceChangeCostLabel = ui("decor.surfaceChangeCost", {
+                      value: SURFACE_APPLY_COST,
+                    });
+                    const surfaceCostLabel = surfacePurchaseCostLabel
+                      ? `${surfacePurchaseCostLabel} ${surfaceChangeCostLabel}`
+                      : surfaceChangeCostLabel;
                     return (
                       <button
                         key={item.id}
@@ -10744,13 +10762,27 @@ export const App = () => {
                         className={`pixel-button decor-surface-button${applied ? " active" : ""}`}
                         disabled={applied || save.wallet.bits < surfaceActionCost}
                         title={item.name}
-                        aria-label={`${item.name} ${surfaceActionLabel}`}
+                        aria-label={`${item.name} ${surfaceActionLabel} ${surfaceCostLabel}`}
                         onClick={() => buyOrApplySurface(item)}
                       >
                         <span
                           className={`decor-surface-preview surface-preview-${item.id}`}
                           aria-hidden="true"
                         />
+                        <span className="decor-surface-name">{item.name}</span>
+                        {surfacePurchaseCostLabel ? (
+                          <span className="decor-surface-cost">
+                            {surfacePurchaseCostLabel}
+                          </span>
+                        ) : null}
+                        <span className="decor-surface-cost">
+                          {surfaceChangeCostLabel}
+                        </span>
+                        {applied || purchased ? (
+                          <span className="decor-surface-state">
+                            {surfaceActionLabel}
+                          </span>
+                        ) : null}
                       </button>
                     );
                   })}

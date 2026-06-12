@@ -18,7 +18,7 @@
         "height": 520,
         "minWidth": 720,
         "minHeight": 500,
-        "resizable": true,
+        "resizable": false,
         "alwaysOnTop": true,
         "decorations": true
       }
@@ -30,7 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.ico"],
+    "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"],
     "resources": ["../plugins/aivatar-session-bridge/", "../scripts/"],
     "windows": {
       "webviewInstallMode": {
