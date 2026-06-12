@@ -2430,6 +2430,30 @@ const calculateTaskScheduleNextRunAt = (
   return new Date(fromMs + intervalMs).toISOString();
 };
 
+const settleTaskScheduleAfterAttempt = (
+  schedule: TaskCabinetSchedule | undefined,
+  attemptedAtMs = Date.now(),
+): TaskCabinetSchedule | undefined => {
+  if (!schedule) return undefined;
+  const attemptedAt = new Date(attemptedAtMs).toISOString();
+  if (schedule.mode === "repeat" && schedule.enabled) {
+    const intervalMs =
+      normalizeTaskCabinetIntervalMinutes(schedule.intervalMinutes) * 60000;
+    return {
+      ...schedule,
+      enabled: true,
+      lastRunAt: attemptedAt,
+      nextRunAt: new Date(attemptedAtMs + intervalMs).toISOString(),
+    };
+  }
+  return {
+    ...schedule,
+    enabled: false,
+    lastRunAt: attemptedAt,
+    nextRunAt: undefined,
+  };
+};
+
 const hasTaskScheduleDue = (entry: TaskCabinetEntry, nowMs: number) => {
   const schedule = entry.schedule;
   if (!schedule?.enabled) return false;
@@ -5910,9 +5934,7 @@ export const App = () => {
         lastRunAt: schedule?.lastRunAt,
       };
       if (enabled) {
-        nextSchedule.nextRunAt =
-          calculateTaskScheduleNextRunAt(nextSchedule) ??
-          new Date().toISOString();
+        nextSchedule.nextRunAt = calculateTaskScheduleNextRunAt(nextSchedule);
       }
       return nextSchedule;
     });
@@ -6026,25 +6048,44 @@ export const App = () => {
       : ["ready", "failed"];
     if (!task || !runnableStatuses.includes(task.status)) return;
 
+    const markScheduledAttemptFailed = (message: string) => {
+      if (!options.scheduled) return;
+      const failedAtMs = Date.now();
+      const failedAt = new Date(failedAtMs).toISOString();
+      setTaskCabinetEntries((current) =>
+        current.map((entry) =>
+          entry.id === task.id
+            ? {
+                ...entry,
+                status: "failed",
+                startedAt: entry.startedAt ?? failedAt,
+                updatedAt: failedAt,
+                finishedAt: failedAt,
+                error: message,
+                schedule: settleTaskScheduleAfterAttempt(
+                  entry.schedule,
+                  failedAtMs,
+                ),
+              }
+            : entry,
+        ),
+      );
+    };
+
+    if (!isTaskCabinetPlaced(contentRef.current)) {
+      if (!options.scheduled) {
+        setTaskCabinetMessage(ui("message.taskCabinetMissingCabinet"));
+      }
+      return;
+    }
+
     const cwd = launcherDirectory.trim();
     if (!cwd) {
       const message = options.scheduled
         ? ui("message.taskCabinetScheduleMissingLauncher")
         : ui("message.taskCabinetMissingLauncher");
       setTaskCabinetMessage(message);
-      if (options.scheduled) {
-        setTaskCabinetEntries((current) =>
-          current.map((entry) =>
-            entry.id === task.id
-              ? {
-                  ...entry,
-                  updatedAt: new Date().toISOString(),
-                  error: message,
-                }
-              : entry,
-          ),
-        );
-      }
+      markScheduledAttemptFailed(message);
       return;
     }
 
@@ -6104,6 +6145,7 @@ export const App = () => {
       }
       const detail = error instanceof Error ? error.message : String(error);
       const failedAt = new Date().toISOString();
+      const failedAtMs = Date.parse(failedAt);
       setTaskCabinetEntries((current) =>
         current.map((entry) =>
           entry.id === task.id
@@ -6113,6 +6155,9 @@ export const App = () => {
                 updatedAt: failedAt,
                 finishedAt: failedAt,
                 error: detail,
+                schedule: options.scheduled
+                  ? settleTaskScheduleAfterAttempt(entry.schedule, failedAtMs)
+                  : entry.schedule,
               }
             : entry,
         ),
@@ -6184,23 +6229,10 @@ export const App = () => {
             };
           }
           changed = true;
-          const schedule = entry.schedule
-            ? {
-                ...entry.schedule,
-                enabled:
-                  entry.schedule.mode === "repeat"
-                    ? entry.schedule.enabled
-                    : false,
-                lastRunAt: finishedAt,
-                nextRunAt:
-                  entry.schedule.mode === "repeat"
-                    ? calculateTaskScheduleNextRunAt(
-                        entry.schedule,
-                        Date.parse(finishedAt),
-                      )
-                    : undefined,
-              }
-            : undefined;
+          const schedule = settleTaskScheduleAfterAttempt(
+            entry.schedule,
+            Date.parse(finishedAt),
+          );
           return {
             ...entry,
             status: "completed" as const,
@@ -6215,23 +6247,10 @@ export const App = () => {
             taskCabinetVisualFlowRef.current = null;
           }
           changed = true;
-          const schedule = entry.schedule
-            ? {
-                ...entry.schedule,
-                enabled:
-                  entry.schedule.mode === "repeat"
-                    ? entry.schedule.enabled
-                    : false,
-                lastRunAt: finishedAt,
-                nextRunAt:
-                  entry.schedule.mode === "repeat"
-                    ? calculateTaskScheduleNextRunAt(
-                        entry.schedule,
-                        Date.parse(finishedAt),
-                      )
-                    : undefined,
-              }
-            : undefined;
+          const schedule = settleTaskScheduleAfterAttempt(
+            entry.schedule,
+            Date.parse(finishedAt),
+          );
           return {
             ...entry,
             status: "failed" as const,
@@ -6246,23 +6265,10 @@ export const App = () => {
             taskCabinetVisualFlowRef.current = null;
           }
           changed = true;
-          const schedule = entry.schedule
-            ? {
-                ...entry.schedule,
-                enabled:
-                  entry.schedule.mode === "repeat"
-                    ? entry.schedule.enabled
-                    : false,
-                lastRunAt: finishedAt,
-                nextRunAt:
-                  entry.schedule.mode === "repeat"
-                    ? calculateTaskScheduleNextRunAt(
-                        entry.schedule,
-                        Date.parse(finishedAt),
-                      )
-                    : undefined,
-              }
-            : undefined;
+          const schedule = settleTaskScheduleAfterAttempt(
+            entry.schedule,
+            Date.parse(finishedAt),
+          );
           return {
             ...entry,
             status: "failed" as const,
@@ -6286,6 +6292,7 @@ export const App = () => {
       const entries = taskCabinetEntriesRef.current;
       const hasRunningTask = entries.some((entry) => entry.status === "running");
       if (hasRunningTask) return;
+      if (!isTaskCabinetPlaced(contentRef.current)) return;
 
       const now = Date.now();
       const scheduledTask =
@@ -10053,7 +10060,11 @@ export const App = () => {
                 <button
                   type="button"
                   className="pixel-button task-cabinet-run-next"
-                  disabled={taskCabinetReadyCount === 0 || taskCabinetRunningCount > 0}
+                  disabled={
+                    !canDispatchTasks ||
+                    taskCabinetReadyCount === 0 ||
+                    taskCabinetRunningCount > 0
+                  }
                   onClick={runNextTaskCabinetEntry}
                 >
                   {ui("taskCabinet.runNext")}
@@ -10229,7 +10240,7 @@ export const App = () => {
                           <button
                             type="button"
                             className="task-cabinet-remove"
-                            disabled={taskCabinetRunningCount > 0}
+                            disabled={!canDispatchTasks || taskCabinetRunningCount > 0}
                             onClick={() => startTaskCabinetEntry(entry.id)}
                           >
                             {entry.status === "failed"

@@ -137,21 +137,57 @@ fn scripts_root(app: Option<&tauri::AppHandle>) -> Option<std::path::PathBuf> {
         .find(|path| path.join("aivatar-connected-run.mjs").is_file())
 }
 
-fn command_exists(command: &str) -> bool {
-    let lookup = if cfg!(target_os = "windows") {
-        ("where.exe", vec![command.to_string()])
-    } else {
-        ("which", vec![command.to_string()])
-    };
-
-    std::process::Command::new(lookup.0)
-        .args(lookup.1)
+#[cfg(target_os = "windows")]
+fn resolve_command(command: &str) -> Option<std::path::PathBuf> {
+    let output = std::process::Command::new("where.exe")
+        .arg(command)
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(std::path::PathBuf::from)
+        .find(|path| path.is_file())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_command(command: &str) -> Option<std::path::PathBuf> {
+    let command_path = std::path::PathBuf::from(command);
+    if command_path.components().count() > 1 && command_path.is_file() {
+        return Some(command_path);
+    }
+
+    let mut search_dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect())
+        .unwrap_or_default();
+
+    search_dirs.extend([
+        std::path::PathBuf::from("/opt/homebrew/bin"),
+        std::path::PathBuf::from("/usr/local/bin"),
+        std::path::PathBuf::from("/usr/bin"),
+        std::path::PathBuf::from("/bin"),
+        std::path::PathBuf::from("/usr/sbin"),
+        std::path::PathBuf::from("/sbin"),
+    ]);
+
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        search_dirs.push(home.join(".local").join("bin"));
+        search_dirs.push(home.join(".cargo").join("bin"));
+    }
+
+    search_dirs
+        .into_iter()
+        .map(|dir| dir.join(command))
+        .find(|path| path.is_file())
 }
 
 fn is_status_bridge_running() -> bool {
@@ -190,6 +226,7 @@ fn start_status_bridge(app: tauri::AppHandle) -> Result<BridgeStartResult, Strin
     start_status_bridge_inner(Some(&app))
 }
 
+#[cfg(target_os = "windows")]
 fn run_windows_picker(script: &str) -> Result<Option<String>, String> {
     let mut command = std::process::Command::new("powershell.exe");
     command
@@ -228,10 +265,39 @@ fn run_windows_picker(script: &str) -> Result<Option<String>, String> {
     Ok((!path.is_empty()).then_some(path))
 }
 
+#[cfg(target_os = "macos")]
+fn run_macos_picker(script: &str) -> Result<Option<String>, String> {
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|error| format!("Could not open file picker: {error}"))?;
+
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if detail.contains("-128") {
+            return Ok(None);
+        }
+        return Err(if detail.is_empty() {
+            "File picker failed.".to_string()
+        } else {
+            detail
+        });
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!path.is_empty()).then_some(path))
+}
+
 #[tauri::command]
 fn pick_markdown_task_file() -> Result<Option<String>, String> {
-    run_windows_picker(
-        r#"
+    #[cfg(target_os = "windows")]
+    {
+        return run_windows_picker(
+            r#"
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
 $dialog.Title = 'Choose Markdown task file'
@@ -243,27 +309,188 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
   Write-Output $dialog.FileName
 }
 "#,
-    )
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return run_macos_picker(
+            r#"POSIX path of (choose file with prompt "Choose Markdown task file")"#,
+        );
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        Err("File picker is not supported on this platform yet.".to_string())
+    }
 }
 
 #[tauri::command]
 fn pick_launcher_directory() -> Result<Option<String>, String> {
-    run_windows_picker(
-        r#"
+    #[cfg(target_os = "windows")]
+    {
+        return run_windows_picker(
+            r#"
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-$dialog.Description = 'Choose CLI launcher folder'
+$dialog.Description = 'Choose CLI launcher project folder'
 $dialog.ShowNewFolderButton = $false
 if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
   Write-Output $dialog.SelectedPath
 }
 "#,
-    )
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return run_macos_picker(
+            r#"POSIX path of (choose folder with prompt "Choose CLI launcher project folder")"#,
+        );
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        Err("Directory picker is not supported on this platform yet.".to_string())
+    }
 }
 
+#[cfg(target_os = "windows")]
 fn powershell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
+}
+
+fn posix_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r#"'\''"#))
+}
+
+fn applescript_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn formatted_extra_args(args: Option<&str>) -> String {
+    args.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(" {value}"))
+        .unwrap_or_default()
+}
+
+fn spawn_connected_runner_terminal(
+    cwd: &std::path::Path,
+    node_command: &std::path::Path,
+    runner: &std::path::Path,
+    agent: &str,
+    runner_args: &[String],
+    command: &std::path::Path,
+    extra_args: &str,
+    error_context: &str,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut wrapped_command = format!(
+            "& {} {} --agent {}",
+            powershell_single_quote(&node_command.to_string_lossy()),
+            powershell_single_quote(&runner.to_string_lossy()),
+            powershell_single_quote(agent),
+        );
+        for arg in runner_args {
+            wrapped_command.push(' ');
+            wrapped_command.push_str(&powershell_single_quote(arg));
+        }
+        wrapped_command.push_str(" -- ");
+        wrapped_command.push_str(&powershell_single_quote(&command.to_string_lossy()));
+        wrapped_command.push_str(extra_args);
+
+        let start_script = format!(
+            "Start-Process -FilePath 'powershell.exe' -WorkingDirectory {} -ArgumentList @('-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-Command',{})",
+            powershell_single_quote(&cwd.to_string_lossy()),
+            powershell_single_quote(&wrapped_command),
+        );
+
+        let mut process = std::process::Command::new("powershell.exe");
+        process
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &start_script,
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+        use std::os::windows::process::CommandExt;
+        process.creation_flags(0x08000000);
+
+        process
+            .spawn()
+            .map_err(|error| format!("Could not open {error_context}: {error}"))?;
+
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut shell_command = format!(
+            "cd {} && {} {} --agent {}",
+            posix_single_quote(&cwd.to_string_lossy()),
+            posix_single_quote(&node_command.to_string_lossy()),
+            posix_single_quote(&runner.to_string_lossy()),
+            posix_single_quote(agent),
+        );
+        for arg in runner_args {
+            shell_command.push(' ');
+            shell_command.push_str(&posix_single_quote(arg));
+        }
+        shell_command.push_str(" -- ");
+        shell_command.push_str(&posix_single_quote(&command.to_string_lossy()));
+        shell_command.push_str(extra_args);
+
+        let do_script = format!("do script {}", applescript_string(&shell_command));
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg("tell application \"Terminal\"")
+            .arg("-e")
+            .arg("activate")
+            .arg("-e")
+            .arg(do_script)
+            .arg("-e")
+            .arg("end tell")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .map_err(|error| format!("Could not open {error_context}: {error}"))?;
+
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if detail.is_empty() {
+                format!("Could not open {error_context}.")
+            } else {
+                detail
+            });
+        }
+
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (
+            cwd,
+            node_command,
+            runner,
+            agent,
+            runner_args,
+            command,
+            extra_args,
+        );
+        Err(format!(
+            "Opening {error_context} is not supported on this platform yet."
+        ))
+    }
 }
 
 #[tauri::command]
@@ -282,17 +509,17 @@ fn start_agent_cli(
         _ => return Err("Unsupported agent.".to_string()),
     };
 
-    if !command_exists(command) {
+    let Some(agent_command) = resolve_command(command) else {
         return Err(format!(
             "{agent} CLI was not found on PATH. Install it first, then restart Aivatar."
         ));
-    }
-    if !command_exists("node") {
+    };
+    let Some(node_command) = resolve_command("node") else {
         return Err(
             "Node.js was not found on PATH. Install Node.js first, then restart Aivatar."
                 .to_string(),
         );
-    }
+    };
 
     let _ = start_status_bridge_inner(Some(&app))?;
 
@@ -303,57 +530,27 @@ fn start_agent_cli(
     };
 
     let runner = scripts.join("aivatar-connected-run.mjs");
-    let extra_args = request
-        .args
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!(" {value}"))
-        .unwrap_or_default();
-    let new_session_arg = if request.allow_new_session.unwrap_or(false) && agent == "codex" {
-        format!(
-            " --new-session --expected-cwd {} --verify-desktop-listing",
-            powershell_single_quote(&cwd.to_string_lossy())
-        )
-    } else {
-        String::new()
-    };
-    let wrapped_command = format!(
-        "& node {} --agent {}{} -- {}{}",
-        powershell_single_quote(&runner.to_string_lossy()),
-        powershell_single_quote(agent),
-        new_session_arg,
-        powershell_single_quote(command),
-        extra_args,
-    );
-    let start_script = format!(
-        "Start-Process -FilePath 'powershell.exe' -WorkingDirectory {} -ArgumentList @('-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-Command',{})",
-        powershell_single_quote(&cwd.to_string_lossy()),
-        powershell_single_quote(&wrapped_command),
-    );
-
-    let mut process = std::process::Command::new("powershell.exe");
-    process
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &start_script,
-        ])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        process.creation_flags(0x08000000);
+    let extra_args = formatted_extra_args(request.args.as_deref());
+    let mut runner_args = Vec::new();
+    if request.allow_new_session.unwrap_or(false) && agent == "codex" {
+        runner_args.extend([
+            "--new-session".to_string(),
+            "--expected-cwd".to_string(),
+            cwd.to_string_lossy().to_string(),
+            "--verify-desktop-listing".to_string(),
+        ]);
     }
 
-    process
-        .spawn()
-        .map_err(|error| format!("Could not open agent terminal: {error}"))?;
+    spawn_connected_runner_terminal(
+        &cwd,
+        &node_command,
+        &runner,
+        agent,
+        &runner_args,
+        &agent_command,
+        &extra_args,
+        "agent terminal",
+    )?;
 
     Ok(AgentCliLaunchResult {
         status: "started".to_string(),
@@ -404,17 +601,17 @@ fn start_task_agent(
         _ => return Err("Unsupported agent.".to_string()),
     };
 
-    if !command_exists(command) {
+    let Some(agent_command) = resolve_command(command) else {
         return Err(format!(
             "{agent} CLI was not found on PATH. Install it first, then restart Aivatar."
         ));
-    }
-    if !command_exists("node") {
+    };
+    let Some(node_command) = resolve_command("node") else {
         return Err(
             "Node.js was not found on PATH. Install Node.js first, then restart Aivatar."
                 .to_string(),
         );
-    }
+    };
 
     let task_content = std::fs::read_to_string(&task_path)
         .map_err(|error| format!("Could not read task file: {error}"))?;
@@ -441,50 +638,24 @@ fn start_task_agent(
     };
 
     let runner = scripts.join("aivatar-connected-run.mjs");
-    let extra_args = request
-        .args
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!(" {value}"))
-        .unwrap_or_default();
-    let wrapped_command = format!(
-        "& node {} --agent {} --session {} --prompt-file {} -- {}{}",
-        powershell_single_quote(&runner.to_string_lossy()),
-        powershell_single_quote(agent),
-        powershell_single_quote(&request.session_id),
-        powershell_single_quote(&prompt_path.to_string_lossy()),
-        powershell_single_quote(command),
-        extra_args,
-    );
-    let start_script = format!(
-        "Start-Process -FilePath 'powershell.exe' -WorkingDirectory {} -ArgumentList @('-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-Command',{})",
-        powershell_single_quote(&cwd.to_string_lossy()),
-        powershell_single_quote(&wrapped_command),
-    );
+    let extra_args = formatted_extra_args(request.args.as_deref());
+    let runner_args = vec![
+        "--session".to_string(),
+        request.session_id.clone(),
+        "--prompt-file".to_string(),
+        prompt_path.to_string_lossy().to_string(),
+    ];
 
-    let mut process = std::process::Command::new("powershell.exe");
-    process
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &start_script,
-        ])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        process.creation_flags(0x08000000);
-    }
-
-    process
-        .spawn()
-        .map_err(|error| format!("Could not open task agent terminal: {error}"))?;
+    spawn_connected_runner_terminal(
+        &cwd,
+        &node_command,
+        &runner,
+        agent,
+        &runner_args,
+        &agent_command,
+        &extra_args,
+        "task agent terminal",
+    )?;
 
     Ok(TaskAgentLaunchResult {
         status: "started".to_string(),

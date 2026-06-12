@@ -232,10 +232,12 @@ const sendAppServerRequest = async (child, request) =>
     child.stdin.write(`${JSON.stringify(request)}\n`);
   });
 
-const verifyDesktopListing = async ({ sessionId, expectedCwd }) => {
-  const child = spawn("codex.cmd", ["app-server"], {
+const verifyDesktopListing = async ({ sessionId, expectedCwd, commandArgs }) => {
+  const codexCommand = commandArgs?.[0] ?? "codex";
+  const spec = createSpawnSpec([codexCommand, "app-server"]);
+  const child = spawn(spec.file, spec.args, {
     cwd: process.cwd(),
-    shell: true,
+    shell: false,
     stdio: ["pipe", "pipe", "pipe"],
   });
 
@@ -282,14 +284,19 @@ const verifyDesktopListing = async ({ sessionId, expectedCwd }) => {
   }
 };
 
-const waitForDesktopListing = async ({ sessionId, expectedCwd, timeoutMs = 30000 }) => {
+const waitForDesktopListing = async ({
+  sessionId,
+  expectedCwd,
+  commandArgs,
+  timeoutMs = 30000,
+}) => {
   const deadline = Date.now() + timeoutMs;
   let lastResult = null;
   let lastError = null;
 
   while (Date.now() < deadline) {
     try {
-      lastResult = await verifyDesktopListing({ sessionId, expectedCwd });
+      lastResult = await verifyDesktopListing({ sessionId, expectedCwd, commandArgs });
       lastError = null;
       if (lastResult.ok) return lastResult;
     } catch (error) {
@@ -412,7 +419,14 @@ const createClaudeStatusLineWrapper = async (options, hookScript) => {
 
 const createClaudeAivatarSettings = async (options) => {
   const hookScript = join(scriptDir, "claude-code-aivatar-hook.mjs");
-  const statusLineWrapper = await createClaudeStatusLineWrapper(options, hookScript);
+  const statusLineCommand =
+    process.platform === "win32"
+      ? `powershell -NoProfile -ExecutionPolicy Bypass -File ${quoteForShellCommand(
+          powershellPath(await createClaudeStatusLineWrapper(options, hookScript)),
+        )}`
+      : `${quoteForShellCommand(process.execPath)} ${quoteForShellCommand(
+          hookScript,
+        )} --status-line`;
   const hookHandler = {
     type: "command",
     command: process.execPath,
@@ -443,9 +457,7 @@ const createClaudeAivatarSettings = async (options) => {
     },
     statusLine: {
       type: "command",
-      command: `powershell -NoProfile -ExecutionPolicy Bypass -File ${quoteForShellCommand(
-        powershellPath(statusLineWrapper),
-      )}`,
+      command: statusLineCommand,
       refreshInterval: 5,
     },
   };
@@ -724,6 +736,7 @@ try {
             checks.desktopListingVerified = await waitForDesktopListing({
               sessionId: discovered.sessionId,
               expectedCwd: options.expectedCwd,
+              commandArgs: launchCommandArgs,
             });
             if (!checks.desktopListingVerified.ok) {
               const logPath = await writeRecoveryLog(
