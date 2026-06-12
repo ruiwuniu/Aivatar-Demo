@@ -665,26 +665,83 @@ fn write_learning_context(session_id: &str, session: &WatchedSession) -> Option<
     let dir = learning_context_dir();
     std::fs::create_dir_all(&dir).ok()?;
     let millis = chrono::Utc::now().timestamp_millis();
-    let path = dir.join(format!("codex-{}-{millis}.txt", safe_file_component(session_id)));
+    let path = dir.join(format!(
+        "codex-{}-{millis}.txt",
+        safe_file_component(session_id)
+    ));
     std::fs::write(&path, digest).ok()?;
     Some(path)
 }
 
-fn command_exists(command: &str) -> bool {
+fn command_variants(command: &str) -> Vec<String> {
+    if cfg!(target_os = "windows") && Path::new(command).extension().is_none() {
+        vec![
+            command.to_string(),
+            format!("{command}.cmd"),
+            format!("{command}.exe"),
+            format!("{command}.bat"),
+        ]
+    } else {
+        vec![command.to_string()]
+    }
+}
+
+fn resolve_command(command: &str) -> Option<PathBuf> {
+    let command_path = PathBuf::from(command);
+    if command_path.components().count() > 1 && command_path.is_file() {
+        return Some(command_path);
+    }
+
     let lookup = if cfg!(target_os = "windows") {
         ("where.exe", vec![command.to_string()])
     } else {
         ("which", vec![command.to_string()])
     };
 
-    Command::new(lookup.0)
+    if let Ok(output) = Command::new(lookup.0)
         .args(lookup.1)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .output()
+    {
+        if output.status.success() {
+            if let Some(path) = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(PathBuf::from)
+                .find(|path| path.is_file())
+            {
+                return Some(path);
+            }
+        }
+    }
+
+    let mut search_dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect())
+        .unwrap_or_default();
+
+    if !cfg!(target_os = "windows") {
+        search_dirs.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/usr/sbin"),
+            PathBuf::from("/sbin"),
+        ]);
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+            search_dirs.push(home.join(".local").join("bin"));
+            search_dirs.push(home.join(".cargo").join("bin"));
+        }
+    }
+
+    let variants = command_variants(command);
+    search_dirs
+        .into_iter()
+        .flat_map(|dir| variants.iter().map(move |variant| dir.join(variant)))
+        .find(|path| path.is_file())
 }
 
 fn spawn_learning_worker(
@@ -693,12 +750,20 @@ fn spawn_learning_worker(
     summary: &str,
     session: &WatchedSession,
 ) -> bool {
-    if !command_exists("node") {
+    let Some(node_command) = resolve_command("node") else {
         return false;
-    }
-    if !command_exists("codex.cmd") && !command_exists("codex") {
+    };
+    let provider =
+        std::env::var("AIVATAR_LEARNING_PROVIDER").unwrap_or_else(|_| "codex".to_string());
+    let provider_command = match provider.as_str() {
+        "codex" => resolve_command("codex").or_else(|| resolve_command("codex.cmd")),
+        "claude-code" => resolve_command("claude"),
+        "none" => return false,
+        _ => return false,
+    };
+    let Some(provider_command) = provider_command else {
         return false;
-    }
+    };
     let Some(script) = LEARNING_SCRIPT.get().filter(|path| path.is_file()) else {
         return false;
     };
@@ -706,11 +771,11 @@ fn spawn_learning_worker(
         return false;
     };
 
-    let mut command = Command::new("node");
+    let mut command = Command::new(node_command);
     command
         .arg(script)
         .arg("--provider")
-        .arg(std::env::var("AIVATAR_LEARNING_PROVIDER").unwrap_or_else(|_| "codex".to_string()))
+        .arg(&provider)
         .arg("--agent")
         .arg(AGENT)
         .arg("--session")
@@ -723,6 +788,13 @@ fn spawn_learning_worker(
         .arg(context_path)
         .arg("--avatar-state-file")
         .arg(avatar_state_file())
+        .env(
+            match provider.as_str() {
+                "claude-code" => "AIVATAR_CLAUDE_COMMAND",
+                _ => "AIVATAR_CODEX_COMMAND",
+            },
+            provider_command,
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

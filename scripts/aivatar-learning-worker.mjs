@@ -14,6 +14,11 @@ const defaultTimeoutMs = Math.max(
   5000,
   Number(process.env.AIVATAR_LEARNING_TIMEOUT_MS ?? 30000),
 );
+const codexCommand =
+  process.env.AIVATAR_CODEX_COMMAND ??
+  process.env.CODEX_COMMAND ??
+  (process.platform === "win32" ? "codex.cmd" : "codex");
+const claudeCommand = process.env.AIVATAR_CLAUDE_COMMAND ?? "claude";
 
 const traitNames = [
   "focus",
@@ -459,7 +464,7 @@ const unwrapProviderJson = (value) => {
 
 const callClaudeCode = async (prompt) => {
   const { stdout } = await runCommand(
-    "claude",
+    claudeCommand,
     [
       "--bare",
       "--print",
@@ -486,7 +491,7 @@ const callCodex = async (prompt) => {
   await writeFile(schemaPath, JSON.stringify(learningSchema, null, 2), "utf8");
 
   await runCommand(
-    "codex.cmd",
+    codexCommand,
     [
       "--ask-for-approval",
       "never",
