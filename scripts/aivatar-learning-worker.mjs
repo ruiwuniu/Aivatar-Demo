@@ -217,7 +217,7 @@ const normalizeBubblePhrase = (value) => {
   if (/[{}()[\];=<>]{3,}/.test(compact)) return "";
   return compact
     .replace(/['’]/g, "")
-    .replace(/[\p{P}\p{S}]+/gu, " ")
+    .replace(/\p{P}+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 };
@@ -368,7 +368,9 @@ Rules:
 - Do not preserve source code, secrets, full filesystem paths, email addresses, URLs, stack traces, or private data.
 - Do not invent technical facts beyond the digest.
 - For idleBubbleCandidates, write each bubble as one complete short sentence, not keywords, labels, slogans, or clipped fragments.
-- Do not use punctuation in idleBubbleCandidates at all: no periods, commas, exclamation marks, question marks, colons, quotes, brackets, emoji, or decorative symbols.
+- Keep idleBubbleCandidates very short and easy to read at a glance.
+- Emoji and tiny decorative symbols are allowed when they feel natural and pet-like.
+- Avoid comma-heavy or period-heavy prose, markdown, file paths, commands, logs, and technical wording in idleBubbleCandidates.
 - Make idleBubbleCandidates sound like something a real gentle human companion might say in one breath.
 - ${languageInstruction(detectSessionLanguage(options, digest))}
 - Match the bubble voice to Aivatar's current trait snapshot when available.

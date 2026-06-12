@@ -5,7 +5,11 @@ use std::{
     hash::{Hash, Hasher},
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    process::{Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        OnceLock,
+    },
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -25,6 +29,7 @@ const DIGEST_ENTRY_LIMIT: usize = 8;
 const DIGEST_ENTRY_CHARS: usize = 360;
 
 static STARTED: AtomicBool = AtomicBool::new(false);
+static LEARNING_SCRIPT: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Clone)]
 struct SessionMeta {
@@ -68,7 +73,11 @@ struct UsageSnapshot {
     model_context_window: Option<u64>,
 }
 
-pub fn start() -> Result<(), String> {
+pub fn start(learning_script: Option<PathBuf>) -> Result<(), String> {
+    if let Some(path) = learning_script.filter(|path| path.is_file()) {
+        let _ = LEARNING_SCRIPT.set(path);
+    }
+
     if STARTED
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -290,7 +299,7 @@ fn tail_session(session_id: &str, session: &mut WatchedSession) -> Result<(), St
 }
 
 fn handle_record(session_id: &str, session: &mut WatchedSession, record: &Value) {
-    let status = status_from_record(session_id, session, record);
+    let status = status_from_record(session_id, session, record, true);
 
     if let Some(status) = status {
         let event_key = status_event_key(&status);
@@ -313,7 +322,7 @@ fn restore_latest_status(session_id: &str, session: &mut WatchedSession) -> Opti
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if let Some(status) = status_from_record(session_id, session, &record) {
+        if let Some(status) = status_from_record(session_id, session, &record, false) {
             latest_status = Some(status);
         }
     }
@@ -324,6 +333,7 @@ fn status_from_record(
     session_id: &str,
     session: &mut WatchedSession,
     record: &Value,
+    allow_learning_worker: bool,
 ) -> Option<Value> {
     let record_type = record.get("type").and_then(Value::as_str);
     let payload = record.get("payload").unwrap_or(record);
@@ -425,7 +435,13 @@ fn status_from_record(
                 text_from_payload(payload).unwrap_or_else(|| "Task finished".to_string());
             remember_digest(session, "assistant", &final_text);
             let usage = completion_usage(session);
-            let learning = heuristic_learning(session_id, phase, &final_text, session);
+            let worker_started = allow_learning_worker
+                && spawn_learning_worker(session_id, "complete", &final_text, session);
+            let learning = if worker_started {
+                None
+            } else {
+                heuristic_learning(session_id, phase, &final_text, session)
+            };
             session.usage_baseline = None;
             session.digest_entries.clear();
             session.terminal_turn_ended = true;
@@ -604,6 +620,120 @@ fn remember_digest(session: &mut WatchedSession, role: &'static str, text: &str)
         let overflow = session.digest_entries.len() - DIGEST_ENTRY_LIMIT;
         session.digest_entries.drain(0..overflow);
     }
+}
+
+fn learning_context_dir() -> PathBuf {
+    std::env::temp_dir().join("aivatar-learning-context")
+}
+
+fn avatar_state_file() -> PathBuf {
+    std::env::var_os("AIVATAR_AVATAR_STATE_FILE")
+        .or_else(|| std::env::var_os("AIVATAR_AVATAR_STATE_PATH"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("aivatar-avatar-state.json"))
+}
+
+fn safe_file_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn learning_digest(session: &WatchedSession) -> Option<String> {
+    if session.digest_entries.is_empty() {
+        return None;
+    }
+
+    let digest = session
+        .digest_entries
+        .iter()
+        .map(|entry| format!("{}: {}", entry.role, entry.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!digest.trim().is_empty()).then_some(digest)
+}
+
+fn write_learning_context(session_id: &str, session: &WatchedSession) -> Option<PathBuf> {
+    let digest = learning_digest(session)?;
+    let dir = learning_context_dir();
+    std::fs::create_dir_all(&dir).ok()?;
+    let millis = chrono::Utc::now().timestamp_millis();
+    let path = dir.join(format!("codex-{}-{millis}.txt", safe_file_component(session_id)));
+    std::fs::write(&path, digest).ok()?;
+    Some(path)
+}
+
+fn command_exists(command: &str) -> bool {
+    let lookup = if cfg!(target_os = "windows") {
+        ("where.exe", vec![command.to_string()])
+    } else {
+        ("which", vec![command.to_string()])
+    };
+
+    Command::new(lookup.0)
+        .args(lookup.1)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn spawn_learning_worker(
+    session_id: &str,
+    status: &str,
+    summary: &str,
+    session: &WatchedSession,
+) -> bool {
+    if !command_exists("node") {
+        return false;
+    }
+    if !command_exists("codex.cmd") && !command_exists("codex") {
+        return false;
+    }
+    let Some(script) = LEARNING_SCRIPT.get().filter(|path| path.is_file()) else {
+        return false;
+    };
+    let Some(context_path) = write_learning_context(session_id, session) else {
+        return false;
+    };
+
+    let mut command = Command::new("node");
+    command
+        .arg(script)
+        .arg("--provider")
+        .arg(std::env::var("AIVATAR_LEARNING_PROVIDER").unwrap_or_else(|_| "codex".to_string()))
+        .arg("--agent")
+        .arg(AGENT)
+        .arg("--session")
+        .arg(session_id)
+        .arg("--status")
+        .arg(status)
+        .arg("--summary")
+        .arg(summarize(summary))
+        .arg("--context-file")
+        .arg(context_path)
+        .arg("--avatar-state-file")
+        .arg(avatar_state_file())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+
+    command.spawn().is_ok()
 }
 
 fn heuristic_learning(

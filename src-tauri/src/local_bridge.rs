@@ -427,12 +427,7 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
     }
     if let Some(existing) = guard.sessions.get(&key) {
         if let Some(object) = status.as_object_mut() {
-            for field in [
-                "presenceTimestamp",
-                "usage",
-                "idleBubbleCandidates",
-                "learning",
-            ] {
+            for field in ["presenceTimestamp", "usage"] {
                 if !object.contains_key(field) {
                     if let Some(value) = existing.get(field) {
                         object.insert(field.to_string(), value.clone());
@@ -860,7 +855,7 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                     }
                     if let Some(existing) = guard.sessions.get(&key) {
                         if let Some(object) = status.as_object_mut() {
-                            for field in ["presenceTimestamp", "usage", "idleBubbleCandidates", "learning"] {
+                            for field in ["presenceTimestamp", "usage"] {
                                 if !object.contains_key(field) {
                                     if let Some(value) = existing.get(field) {
                                         object.insert(field.to_string(), value.clone());

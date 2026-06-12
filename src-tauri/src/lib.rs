@@ -200,8 +200,9 @@ fn is_status_bridge_running() -> bool {
 
 fn start_status_bridge_inner(app: Option<&tauri::AppHandle>) -> Result<BridgeStartResult, String> {
     let connector = connector_root(app);
+    let learning_script = scripts_root(app).map(|path| path.join("aivatar-learning-worker.mjs"));
     if is_status_bridge_running() {
-        let _ = codex_discovery::start();
+        let _ = codex_discovery::start(learning_script);
         return Ok(BridgeStartResult {
             status: "already-running".to_string(),
             message: "Bridge already running.".to_string(),
@@ -209,7 +210,7 @@ fn start_status_bridge_inner(app: Option<&tauri::AppHandle>) -> Result<BridgeSta
     }
 
     local_bridge::start()?;
-    let _ = codex_discovery::start();
+    let _ = codex_discovery::start(learning_script);
 
     Ok(BridgeStartResult {
         status: "started".to_string(),

@@ -13,6 +13,9 @@ const activeEndpoint =
   process.env.AIVATAR_ACTIVE_ENDPOINT ?? "http://127.0.0.1:38988/agent-active";
 const presenceEndpoint =
   process.env.AIVATAR_PRESENCE_ENDPOINT ?? "http://127.0.0.1:38988/agent-presence";
+const disconnectEndpoint =
+  process.env.AIVATAR_DISCONNECT_ENDPOINT ??
+  "http://127.0.0.1:38988/agent-sessions/disconnect";
 const claudeDefaultModelContextWindow = Number(
   process.env.AIVATAR_CLAUDE_MODEL_CONTEXT_WINDOW ?? 200000,
 );
@@ -511,6 +514,8 @@ try {
   const statusLineMode = process.argv.includes("--status-line");
   const rawInput = await readStdin();
   const input = rawInput.trim() ? JSON.parse(rawInput) : {};
+  const hookEvent = input?.hook_event_name ?? (input?.context_window ? "StatusLine" : "Unknown");
+  const isSessionEnd = !statusLineMode && hookEvent === "SessionEnd";
   const sessionId =
     firstString(
       process.env.AIVATAR_SESSION_ID,
@@ -579,23 +584,30 @@ try {
   await appendEventLog(sessionId, input, payload, statusLineMode ? "statusLine" : "hook");
 
   await postJson(endpoint, payload);
-  await postJson(presenceEndpoint, {
-    agent: payload.agent,
-    sessionId,
-    timestamp,
-  });
-
-  if (status.status === "idle") {
-    await postJson(activeEndpoint, {
-      clear: true,
+  if (isSessionEnd) {
+    await postJson(disconnectEndpoint, {
       agent: payload.agent,
       sessionId,
     });
   } else {
-    await postJson(activeEndpoint, {
+    await postJson(presenceEndpoint, {
       agent: payload.agent,
       sessionId,
+      timestamp,
     });
+
+    if (status.status === "idle") {
+      await postJson(activeEndpoint, {
+        clear: true,
+        agent: payload.agent,
+        sessionId,
+      });
+    } else {
+      await postJson(activeEndpoint, {
+        agent: payload.agent,
+        sessionId,
+      });
+    }
   }
 
   if (statusLineMode) {

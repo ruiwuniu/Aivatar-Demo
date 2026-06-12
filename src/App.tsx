@@ -5590,6 +5590,7 @@ export const App = () => {
     connectedSessionKey,
     effectiveStatus.agent,
     effectiveStatus.sessionId,
+    effectiveStatus.learning?.id,
     effectiveStatus.timestamp,
     effectiveStatus.status,
     locale,
