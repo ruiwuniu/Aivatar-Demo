@@ -6,7 +6,29 @@
 
 **中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。它把 Codex、Claude Code 或其他 agent 的会话状态映射成像素房间里的小伙伴行为：思考、编码、等待、报错、完成任务，并通过 `bits`、成长、背包、商店和房间装修形成一个可互动的工作陪伴系统。
 
-> Current status / 当前状态: the app can be built from source. A Windows preview release is being prepared; installer distribution and some release-mode integrations are still being hardened.
+<p align="center">
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.1.1-desktop-preview/Aivatar_0.1.0_universal.dmg"><strong>Download macOS DMG</strong></a>
+  ·
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.1.1-desktop-preview/Aivatar_0.1.0_x64-setup.exe"><strong>Download Windows EXE</strong></a>
+  ·
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.1.1-desktop-preview">Preview Release</a>
+</p>
+
+| Live AI session companion | Growth and session summaries |
+| --- | --- |
+| ![Aivatar reacts to a live AI coding session](docs/assets/aivatar-readme-live-session.gif) | ![Aivatar summarizes sessions into growth bubbles](docs/assets/aivatar-readme-agent-summary.gif) |
+
+<p align="center">
+  <a href="docs/assets/aivatar-30s-vertical-promo.mp4">
+    <img src="docs/assets/aivatar-30s-vertical-promo-thumbnail.jpg" width="360" alt="Watch the 30-second Aivatar vertical demo video" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video</strong></a>
+</p>
+
+> Current status / 当前状态: preview builds are available for macOS and Windows. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
 
 ## Contents / 目录
 
