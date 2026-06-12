@@ -139,11 +139,17 @@ fn scripts_root(app: Option<&tauri::AppHandle>) -> Option<std::path::PathBuf> {
 
 #[cfg(target_os = "windows")]
 fn resolve_command(command: &str) -> Option<std::path::PathBuf> {
-    let output = std::process::Command::new("where.exe")
+    let mut process = std::process::Command::new("where.exe");
+    process
         .arg(command)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    use std::os::windows::process::CommandExt;
+    process.creation_flags(0x08000000);
+
+    let output = process
         .output()
         .ok()?;
 

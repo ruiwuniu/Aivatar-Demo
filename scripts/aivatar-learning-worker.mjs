@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 
 const endpoint =
   process.env.AIVATAR_HTTP_ENDPOINT ?? "http://127.0.0.1:38988/agent-status";
@@ -14,10 +14,11 @@ const defaultTimeoutMs = Math.max(
   5000,
   Number(process.env.AIVATAR_LEARNING_TIMEOUT_MS ?? 30000),
 );
-const codexCommand =
+const configuredCodexCommand =
   process.env.AIVATAR_CODEX_COMMAND ??
   process.env.CODEX_COMMAND ??
-  (process.platform === "win32" ? "codex.cmd" : "codex");
+  null;
+const defaultCodexCommand = process.platform === "win32" ? "codex.cmd" : "codex";
 const claudeCommand = process.env.AIVATAR_CLAUDE_COMMAND ?? "claude";
 
 const traitNames = [
@@ -435,6 +436,58 @@ const runCommand = (command, args, stdin, timeoutMs = defaultTimeoutMs) =>
     child.stdin.end(stdin);
   });
 
+const fileExists = async (path) => {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const envPathValue = () =>
+  process.env.PATH ?? process.env.Path ?? process.env.path ?? "";
+
+const resolveWindowsCodexJs = async (command = null) => {
+  if (
+    process.env.AIVATAR_CODEX_JS &&
+    (await fileExists(process.env.AIVATAR_CODEX_JS))
+  ) {
+    return process.env.AIVATAR_CODEX_JS;
+  }
+
+  const dirs = command && /\.(cmd|bat)$/i.test(command) ? [dirname(command)] : [];
+  dirs.push(...envPathValue().split(delimiter).filter(Boolean));
+
+  for (const dir of dirs) {
+    const codexCmd = join(dir, "codex.cmd");
+    const codexJs = join(
+      dir,
+      "node_modules",
+      "@openai",
+      "codex",
+      "bin",
+      "codex.js",
+    );
+    if ((await fileExists(codexCmd)) && (await fileExists(codexJs))) {
+      return codexJs;
+    }
+  }
+
+  return null;
+};
+
+const codexCommand = async () => {
+  if (process.platform !== "win32") {
+    return { command: configuredCodexCommand ?? defaultCodexCommand, prefixArgs: [] };
+  }
+
+  const codexJs = await resolveWindowsCodexJs(configuredCodexCommand);
+  return codexJs
+    ? { command: process.execPath, prefixArgs: [codexJs] }
+    : { command: configuredCodexCommand ?? defaultCodexCommand, prefixArgs: [] };
+};
+
 const extractJsonObject = (text) => {
   const trimmed = text.trim();
   if (!trimmed) throw new Error("Provider returned empty output");
@@ -489,10 +542,12 @@ const callCodex = async (prompt) => {
   const schemaPath = join(dir, `${runId}.schema.json`);
   const outputPath = join(dir, `${runId}.output.json`);
   await writeFile(schemaPath, JSON.stringify(learningSchema, null, 2), "utf8");
+  const codex = await codexCommand();
 
   await runCommand(
-    codexCommand,
+    codex.command,
     [
+      ...codex.prefixArgs,
       "--ask-for-approval",
       "never",
       "exec",

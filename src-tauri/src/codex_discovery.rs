@@ -698,13 +698,20 @@ fn resolve_command(command: &str) -> Option<PathBuf> {
         ("which", vec![command.to_string()])
     };
 
-    if let Ok(output) = Command::new(lookup.0)
+    let mut process = Command::new(lookup.0);
+    process
         .args(lookup.1)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
+        .stderr(Stdio::null());
+
+    #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        process.creation_flags(0x08000000);
+    }
+
+    if let Ok(output) = process.output() {
         if output.status.success() {
             if let Some(path) = String::from_utf8_lossy(&output.stdout)
                 .lines()

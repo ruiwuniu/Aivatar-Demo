@@ -290,6 +290,7 @@ const spawnHelper = (script, session, extraEnv = {}) => {
     {
       detached: true,
       stdio: "ignore",
+      windowsHide: true,
       env: {
         ...process.env,
         ...extraEnv,
