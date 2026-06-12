@@ -114,6 +114,7 @@ const COFFEE_ITEM_ID = "coffee";
 const COLA_ITEM_ID = "cola";
 const BENTO_ITEM_ID = "bento";
 const COOKIE_ITEM_ID = "cookie";
+const REPAIR_KIT_ITEM_ID = "repair-kit";
 const BED_INDUSTRIAL_SKIN_ID = "industrial-bed-skin";
 const BED_WOOD_RED_SKIN_ID = "wood-red-bed-skin";
 const BED_IVORY_PINK_PLAID_SKIN_ID = "ivory-pink-plaid-bed-skin";
@@ -472,6 +473,9 @@ const clampQuantity = (entry: InventoryEntry): InventoryEntry => ({
   ...entry,
   quantity: Math.max(0, entry.quantity),
 });
+
+const removeDeprecatedInventoryItems = (inventory: InventoryEntry[]) =>
+  inventory.filter((entry) => entry.itemId !== REPAIR_KIT_ITEM_ID);
 
 const isStatusStale = (status: CodexStatusMessage, now = Date.now()) => {
   const updatedAt = Date.parse(status.expiresAt ?? status.timestamp);
@@ -2084,7 +2088,7 @@ const saveFromContent = (
   memory: defaultMemory(),
   navMemory: defaultNavMemory(),
   petStats: content.petStats,
-  inventory: content.inventory,
+  inventory: removeDeprecatedInventoryItems(content.inventory),
   furnitureStorage: defaultFurnitureStorage(),
   ...loadDefaultLayout(content),
   wallet: content.wallet,
@@ -2125,6 +2129,9 @@ const normalizeSavePayload = (
     memory: normalizeMemory(parsed.memory),
     navMemory: normalizeNavMemory(parsed.navMemory),
     activeFurnitureSkinIds: normalizeFurnitureSkinIds(parsed.activeFurnitureSkinIds),
+    inventory: removeDeprecatedInventoryItems(
+      parsed.inventory ?? fallback.inventory,
+    ),
     placedItems,
     furniturePlacements,
     layoutVersion: SAVE_LAYOUT_VERSION,

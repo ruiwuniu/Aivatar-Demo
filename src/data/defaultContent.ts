@@ -355,7 +355,6 @@ export const defaultContent: AivatarContent = {
     { itemId: "coffee", quantity: 2 },
     { itemId: "bento", quantity: 1 },
     { itemId: "cookie", quantity: 2 },
-    { itemId: "repair-kit", quantity: 1 },
   ],
   placedItems: [
     {
@@ -418,14 +417,6 @@ export const defaultContent: AivatarContent = {
       tags: ["consumable"],
       price: 10,
       effect: { energy: 8, mood: 8, hunger: 6 },
-    },
-    {
-      id: "repair-kit",
-      name: "Repair Kit",
-      kind: "tool",
-      tags: ["consumable"],
-      price: 20,
-      effect: { mood: 12 },
     },
     {
       id: "tiny-plant",
