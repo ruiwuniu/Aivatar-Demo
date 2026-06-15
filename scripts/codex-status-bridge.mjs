@@ -587,6 +587,63 @@ const firstObjectString = (value, keys) => {
   return undefined;
 };
 
+const claudeEventName = (input, statusLine = false) => {
+  const event =
+    firstObjectString(input, [
+      "hook_event_name",
+      "hookEventName",
+      "event_name",
+      "eventName",
+      "type",
+      "name",
+      "kind",
+      "phase",
+      "status",
+    ]) ??
+    (typeof input?.event === "string" ? input.event.trim() : undefined) ??
+    firstObjectString(input?.event, [
+      "hook_event_name",
+      "hookEventName",
+      "event_name",
+      "eventName",
+      "type",
+      "name",
+      "kind",
+      "phase",
+    ]) ??
+    firstObjectString(input?.payload, [
+      "hook_event_name",
+      "type",
+      "name",
+      "kind",
+      "phase",
+    ]) ??
+    firstObjectString(input?.data, ["hook_event_name", "type", "name", "kind", "phase"]);
+  return event ?? (statusLine || input?.context_window ? "StatusLine" : "Unknown");
+};
+
+const claudeSurfaceLabel = (input) => {
+  const text = [
+    firstObjectString(input, [
+      "mode",
+      "surface",
+      "channel",
+      "client_mode",
+      "clientMode",
+      "app_mode",
+      "appMode",
+      "source",
+    ]),
+    claudeEventName(input),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (/\bcowork\b|co-work|teammate|subagent/u.test(text)) return "Claude Cowork";
+  if (/\bchat\b|conversation/u.test(text)) return "Claude Chat";
+  return "Claude Code";
+};
+
 const compactHookText = (value, limit = 120) => {
   let text = String(value ?? "")
     .replace(/\r|\n/g, " ")
@@ -615,8 +672,53 @@ const sanitizedDigestText = (value, limit = 520) =>
 const safeSessionName = (value) =>
   String(value || "session").replace(/[^a-zA-Z0-9_.-]/g, "_") || "session";
 
+const hashString = (value) => {
+  let hash = 2166136261;
+  for (const character of String(value)) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+};
+
+const claudeSessionId = (input) => {
+  const explicit = firstObjectString(input, [
+    "session_id",
+    "sessionId",
+    "sessionID",
+    "conversation_id",
+    "conversationId",
+    "thread_id",
+    "threadId",
+    "chat_id",
+    "chatId",
+    "cowork_session_id",
+    "coworkSessionId",
+  ]);
+  if (explicit) return explicit;
+  const nested =
+    firstObjectString(input?.session, ["id"]) ??
+    firstObjectString(input?.conversation, ["id"]) ??
+    firstObjectString(input?.thread, ["id"]) ??
+    firstObjectString(input?.chat, ["id"]) ??
+    firstObjectString(input?.cowork, ["id"]);
+  if (nested) return nested;
+  const basis = firstObjectString(input, [
+    "session_name",
+    "conversation_title",
+    "conversationTitle",
+    "title",
+    "cwd",
+  ]);
+  if (!basis) return "claude-code-desktop";
+  return `claude-${safeSessionName(`${claudeSurfaceLabel(input)}-${basis}`).slice(
+    0,
+    48,
+  )}-${hashString(basis)}`;
+};
+
 const claudeDigestEntry = (input) => {
-  const event = firstObjectString(input, ["hook_event_name"]) ?? "Unknown";
+  const event = claudeEventName(input);
   if (event === "UserPromptSubmit" && typeof input.prompt === "string") {
     return `user: ${sanitizedDigestText(input.prompt, 520)}`;
   }
@@ -813,6 +915,8 @@ const claudeStatusForEvent = (event, statusLine, hasUsage) => {
     case "PostToolUseFailure":
       return ["error", "error"];
     case "Stop":
+    case "SubagentStop":
+    case "TeammateIdle":
     case "TaskCompleted":
       return ["complete", "turn-complete"];
     case "SessionEnd":
@@ -820,13 +924,25 @@ const claudeStatusForEvent = (event, statusLine, hasUsage) => {
     case "Notification":
       return ["waiting_for_user", "notification"];
     default:
+      if (/permission|approval|waiting|input_required/u.test(event.toLowerCase())) {
+        return ["waiting_for_user", event];
+      }
+      if (/fail|failed|error|exception/u.test(event.toLowerCase())) {
+        return ["error", event];
+      }
+      if (/stop|complete|completed|done|idle/u.test(event.toLowerCase())) {
+        return ["complete", event];
+      }
+      if (/tool|command|execute|executing|running/u.test(event.toLowerCase())) {
+        return ["executing", event];
+      }
       return ["thinking", "hook"];
   }
 };
 
 const claudeIdleBubbles = (input) => {
   const candidates = [];
-  for (const key of ["session_name", "message"]) {
+  for (const key of ["session_name", "conversation_title", "conversationTitle", "message"]) {
     const phrase = compactHookText(input?.[key], 28);
     const length = Array.from(phrase).length;
     if (length >= 2 && length <= 28 && !candidates.includes(phrase)) {
@@ -842,6 +958,8 @@ const claudeLearningForStatus = (status, input) => {
   const text = `${summary} ${firstObjectString(input, [
     "tool_name",
     "hook_event_name",
+    "eventName",
+    "type",
   ]) ?? ""} ${firstObjectString(input, ["message", "session_name"]) ?? ""}`.toLowerCase();
   const traitChanges = {};
   if (/error|fail|fix|repair/u.test(text)) traitChanges.resilience = 1;
@@ -867,34 +985,37 @@ const normalizeClaudeHookStatus = (input, statusLine) => {
     throw new Error("Claude hook payload must be a JSON object");
   }
 
-  const event =
-    firstObjectString(input, ["hook_event_name"]) ??
-    (statusLine ? "StatusLine" : "Unknown");
+  const event = claudeEventName(input, statusLine);
   const usage = claudeUsageFromInput(
     input,
-    event === "Stop" || event === "TaskCompleted",
+    ["Stop", "SubagentStop", "TeammateIdle", "TaskCompleted"].includes(event),
   );
   const [status, phase] = claudeStatusForEvent(event, statusLine, Boolean(usage));
-  const sessionId =
-    firstObjectString(input, ["session_id", "sessionId"]) ?? "claude-code-desktop";
+  const sessionId = claudeSessionId(input);
+  const label = claudeSurfaceLabel(input);
   const message =
     event === "UserPromptSubmit"
-      ? "Claude Code is thinking"
+      ? `${label} is thinking`
+      : event === "MessageDisplay"
+        ? `${label} is responding`
       : event === "PreToolUse" ||
           event === "PostToolUse" ||
           event === "PostToolBatch"
         ? firstObjectString(input, ["tool_name"])
-          ? `Claude Code used ${firstObjectString(input, ["tool_name"])}`
-          : "Claude Code is using a tool"
+          ? `${label} used ${firstObjectString(input, ["tool_name"])}`
+          : `${label} is using a tool`
         : event === "PermissionRequest"
-          ? "Claude Code needs approval"
-          : event === "Stop" || event === "TaskCompleted"
-            ? "Claude Code turn complete"
+          ? `${label} needs approval`
+          : event === "Stop" ||
+              event === "SubagentStop" ||
+              event === "TeammateIdle" ||
+              event === "TaskCompleted"
+            ? `${label} turn complete`
             : event === "StopFailure" || event === "PostToolUseFailure"
-              ? "Claude Code turn failed"
+              ? `${label} turn failed`
               : event === "SessionEnd"
-                ? "Claude Code session ended"
-                : `Claude Code ${event}`;
+                ? `${label} session ended`
+                : `${label} ${event}`;
   const payload = {
     agent: "claude-code",
     sessionId,
@@ -1249,9 +1370,7 @@ const httpServer = http.createServer(async (request, response) => {
         return;
       }
       const statusLine = request.url === claudeStatusLineHookPath;
-      const event =
-        firstObjectString(input, ["hook_event_name"]) ??
-        (statusLine ? "StatusLine" : "Unknown");
+      const event = claudeEventName(input, statusLine);
       if (event === "UserPromptSubmit") {
         claudeLastLearningKeys.delete(nextStatus.sessionId);
       }

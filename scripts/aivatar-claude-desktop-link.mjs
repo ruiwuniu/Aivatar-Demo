@@ -33,6 +33,8 @@ const EVENT_GROUPS = [
   ["PostToolUseFailure", "*"],
   ["PostToolBatch"],
   ["Stop"],
+  ["SubagentStop"],
+  ["TeammateIdle"],
   ["StopFailure"],
   ["TaskCompleted"],
   ["SessionEnd"],

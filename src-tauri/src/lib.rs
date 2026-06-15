@@ -465,6 +465,8 @@ fn enable_claude_code_integration() -> Result<(), String> {
         "Notification",
         "PostToolBatch",
         "Stop",
+        "SubagentStop",
+        "TeammateIdle",
         "StopFailure",
         "TaskCompleted",
         "SessionEnd",
@@ -541,9 +543,9 @@ fn claude_code_integration_status() -> AgentIntegrationStatus {
         detected,
         enabled,
         cli_available: cli_path.is_some(),
-        needs_restart: enabled,
+        needs_restart: false,
         detail: if enabled {
-            "Hooks/statusLine enabled for new Claude Code sessions.".to_string()
+            "Hooks/statusLine installed for Claude Code, Chat, and Cowork sessions.".to_string()
         } else if detected {
             "Claude Code detected; enable Aivatar hooks from this app.".to_string()
         } else {
@@ -580,9 +582,9 @@ fn opencode_integration_status() -> AgentIntegrationStatus {
         detected,
         enabled,
         cli_available: cli_path.is_some(),
-        needs_restart: enabled,
+        needs_restart: false,
         detail: if enabled {
-            "Plugin installed; restart opencode Desktop/TUI if it was already open.".to_string()
+            "Plugin installed for opencode Desktop/TUI.".to_string()
         } else if detected {
             "opencode detected; enable the Aivatar plugin from this app.".to_string()
         } else {

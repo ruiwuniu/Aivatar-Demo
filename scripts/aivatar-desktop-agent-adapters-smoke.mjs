@@ -214,6 +214,38 @@ try {
   );
   assert.ok(claudeSession);
   assert.equal(claudeSession.learning.id, firstLearningId);
+
+  await postHook({
+    eventName: "chat.message",
+    conversationId: "claude_chat_smoke",
+    mode: "chat",
+    message: "Chat mode should be visible to Aivatar.",
+  });
+  snapshot = await fetch(`http://127.0.0.1:${httpPort}/agent-status`).then(
+    (response) => response.json(),
+  );
+  const chatSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_chat_smoke",
+  );
+  assert.ok(chatSession);
+  assert.equal(chatSession.status, "thinking");
+  assert.match(chatSession.summary, /Claude Chat/);
+
+  await postHook({
+    type: "cowork.idle",
+    coworkSessionId: "claude_cowork_smoke",
+    mode: "cowork",
+    message: "Cowork turn finished.",
+  });
+  snapshot = await fetch(`http://127.0.0.1:${httpPort}/agent-status`).then(
+    (response) => response.json(),
+  );
+  const coworkSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_cowork_smoke",
+  );
+  assert.ok(coworkSession);
+  assert.equal(coworkSession.status, "complete");
+  assert.match(coworkSession.summary, /Claude Cowork/);
 } finally {
   bridge.kill();
 }

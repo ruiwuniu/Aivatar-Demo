@@ -68,6 +68,8 @@ try {
   assert.equal(claudeSettings.env.AIVATAR_LEARNING_PROVIDER, "claude-code");
   assert.ok(claudeSettings.hooks.UserPromptSubmit);
   assert.ok(claudeSettings.hooks.MessageDisplay);
+  assert.ok(claudeSettings.hooks.SubagentStop);
+  assert.ok(claudeSettings.hooks.TeammateIdle);
   assert.ok(claudeSettings.hooks.Stop);
   assert.equal(claudeSettings.statusLine.type, "command");
   assert.match(claudeSettings.statusLine.command, /aivatar-statusline\.ps1/);

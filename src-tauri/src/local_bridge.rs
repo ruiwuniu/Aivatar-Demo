@@ -470,12 +470,137 @@ fn safe_session_name(value: &str) -> String {
     }
 }
 
+fn claude_event_name(input: &Value, status_line: bool) -> String {
+    first_string(
+        input,
+        &[
+            "hook_event_name",
+            "hookEventName",
+            "event_name",
+            "eventName",
+            "event",
+            "type",
+            "name",
+            "kind",
+            "phase",
+            "status",
+        ],
+    )
+    .or_else(|| input.get("event").and_then(|value| {
+        first_string(
+            value,
+            &[
+                "hook_event_name",
+                "hookEventName",
+                "event_name",
+                "eventName",
+                "type",
+                "name",
+                "kind",
+                "phase",
+            ],
+        )
+    }))
+    .or_else(|| input.get("payload").and_then(|value| {
+        first_string(value, &["hook_event_name", "type", "name", "kind", "phase"])
+    }))
+    .or_else(|| input.get("data").and_then(|value| {
+        first_string(value, &["hook_event_name", "type", "name", "kind", "phase"])
+    }))
+    .unwrap_or_else(|| {
+        if status_line || input.get("context_window").is_some() {
+            "StatusLine".to_string()
+        } else {
+            "Unknown".to_string()
+        }
+    })
+}
+
+fn claude_surface_label(input: &Value) -> &'static str {
+    let mut text = String::new();
+    for key in [
+        "mode",
+        "surface",
+        "channel",
+        "client_mode",
+        "clientMode",
+        "app_mode",
+        "appMode",
+        "source",
+    ] {
+        if let Some(value) = input.get(key).and_then(Value::as_str) {
+            text.push_str(value);
+            text.push(' ');
+        }
+    }
+    text.push_str(&claude_event_name(input, false));
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("cowork")
+        || lower.contains("co-work")
+        || lower.contains("teammate")
+        || lower.contains("subagent")
+    {
+        "Claude Cowork"
+    } else if lower.contains("chat") || lower.contains("conversation") {
+        "Claude Chat"
+    } else {
+        "Claude Code"
+    }
+}
+
+fn hash_string(value: &str) -> String {
+    let mut hash: u32 = 2_166_136_261;
+    for byte in value.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    format!("{hash:x}")
+}
+
+fn claude_session_id(input: &Value) -> String {
+    if let Some(explicit) = first_string(
+        input,
+        &[
+            "session_id",
+            "sessionId",
+            "sessionID",
+            "conversation_id",
+            "conversationId",
+            "thread_id",
+            "threadId",
+            "chat_id",
+            "chatId",
+            "cowork_session_id",
+            "coworkSessionId",
+        ],
+    ) {
+        return explicit;
+    }
+    for key in ["session", "conversation", "thread", "chat", "cowork"] {
+        if let Some(nested) = input.get(key).and_then(|value| first_string(value, &["id"])) {
+            return nested;
+        }
+    }
+    if let Some(basis) = first_string(
+        input,
+        &[
+            "session_name",
+            "conversation_title",
+            "conversationTitle",
+            "title",
+            "cwd",
+        ],
+    ) {
+        let mut safe = safe_session_name(&format!("{}-{basis}", claude_surface_label(input)));
+        safe = safe.chars().take(48).collect();
+        return format!("claude-{safe}-{}", hash_string(&basis));
+    }
+    "claude-code-desktop".to_string()
+}
+
 fn claude_digest_entry(input: &Value) -> Option<String> {
-    let event = input
-        .get("hook_event_name")
-        .and_then(Value::as_str)
-        .unwrap_or("Unknown");
-    let entry = match event {
+    let event = claude_event_name(input, false);
+    let entry = match event.as_str() {
         "UserPromptSubmit" => input
             .get("prompt")
             .and_then(Value::as_str)
@@ -503,7 +628,26 @@ fn claude_digest_entry(input: &Value) -> Option<String> {
         .map(|text| format!("{event}: {}", sanitized_digest_text(&text, 220))),
         "Stop" | "TaskCompleted" => Some("turn: Claude Code completed the turn".to_string()),
         "StopFailure" => Some("turn: Claude Code reported an error".to_string()),
-        _ => None,
+        _ => {
+            let detail = first_string(
+                input,
+                &["prompt", "delta", "message", "text", "content", "summary", "title"],
+            )
+            .map(|text| sanitized_digest_text(&text, 520));
+            let lower = event.to_ascii_lowercase();
+            if lower.contains("prompt") || lower.contains("user") {
+                detail.map(|text| format!("user: {text}"))
+            } else if lower.contains("message")
+                || lower.contains("chat")
+                || lower.contains("assistant")
+                || lower.contains("response")
+                || lower.contains("delta")
+            {
+                detail.map(|text| format!("assistant: {text}"))
+            } else {
+                None
+            }
+        }
     }?;
 
     (!entry.trim().is_empty()).then_some(entry)
@@ -714,16 +858,44 @@ fn claude_status_for_event(event: &str, status_line: bool, _has_usage: bool) -> 
         "MessageDisplay" => ("thinking", "message-display"),
         "PermissionRequest" => ("waiting_for_user", "permission"),
         "PermissionDenied" | "StopFailure" | "PostToolUseFailure" => ("error", "error"),
-        "Stop" | "TaskCompleted" => ("complete", "turn-complete"),
+        "Stop" | "SubagentStop" | "TeammateIdle" | "TaskCompleted" => ("complete", "turn-complete"),
         "SessionEnd" => ("idle", "session-end"),
         "Notification" => ("waiting_for_user", "notification"),
-        _ => ("thinking", "hook"),
+        _ => {
+            let lower = event.to_ascii_lowercase();
+            if lower.contains("permission")
+                || lower.contains("approval")
+                || lower.contains("waiting")
+                || lower.contains("input_required")
+            {
+                ("waiting_for_user", "permission")
+            } else if lower.contains("fail")
+                || lower.contains("error")
+                || lower.contains("exception")
+            {
+                ("error", "error")
+            } else if lower.contains("stop")
+                || lower.contains("complete")
+                || lower.contains("done")
+                || lower.contains("idle")
+            {
+                ("complete", "turn-complete")
+            } else if lower.contains("tool")
+                || lower.contains("command")
+                || lower.contains("execute")
+                || lower.contains("running")
+            {
+                ("executing", "tool-use")
+            } else {
+                ("thinking", "hook")
+            }
+        }
     }
 }
 
 fn claude_idle_bubbles(input: &Value) -> Option<Value> {
     let mut values = Vec::new();
-    for key in ["session_name", "message"] {
+    for key in ["session_name", "conversation_title", "conversationTitle", "message"] {
         if let Some(text) = input.get(key).and_then(Value::as_str) {
             let compact = compact_hook_text(text, 28);
             let length = compact.chars().count();
@@ -751,7 +923,8 @@ fn native_learning_for_status(status: &Value, input: &Value) -> Option<Value> {
     let text = format!(
         "{} {} {}",
         summary,
-        first_string(input, &["tool_name", "hook_event_name"]).unwrap_or_default(),
+        first_string(input, &["tool_name", "hook_event_name", "eventName", "type"])
+            .unwrap_or_default(),
         first_string(input, &["message", "session_name"]).unwrap_or_default()
     )
     .to_ascii_lowercase();
@@ -786,26 +959,32 @@ fn native_learning_for_status(status: &Value, input: &Value) -> Option<Value> {
 }
 
 fn normalize_claude_hook_status(input: Value, status_line: bool) -> Result<Value, String> {
-    let event = input
-        .get("hook_event_name")
-        .and_then(Value::as_str)
-        .unwrap_or(if status_line { "StatusLine" } else { "Unknown" });
-    let usage = claude_usage_from_input(&input, matches!(event, "Stop" | "TaskCompleted"));
-    let (status, phase) = claude_status_for_event(event, status_line, usage.is_some());
-    let session_id = first_string(&input, &["session_id", "sessionId"])
-        .unwrap_or_else(|| "claude-code-desktop".to_string());
-    let message = match event {
-        "UserPromptSubmit" => "Claude Code is thinking".to_string(),
+    let event = claude_event_name(&input, status_line);
+    let usage = claude_usage_from_input(
+        &input,
+        matches!(
+            event.as_str(),
+            "Stop" | "SubagentStop" | "TeammateIdle" | "TaskCompleted"
+        ),
+    );
+    let (status, phase) = claude_status_for_event(&event, status_line, usage.is_some());
+    let session_id = claude_session_id(&input);
+    let label = claude_surface_label(&input);
+    let message = match event.as_str() {
+        "UserPromptSubmit" => format!("{label} is thinking"),
+        "MessageDisplay" => format!("{label} is responding"),
         "PreToolUse" | "PostToolUse" | "PostToolBatch" => input
             .get("tool_name")
             .and_then(Value::as_str)
-            .map(|tool| format!("Claude Code used {tool}"))
-            .unwrap_or_else(|| "Claude Code is using a tool".to_string()),
-        "PermissionRequest" => "Claude Code needs approval".to_string(),
-        "Stop" | "TaskCompleted" => "Claude Code turn complete".to_string(),
-        "StopFailure" | "PostToolUseFailure" => "Claude Code turn failed".to_string(),
-        "SessionEnd" => "Claude Code session ended".to_string(),
-        _ => format!("Claude Code {event}"),
+            .map(|tool| format!("{label} used {tool}"))
+            .unwrap_or_else(|| format!("{label} is using a tool")),
+        "PermissionRequest" => format!("{label} needs approval"),
+        "Stop" | "SubagentStop" | "TeammateIdle" | "TaskCompleted" => {
+            format!("{label} turn complete")
+        }
+        "StopFailure" | "PostToolUseFailure" => format!("{label} turn failed"),
+        "SessionEnd" => format!("{label} session ended"),
+        _ => format!("{label} {event}"),
     };
     let mut payload = json!({
         "agent": "claude-code",
@@ -1321,10 +1500,7 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                     Ok(status) => {
                         let session_id = string_field(&status, "sessionId")
                             .unwrap_or_else(|| "claude-code-desktop".to_string());
-                        let event = input
-                            .get("hook_event_name")
-                            .and_then(Value::as_str)
-                            .unwrap_or(if status_line { "StatusLine" } else { "Unknown" });
+                        let event = claude_event_name(&input, status_line);
                         if event == "UserPromptSubmit" {
                             reset_claude_learning_key(&session_id);
                         }
