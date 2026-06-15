@@ -196,6 +196,9 @@ const COLLAPSED_WINDOW_MIN_WIDTH = DEFAULT_SCENE_PANEL_WIDTH + APP_HORIZONTAL_PA
 const DEFAULT_WINDOW_HEIGHT = 520;
 const SHOW_DEBUG_CARD = false;
 const EXPANDED_WINDOW_MIN_WIDTH = 720;
+const COLLAPSED_WINDOW_CLIENT_WIDTH_GUARD = 2;
+const COLLAPSED_WINDOW_RESIZE_RETRY_DELAY_MS = 50;
+const COLLAPSED_WINDOW_RESIZE_RETRY_LIMIT = 2;
 const MEMORY_RECENT_EVENT_LIMIT = 20;
 const BEHAVIOR_DEMO_SECONDS = 3;
 const SIDE_PANEL_TRANSITION_MS = 80;
@@ -3064,11 +3067,30 @@ export const App = () => {
       const nextWidth = open
         ? Math.max(previousExpandedWindowWidthRef.current, DEFAULT_EXPANDED_WINDOW_WIDTH)
         : collapsedWidth;
+      let requestedWidth = nextWidth;
       await invoke("resize_main_window_for_side_panel", {
-        width: nextWidth,
+        width: requestedWidth,
         minWidth,
         height: DEFAULT_WINDOW_HEIGHT,
       });
+
+      if (!open) {
+        for (let attempt = 0; attempt < COLLAPSED_WINDOW_RESIZE_RETRY_LIMIT; attempt += 1) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, COLLAPSED_WINDOW_RESIZE_RETRY_DELAY_MS);
+          });
+
+          const widthDeficit = Math.ceil(collapsedWidth - window.innerWidth);
+          if (widthDeficit <= 0) break;
+
+          requestedWidth += widthDeficit + COLLAPSED_WINDOW_CLIENT_WIDTH_GUARD;
+          await invoke("resize_main_window_for_side_panel", {
+            width: requestedWidth,
+            minWidth: requestedWidth,
+            height: DEFAULT_WINDOW_HEIGHT,
+          });
+        }
+      }
     } catch {
       // Web preview has no native window to resize.
     }
@@ -3086,7 +3108,7 @@ export const App = () => {
     }
     const sceneWidth =
       scenePanelRef.current?.getBoundingClientRect().width ?? DEFAULT_SCENE_PANEL_WIDTH;
-    const lockedSceneWidth = Math.max(Math.round(sceneWidth), DEFAULT_SCENE_PANEL_WIDTH);
+    const lockedSceneWidth = Math.max(Math.ceil(sceneWidth), DEFAULT_SCENE_PANEL_WIDTH);
     const collapsedWidth = lockedSceneWidth + APP_HORIZONTAL_PADDING;
 
     if (sidePanelTimerRef.current) {
