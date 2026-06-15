@@ -1,8 +1,13 @@
 import http from "node:http";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+
+const scriptDir = dirname(fileURLToPath(import.meta.url));
 
 const wsPort = Number(process.env.AIVATAR_WS_PORT ?? 38987);
 const httpPort = Number(process.env.AIVATAR_HTTP_PORT ?? 38988);
@@ -15,6 +20,8 @@ const staleSessionsPath = "/agent-sessions/stale";
 const disconnectSessionPath = "/agent-sessions/disconnect";
 const presencePath = "/agent-presence";
 const avatarStatePath = "/avatar-state";
+const claudeHookPath = "/agent-hooks/claude-code";
+const claudeStatusLineHookPath = "/agent-hooks/claude-code/status-line";
 const healthPath = "/health";
 const avatarStateFile =
   process.env.AIVATAR_AVATAR_STATE_PATH ??
@@ -33,6 +40,14 @@ const disconnectedSessionTombstoneFile =
   process.env.AIVATAR_DISCONNECTED_SESSION_TOMBSTONE_PATH ??
   join(tmpdir(), "aivatar-disconnected-sessions.json");
 const maxSessions = Number(process.env.AIVATAR_MAX_SESSIONS ?? 80);
+const maxClaudeDigestEntries = 12;
+const learningScript =
+  process.env.AIVATAR_LEARNING_SCRIPT ??
+  join(scriptDir, "aivatar-learning-worker.mjs");
+const nodeCommand = process.env.AIVATAR_NODE_COMMAND ?? process.execPath;
+const learningEnabled = !/^(0|false|no|off)$/i.test(
+  process.env.AIVATAR_LEARNING_ENABLED ?? "1",
+);
 
 const allowedStatuses = new Set([
   "idle",
@@ -77,6 +92,8 @@ let activeSessionKey = null;
 
 const sessions = new Map();
 const disconnectedSessionKeys = new Map();
+const claudeDigests = new Map();
+const claudeLastLearningKeys = new Map();
 
 const sessionKey = (status) =>
   `${status.agent ?? "codex"}:${status.sessionId ?? "default"}`;
@@ -561,6 +578,350 @@ const normalizeStatus = (value) => {
   };
 };
 
+const firstObjectString = (value, keys) => {
+  if (!value || typeof value !== "object") return undefined;
+  for (const key of keys) {
+    const text = value[key];
+    if (typeof text === "string" && text.trim()) return text.trim();
+  }
+  return undefined;
+};
+
+const compactHookText = (value, limit = 120) => {
+  let text = String(value ?? "")
+    .replace(/\r|\n/g, " ")
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/[A-Za-z]:\\[^\s"'<>]+/g, "[path]")
+    .replace(/(?:[./]|\\\\)[^\s"'<>]*[\\/][^\s"'<>]+/g, "[path]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
+    .replace(/\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*\S+/gi, "[secret]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return Array.from(text).slice(0, limit).join("");
+};
+
+const sanitizedDigestText = (value, limit = 520) =>
+  compactHookText(value, limit)
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`]*`/g, " ")
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/[A-Za-z]:\\[^\s"'<>]+/g, "[path]")
+    .replace(/(?:[./]|\\\\)[^\s"'<>]*[\\/][^\s"'<>]+/g, "[path]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
+    .replace(/\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*\S+/gi, "[secret]")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const safeSessionName = (value) =>
+  String(value || "session").replace(/[^a-zA-Z0-9_.-]/g, "_") || "session";
+
+const claudeDigestEntry = (input) => {
+  const event = firstObjectString(input, ["hook_event_name"]) ?? "Unknown";
+  if (event === "UserPromptSubmit" && typeof input.prompt === "string") {
+    return `user: ${sanitizedDigestText(input.prompt, 520)}`;
+  }
+  if (event === "MessageDisplay" && typeof input.delta === "string") {
+    return `assistant: ${sanitizedDigestText(input.delta, 520)}`;
+  }
+  if (
+    event === "PreToolUse" ||
+    event === "PostToolUse" ||
+    event === "PostToolUseFailure"
+  ) {
+    const tool = firstObjectString(input, ["tool_name"]) ?? "tool";
+    const detail =
+      input.tool_input && typeof input.tool_input === "object"
+        ? firstObjectString(input.tool_input, ["description", "query", "prompt"])
+        : undefined;
+    return detail
+      ? `tool ${tool}: ${sanitizedDigestText(detail, 220)}`
+      : `tool ${tool}`;
+  }
+  if (
+    event === "PermissionRequest" ||
+    event === "PermissionDenied" ||
+    event === "Notification"
+  ) {
+    const detail = firstObjectString(input, [
+      "message",
+      "reason",
+      "notification_type",
+    ]);
+    return detail ? `${event}: ${sanitizedDigestText(detail, 220)}` : undefined;
+  }
+  if (event === "Stop" || event === "TaskCompleted") {
+    return "turn: Claude Code completed the turn";
+  }
+  if (event === "StopFailure") return "turn: Claude Code reported an error";
+  return undefined;
+};
+
+const addClaudeDigest = (sessionId, entry) => {
+  const text = sanitizedDigestText(entry, 760);
+  if (!text) return;
+  const digest = claudeDigests.get(sessionId) ?? [];
+  digest.push(text);
+  while (digest.length > maxClaudeDigestEntries) digest.shift();
+  claudeDigests.set(sessionId, digest);
+};
+
+const takeClaudeDigest = (sessionId) => {
+  const digest = claudeDigests.get(sessionId) ?? [];
+  claudeDigests.delete(sessionId);
+  return digest;
+};
+
+const markClaudeLearningKey = (sessionId, key) => {
+  if (claudeLastLearningKeys.get(sessionId) === key) return false;
+  claudeLastLearningKeys.set(sessionId, key);
+  return true;
+};
+
+const learningContextPath = async (sessionId, digest, summary) => {
+  const path = join(
+    tmpdir(),
+    "aivatar-learning-context",
+    `claude-native-${safeSessionName(sessionId)}-${Date.now()}.txt`,
+  );
+  await mkdir(dirname(path), { recursive: true });
+  const content = [
+    summary ? `summary: ${sanitizedDigestText(summary, 220)}` : "",
+    ...digest,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  await writeFile(path, `${content || "Claude Code turn completed."}\n`, "utf8");
+  return path;
+};
+
+const spawnClaudeLearningWorker = async (status, digest) => {
+  if (!existsSync(learningScript)) return false;
+  try {
+    const sessionId = status.sessionId ?? "claude-code-desktop";
+    const summary =
+      status.summary ?? status.message ?? "Claude Code turn complete";
+    const contextPath = await learningContextPath(sessionId, digest, summary);
+    const child = spawn(
+      nodeCommand,
+      [
+        learningScript,
+        "--provider",
+        "claude-code",
+        "--agent",
+        "claude-code",
+        "--session",
+        sessionId,
+        "--status",
+        status.status === "error" ? "error" : "complete",
+        "--summary",
+        summary,
+        "--context-file",
+        contextPath,
+        "--avatar-state-file",
+        avatarStateFile,
+      ],
+      {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+        env: {
+          ...process.env,
+          AIVATAR_AGENT: "claude-code",
+          AIVATAR_SESSION_ID: sessionId,
+          AIVATAR_LEARNING_PROVIDER: "claude-code",
+        },
+      },
+    );
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const sessionLearningStatus = (status, learning) => ({
+  agent: "claude-code",
+  sessionId: status.sessionId ?? "claude-code-desktop",
+  status: status.status === "error" ? "error" : "complete",
+  phase: "session-learning",
+  task: status.summary ?? status.message ?? "Claude Code turn complete",
+  summary: status.summary ?? status.message ?? "Claude Code turn complete",
+  progress: status.status === "complete" ? 100 : 50,
+  message: "Claude Code session learning updated",
+  severity: status.status === "error" ? "error" : "info",
+  timestamp: new Date().toISOString(),
+  learning,
+});
+
+const positiveNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+};
+
+const claudeUsageFromInput = (input, terminal) => {
+  const context = input?.context_window;
+  if (!context || typeof context !== "object") return undefined;
+
+  const current =
+    context.current_usage && typeof context.current_usage === "object"
+      ? context.current_usage
+      : {};
+  const inputTokens =
+    positiveNumber(current.input_tokens) +
+    positiveNumber(current.cache_creation_input_tokens) +
+    positiveNumber(current.cache_read_input_tokens);
+  const outputTokens = Math.max(
+    positiveNumber(current.output_tokens),
+    positiveNumber(context.total_output_tokens),
+  );
+  const totalTokens = inputTokens + outputTokens;
+  if (totalTokens <= 0) return undefined;
+
+  return {
+    inputTokens: Math.round(inputTokens),
+    cachedInputTokens: Math.round(positiveNumber(current.cache_read_input_tokens)),
+    outputTokens: Math.round(outputTokens),
+    totalTokens: Math.round(totalTokens),
+    contextTokens: Math.round(inputTokens),
+    modelContextWindow: Math.round(
+      positiveNumber(context.context_window_size) || 200000,
+    ),
+    source: "claude-code-js-statusline",
+    scope: terminal ? "turn" : "context-window",
+  };
+};
+
+const claudeStatusForEvent = (event, statusLine, hasUsage) => {
+  if (statusLine) {
+    return ["idle", "context-window"];
+  }
+  switch (event) {
+    case "SessionStart":
+      return ["idle", "session-start"];
+    case "UserPromptSubmit":
+      return ["thinking", "user-prompt"];
+    case "PreToolUse":
+    case "PostToolUse":
+    case "PostToolBatch":
+      return ["executing", "tool-use"];
+    case "MessageDisplay":
+      return ["thinking", "message-display"];
+    case "PermissionRequest":
+      return ["waiting_for_user", "permission"];
+    case "PermissionDenied":
+    case "StopFailure":
+    case "PostToolUseFailure":
+      return ["error", "error"];
+    case "Stop":
+    case "TaskCompleted":
+      return ["complete", "turn-complete"];
+    case "SessionEnd":
+      return ["idle", "session-end"];
+    case "Notification":
+      return ["waiting_for_user", "notification"];
+    default:
+      return ["thinking", "hook"];
+  }
+};
+
+const claudeIdleBubbles = (input) => {
+  const candidates = [];
+  for (const key of ["session_name", "message"]) {
+    const phrase = compactHookText(input?.[key], 28);
+    const length = Array.from(phrase).length;
+    if (length >= 2 && length <= 28 && !candidates.includes(phrase)) {
+      candidates.push(phrase);
+    }
+  }
+  return candidates.length > 0 ? candidates : undefined;
+};
+
+const claudeLearningForStatus = (status, input) => {
+  if (status.status !== "complete" && status.status !== "error") return undefined;
+  const summary = status.summary ?? "Claude Code turn complete";
+  const text = `${summary} ${firstObjectString(input, [
+    "tool_name",
+    "hook_event_name",
+  ]) ?? ""} ${firstObjectString(input, ["message", "session_name"]) ?? ""}`.toLowerCase();
+  const traitChanges = {};
+  if (/error|fail|fix|repair/u.test(text)) traitChanges.resilience = 1;
+  if (/test|build|check|verify/u.test(text)) traitChanges.focus = 1;
+  if (/ui|design|visual|bubble/u.test(text)) traitChanges.creativity = 1;
+  if (/complete|done|success|finish/u.test(text)) traitChanges.efficiency = 1;
+  if (/why|explore|idea|learn/u.test(text)) traitChanges.curiosity = 1;
+  return {
+    id: `js-claude-${status.sessionId ?? "session"}-${Date.now()}`,
+    source: "heuristic",
+    summary: compactHookText(summary, 160),
+    idleBubbleCandidates:
+      claudeIdleBubbles(input) ?? ["I learned a little", "Session thoughts saved"],
+    traitChanges,
+    xp: 2,
+    confidence: 0.35,
+    privacyRisk: "low",
+  };
+};
+
+const normalizeClaudeHookStatus = (input, statusLine) => {
+  if (!input || typeof input !== "object") {
+    throw new Error("Claude hook payload must be a JSON object");
+  }
+
+  const event =
+    firstObjectString(input, ["hook_event_name"]) ??
+    (statusLine ? "StatusLine" : "Unknown");
+  const usage = claudeUsageFromInput(
+    input,
+    event === "Stop" || event === "TaskCompleted",
+  );
+  const [status, phase] = claudeStatusForEvent(event, statusLine, Boolean(usage));
+  const sessionId =
+    firstObjectString(input, ["session_id", "sessionId"]) ?? "claude-code-desktop";
+  const message =
+    event === "UserPromptSubmit"
+      ? "Claude Code is thinking"
+      : event === "PreToolUse" ||
+          event === "PostToolUse" ||
+          event === "PostToolBatch"
+        ? firstObjectString(input, ["tool_name"])
+          ? `Claude Code used ${firstObjectString(input, ["tool_name"])}`
+          : "Claude Code is using a tool"
+        : event === "PermissionRequest"
+          ? "Claude Code needs approval"
+          : event === "Stop" || event === "TaskCompleted"
+            ? "Claude Code turn complete"
+            : event === "StopFailure" || event === "PostToolUseFailure"
+              ? "Claude Code turn failed"
+              : event === "SessionEnd"
+                ? "Claude Code session ended"
+                : `Claude Code ${event}`;
+  const payload = {
+    agent: "claude-code",
+    sessionId,
+    status,
+    phase,
+    task: message,
+    summary: message,
+    progress: status === "complete" ? 100 : status === "idle" ? 0 : 50,
+    message,
+    severity:
+      status === "error" ? "error" : status === "waiting_for_user" ? "warning" : "info",
+    timestamp: new Date().toISOString(),
+    usage,
+    idleBubbleCandidates: claudeIdleBubbles(input),
+  };
+  return normalizeStatus(payload);
+};
+
+const statusLineLabel = (status) => {
+  const total = Number(status?.usage?.totalTokens);
+  const window = Number(status?.usage?.modelContextWindow);
+  if (Number.isFinite(total) && total > 0 && Number.isFinite(window) && window > 0) {
+    return `Aivatar ${Math.round((total / window) * 100)}% ctx`;
+  }
+  return "Aivatar linked";
+};
+
 const readBody = (request) =>
   new Promise((resolve, reject) => {
     let body = "";
@@ -723,6 +1084,8 @@ const httpServer = http.createServer(async (request, response) => {
       disconnectSessionHttp: `http://127.0.0.1:${httpPort}${disconnectSessionPath}`,
       presenceHttp: `http://127.0.0.1:${httpPort}${presencePath}`,
       avatarStateHttp: `http://127.0.0.1:${httpPort}${avatarStatePath}`,
+      claudeHookHttp: `http://127.0.0.1:${httpPort}${claudeHookPath}`,
+      claudeStatusLineHookHttp: `http://127.0.0.1:${httpPort}${claudeStatusLineHookPath}`,
       clients: wsServer.clients.size,
       agentStatus: snapshot.currentStatus,
       codexStatus: snapshot.currentStatus,
@@ -865,6 +1228,108 @@ const httpServer = http.createServer(async (request, response) => {
   }
 
   if (
+    (request.url === claudeHookPath ||
+      request.url === claudeStatusLineHookPath) &&
+    request.method === "POST"
+  ) {
+    try {
+      const body = await readBody(request);
+      const input = JSON.parse(body);
+      const nextStatus = normalizeClaudeHookStatus(
+        input,
+        request.url === claudeStatusLineHookPath,
+      );
+      const key = sessionKey(nextStatus);
+      if (isSessionTombstoned(key)) {
+        sendJson(response, 202, {
+          ...makeSnapshot(),
+          ignored: true,
+          disconnectedSessionKey: key,
+        });
+        return;
+      }
+      const statusLine = request.url === claudeStatusLineHookPath;
+      const event =
+        firstObjectString(input, ["hook_event_name"]) ??
+        (statusLine ? "StatusLine" : "Unknown");
+      if (event === "UserPromptSubmit") {
+        claudeLastLearningKeys.delete(nextStatus.sessionId);
+      }
+      if (!statusLine) {
+        const entry = claudeDigestEntry(input);
+        if (entry) addClaudeDigest(nextStatus.sessionId, entry);
+      }
+      const terminal =
+        nextStatus.status === "complete" || nextStatus.status === "error";
+      const digest = terminal ? takeClaudeDigest(nextStatus.sessionId) : [];
+      const learningKey =
+        firstObjectString(input, ["turn_id", "message_id"]) ??
+        `${nextStatus.sessionId}:${event}`;
+      const fallbackLearning = terminal
+        ? claudeLearningForStatus(nextStatus, input)
+        : undefined;
+      const existing = sessions.get(key);
+      currentStatus =
+        nextStatus.phase === "context-window" && existing
+          ? {
+              ...existing,
+              presenceTimestamp:
+                nextStatus.presenceTimestamp ?? existing.presenceTimestamp,
+              usage: nextStatus.usage ?? existing.usage,
+              idleBubbleCandidates:
+                nextStatus.idleBubbleCandidates ?? existing.idleBubbleCandidates,
+              learning: nextStatus.learning ?? existing.learning,
+            }
+          : {
+              ...nextStatus,
+              presenceTimestamp:
+                nextStatus.presenceTimestamp ?? existing?.presenceTimestamp,
+              usage: nextStatus.usage ?? existing?.usage,
+              idleBubbleCandidates:
+                nextStatus.idleBubbleCandidates ?? existing?.idleBubbleCandidates,
+              learning: nextStatus.learning ?? existing?.learning,
+            };
+      currentStatus = withSessionExpiry(currentStatus);
+      sessions.set(key, currentStatus);
+      pruneSessionOverflow();
+      let snapshot = makeSnapshot();
+      if (
+        terminal &&
+        learningEnabled &&
+        markClaudeLearningKey(nextStatus.sessionId, learningKey) &&
+        !(await spawnClaudeLearningWorker(nextStatus, digest)) &&
+        fallbackLearning
+      ) {
+        const learningStatus = normalizeStatus(
+          sessionLearningStatus(nextStatus, fallbackLearning),
+        );
+        currentStatus = withSessionExpiry({
+          ...learningStatus,
+          presenceTimestamp:
+            learningStatus.presenceTimestamp ?? currentStatus.presenceTimestamp,
+          usage: learningStatus.usage ?? currentStatus.usage,
+        });
+        sessions.set(sessionKey(currentStatus), currentStatus);
+        pruneSessionOverflow();
+        snapshot = makeSnapshot();
+      }
+      broadcast(snapshot);
+      sendJson(response, 200, {
+        ...snapshot,
+        ...(request.url === claudeStatusLineHookPath
+          ? { label: statusLineLabel(currentStatus) }
+          : {}),
+      });
+    } catch (error) {
+      sendJson(response, 400, {
+        error:
+          error instanceof Error ? error.message : "Invalid Claude hook payload",
+      });
+    }
+    return;
+  }
+
+  if (
     (request.url === agentStatusPath || request.url === legacyStatusPath) &&
     request.method === "POST"
   ) {
@@ -919,6 +1384,10 @@ httpServer.listen(httpPort, "127.0.0.1", () => {
   console.log(`Aivatar disconnect session: http://127.0.0.1:${httpPort}${disconnectSessionPath}`);
   console.log(`Aivatar presence: http://127.0.0.1:${httpPort}${presencePath}`);
   console.log(`Aivatar avatar state: http://127.0.0.1:${httpPort}${avatarStatePath}`);
+  console.log(`Aivatar Claude hook: http://127.0.0.1:${httpPort}${claudeHookPath}`);
+  console.log(
+    `Aivatar Claude statusLine hook: http://127.0.0.1:${httpPort}${claudeStatusLineHookPath}`,
+  );
   console.log(`Aivatar health: http://127.0.0.1:${httpPort}${healthPath}`);
 });
 

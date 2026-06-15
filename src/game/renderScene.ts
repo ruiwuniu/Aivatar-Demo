@@ -1,3 +1,4 @@
+import { isTerminalBubbleAgent } from "../agentRegistry";
 import type {
   AivatarContent,
   AivatarMemory,
@@ -3500,7 +3501,7 @@ const drawComputerStatusBubble = (
   status: CodexStatusMessage,
   uiTheme: UiThemeId = "classic",
 ) => {
-  if (status.agent !== "codex" && status.agent !== "claude-code") return;
+  if (!isTerminalBubbleAgent(status)) return;
   if (status.status === "idle" || status.status === "thinking") return;
   if (!isStatusBubbleVisible(status)) return;
   const terminal = content.placedItems?.find(

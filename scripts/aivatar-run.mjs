@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { basename, join } from "node:path";
 import process from "node:process";
 
 const endpoint =
@@ -189,7 +191,37 @@ const quoteForCmd = (value) => {
   return `"${value.replace(/"/g, '""')}"`;
 };
 
+const opencodeFallbackCommand = () => {
+  if (process.env.AIVATAR_OPENCODE_COMMAND) return process.env.AIVATAR_OPENCODE_COMMAND;
+  const candidates =
+    process.platform === "win32"
+      ? [
+          process.env.LOCALAPPDATA
+            ? join(process.env.LOCALAPPDATA, "opencode", "opencode-cli.exe")
+            : "",
+        ]
+      : [
+          "/opt/homebrew/bin/opencode",
+          "/usr/local/bin/opencode",
+          join(process.env.HOME ?? "", ".local", "bin", "opencode"),
+        ];
+  return candidates.filter(Boolean).find((path) => existsSync(path));
+};
+
 const createSpawnSpec = () => {
+  const normalizedCommand = basename(command ?? "")
+    .toLowerCase()
+    .replace(/\.(cmd|exe|bat)$/i, "");
+  if (normalizedCommand === "opencode") {
+    const fallback = opencodeFallbackCommand();
+    if (fallback) {
+      return {
+        file: fallback,
+        args,
+      };
+    }
+  }
+
   const needsCmd = process.platform === "win32";
 
   if (!needsCmd) {
@@ -227,7 +259,9 @@ await startHeartbeat();
 try {
   const spawnSpec = createSpawnSpec();
   const interactiveAgent =
-    options.agent === "codex" || options.agent === "claude-code";
+    options.agent === "codex" ||
+    options.agent === "claude-code" ||
+    options.agent === "opencode";
   child = spawn(spawnSpec.file, spawnSpec.args, {
     cwd: process.cwd(),
     env: process.env,

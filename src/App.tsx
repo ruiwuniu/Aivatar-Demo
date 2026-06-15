@@ -33,6 +33,14 @@ import {
 } from "./game/simulation";
 import { useCodexStatus } from "./hooks/useCodexStatus";
 import {
+  agentDisplayName,
+  agentSourceBadge,
+  agentSourceClassName,
+  isRewardAgent,
+  launcherAgentDefinitions,
+  type LauncherAgentId,
+} from "./agentRegistry";
+import {
   LOCALE_KEY,
   activityLabel,
   behaviorLabel,
@@ -74,6 +82,19 @@ import type {
   TaskCabinetStatus,
   TokenUsage,
 } from "./types";
+
+type AgentIntegrationStatus = {
+  agent: LauncherAgentId;
+  label: string;
+  detected: boolean;
+  enabled: boolean;
+  cli_available: boolean;
+  needs_restart: boolean;
+  detail: string;
+  config_path?: string | null;
+  connector_path?: string | null;
+  cli_path?: string | null;
+};
 
 const SAVE_KEY = "aivatar.save.v1";
 const SAVE_SLOTS_KEY = "aivatar.saveSlots.v1";
@@ -319,7 +340,6 @@ type ShopCategoryId =
 
 type DecorSurfaceCategoryId = "wallpaper" | "flooring";
 
-type LauncherAgentId = "codex" | "claude-code";
 type UiThemeId = "classic" | "terminal" | "terminal-amber";
 type BgmTrack = (typeof BGM_TRACKS)[number];
 type BgmTrackId = BgmTrack["id"];
@@ -1275,15 +1295,6 @@ const traitChangesForPurchase = (
   item.kind === "food" || item.kind === "drink" || item.kind === "tool"
     ? { efficiency: 1 }
     : { curiosity: 1, creativity: 1 };
-
-const agentDisplayName = (status: Pick<CodexStatusMessage, "agent">) => {
-  if (status.agent === "codex") return "Codex";
-  if (status.agent === "claude-code") return "Claude Code";
-  return status.agent?.trim() || "agent";
-};
-
-const isRewardAgent = (status: Pick<CodexStatusMessage, "agent">) =>
-  status.agent === "codex" || status.agent === "claude-code";
 
 type BusyRecoveryNeed =
   | { behavior: "snack"; targetFurnitureId: string }
@@ -2729,6 +2740,7 @@ export const App = () => {
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
   const [growthPanelOpen, setGrowthPanelOpen] = useState(false);
   const [sessionsPanelOpen, setSessionsPanelOpen] = useState(false);
+  const [integrationsPanelOpen, setIntegrationsPanelOpen] = useState(false);
   const [taskCabinetPanelOpen, setTaskCabinetPanelOpen] = useState(false);
   const [launcherPanelOpen, setLauncherPanelOpen] = useState(false);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
@@ -2845,6 +2857,9 @@ export const App = () => {
   const [launcherArgs, setLauncherArgs] = useState("");
   const [launcherAllowNewSession, setLauncherAllowNewSession] = useState(false);
   const [launcherMessage, setLauncherMessage] = useState("");
+  const [agentIntegrations, setAgentIntegrations] = useState<AgentIntegrationStatus[]>([]);
+  const [agentIntegrationsChecked, setAgentIntegrationsChecked] = useState(false);
+  const [agentIntegrationMessage, setAgentIntegrationMessage] = useState("");
   const effectiveStatus = debugStatus ?? status;
   const effectiveSource = debugStatus ? "debug" : source;
   const statusRef = useRef({ status: effectiveStatus, source: effectiveSource, endpoint });
@@ -2989,6 +3004,18 @@ export const App = () => {
   const liveSessionCount = sessionRows.filter(
     (session) => !session.stale || session.sessionKey === connectedSessionKey,
   ).length;
+  const enabledIntegrationCount = agentIntegrations.filter(
+    (integration) => integration.enabled,
+  ).length;
+  const detectedIntegrationCount = agentIntegrations.filter(
+    (integration) => integration.detected,
+  ).length;
+  const integrationToggleStatus =
+    !agentIntegrationsChecked
+      ? ui("integrations.checking")
+      : agentIntegrations.length === 0
+        ? ui("integrations.desktopOnlyShort")
+        : `${enabledIntegrationCount}/${agentIntegrations.length} ${ui("integrations.enabledShort")}`;
   const currentSessionContextMeter =
     sessionRows.find((session) => session.sessionKey === currentSessionKey)
       ?.contextMeter ??
@@ -3113,6 +3140,51 @@ export const App = () => {
       setBridgeStartMessage(ui("message.bridgeDesktopOnly"));
     }
   };
+
+  const refreshAgentIntegrations = async () => {
+    setAgentIntegrationsChecked(false);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke<AgentIntegrationStatus[]>("get_agent_integrations");
+      setAgentIntegrations(result);
+      setAgentIntegrationMessage("");
+      return result;
+    } catch {
+      setAgentIntegrations([]);
+      setAgentIntegrationMessage(ui("message.integrationsDesktopOnly"));
+      return [];
+    } finally {
+      setAgentIntegrationsChecked(true);
+    }
+  };
+
+  const enableAgentIntegration = async (agent: LauncherAgentId) => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke<AgentIntegrationStatus>("enable_agent_integration", {
+        request: { agent },
+      });
+      setAgentIntegrations((current) => {
+        const rest = current.filter((item) => item.agent !== result.agent);
+        return [...rest, result].sort((left, right) =>
+          left.label.localeCompare(right.label),
+        );
+      });
+      setAgentIntegrationMessage(
+        result.enabled
+          ? ui("message.integrationEnabled", { agent: result.label })
+          : ui("message.integrationChecked", { agent: result.label }),
+      );
+      void refreshAgentIntegrations();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setAgentIntegrationMessage(detail || ui("message.integrationFailed"));
+    }
+  };
+
+  useEffect(() => {
+    void refreshAgentIntegrations();
+  }, []);
 
   const startAgentCliFromLauncher = async () => {
     const cwd = launcherDirectory.trim();
@@ -8213,15 +8285,11 @@ export const App = () => {
   );
   const idleBubbleCandidateBadge = (candidate: IdleBubbleCandidateOption) => {
     if (candidate.source === "llm") return "LLM";
-    if (candidate.agent === "claude-code") return "CC";
-    if (candidate.agent === "codex") return "Codex";
-    return null;
+    return agentSourceBadge(candidate.agent);
   };
   const idleBubbleCandidateBadgeClass = (candidate: IdleBubbleCandidateOption) => {
     if (candidate.source === "llm") return "llm";
-    if (candidate.agent === "claude-code") return "agent-claude-code";
-    if (candidate.agent === "codex") return "agent-codex";
-    return "";
+    return agentSourceClassName(candidate.agent);
   };
   const sessionCandidateOptions = idleBubbleCandidateOptions([
     ...(effectiveStatus.learning?.idleBubbleCandidates ?? []).map((phrase) => ({
@@ -10006,6 +10074,96 @@ export const App = () => {
           ) : null}
         </section>
 
+        <section className="integrations-card" aria-label={ui("integrations.title")}>
+          <button
+            type="button"
+            className={`integrations-toggle${integrationsPanelOpen ? " active" : ""}`}
+            onClick={() => setIntegrationsPanelOpen((current) => !current)}
+            aria-expanded={integrationsPanelOpen}
+          >
+            <span className="integrations-toggle-main">
+              <span>{ui("integrations.title")}</span>
+              <b>
+                {detectedIntegrationCount}/
+                {agentIntegrations.length || (agentIntegrationsChecked ? 0 : 2)}
+              </b>
+            </span>
+            <span className="integrations-toggle-status">
+              {integrationToggleStatus}
+            </span>
+            <span className="integrations-toggle-chevron" aria-hidden="true">
+              {integrationsPanelOpen ? "-" : "+"}
+            </span>
+          </button>
+
+          {integrationsPanelOpen ? (
+            <div className="integrations-submenu">
+              <div className="integrations-actions">
+                <button
+                  type="button"
+                  className="pixel-button"
+                  onClick={() => void refreshAgentIntegrations()}
+                >
+                  {ui("integrations.refresh")}
+                </button>
+              </div>
+              {agentIntegrations.length > 0 ? (
+                <div className="integrations-list">
+                  {agentIntegrations.map((integration) => (
+                    <article
+                      key={integration.agent}
+                      className={`integration-card${
+                        integration.enabled ? " enabled" : ""
+                      }${integration.detected ? " detected" : ""}`}
+                    >
+                      <div className="integration-heading">
+                        <strong>{integration.label}</strong>
+                        <span>
+                          {integration.enabled
+                            ? ui("integrations.enabled")
+                            : integration.detected
+                              ? ui("integrations.detected")
+                              : ui("integrations.notFound")}
+                        </span>
+                      </div>
+                      <p>{integration.detail}</p>
+                      <div className="integration-chips">
+                        <span>
+                          {integration.cli_available
+                            ? ui("integrations.cliReady")
+                            : ui("integrations.cliMissing")}
+                        </span>
+                        {integration.needs_restart ? (
+                          <span>{ui("integrations.restart")}</span>
+                        ) : null}
+                      </div>
+                      {integration.connector_path ? (
+                        <small title={integration.connector_path}>
+                          {integration.connector_path}
+                        </small>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="pixel-button integration-enable"
+                        onClick={() => enableAgentIntegration(integration.agent)}
+                      >
+                        {integration.enabled
+                          ? ui("integrations.repair")
+                          : ui("integrations.enable")}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="integrations-empty">{ui("integrations.empty")}</p>
+              )}
+              {agentIntegrationMessage ? (
+                <p className="integrations-message">{agentIntegrationMessage}</p>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+
         <section className="task-cabinet-card" aria-label={ui("taskCabinet.title")}>
           <button
             type="button"
@@ -10123,7 +10281,9 @@ export const App = () => {
                         <small className="task-cabinet-schedule-next">
                           {launcherAgent === "claude-code"
                             ? ui("profile.fastClaude")
-                            : ui("profile.fastCodex")}
+                            : launcherAgent === "codex"
+                              ? ui("profile.fastCodex")
+                              : ui("profile.fastOpencode")}
                         </small>
                       ) : null}
                       {entry.cwd || entry.sessionId || entry.error ? (
@@ -10285,7 +10445,7 @@ export const App = () => {
           >
             <span className="launcher-toggle-main">
               <span>{ui("launcher.title")}</span>
-              <b>{launcherAgent === "codex" ? "Codex" : "Claude"}</b>
+              <b>{agentDisplayName({ agent: launcherAgent })}</b>
             </span>
             <span className="launcher-toggle-status">
               {launcherDirectory.trim() || ui("launcher.directoryPlaceholder")}
@@ -10319,20 +10479,16 @@ export const App = () => {
                 </small>
               </label>
               <div className="launcher-agent-choice" aria-label={ui("launcher.agent")}>
-                <button
-                  type="button"
-                  className={launcherAgent === "codex" ? "active" : ""}
-                  onClick={() => setLauncherAgent("codex")}
-                >
-                  Codex
-                </button>
-                <button
-                  type="button"
-                  className={launcherAgent === "claude-code" ? "active" : ""}
-                  onClick={() => setLauncherAgent("claude-code")}
-                >
-                  Claude Code
-                </button>
+                {launcherAgentDefinitions().map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className={launcherAgent === agent.id ? "active" : ""}
+                    onClick={() => setLauncherAgent(agent.id)}
+                  >
+                    {agent.label}
+                  </button>
+                ))}
               </div>
               {launcherAgent === "codex" ? (
                 <label className="launcher-option">

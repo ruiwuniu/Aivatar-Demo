@@ -22,10 +22,13 @@ const STALE_SESSIONS_PATH: &str = "/agent-sessions/stale";
 const DISCONNECT_SESSION_PATH: &str = "/agent-sessions/disconnect";
 const PRESENCE_PATH: &str = "/agent-presence";
 const AVATAR_STATE_PATH: &str = "/avatar-state";
+const CLAUDE_HOOK_PATH: &str = "/agent-hooks/claude-code";
+const CLAUDE_STATUS_LINE_HOOK_PATH: &str = "/agent-hooks/claude-code/status-line";
 const HEALTH_PATH: &str = "/health";
 const SESSION_STALE_MS: u64 = 5 * 60 * 60 * 1000;
 const ACTIVITY_STALE_MS: u64 = 5 * 60 * 1000;
 const MAX_SESSIONS: usize = 80;
+const MAX_CLAUDE_DIGEST_ENTRIES: usize = 12;
 
 static BRIDGE_STATE: OnceLock<Arc<Mutex<BridgeState>>> = OnceLock::new();
 
@@ -35,10 +38,17 @@ struct BridgeState {
     active_session_key: Option<String>,
     clients: Vec<mpsc::Sender<String>>,
     tombstones: HashMap<String, u128>,
+    claude_digests: HashMap<String, Vec<String>>,
+    claude_last_learning_keys: HashMap<String, String>,
+    learning_script: Option<PathBuf>,
 }
 
-pub fn start() -> Result<(), String> {
-    if BRIDGE_STATE.get().is_some() {
+pub fn start(learning_script: Option<PathBuf>) -> Result<(), String> {
+    if let Some(state) = BRIDGE_STATE.get() {
+        if learning_script.is_some() {
+            let mut guard = state.lock().expect("bridge state poisoned");
+            guard.learning_script = learning_script;
+        }
         return Ok(());
     }
 
@@ -48,7 +58,10 @@ pub fn start() -> Result<(), String> {
         format!("Could not bind native bridge WebSocket port {WS_PORT}: {error}")
     })?;
 
-    let state = Arc::new(Mutex::new(BridgeState::default()));
+    let state = Arc::new(Mutex::new(BridgeState {
+        learning_script,
+        ..BridgeState::default()
+    }));
     let _ = BRIDGE_STATE.set(Arc::clone(&state));
 
     let http_state = Arc::clone(&state);
@@ -381,6 +394,456 @@ fn normalize_status(payload: Value) -> Result<Value, String> {
     Ok(Value::Object(object))
 }
 
+fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
+    let object = value.as_object()?;
+    keys.iter()
+        .filter_map(|key| object.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|text| !text.is_empty())
+        .map(String::from)
+}
+
+fn compact_hook_text(value: &str, limit: usize) -> String {
+    let mut text = value
+        .replace('\r', " ")
+        .replace('\n', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for marker in ["http://", "https://"] {
+        if let Some(index) = text.find(marker) {
+            text.truncate(index);
+            text.push_str("[url]");
+        }
+    }
+    text.chars().take(limit).collect()
+}
+
+fn sanitized_digest_text(value: &str, limit: usize) -> String {
+    let mut words = Vec::new();
+    let mut secret_next = false;
+    let normalized = value.replace('\r', " ").replace('\n', " ");
+    for raw in normalized.split_whitespace() {
+        let lower = raw.to_ascii_lowercase();
+        let word = if secret_next {
+            secret_next = false;
+            "[secret]"
+        } else if lower.contains("api_key")
+            || lower.contains("apikey")
+            || lower.contains("token")
+            || lower.contains("secret")
+            || lower.contains("password")
+        {
+            secret_next = raw.ends_with(':') || raw.ends_with('=');
+            "[secret]"
+        } else if lower.starts_with("http://") || lower.starts_with("https://") {
+            "[url]"
+        } else if raw.contains('@') && raw.contains('.') {
+            "[email]"
+        } else if raw.contains('\\')
+            || (raw.contains('/') && (raw.starts_with('/') || raw.starts_with('.') || raw.contains(":/")))
+        {
+            "[path]"
+        } else {
+            raw
+        };
+        words.push(word);
+    }
+    compact_hook_text(&words.join(" "), limit)
+}
+
+fn safe_session_name(value: &str) -> String {
+    let safe: String = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if safe.is_empty() {
+        "session".to_string()
+    } else {
+        safe
+    }
+}
+
+fn claude_digest_entry(input: &Value) -> Option<String> {
+    let event = input
+        .get("hook_event_name")
+        .and_then(Value::as_str)
+        .unwrap_or("Unknown");
+    let entry = match event {
+        "UserPromptSubmit" => input
+            .get("prompt")
+            .and_then(Value::as_str)
+            .map(|text| format!("user: {}", sanitized_digest_text(text, 520))),
+        "MessageDisplay" => input
+            .get("delta")
+            .and_then(Value::as_str)
+            .map(|text| format!("assistant: {}", sanitized_digest_text(text, 520))),
+        "PreToolUse" | "PostToolUse" | "PostToolUseFailure" => {
+            let tool = first_string(input, &["tool_name"]).unwrap_or_else(|| "tool".to_string());
+            let description = input
+                .get("tool_input")
+                .and_then(|tool_input| first_string(tool_input, &["description", "query", "prompt"]))
+                .map(|text| sanitized_digest_text(&text, 220))
+                .filter(|text| !text.is_empty());
+            Some(match description {
+                Some(text) => format!("tool {tool}: {text}"),
+                None => format!("tool {tool}"),
+            })
+        }
+        "PermissionRequest" | "PermissionDenied" | "Notification" => first_string(
+            input,
+            &["message", "reason", "notification_type"],
+        )
+        .map(|text| format!("{event}: {}", sanitized_digest_text(&text, 220))),
+        "Stop" | "TaskCompleted" => Some("turn: Claude Code completed the turn".to_string()),
+        "StopFailure" => Some("turn: Claude Code reported an error".to_string()),
+        _ => None,
+    }?;
+
+    (!entry.trim().is_empty()).then_some(entry)
+}
+
+fn add_claude_digest(session_id: &str, entry: String) {
+    let Some(state) = BRIDGE_STATE.get() else {
+        return;
+    };
+    let mut guard = state.lock().expect("bridge state poisoned");
+    let digest = guard
+        .claude_digests
+        .entry(session_id.to_string())
+        .or_default();
+    digest.push(entry);
+    while digest.len() > MAX_CLAUDE_DIGEST_ENTRIES {
+        digest.remove(0);
+    }
+}
+
+fn take_claude_digest(session_id: &str) -> Vec<String> {
+    let Some(state) = BRIDGE_STATE.get() else {
+        return Vec::new();
+    };
+    let mut guard = state.lock().expect("bridge state poisoned");
+    guard.claude_digests.remove(session_id).unwrap_or_default()
+}
+
+fn reset_claude_learning_key(session_id: &str) {
+    let Some(state) = BRIDGE_STATE.get() else {
+        return;
+    };
+    let mut guard = state.lock().expect("bridge state poisoned");
+    guard.claude_last_learning_keys.remove(session_id);
+}
+
+fn mark_claude_learning_key(session_id: &str, key: &str) -> bool {
+    let Some(state) = BRIDGE_STATE.get() else {
+        return true;
+    };
+    let mut guard = state.lock().expect("bridge state poisoned");
+    if guard
+        .claude_last_learning_keys
+        .get(session_id)
+        .is_some_and(|current| current == key)
+    {
+        return false;
+    }
+    guard
+        .claude_last_learning_keys
+        .insert(session_id.to_string(), key.to_string());
+    true
+}
+
+fn current_learning_script() -> Option<PathBuf> {
+    let state = BRIDGE_STATE.get()?;
+    let guard = state.lock().expect("bridge state poisoned");
+    guard.learning_script.clone()
+}
+
+fn learning_enabled() -> bool {
+    std::env::var("AIVATAR_LEARNING_ENABLED")
+        .map(|value| !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(true)
+}
+
+fn learning_context_file(session_id: &str, digest: &[String], summary: &str) -> Result<PathBuf, String> {
+    let directory = std::env::temp_dir().join("aivatar-learning-context");
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let path = directory.join(format!(
+        "claude-native-{}-{}.txt",
+        safe_session_name(session_id),
+        now_ms()
+    ));
+    let mut content = String::new();
+    if !summary.trim().is_empty() {
+        content.push_str("summary: ");
+        content.push_str(&sanitized_digest_text(summary, 220));
+        content.push('\n');
+    }
+    for entry in digest {
+        content.push_str(entry);
+        content.push('\n');
+    }
+    if content.trim().is_empty() {
+        content.push_str("Claude Code turn completed.\n");
+    }
+    std::fs::write(&path, content).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn node_command() -> PathBuf {
+    std::env::var_os("AIVATAR_NODE_COMMAND")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("node"))
+}
+
+fn spawn_claude_learning_worker(status: &Value, digest: &[String]) -> bool {
+    let Some(script) = current_learning_script().filter(|path| path.is_file()) else {
+        return false;
+    };
+    let session_id =
+        string_field(status, "sessionId").unwrap_or_else(|| "claude-code-desktop".to_string());
+    let summary = string_field(status, "summary")
+        .or_else(|| string_field(status, "message"))
+        .unwrap_or_else(|| "Claude Code turn complete".to_string());
+    let context_file = match learning_context_file(&session_id, digest, &summary) {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    let mut command = std::process::Command::new(node_command());
+    command
+        .arg(script)
+        .args([
+            "--provider",
+            "claude-code",
+            "--agent",
+            "claude-code",
+            "--session",
+            &session_id,
+            "--status",
+            status
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("complete"),
+            "--summary",
+            &summary,
+            "--context-file",
+        ])
+        .arg(context_file)
+        .arg("--avatar-state-file")
+        .arg(avatar_state_file())
+        .env("AIVATAR_AGENT", "claude-code")
+        .env("AIVATAR_SESSION_ID", &session_id)
+        .env("AIVATAR_LEARNING_PROVIDER", "claude-code")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+
+    command.spawn().is_ok()
+}
+
+fn session_learning_status(status: &Value, learning: Value) -> Value {
+    let summary = string_field(status, "summary")
+        .or_else(|| string_field(status, "message"))
+        .unwrap_or_else(|| "Claude Code turn complete".to_string());
+    json!({
+        "agent": "claude-code",
+        "sessionId": string_field(status, "sessionId").unwrap_or_else(|| "claude-code-desktop".to_string()),
+        "status": status.get("status").and_then(Value::as_str).unwrap_or("complete"),
+        "phase": "session-learning",
+        "task": summary,
+        "summary": summary,
+        "progress": if status.get("status").and_then(Value::as_str) == Some("complete") { 100 } else { 50 },
+        "message": "Claude Code session learning updated",
+        "severity": if status.get("status").and_then(Value::as_str) == Some("error") { "error" } else { "info" },
+        "timestamp": iso_now(),
+        "learning": learning
+    })
+}
+
+fn claude_usage_from_input(input: &Value, terminal: bool) -> Option<Value> {
+    let context = input.get("context_window")?.as_object()?;
+    let current = context
+        .get("current_usage")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let number = |key: &str| current.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+    let input_tokens =
+        number("input_tokens") + number("cache_creation_input_tokens") + number("cache_read_input_tokens");
+    let output_tokens = number("output_tokens")
+        .max(context.get("total_output_tokens").and_then(Value::as_f64).unwrap_or(0.0));
+    let total_tokens = input_tokens + output_tokens;
+    if total_tokens <= 0.0 {
+        return None;
+    }
+    Some(json!({
+        "inputTokens": input_tokens.round(),
+        "cachedInputTokens": number("cache_read_input_tokens").round(),
+        "outputTokens": output_tokens.round(),
+        "totalTokens": total_tokens.round(),
+        "contextTokens": input_tokens.round(),
+        "modelContextWindow": context
+            .get("context_window_size")
+            .and_then(Value::as_f64)
+            .unwrap_or(200000.0)
+            .round(),
+        "source": "claude-code-native-statusline",
+        "scope": if terminal { "turn" } else { "context-window" }
+    }))
+}
+
+fn claude_status_for_event(event: &str, status_line: bool, _has_usage: bool) -> (&'static str, &'static str) {
+    if status_line {
+        return ("idle", "context-window");
+    }
+    match event {
+        "SessionStart" => ("idle", "session-start"),
+        "UserPromptSubmit" => ("thinking", "user-prompt"),
+        "PreToolUse" | "PostToolUse" | "PostToolBatch" => ("executing", "tool-use"),
+        "MessageDisplay" => ("thinking", "message-display"),
+        "PermissionRequest" => ("waiting_for_user", "permission"),
+        "PermissionDenied" | "StopFailure" | "PostToolUseFailure" => ("error", "error"),
+        "Stop" | "TaskCompleted" => ("complete", "turn-complete"),
+        "SessionEnd" => ("idle", "session-end"),
+        "Notification" => ("waiting_for_user", "notification"),
+        _ => ("thinking", "hook"),
+    }
+}
+
+fn claude_idle_bubbles(input: &Value) -> Option<Value> {
+    let mut values = Vec::new();
+    for key in ["session_name", "message"] {
+        if let Some(text) = input.get(key).and_then(Value::as_str) {
+            let compact = compact_hook_text(text, 28);
+            let length = compact.chars().count();
+            if (2..=28).contains(&length) && !values.contains(&compact) {
+                values.push(compact);
+            }
+        }
+    }
+    if values.is_empty() {
+        None
+    } else {
+        Some(json!(values))
+    }
+}
+
+fn native_learning_for_status(status: &Value, input: &Value) -> Option<Value> {
+    let status_name = status.get("status").and_then(Value::as_str)?;
+    if status_name != "complete" && status_name != "error" {
+        return None;
+    }
+    let summary = status
+        .get("summary")
+        .and_then(Value::as_str)
+        .unwrap_or("Claude Code turn complete");
+    let text = format!(
+        "{} {} {}",
+        summary,
+        first_string(input, &["tool_name", "hook_event_name"]).unwrap_or_default(),
+        first_string(input, &["message", "session_name"]).unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    let mut traits = Map::new();
+    if text.contains("error") || text.contains("fail") || text.contains("fix") {
+        traits.insert("resilience".to_string(), json!(1));
+    }
+    if text.contains("test") || text.contains("build") || text.contains("check") {
+        traits.insert("focus".to_string(), json!(1));
+    }
+    if text.contains("ui") || text.contains("design") || text.contains("visual") {
+        traits.insert("creativity".to_string(), json!(1));
+    }
+    if text.contains("complete") || text.contains("done") || text.contains("success") {
+        traits.insert("efficiency".to_string(), json!(1));
+    }
+    Some(json!({
+        "id": format!(
+            "native-claude-{}-{}",
+            status.get("sessionId").and_then(Value::as_str).unwrap_or("session"),
+            now_ms()
+        ),
+        "source": "heuristic",
+        "summary": compact_hook_text(summary, 160),
+        "idleBubbleCandidates": claude_idle_bubbles(input)
+            .unwrap_or_else(|| json!(["I learned a little", "Session thoughts saved"])),
+        "traitChanges": traits,
+        "xp": 2,
+        "confidence": 0.35,
+        "privacyRisk": "low"
+    }))
+}
+
+fn normalize_claude_hook_status(input: Value, status_line: bool) -> Result<Value, String> {
+    let event = input
+        .get("hook_event_name")
+        .and_then(Value::as_str)
+        .unwrap_or(if status_line { "StatusLine" } else { "Unknown" });
+    let usage = claude_usage_from_input(&input, matches!(event, "Stop" | "TaskCompleted"));
+    let (status, phase) = claude_status_for_event(event, status_line, usage.is_some());
+    let session_id = first_string(&input, &["session_id", "sessionId"])
+        .unwrap_or_else(|| "claude-code-desktop".to_string());
+    let message = match event {
+        "UserPromptSubmit" => "Claude Code is thinking".to_string(),
+        "PreToolUse" | "PostToolUse" | "PostToolBatch" => input
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .map(|tool| format!("Claude Code used {tool}"))
+            .unwrap_or_else(|| "Claude Code is using a tool".to_string()),
+        "PermissionRequest" => "Claude Code needs approval".to_string(),
+        "Stop" | "TaskCompleted" => "Claude Code turn complete".to_string(),
+        "StopFailure" | "PostToolUseFailure" => "Claude Code turn failed".to_string(),
+        "SessionEnd" => "Claude Code session ended".to_string(),
+        _ => format!("Claude Code {event}"),
+    };
+    let mut payload = json!({
+        "agent": "claude-code",
+        "sessionId": session_id,
+        "status": status,
+        "phase": phase,
+        "task": message,
+        "summary": message,
+        "progress": if status == "complete" { 100 } else if status == "idle" { 0 } else { 50 },
+        "message": message,
+        "severity": if status == "error" { "error" } else if status == "waiting_for_user" { "warning" } else { "info" },
+        "timestamp": iso_now(),
+    });
+    if let Some(usage) = usage {
+        payload["usage"] = usage;
+    }
+    if let Some(candidates) = claude_idle_bubbles(&input) {
+        payload["idleBubbleCandidates"] = candidates;
+    }
+    normalize_status(payload)
+}
+
+fn status_line_label(status: &Value) -> String {
+    let usage = status.get("usage").and_then(Value::as_object);
+    let total = usage
+        .and_then(|value| value.get("totalTokens"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let window = usage
+        .and_then(|value| value.get("modelContextWindow"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    if total > 0.0 && window > 0.0 {
+        return format!("Aivatar {}% ctx", ((total / window) * 100.0).round());
+    }
+    "Aivatar linked".to_string()
+}
+
 fn normalize_presence(payload: Value) -> Result<Value, String> {
     let Value::Object(source) = payload else {
         return Err("Presence payload must be a JSON object".to_string());
@@ -425,9 +888,21 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
         }
         return Ok(response);
     }
-    if let Some(existing) = guard.sessions.get(&key) {
-        if let Some(object) = status.as_object_mut() {
-            for field in ["presenceTimestamp", "usage"] {
+    if let Some(existing) = guard.sessions.get(&key).cloned() {
+        let context_window_only =
+            string_field(&status, "phase").as_deref() == Some("context-window");
+        if context_window_only {
+            let mut merged = existing;
+            if let Some(object) = merged.as_object_mut() {
+                for field in ["presenceTimestamp", "usage", "idleBubbleCandidates", "learning"] {
+                    if let Some(value) = status.get(field) {
+                        object.insert(field.to_string(), value.clone());
+                    }
+                }
+            }
+            status = merged;
+        } else if let Some(object) = status.as_object_mut() {
+            for field in ["presenceTimestamp", "usage", "idleBubbleCandidates", "learning"] {
                 if !object.contains_key(field) {
                     if let Some(value) = existing.get(field) {
                         object.insert(field.to_string(), value.clone());
@@ -839,6 +1314,67 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
             }
             Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
         },
+        ("POST", CLAUDE_HOOK_PATH) | ("POST", CLAUDE_STATUS_LINE_HOOK_PATH) => {
+            let status_line = request.path == CLAUDE_STATUS_LINE_HOOK_PATH;
+            match parse_body(&request.body) {
+                Ok(input) => match normalize_claude_hook_status(input.clone(), status_line) {
+                    Ok(status) => {
+                        let session_id = string_field(&status, "sessionId")
+                            .unwrap_or_else(|| "claude-code-desktop".to_string());
+                        let event = input
+                            .get("hook_event_name")
+                            .and_then(Value::as_str)
+                            .unwrap_or(if status_line { "StatusLine" } else { "Unknown" });
+                        if event == "UserPromptSubmit" {
+                            reset_claude_learning_key(&session_id);
+                        }
+                        if !status_line {
+                            if let Some(entry) = claude_digest_entry(&input) {
+                                add_claude_digest(&session_id, entry);
+                            }
+                        }
+                        let terminal = matches!(
+                            status.get("status").and_then(Value::as_str),
+                            Some("complete" | "error")
+                        );
+                        let learning_key = first_string(&input, &["turn_id", "message_id"])
+                            .unwrap_or_else(|| format!("{session_id}:{event}"));
+                        let digest = if terminal {
+                            take_claude_digest(&session_id)
+                        } else {
+                            Vec::new()
+                        };
+                        let fallback_learning = if terminal {
+                            native_learning_for_status(&status, &input)
+                        } else {
+                            None
+                        };
+                        match submit_status(status.clone()) {
+                            Ok(mut response) => {
+                                if terminal
+                                    && learning_enabled()
+                                    && mark_claude_learning_key(&session_id, &learning_key)
+                                    && !spawn_claude_learning_worker(&status, &digest)
+                                {
+                                    if let Some(learning) = fallback_learning {
+                                        let _ = submit_status(session_learning_status(&status, learning));
+                                    }
+                                }
+                                if status_line {
+                                    if let Some(object) = response.as_object_mut() {
+                                        object.insert("label".to_string(), json!(status_line_label(&status)));
+                                    }
+                                }
+                                send_json(&mut stream, 200, response);
+                            }
+                            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+                        }
+                    }
+                    Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+                },
+                Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+            }
+        }
         ("POST", AGENT_STATUS_PATH) | ("POST", LEGACY_STATUS_PATH) => {
             match parse_body(&request.body).and_then(normalize_status) {
                 Ok(mut status) => {
@@ -855,7 +1391,7 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                     }
                     if let Some(existing) = guard.sessions.get(&key) {
                         if let Some(object) = status.as_object_mut() {
-                            for field in ["presenceTimestamp", "usage"] {
+                            for field in ["presenceTimestamp", "usage", "idleBubbleCandidates", "learning"] {
                                 if !object.contains_key(field) {
                                     if let Some(value) = existing.get(field) {
                                         object.insert(field.to_string(), value.clone());
