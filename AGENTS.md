@@ -1576,6 +1576,7 @@ To reduce semantic regressions from parallel worktrees:
 
 - Keep changes to central lifecycle files small and isolated. In this project, `scripts/codex-status-bridge.mjs`, `scripts/codex-session-discovery.mjs`, `scripts/aivatar-connected-run.mjs`, `src/App.tsx`, and `AGENTS.md` are high-conflict files.
 - Before starting or finishing work in a worktree, update from `main` with `git fetch` plus either `git merge main` or `git rebase main`, depending on the branch workflow.
+- For this worktree, default GitHub pushes should go to `https://github.com/ruiwuniu/Aivatar-Demo.git` `main` (remote `origin`). When the current branch is not `main`, push the intended reviewed commit with an explicit refspec such as `git push origin HEAD:main` rather than pushing the current branch by default.
 - When a merge conflict touches bridge/discovery/session files, resolve text conflicts and then do a semantic checklist:
   - New or changed endpoints appear in `/health`.
   - Session keys are normalized consistently.
