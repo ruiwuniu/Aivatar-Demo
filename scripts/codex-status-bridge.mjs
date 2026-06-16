@@ -980,6 +980,26 @@ const claudeLearningForStatus = (status, input) => {
   };
 };
 
+const isTerminalSessionStatus = (status) =>
+  status?.status === "complete" || status?.status === "error";
+
+const preserveClaudeSessionEndStatus = (event, nextStatus, existing) => {
+  if (event !== "SessionEnd" || !existing || !isTerminalSessionStatus(existing)) {
+    return nextStatus;
+  }
+
+  return {
+    ...existing,
+    timestamp: nextStatus.timestamp ?? existing.timestamp,
+    expiresAt: nextStatus.expiresAt ?? existing.expiresAt,
+    presenceTimestamp: nextStatus.presenceTimestamp ?? existing.presenceTimestamp,
+    usage: nextStatus.usage ?? existing.usage,
+    idleBubbleCandidates:
+      nextStatus.idleBubbleCandidates ?? existing.idleBubbleCandidates,
+    learning: nextStatus.learning ?? existing.learning,
+  };
+};
+
 const normalizeClaudeHookStatus = (input, statusLine) => {
   if (!input || typeof input !== "object") {
     throw new Error("Claude hook payload must be a JSON object");
@@ -1378,35 +1398,42 @@ const httpServer = http.createServer(async (request, response) => {
         const entry = claudeDigestEntry(input);
         if (entry) addClaudeDigest(nextStatus.sessionId, entry);
       }
+      const existing = sessions.get(key);
+      const effectiveStatus = preserveClaudeSessionEndStatus(
+        event,
+        nextStatus,
+        existing,
+      );
       const terminal =
-        nextStatus.status === "complete" || nextStatus.status === "error";
-      const digest = terminal ? takeClaudeDigest(nextStatus.sessionId) : [];
+        event !== "SessionEnd" &&
+        (effectiveStatus.status === "complete" ||
+          effectiveStatus.status === "error");
+      const digest = terminal ? takeClaudeDigest(effectiveStatus.sessionId) : [];
       const learningKey =
         firstObjectString(input, ["turn_id", "message_id"]) ??
-        `${nextStatus.sessionId}:${event}`;
+        `${effectiveStatus.sessionId}:${event}`;
       const fallbackLearning = terminal
-        ? claudeLearningForStatus(nextStatus, input)
+        ? claudeLearningForStatus(effectiveStatus, input)
         : undefined;
-      const existing = sessions.get(key);
       currentStatus =
-        nextStatus.phase === "context-window" && existing
+        effectiveStatus.phase === "context-window" && existing
           ? {
               ...existing,
               presenceTimestamp:
-                nextStatus.presenceTimestamp ?? existing.presenceTimestamp,
-              usage: nextStatus.usage ?? existing.usage,
+                effectiveStatus.presenceTimestamp ?? existing.presenceTimestamp,
+              usage: effectiveStatus.usage ?? existing.usage,
               idleBubbleCandidates:
-                nextStatus.idleBubbleCandidates ?? existing.idleBubbleCandidates,
-              learning: nextStatus.learning ?? existing.learning,
+                effectiveStatus.idleBubbleCandidates ?? existing.idleBubbleCandidates,
+              learning: effectiveStatus.learning ?? existing.learning,
             }
           : {
-              ...nextStatus,
+              ...effectiveStatus,
               presenceTimestamp:
-                nextStatus.presenceTimestamp ?? existing?.presenceTimestamp,
-              usage: nextStatus.usage ?? existing?.usage,
+                effectiveStatus.presenceTimestamp ?? existing?.presenceTimestamp,
+              usage: effectiveStatus.usage ?? existing?.usage,
               idleBubbleCandidates:
-                nextStatus.idleBubbleCandidates ?? existing?.idleBubbleCandidates,
-              learning: nextStatus.learning ?? existing?.learning,
+                effectiveStatus.idleBubbleCandidates ?? existing?.idleBubbleCandidates,
+              learning: effectiveStatus.learning ?? existing?.learning,
             };
       currentStatus = withSessionExpiry(currentStatus);
       sessions.set(key, currentStatus);
@@ -1415,12 +1442,12 @@ const httpServer = http.createServer(async (request, response) => {
       if (
         terminal &&
         learningEnabled &&
-        markClaudeLearningKey(nextStatus.sessionId, learningKey) &&
-        !(await spawnClaudeLearningWorker(nextStatus, digest)) &&
+        markClaudeLearningKey(effectiveStatus.sessionId, learningKey) &&
+        !(await spawnClaudeLearningWorker(effectiveStatus, digest)) &&
         fallbackLearning
       ) {
         const learningStatus = normalizeStatus(
-          sessionLearningStatus(nextStatus, fallbackLearning),
+          sessionLearningStatus(effectiveStatus, fallbackLearning),
         );
         currentStatus = withSessionExpiry({
           ...learningStatus,

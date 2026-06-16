@@ -646,9 +646,11 @@ const spawnLearningWorker = async (sessionId, input, payload) => {
 try {
   const statusLineMode = process.argv.includes("--status-line");
   const rawInput = await readStdin();
-  const input = rawInput.trim() ? JSON.parse(rawInput) : {};
+  const inputText = rawInput.replace(/^\uFEFF/u, "").trim();
+  const input = inputText ? JSON.parse(inputText) : {};
   const hookEvent = hookEventName(input, statusLineMode);
   const isSessionEnd = !statusLineMode && hookEvent === "SessionEnd";
+  const managedSessionId = firstString(process.env.AIVATAR_SESSION_ID);
   const sessionId = sessionIdForInput(input);
   const previousState = await readSessionState(sessionId);
   const usage =
@@ -712,19 +714,21 @@ try {
   await appendEventLog(sessionId, input, payload, statusLineMode ? "statusLine" : "hook");
 
   await postJson(endpoint, payload);
-  if (isSessionEnd) {
+  if (isSessionEnd && managedSessionId) {
     await postJson(disconnectEndpoint, {
       agent: payload.agent,
       sessionId,
     });
   } else {
-    await postJson(presenceEndpoint, {
-      agent: payload.agent,
-      sessionId,
-      timestamp,
-    });
+    if (!isSessionEnd) {
+      await postJson(presenceEndpoint, {
+        agent: payload.agent,
+        sessionId,
+        timestamp,
+      });
+    }
 
-    if (status.status === "idle") {
+    if (status.status === "idle" || isSessionEnd) {
       await postJson(activeEndpoint, {
         clear: true,
         agent: payload.agent,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const realFetch = globalThis.fetch;
 
@@ -136,6 +136,9 @@ const bridge = spawn(process.execPath, ["scripts/codex-status-bridge.mjs"], {
 
 try {
   await waitForBridge(httpPort);
+  const hookSmokeSuffix = `${Date.now().toString(36)}-${process.pid}`;
+  const desktopHookSessionId = `claude_desktop_hook_smoke_${hookSmokeSuffix}`;
+  const managedHookSessionId = `claude_managed_hook_smoke_${hookSmokeSuffix}`;
   const postHook = async (payload, path = "/agent-hooks/claude-code") => {
     const response = await fetch(`http://127.0.0.1:${httpPort}${path}`, {
       method: "POST",
@@ -144,6 +147,41 @@ try {
     });
     assert.equal(response.ok, true);
     return response.json();
+  };
+  const runNodeHook = (payload, extraEnv = {}) => {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/claude-code-aivatar-hook.mjs"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          AIVATAR_HTTP_ENDPOINT: `http://127.0.0.1:${httpPort}/agent-status`,
+          AIVATAR_ACTIVE_ENDPOINT: `http://127.0.0.1:${httpPort}/agent-active`,
+          AIVATAR_PRESENCE_ENDPOINT: `http://127.0.0.1:${httpPort}/agent-presence`,
+          AIVATAR_DISCONNECT_ENDPOINT: `http://127.0.0.1:${httpPort}/agent-sessions/disconnect`,
+          AIVATAR_LEARNING_ENABLED: "0",
+          ...extraEnv,
+        },
+        input: JSON.stringify(payload),
+        encoding: "utf8",
+        windowsHide: true,
+      },
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  };
+  const readSnapshot = async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${httpPort}/agent-status`);
+        assert.equal(response.ok, true);
+        return await response.json();
+      } catch (error) {
+        if (attempt >= 2) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+    throw new Error("Could not read bridge snapshot");
   };
 
   await postHook({
@@ -167,9 +205,7 @@ try {
     "/agent-hooks/claude-code/status-line",
   );
   assert.match(statusLineResponse.label, /^Aivatar \d+% ctx$/);
-  let snapshot = await fetch(`http://127.0.0.1:${httpPort}/agent-status`).then(
-    (response) => response.json(),
-  );
+  let snapshot = await readSnapshot();
   let claudeSession = snapshot.sessions.find(
     (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
   );
@@ -189,9 +225,7 @@ try {
     session_id: "claude_native_smoke",
     turn_id: "turn-smoke-1",
   });
-  snapshot = await fetch(`http://127.0.0.1:${httpPort}/agent-status`).then(
-    (response) => response.json(),
-  );
+  snapshot = await readSnapshot();
   claudeSession = snapshot.sessions.find(
     (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
   );
@@ -206,13 +240,25 @@ try {
     session_id: "claude_native_smoke",
     turn_id: "turn-smoke-1",
   });
-  snapshot = await fetch(`http://127.0.0.1:${httpPort}/agent-status`).then(
-    (response) => response.json(),
-  );
+  snapshot = await readSnapshot();
   claudeSession = snapshot.sessions.find(
     (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
   );
   assert.ok(claudeSession);
+  assert.equal(claudeSession.learning.id, firstLearningId);
+
+  await postHook({
+    hook_event_name: "SessionEnd",
+    session_id: "claude_native_smoke",
+    turn_id: "turn-smoke-1",
+    reason: "closed",
+  });
+  snapshot = await readSnapshot();
+  claudeSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
+  );
+  assert.ok(claudeSession);
+  assert.equal(claudeSession.status, "complete");
   assert.equal(claudeSession.learning.id, firstLearningId);
 
   await postHook({
@@ -221,9 +267,7 @@ try {
     mode: "chat",
     message: "Chat mode should be visible to Aivatar.",
   });
-  snapshot = await fetch(`http://127.0.0.1:${httpPort}/agent-status`).then(
-    (response) => response.json(),
-  );
+  snapshot = await readSnapshot();
   const chatSession = snapshot.sessions.find(
     (session) => session.agent === "claude-code" && session.sessionId === "claude_chat_smoke",
   );
@@ -237,17 +281,82 @@ try {
     mode: "cowork",
     message: "Cowork turn finished.",
   });
-  snapshot = await fetch(`http://127.0.0.1:${httpPort}/agent-status`).then(
-    (response) => response.json(),
-  );
+  snapshot = await readSnapshot();
   const coworkSession = snapshot.sessions.find(
     (session) => session.agent === "claude-code" && session.sessionId === "claude_cowork_smoke",
   );
   assert.ok(coworkSession);
   assert.equal(coworkSession.status, "complete");
   assert.match(coworkSession.summary, /Claude Cowork/);
+
+  runNodeHook({
+    hook_event_name: "UserPromptSubmit",
+    session_id: desktopHookSessionId,
+    mode: "chat",
+    prompt: "Track this desktop Chat session.",
+  });
+  runNodeHook({
+    hook_event_name: "Stop",
+    session_id: desktopHookSessionId,
+    mode: "chat",
+    last_assistant_message: "Desktop Chat turn complete.",
+  });
+  runNodeHook({
+    hook_event_name: "SessionEnd",
+    session_id: desktopHookSessionId,
+    mode: "chat",
+    reason: "closed",
+  });
+  snapshot = await readSnapshot();
+  const desktopHookSession = snapshot.sessions.find(
+    (session) =>
+      session.agent === "claude-code" &&
+      session.sessionId === desktopHookSessionId,
+  );
+  assert.ok(desktopHookSession);
+  assert.equal(desktopHookSession.status, "complete");
+
+  runNodeHook(
+    {
+      hook_event_name: "UserPromptSubmit",
+      prompt: "Managed launcher session.",
+    },
+    { AIVATAR_SESSION_ID: managedHookSessionId },
+  );
+  runNodeHook(
+    {
+      hook_event_name: "Stop",
+      last_assistant_message: "Managed launcher turn complete.",
+    },
+    { AIVATAR_SESSION_ID: managedHookSessionId },
+  );
+  runNodeHook(
+    {
+      hook_event_name: "SessionEnd",
+      reason: "closed",
+    },
+    { AIVATAR_SESSION_ID: managedHookSessionId },
+  );
+  snapshot = await readSnapshot();
+  assert.equal(
+    snapshot.sessions.some(
+      (session) =>
+        session.agent === "claude-code" &&
+        session.sessionId === managedHookSessionId,
+    ),
+    false,
+  );
 } finally {
-  bridge.kill();
+  if (bridge.exitCode === null && bridge.signalCode === null) {
+    bridge.kill();
+    await new Promise((resolve) => {
+      const timeout = setTimeout(resolve, 1000);
+      bridge.once("exit", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+  }
 }
 
 console.log("Aivatar desktop agent adapter smoke test passed.");

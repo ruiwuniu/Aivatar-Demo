@@ -169,6 +169,17 @@ fn status_name(status: &Value) -> Option<&str> {
     status.get("status").and_then(Value::as_str)
 }
 
+fn is_terminal_session_status(status: &Value) -> bool {
+    matches!(status_name(status), Some("complete" | "error"))
+}
+
+fn should_preserve_claude_session_end(status: &Value, existing: &Value) -> bool {
+    string_field(status, "agent").as_deref() == Some("claude-code")
+        && string_field(status, "phase").as_deref() == Some("session-end")
+        && string_field(status, "status").as_deref() == Some("idle")
+        && is_terminal_session_status(existing)
+}
+
 fn sorted_sessions(state: &BridgeState) -> Vec<Value> {
     let mut sessions: Vec<_> = state
         .sessions
@@ -1068,9 +1079,21 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
         return Ok(response);
     }
     if let Some(existing) = guard.sessions.get(&key).cloned() {
+        let preserve_claude_session_end =
+            should_preserve_claude_session_end(&status, &existing);
         let context_window_only =
             string_field(&status, "phase").as_deref() == Some("context-window");
-        if context_window_only {
+        if preserve_claude_session_end {
+            let mut merged = existing;
+            if let Some(object) = merged.as_object_mut() {
+                for field in ["timestamp", "presenceTimestamp", "usage", "idleBubbleCandidates", "learning"] {
+                    if let Some(value) = status.get(field) {
+                        object.insert(field.to_string(), value.clone());
+                    }
+                }
+            }
+            status = merged;
+        } else if context_window_only {
             let mut merged = existing;
             if let Some(object) = merged.as_object_mut() {
                 for field in ["presenceTimestamp", "usage", "idleBubbleCandidates", "learning"] {
