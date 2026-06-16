@@ -272,6 +272,45 @@ fn json_contains_aivatar(value: &serde_json::Value) -> bool {
     value.to_string().to_ascii_lowercase().contains("aivatar")
 }
 
+const CLAUDE_REQUIRED_ORDINARY_EVENTS: &[&str] = &[
+    "SessionStart",
+    "UserPromptSubmit",
+    "MessageDisplay",
+    "Notification",
+    "PostToolBatch",
+    "Stop",
+    "SubagentStop",
+    "TeammateIdle",
+    "StopFailure",
+    "TaskCompleted",
+    "SessionEnd",
+];
+
+const CLAUDE_REQUIRED_TOOL_EVENTS: &[&str] = &[
+    "PreToolUse",
+    "PermissionRequest",
+    "PermissionDenied",
+    "PostToolUse",
+    "PostToolUseFailure",
+];
+
+fn claude_hook_event_has_aivatar(settings: &serde_json::Value, event: &str) -> bool {
+    settings
+        .get("hooks")
+        .and_then(|hooks| hooks.get(event))
+        .is_some_and(json_contains_aivatar)
+}
+
+fn claude_hooks_complete(settings: &serde_json::Value) -> bool {
+    CLAUDE_REQUIRED_ORDINARY_EVENTS
+        .iter()
+        .chain(CLAUDE_REQUIRED_TOOL_EVENTS.iter())
+        .all(|event| claude_hook_event_has_aivatar(settings, event))
+        && settings
+            .get("statusLine")
+            .is_some_and(json_contains_aivatar)
+}
+
 fn read_json_file(path: &std::path::Path) -> serde_json::Value {
     std::fs::read_to_string(path)
         .ok()
@@ -531,7 +570,8 @@ fn claude_code_integration_status() -> AgentIntegrationStatus {
         .map(read_json_file)
         .unwrap_or_else(|| serde_json::json!({}));
     let cli_path = resolve_command("claude");
-    let enabled = json_contains_aivatar(&settings);
+    let has_aivatar_config = json_contains_aivatar(&settings);
+    let enabled = claude_hooks_complete(&settings);
     let detected = cli_path.is_some()
         || settings_path
             .as_ref()
@@ -543,9 +583,11 @@ fn claude_code_integration_status() -> AgentIntegrationStatus {
         detected,
         enabled,
         cli_available: cli_path.is_some(),
-        needs_restart: false,
+        needs_restart: has_aivatar_config && !enabled,
         detail: if enabled {
             "Hooks/statusLine installed for Claude Code, Chat, and Cowork sessions.".to_string()
+        } else if has_aivatar_config {
+            "Aivatar Claude hooks are incomplete; repair to restore Chat and Cowork tracking.".to_string()
         } else if detected {
             "Claude Code detected; enable Aivatar hooks from this app.".to_string()
         } else {

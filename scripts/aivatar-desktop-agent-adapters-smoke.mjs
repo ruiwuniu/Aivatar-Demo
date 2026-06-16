@@ -139,6 +139,10 @@ try {
   const hookSmokeSuffix = `${Date.now().toString(36)}-${process.pid}`;
   const desktopHookSessionId = `claude_desktop_hook_smoke_${hookSmokeSuffix}`;
   const managedHookSessionId = `claude_managed_hook_smoke_${hookSmokeSuffix}`;
+  const desktopHookLifecycleSessionId =
+    `claude_desktop_hook_lifecycle_smoke_${hookSmokeSuffix}`;
+  const nativeLifecycleSessionId = `claude_native_lifecycle_smoke_${hookSmokeSuffix}`;
+  const coworkHookSessionId = `claude_cowork_hook_smoke_${hookSmokeSuffix}`;
   const postHook = async (payload, path = "/agent-hooks/claude-code") => {
     const response = await fetch(`http://127.0.0.1:${httpPort}${path}`, {
       method: "POST",
@@ -185,6 +189,25 @@ try {
   };
 
   await postHook({
+    hook_event_name: "SessionStart",
+    session_id: nativeLifecycleSessionId,
+  });
+  await postHook({
+    hook_event_name: "SessionEnd",
+    session_id: nativeLifecycleSessionId,
+    reason: "other",
+  });
+  let snapshot = await readSnapshot();
+  assert.equal(
+    snapshot.sessions.some(
+      (session) =>
+        session.agent === "claude-code" &&
+        session.sessionId === nativeLifecycleSessionId,
+    ),
+    false,
+  );
+
+  await postHook({
     hook_event_name: "UserPromptSubmit",
     session_id: "claude_native_smoke",
     turn_id: "turn-smoke-1",
@@ -205,7 +228,7 @@ try {
     "/agent-hooks/claude-code/status-line",
   );
   assert.match(statusLineResponse.label, /^Aivatar \d+% ctx$/);
-  let snapshot = await readSnapshot();
+  snapshot = await readSnapshot();
   let claudeSession = snapshot.sessions.find(
     (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
   );
@@ -315,6 +338,41 @@ try {
   );
   assert.ok(desktopHookSession);
   assert.equal(desktopHookSession.status, "complete");
+
+  runNodeHook({
+    hook_event_name: "SessionStart",
+    session_id: desktopHookLifecycleSessionId,
+  });
+  runNodeHook({
+    hook_event_name: "SessionEnd",
+    session_id: desktopHookLifecycleSessionId,
+    reason: "other",
+  });
+  snapshot = await readSnapshot();
+  assert.equal(
+    snapshot.sessions.some(
+      (session) =>
+        session.agent === "claude-code" &&
+        session.sessionId === desktopHookLifecycleSessionId,
+    ),
+    false,
+  );
+
+  runNodeHook({
+    hook_event_name: "TeammateIdle",
+    session_id: coworkHookSessionId,
+    mode: "cowork",
+    last_assistant_message: "Cowork helper finished.",
+  });
+  snapshot = await readSnapshot();
+  const coworkHookSession = snapshot.sessions.find(
+    (session) =>
+      session.agent === "claude-code" &&
+      session.sessionId === coworkHookSessionId,
+  );
+  assert.ok(coworkHookSession);
+  assert.equal(coworkHookSession.status, "complete");
+  assert.match(coworkHookSession.summary, /Cowork helper finished/);
 
   runNodeHook(
     {

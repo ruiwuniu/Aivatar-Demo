@@ -180,6 +180,17 @@ fn should_preserve_claude_session_end(status: &Value, existing: &Value) -> bool 
         && is_terminal_session_status(existing)
 }
 
+fn is_claude_lifecycle_only_idle_status(status: &Value) -> bool {
+    string_field(status, "agent").as_deref() == Some("claude-code")
+        && string_field(status, "status").as_deref() == Some("idle")
+        && matches!(
+            string_field(status, "phase").as_deref(),
+            Some("session-start" | "session-end" | "other")
+        )
+        && status.get("usage").is_none()
+        && status.get("learning").is_none()
+}
+
 fn sorted_sessions(state: &BridgeState) -> Vec<Value> {
     let mut sessions: Vec<_> = state
         .sessions
@@ -1078,7 +1089,17 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
         }
         return Ok(response);
     }
-    if let Some(existing) = guard.sessions.get(&key).cloned() {
+    let existing = guard.sessions.get(&key).cloned();
+    if existing.is_none() && is_claude_lifecycle_only_idle_status(&status) {
+        let mut response = snapshot(&guard);
+        if let Some(object) = response.as_object_mut() {
+            object.insert("ignored".to_string(), json!(true));
+            object.insert("ignoredLifecycleOnly".to_string(), json!(true));
+            object.insert("ignoredSessionKey".to_string(), json!(key));
+        }
+        return Ok(response);
+    }
+    if let Some(existing) = existing {
         let preserve_claude_session_end =
             should_preserve_claude_session_end(&status, &existing);
         let context_window_only =

@@ -452,6 +452,9 @@ const preserveTerminalStatusAfterTurnEnd = (input, status, previousState) => {
 
 const isTerminalStatusName = (status) => status === "complete" || status === "error";
 
+const isLifecycleOnlyEvent = (event) =>
+  event === "SessionStart" || event === "SessionEnd";
+
 const shouldStatusLineComplete = (previousState, usage) => {
   if (!usage?.outputTokens || usage.outputTokens <= 0) return false;
   if (previousState.status === "complete" || previousState.status === "error") return false;
@@ -653,6 +656,10 @@ try {
   const managedSessionId = firstString(process.env.AIVATAR_SESSION_ID);
   const sessionId = sessionIdForInput(input);
   const previousState = await readSessionState(sessionId);
+  const eventShowsRealActivity =
+    !statusLineMode && !isLifecycleOnlyEvent(hookEvent);
+  const realActivitySeen =
+    Boolean(previousState.realActivitySeen) || eventShowsRealActivity;
   const usage =
     usageFromClaudeInput(input, "context-window") ??
     (await usageFromClaudeTranscript(input, "context-window")) ??
@@ -706,6 +713,7 @@ try {
     phase: payload.phase,
     message: payload.message,
     timestamp: payload.timestamp,
+    realActivitySeen,
     latestUsage: payload.usage ?? previousState.latestUsage,
     lastLearningKey: isTerminalStatus
       ? previousState.lastLearningKey
@@ -713,32 +721,37 @@ try {
   });
   await appendEventLog(sessionId, input, payload, statusLineMode ? "statusLine" : "hook");
 
-  await postJson(endpoint, payload);
-  if (isSessionEnd && managedSessionId) {
-    await postJson(disconnectEndpoint, {
-      agent: payload.agent,
-      sessionId,
-    });
-  } else {
-    if (!isSessionEnd) {
-      await postJson(presenceEndpoint, {
-        agent: payload.agent,
-        sessionId,
-        timestamp,
-      });
-    }
+  const shouldIgnoreLifecycleOnly =
+    !managedSessionId && !realActivitySeen && isLifecycleOnlyEvent(hookEvent);
 
-    if (status.status === "idle" || isSessionEnd) {
-      await postJson(activeEndpoint, {
-        clear: true,
+  if (!shouldIgnoreLifecycleOnly) {
+    await postJson(endpoint, payload);
+    if (isSessionEnd && managedSessionId) {
+      await postJson(disconnectEndpoint, {
         agent: payload.agent,
         sessionId,
       });
     } else {
-      await postJson(activeEndpoint, {
-        agent: payload.agent,
-        sessionId,
-      });
+      if (!isSessionEnd) {
+        await postJson(presenceEndpoint, {
+          agent: payload.agent,
+          sessionId,
+          timestamp,
+        });
+      }
+
+      if (status.status === "idle" || isSessionEnd) {
+        await postJson(activeEndpoint, {
+          clear: true,
+          agent: payload.agent,
+          sessionId,
+        });
+      } else {
+        await postJson(activeEndpoint, {
+          agent: payload.agent,
+          sessionId,
+        });
+      }
     }
   }
 
@@ -750,6 +763,7 @@ try {
 
   if (
     learningEnabled &&
+    !shouldIgnoreLifecycleOnly &&
     isTerminalStatus &&
     !preservedTerminalStatus &&
     learningTriggerKey !== previousState.lastLearningKey
@@ -759,6 +773,7 @@ try {
       phase: payload.phase,
       message: payload.message,
       timestamp: payload.timestamp,
+      realActivitySeen,
       latestUsage: payload.usage ?? previousState.latestUsage,
       lastLearningKey: learningTriggerKey,
     });

@@ -2587,6 +2587,19 @@ const isTaskCabinetExitIdle = (session: CodexStatusMessage | undefined) => {
   );
 };
 
+const isClaudeLifecycleOnlyIdleSession = (session: CodexStatusMessage) => {
+  if (session.agent !== "claude-code" || session.status !== "idle") return false;
+  if (session.usage || session.learning) return false;
+  const phase = session.phase ?? "";
+  const message = session.message ?? session.summary ?? session.task ?? "";
+  return (
+    phase === "session-start" ||
+    phase === "session-end" ||
+    phase === "other" ||
+    /Claude Code session (connected|ended)/i.test(message)
+  );
+};
+
 const isTaskCabinetLiveWorkStatus = (status: CodexStatusMessage) =>
   status.status === "thinking" ||
   status.status === "executing" ||
@@ -2995,7 +3008,10 @@ export const App = () => {
       : effectiveSource === "debug"
         ? ui("source.debug")
         : ui("source.simulated");
-  const sessionRows = sessions.slice(0, 6).map((session) => ({
+  const visibleSessions = sessions.filter(
+    (session) => !isClaudeLifecycleOnlyIdleSession(session),
+  );
+  const sessionRows = visibleSessions.slice(0, 6).map((session) => ({
     ...session,
     sessionKey: explicitStatusSessionKey(session),
     stale: isPresenceStale(session, nowMs),
@@ -3027,7 +3043,7 @@ export const App = () => {
     sessionRows.find((session) => session.sessionKey === activeSessionKey)
       ?.contextMeter ??
     contextWindowMeterForUsage(effectiveStatus.usage);
-  const clearableStaleSessionCount = sessions.filter((session) => {
+  const clearableStaleSessionCount = visibleSessions.filter((session) => {
     const sessionKey = explicitStatusSessionKey(session);
     return sessionKey !== activeSessionKey && isPresenceStale(session, nowMs);
   }).length;
@@ -10171,7 +10187,9 @@ export const App = () => {
                       >
                         {integration.enabled
                           ? ui("integrations.repair")
-                          : ui("integrations.enable")}
+                          : integration.needs_restart
+                            ? ui("integrations.repair")
+                            : ui("integrations.enable")}
                       </button>
                     </article>
                   ))}

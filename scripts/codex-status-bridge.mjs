@@ -983,6 +983,13 @@ const claudeLearningForStatus = (status, input) => {
 const isTerminalSessionStatus = (status) =>
   status?.status === "complete" || status?.status === "error";
 
+const isClaudeLifecycleOnlyIdleStatus = (status) =>
+  status?.agent === "claude-code" &&
+  status?.status === "idle" &&
+  ["session-start", "session-end", "other"].includes(status?.phase) &&
+  !status?.usage &&
+  !status?.learning;
+
 const preserveClaudeSessionEndStatus = (event, nextStatus, existing) => {
   if (event !== "SessionEnd" || !existing || !isTerminalSessionStatus(existing)) {
     return nextStatus;
@@ -1399,6 +1406,15 @@ const httpServer = http.createServer(async (request, response) => {
         if (entry) addClaudeDigest(nextStatus.sessionId, entry);
       }
       const existing = sessions.get(key);
+      if (!existing && isClaudeLifecycleOnlyIdleStatus(nextStatus)) {
+        sendJson(response, 202, {
+          ...makeSnapshot(),
+          ignored: true,
+          ignoredLifecycleOnly: true,
+          ignoredSessionKey: key,
+        });
+        return;
+      }
       const effectiveStatus = preserveClaudeSessionEndStatus(
         event,
         nextStatus,
@@ -1492,6 +1508,15 @@ const httpServer = http.createServer(async (request, response) => {
         return;
       }
       const existing = sessions.get(key);
+      if (!existing && isClaudeLifecycleOnlyIdleStatus(nextStatus)) {
+        sendJson(response, 202, {
+          ...makeSnapshot(),
+          ignored: true,
+          ignoredLifecycleOnly: true,
+          ignoredSessionKey: key,
+        });
+        return;
+      }
       currentStatus = {
         ...nextStatus,
         presenceTimestamp: nextStatus.presenceTimestamp ?? existing?.presenceTimestamp,
