@@ -161,7 +161,11 @@ const COFFEE_AUTONOMOUS_COOLDOWN_SECONDS = 90;
 const WORK_BOOST_SECONDS = 120;
 const WORK_BOOST_COMPLETE_BONUS = 3;
 const TOKEN_REWARD_TOKEN_STEP = 1000;
-const TOKEN_REWARD_MAX_BITS = 40;
+const TOKEN_REWARD_DEFAULT_MAX_BITS = 40;
+const TOKEN_REWARD_HIGH_USAGE_TOKEN_THRESHOLD = 100_000;
+const TOKEN_REWARD_EXTREME_USAGE_TOKEN_THRESHOLD = 1_000_000;
+const TOKEN_REWARD_HIGH_USAGE_MAX_BITS = 100;
+const TOKEN_REWARD_EXTREME_USAGE_MAX_BITS = 1000;
 const TOKEN_REWARD_CACHED_INPUT_WEIGHT = 0.1;
 const INTERACTION_ARRIVAL_DISTANCE = 8;
 const AVATAR_FOOTPRINT_HALF_WIDTH = 6;
@@ -547,12 +551,23 @@ const weightedTokensForUsage = (usage?: TokenUsage) => {
   );
 };
 
+const maxRewardBitsForUsage = (usage?: TokenUsage) => {
+  const totalTokens = usage?.totalTokens ?? 0;
+  if (totalTokens > TOKEN_REWARD_EXTREME_USAGE_TOKEN_THRESHOLD) {
+    return TOKEN_REWARD_EXTREME_USAGE_MAX_BITS;
+  }
+  if (totalTokens > TOKEN_REWARD_HIGH_USAGE_TOKEN_THRESHOLD) {
+    return TOKEN_REWARD_HIGH_USAGE_MAX_BITS;
+  }
+  return TOKEN_REWARD_DEFAULT_MAX_BITS;
+};
+
 const rewardBitsForUsage = (usage?: TokenUsage) => {
   if (!usage?.totalTokens || usage.totalTokens <= 0) return 4;
   const weightedTokens = weightedTokensForUsage(usage);
 
   return Math.min(
-    TOKEN_REWARD_MAX_BITS,
+    maxRewardBitsForUsage(usage),
     4 + Math.floor(weightedTokens / TOKEN_REWARD_TOKEN_STEP),
   );
 };
@@ -568,7 +583,7 @@ const rewardSummaryForUsage = (usage?: TokenUsage) => {
   if (usage.scope === "context-window") return null;
   const weightedTokens = weightedTokensForUsage(usage);
   const bits = rewardBitsForUsage(usage);
-  const capped = bits >= TOKEN_REWARD_MAX_BITS ? " cap" : "";
+  const capped = bits >= maxRewardBitsForUsage(usage) ? " cap" : "";
   return `${formatTokenCount(usage.totalTokens)} tokens -> ${bits} bits${capped} (${formatTokenCount(weightedTokens)} weighted)`;
 };
 
