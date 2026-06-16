@@ -29,6 +29,7 @@ const MAX_CLAUDE_DESKTOP_SESSIONS_PER_SCAN: usize = 30;
 const CLAUDE_DESKTOP_INVENTORY_REPOST: Duration = Duration::from_secs(60);
 const MAX_CLAUDE_LEVELDB_BYTES: u64 = 25 * 1024 * 1024;
 const CLAUDE_LOG_INITIAL_TAIL_BYTES: u64 = 256 * 1024;
+const DEFAULT_CLAUDE_CHAT_SETTLE_MS: u64 = 5_000;
 const MAX_LINE_CHARS: usize = 32 * 1024;
 const SUMMARY_CHARS: usize = 90;
 const DIGEST_ENTRY_LIMIT: usize = 8;
@@ -65,7 +66,15 @@ struct ClaudeDesktopActivityState {
     log_offsets: HashMap<PathBuf, u64>,
     latest_log_events: HashMap<String, String>,
     session_index: HashMap<String, ClaudeDesktopSession>,
-    chat_activity_signatures: HashMap<String, String>,
+    chat_activity_cache: HashMap<String, ClaudeChatActivityCache>,
+}
+
+struct ClaudeChatActivityCache {
+    signature: String,
+    last_changed_at: Instant,
+    posted_thinking_signature: Option<String>,
+    posted_responding_signature: Option<String>,
+    posted_complete_signature: Option<String>,
 }
 
 struct WatchedSession {
@@ -643,6 +652,16 @@ fn activity_window() -> Duration {
     Duration::from_millis(u64::try_from(millis).unwrap_or(u64::MAX))
 }
 
+fn claude_chat_settle_window() -> Duration {
+    let millis = std::env::var("AIVATAR_CLAUDE_DESKTOP_CHAT_SETTLE_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CLAUDE_CHAT_SETTLE_MS)
+        .max(u64::try_from(DISCOVERY_INTERVAL.as_millis()).unwrap_or(1_000));
+    Duration::from_millis(millis)
+}
+
 fn timestamp_in_activity_window(timestamp_ms: u128) -> bool {
     if timestamp_ms == 0 {
         return false;
@@ -864,6 +883,9 @@ fn post_claude_desktop_chat_activity(activity: &mut ClaudeDesktopActivityState) 
         .filter(|session| session.surface == "chat" && timestamp_in_activity_window(session.timestamp_ms))
         .cloned()
         .collect::<Vec<_>>();
+    let now = Instant::now();
+    let now_ms = unix_now_ms();
+    let settle_window = claude_chat_settle_window();
     for session in sessions {
         let signature = format!(
             "{}:{}:{}:{}:{}",
@@ -873,16 +895,6 @@ fn post_claude_desktop_chat_activity(activity: &mut ClaudeDesktopActivityState) 
             session.last_message_text.as_deref().unwrap_or_default(),
             session.message_count
         );
-        if activity
-            .chat_activity_signatures
-            .get(&session.session_id)
-            .is_some_and(|cached| cached == &signature)
-        {
-            continue;
-        }
-        activity
-            .chat_activity_signatures
-            .insert(session.session_id.clone(), signature);
         let role = session
             .last_message_role
             .as_deref()
@@ -894,23 +906,64 @@ fn post_claude_desktop_chat_activity(activity: &mut ClaudeDesktopActivityState) 
             .as_deref()
             .filter(|text| !text.trim().is_empty())
             .unwrap_or(&session.title);
-        let message = if user_like {
-            format!("Claude Chat is thinking: {text}")
+        let cache = activity
+            .chat_activity_cache
+            .entry(session.session_id.clone())
+            .and_modify(|cached| {
+                if cached.signature != signature {
+                    cached.signature = signature.clone();
+                    cached.last_changed_at = now;
+                    cached.posted_thinking_signature = None;
+                    cached.posted_responding_signature = None;
+                    cached.posted_complete_signature = None;
+                }
+            })
+            .or_insert_with(|| ClaudeChatActivityCache {
+                signature: signature.clone(),
+                last_changed_at: now,
+                posted_thinking_signature: None,
+                posted_responding_signature: None,
+                posted_complete_signature: None,
+            });
+        let status = if user_like {
+            if cache.posted_thinking_signature.as_deref() == Some(signature.as_str()) {
+                None
+            } else {
+                cache.posted_thinking_signature = Some(signature.clone());
+                Some(claude_desktop_activity_status(
+                    &session,
+                    "thinking",
+                    "desktop-chat-user-message",
+                    &format!("Claude Chat is thinking: {text}"),
+                    now_ms,
+                ))
+            }
+        } else if cache.posted_responding_signature.as_deref() != Some(signature.as_str()) {
+            cache.posted_responding_signature = Some(signature.clone());
+            Some(claude_desktop_activity_status(
+                &session,
+                "executing",
+                "desktop-chat-responding",
+                &format!("Claude Chat is responding: {text}"),
+                now_ms,
+            ))
+        } else if now.duration_since(cache.last_changed_at) >= settle_window
+            && cache.posted_complete_signature.as_deref() != Some(signature.as_str())
+        {
+            cache.posted_complete_signature = Some(signature.clone());
+            Some(claude_desktop_activity_status(
+                &session,
+                "complete",
+                "desktop-chat-complete",
+                text,
+                now_ms,
+            ))
         } else {
-            text.to_string()
+            None
         };
-        let phase = if user_like {
-            "desktop-chat-user-message"
-        } else {
-            "desktop-chat-complete"
-        };
-        submit_status(claude_desktop_activity_status(
-            &session,
-            if user_like { "thinking" } else { "complete" },
-            phase,
-            &message,
-            session.timestamp_ms,
-        ));
+        if let Some(status) = status {
+            submit_status(status);
+        }
     }
 }
 

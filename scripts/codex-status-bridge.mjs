@@ -1005,6 +1005,60 @@ const isClaudeDesktopInventoryStatus = (status) =>
     "desktop-code-session",
   ].includes(status?.phase);
 
+const isClaudeDesktopAliasedStatus = (status) =>
+  status?.agent === "claude-code" &&
+  typeof status?.desktopSessionId === "string" &&
+  status.desktopSessionId.trim().length > 0;
+
+const statusMergeRank = (status) => {
+  if (!status) return 0;
+  if (highPriorityStatuses.has(status.status)) return 4;
+  if (isTerminalSessionStatus(status)) return 3;
+  if (status.status && status.status !== "idle") return 2;
+  return 1;
+};
+
+const claudeDesktopAliasKey = (status, preferredKey) => {
+  if (!isClaudeDesktopAliasedStatus(status)) return undefined;
+  const desktopSessionId = status.desktopSessionId.trim().toLowerCase();
+  let bestKey;
+  let bestRank = -1;
+  for (const [candidateKey, candidate] of sessions) {
+    if (candidateKey === preferredKey) continue;
+    if (candidate?.agent !== "claude-code") continue;
+    if (
+      String(candidate.desktopSessionId ?? "").trim().toLowerCase() !==
+      desktopSessionId
+    ) {
+      continue;
+    }
+    const rank = statusMergeRank(candidate);
+    if (rank > bestRank) {
+      bestKey = candidateKey;
+      bestRank = rank;
+    }
+  }
+  return bestKey;
+};
+
+const bestExistingStatus = (exact, alias) => {
+  if (!alias) return exact;
+  if (!exact) return alias;
+  if (exact.status === "idle" && alias.status !== "idle") return alias;
+  return exact;
+};
+
+const canonicalizeClaudeDesktopAliasStatus = (status, incoming) => {
+  if (!isClaudeDesktopAliasedStatus(incoming)) return status;
+  return {
+    ...status,
+    agent: incoming.agent ?? status.agent,
+    sessionId: incoming.sessionId ?? status.sessionId,
+    desktopSessionId: incoming.desktopSessionId ?? status.desktopSessionId,
+    surface: incoming.surface ?? status.surface,
+  };
+};
+
 const mergeClaudeDesktopInventoryStatus = (nextStatus, existing) => {
   if (!existing || existing.status === "idle") return nextStatus;
 
@@ -1013,7 +1067,6 @@ const mergeClaudeDesktopInventoryStatus = (nextStatus, existing) => {
     presenceTimestamp:
       nextStatus.presenceTimestamp ?? existing.presenceTimestamp,
     expiresAt: nextStatus.expiresAt ?? existing.expiresAt,
-    source: nextStatus.source ?? existing.source,
     surface: nextStatus.surface ?? existing.surface,
     desktopSessionId: nextStatus.desktopSessionId ?? existing.desktopSessionId,
   };
@@ -1536,7 +1589,11 @@ const httpServer = http.createServer(async (request, response) => {
         });
         return;
       }
-      const existing = sessions.get(key);
+      const aliasKey = claudeDesktopAliasKey(nextStatus, key);
+      const existing = bestExistingStatus(
+        sessions.get(key),
+        aliasKey ? sessions.get(aliasKey) : undefined,
+      );
       if (!existing && isClaudeLifecycleOnlyIdleStatus(nextStatus)) {
         sendJson(response, 202, {
           ...makeSnapshot(),
@@ -1557,6 +1614,14 @@ const httpServer = http.createServer(async (request, response) => {
               nextStatus.idleBubbleCandidates ?? existing?.idleBubbleCandidates,
             learning: nextStatus.learning ?? existing?.learning,
           };
+      if (aliasKey && aliasKey !== key) {
+        currentStatus = canonicalizeClaudeDesktopAliasStatus(
+          currentStatus,
+          nextStatus,
+        );
+        sessions.delete(aliasKey);
+        if (activeSessionKey === aliasKey) activeSessionKey = key;
+      }
       currentStatus = withSessionExpiry(currentStatus);
       sessions.set(key, currentStatus);
       pruneSessionOverflow();

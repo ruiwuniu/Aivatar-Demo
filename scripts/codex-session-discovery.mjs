@@ -61,6 +61,10 @@ const claudeDesktopActivityWindowMs = Math.max(
       Math.min(activeWindowMs, 30 * 60 * 1000),
   ),
 );
+const claudeDesktopChatSettleMs = Math.max(
+  discoveryIntervalMs,
+  Number(process.env.AIVATAR_CLAUDE_DESKTOP_CHAT_SETTLE_MS ?? 5_000),
+);
 const claudeLogInitialTailBytes = Math.max(
   16 * 1024,
   Number(process.env.AIVATAR_CLAUDE_DESKTOP_LOG_TAIL_BYTES ?? 256 * 1024),
@@ -684,22 +688,9 @@ const claudeDesktopActivityStatus = (session, status, phase, message, timestampM
   };
 };
 
-const claudeDesktopChatActivityStatus = (session) => {
-  const role = String(session.lastMessageRole ?? "").toLowerCase();
-  const userLike = role.includes("human") || role.includes("user");
-  const text = compactText(session.lastMessageText, 120);
-  const message = text || session.title;
-  return claudeDesktopActivityStatus(
-    session,
-    userLike ? "thinking" : "complete",
-    userLike ? "desktop-chat-user-message" : "desktop-chat-complete",
-    userLike ? `Claude Chat is thinking: ${message}` : message,
-    session.timestampMs,
-  );
-};
-
 const postClaudeDesktopChatActivity = async (sessions) => {
   let posted = 0;
+  const now = Date.now();
   for (const session of sessions.filter((entry) => entry.surface === "chat")) {
     if (!isInActivityWindowMs(session.timestampMs)) continue;
     const signature = [
@@ -709,10 +700,56 @@ const postClaudeDesktopChatActivity = async (sessions) => {
       session.lastMessageText ?? "",
       session.messageCount ?? 0,
     ].join("|");
-    const cached = claudeChatActivityCache.get(session.sessionId);
-    if (cached === signature) continue;
-    claudeChatActivityCache.set(session.sessionId, signature);
-    await postJson(statusEndpoint, claudeDesktopChatActivityStatus(session));
+    let cached = claudeChatActivityCache.get(session.sessionId);
+    if (!cached || cached.signature !== signature) {
+      cached = {
+        signature,
+        lastChangedAt: now,
+        postedThinkingSignature: undefined,
+        postedRespondingSignature: undefined,
+        postedCompleteSignature: undefined,
+      };
+      claudeChatActivityCache.set(session.sessionId, cached);
+    }
+    const role = String(session.lastMessageRole ?? "").toLowerCase();
+    const userLike = role.includes("human") || role.includes("user");
+    const text = compactText(session.lastMessageText, 120);
+    const message = text || session.title;
+    let status;
+    if (userLike) {
+      if (cached.postedThinkingSignature === signature) continue;
+      cached.postedThinkingSignature = signature;
+      status = claudeDesktopActivityStatus(
+        session,
+        "thinking",
+        "desktop-chat-user-message",
+        `Claude Chat is thinking: ${message}`,
+        now,
+      );
+    } else if (cached.postedRespondingSignature !== signature) {
+      cached.postedRespondingSignature = signature;
+      status = claudeDesktopActivityStatus(
+        session,
+        "executing",
+        "desktop-chat-responding",
+        `Claude Chat is responding: ${message}`,
+        now,
+      );
+    } else if (
+      now - cached.lastChangedAt >= claudeDesktopChatSettleMs &&
+      cached.postedCompleteSignature !== signature
+    ) {
+      cached.postedCompleteSignature = signature;
+      status = claudeDesktopActivityStatus(
+        session,
+        "complete",
+        "desktop-chat-complete",
+        message,
+        now,
+      );
+    }
+    if (!status) continue;
+    await postJson(statusEndpoint, status);
     posted += 1;
   }
   return posted;

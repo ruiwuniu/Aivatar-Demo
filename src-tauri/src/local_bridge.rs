@@ -206,6 +206,71 @@ fn is_claude_desktop_inventory_status(status: &Value) -> bool {
         )
 }
 
+fn is_claude_desktop_aliased_status(status: &Value) -> bool {
+    string_field(status, "agent").as_deref() == Some("claude-code")
+        && string_field(status, "desktopSessionId")
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn status_merge_rank(status: &Value) -> u8 {
+    match status_name(status) {
+        Some("thinking" | "executing" | "waiting_for_user" | "error") => 4,
+        Some("complete") => 3,
+        Some("idle") => 1,
+        Some(_) => 2,
+        None => 0,
+    }
+}
+
+fn claude_desktop_alias_key(
+    state: &BridgeState,
+    status: &Value,
+    preferred_key: &str,
+) -> Option<String> {
+    if !is_claude_desktop_aliased_status(status) {
+        return None;
+    }
+    let desktop_session_id = string_field(status, "desktopSessionId")?.to_ascii_lowercase();
+    state
+        .sessions
+        .iter()
+        .filter(|(key, existing)| {
+            key.as_str() != preferred_key
+                && string_field(existing, "agent").as_deref() == Some("claude-code")
+                && string_field(existing, "desktopSessionId")
+                    .map(|value| value.to_ascii_lowercase())
+                    .as_deref()
+                    == Some(desktop_session_id.as_str())
+        })
+        .max_by_key(|(_, existing)| status_merge_rank(existing))
+        .map(|(key, _)| key.clone())
+}
+
+fn best_existing_status(exact: Option<Value>, alias: Option<Value>) -> Option<Value> {
+    match (exact, alias) {
+        (Some(exact), Some(alias))
+            if status_name(&exact) == Some("idle") && status_name(&alias) != Some("idle") =>
+        {
+            Some(alias)
+        }
+        (Some(exact), _) => Some(exact),
+        (None, alias) => alias,
+    }
+}
+
+fn canonicalize_claude_desktop_alias_status(status: &mut Value, incoming: &Value) {
+    if !is_claude_desktop_aliased_status(incoming) {
+        return;
+    }
+    if let Some(object) = status.as_object_mut() {
+        for field in ["agent", "sessionId", "desktopSessionId", "surface"] {
+            if let Some(value) = incoming.get(field) {
+                object.insert(field.to_string(), value.clone());
+            }
+        }
+    }
+}
+
 fn merge_claude_desktop_inventory_status(status: Value, existing: &Value) -> Value {
     if string_field(existing, "status").as_deref() == Some("idle") {
         return status;
@@ -216,7 +281,6 @@ fn merge_claude_desktop_inventory_status(status: Value, existing: &Value) -> Val
         for field in [
             "presenceTimestamp",
             "expiresAt",
-            "source",
             "surface",
             "desktopSessionId",
         ] {
@@ -1120,6 +1184,7 @@ fn normalize_presence(payload: Value) -> Result<Value, String> {
 
 pub fn submit_status(payload: Value) -> Result<Value, String> {
     let mut status = normalize_status(payload)?;
+    let incoming_status = status.clone();
     let key = session_key(&status);
     let state = BRIDGE_STATE
         .get()
@@ -1134,7 +1199,13 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
         }
         return Ok(response);
     }
-    let existing = guard.sessions.get(&key).cloned();
+    let alias_key = claude_desktop_alias_key(&guard, &status, &key);
+    let existing = best_existing_status(
+        guard.sessions.get(&key).cloned(),
+        alias_key
+            .as_ref()
+            .and_then(|alias_key| guard.sessions.get(alias_key).cloned()),
+    );
     if existing.is_none() && is_claude_lifecycle_only_idle_status(&status) {
         let mut response = snapshot(&guard);
         if let Some(object) = response.as_object_mut() {
@@ -1181,7 +1252,18 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
             }
         }
     }
-    guard.sessions.insert(key, with_session_expiry(status));
+    if alias_key.as_deref().is_some_and(|alias| alias != key) {
+        canonicalize_claude_desktop_alias_status(&mut status, &incoming_status);
+    }
+    guard.sessions.insert(key.clone(), with_session_expiry(status));
+    if let Some(alias_key) = alias_key {
+        if alias_key != key {
+            guard.sessions.remove(&alias_key);
+            if guard.active_session_key.as_deref() == Some(alias_key.as_str()) {
+                guard.active_session_key = Some(key);
+            }
+        }
+    }
     prune_sessions(&mut guard);
     let response = snapshot(&guard);
     drop(guard);
@@ -1643,37 +1725,8 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
             }
         }
         ("POST", AGENT_STATUS_PATH) | ("POST", LEGACY_STATUS_PATH) => {
-            match parse_body(&request.body).and_then(normalize_status) {
-                Ok(mut status) => {
-                    let key = session_key(&status);
-                    let mut guard = state.lock().expect("bridge state poisoned");
-                    if guard.tombstones.get(&key).is_some_and(|expires| now_ms() <= *expires) {
-                        let mut response = snapshot(&guard);
-                        if let Some(object) = response.as_object_mut() {
-                            object.insert("ignored".to_string(), json!(true));
-                            object.insert("disconnectedSessionKey".to_string(), json!(key));
-                        }
-                        send_json(&mut stream, 202, response);
-                        return;
-                    }
-                    if let Some(existing) = guard.sessions.get(&key) {
-                        if let Some(object) = status.as_object_mut() {
-                            for field in ["presenceTimestamp", "usage", "idleBubbleCandidates", "learning"] {
-                                if !object.contains_key(field) {
-                                    if let Some(value) = existing.get(field) {
-                                        object.insert(field.to_string(), value.clone());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    guard.sessions.insert(key, with_session_expiry(status));
-                    prune_sessions(&mut guard);
-                    let response = snapshot(&guard);
-                    drop(guard);
-                    broadcast(&state);
-                    send_json(&mut stream, 202, response);
-                }
+            match parse_body(&request.body).and_then(submit_status) {
+                Ok(response) => send_json(&mut stream, 202, response),
                 Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
             }
         }

@@ -296,6 +296,48 @@ try {
   assert.equal(inventorySession.status, "complete");
   assert.equal(inventorySession.phase, "desktop-chat-complete");
 
+  const aliasDesktopSessionId = `local_alias_smoke_${hookSmokeSuffix}`;
+  const aliasLocalSessionId = `local_alias_session_${hookSmokeSuffix}`;
+  const aliasCliSessionId = `cli_alias_session_${hookSmokeSuffix}`;
+  await postStatus({
+    agent: "claude-code",
+    sessionId: aliasLocalSessionId,
+    status: "executing",
+    phase: "desktop-cowork-running",
+    summary: "Claude Cowork: Alias smoke",
+    message: "Claude Cowork is running: Alias smoke",
+    progress: 55,
+    severity: "info",
+    timestamp: new Date().toISOString(),
+    source: "claude-desktop-activity",
+    surface: "cowork",
+    desktopSessionId: aliasDesktopSessionId,
+  });
+  await postStatus({
+    agent: "claude-code",
+    sessionId: aliasCliSessionId,
+    status: "complete",
+    phase: "desktop-cowork-complete",
+    summary: "Claude Cowork: Alias smoke",
+    message: "Claude Cowork turn complete",
+    progress: 100,
+    severity: "info",
+    timestamp: new Date().toISOString(),
+    source: "claude-desktop-activity",
+    surface: "cowork",
+    desktopSessionId: aliasDesktopSessionId,
+  });
+  snapshot = await readSnapshot();
+  const aliasSessions = snapshot.sessions.filter(
+    (session) =>
+      session.agent === "claude-code" &&
+      session.desktopSessionId === aliasDesktopSessionId,
+  );
+  assert.equal(aliasSessions.length, 1);
+  assert.equal(aliasSessions[0].sessionId, aliasCliSessionId);
+  assert.equal(aliasSessions[0].status, "complete");
+  assert.equal(aliasSessions[0].phase, "desktop-cowork-complete");
+
   await postHook({
     hook_event_name: "UserPromptSubmit",
     session_id: "claude_native_smoke",
