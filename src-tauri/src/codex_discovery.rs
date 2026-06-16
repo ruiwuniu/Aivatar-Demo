@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use chrono::TimeZone;
 use serde_json::{json, Value};
 
 use crate::local_bridge;
@@ -27,6 +28,7 @@ const MAX_ROLLOUTS_PER_SCAN: usize = 160;
 const MAX_CLAUDE_DESKTOP_SESSIONS_PER_SCAN: usize = 30;
 const CLAUDE_DESKTOP_INVENTORY_REPOST: Duration = Duration::from_secs(60);
 const MAX_CLAUDE_LEVELDB_BYTES: u64 = 25 * 1024 * 1024;
+const CLAUDE_LOG_INITIAL_TAIL_BYTES: u64 = 256 * 1024;
 const MAX_LINE_CHARS: usize = 32 * 1024;
 const SUMMARY_CHARS: usize = 90;
 const DIGEST_ENTRY_LIMIT: usize = 8;
@@ -50,7 +52,20 @@ struct ClaudeDesktopSession {
     surface: &'static str,
     title: String,
     cwd: Option<String>,
+    initial_message: Option<String>,
+    last_message_id: Option<String>,
+    last_message_role: Option<String>,
+    last_message_text: Option<String>,
+    message_count: usize,
     timestamp_ms: u128,
+}
+
+#[derive(Default)]
+struct ClaudeDesktopActivityState {
+    log_offsets: HashMap<PathBuf, u64>,
+    latest_log_events: HashMap<String, String>,
+    session_index: HashMap<String, ClaudeDesktopSession>,
+    chat_activity_signatures: HashMap<String, String>,
 }
 
 struct WatchedSession {
@@ -109,6 +124,7 @@ pub fn start(learning_script: Option<PathBuf>) -> Result<(), String> {
 fn discovery_loop() {
     let mut watched = HashMap::<String, WatchedSession>::new();
     let mut claude_inventory_posts = HashMap::<String, (String, Instant)>::new();
+    let mut claude_activity = ClaudeDesktopActivityState::default();
     let mut last_scan = Instant::now() - DISCOVERY_INTERVAL;
 
     loop {
@@ -121,7 +137,8 @@ fn discovery_loop() {
                         .or_insert_with(|| initialize_watched_session(&meta));
                 }
             }
-            refresh_claude_desktop_inventory(&mut claude_inventory_posts);
+            refresh_claude_desktop_inventory(&mut claude_inventory_posts, &mut claude_activity);
+            tail_claude_desktop_activity_logs(&mut claude_activity);
             last_scan = Instant::now();
         }
 
@@ -204,11 +221,13 @@ fn discover_sessions(root: &Path) -> Vec<SessionMeta> {
 
 fn refresh_claude_desktop_inventory(
     posted_cache: &mut HashMap<String, (String, Instant)>,
+    activity: &mut ClaudeDesktopActivityState,
 ) {
     let sessions = discover_claude_desktop_inventory();
     let mut live_keys = HashSet::new();
 
     for session in sessions {
+        remember_claude_desktop_session(activity, &session);
         let key = format!("{}:{}", session.surface, session.session_id);
         live_keys.insert(key.clone());
         let signature = format!(
@@ -231,6 +250,7 @@ fn refresh_claude_desktop_inventory(
     }
 
     posted_cache.retain(|key, _| live_keys.contains(key));
+    post_claude_desktop_chat_activity(activity);
 }
 
 fn discover_claude_desktop_inventory() -> Vec<ClaudeDesktopSession> {
@@ -353,6 +373,12 @@ fn read_claude_desktop_json_session(
             fallback,
         ),
         cwd: string_field(&parsed, "cwd").or_else(|| string_field(&parsed, "originCwd")),
+        initial_message: string_field(&parsed, "initialMessage")
+            .map(|message| compact_text(&message, 140)),
+        last_message_id: None,
+        last_message_role: None,
+        last_message_text: None,
+        message_count: 0,
         timestamp_ms,
     })
 }
@@ -399,19 +425,46 @@ fn collect_claude_chat_objects(
     text: &str,
     conversations: &mut HashMap<String, ClaudeDesktopSession>,
 ) {
+    for marker in [
+        "{\"uuid\":\"",
+        "{\"state\":{\"data\":{\"uuid\":\"",
+        "\"data\":{\"uuid\":\"",
+    ] {
+        collect_claude_chat_objects_for_marker(text, marker, conversations);
+    }
+}
+
+fn collect_claude_chat_objects_for_marker(
+    text: &str,
+    marker: &str,
+    conversations: &mut HashMap<String, ClaudeDesktopSession>,
+) {
     let mut search_from = 0;
-    while let Some(relative) = text[search_from..].find("{\"uuid\":\"") {
-        let start = search_from + relative;
+    while let Some(relative) = text[search_from..].find(marker) {
+        let marker_start = search_from + relative;
+        let bytes = text.as_bytes();
+        let mut start = marker_start;
+        while start > 0 && bytes[start] != b'{' {
+            start -= 1;
+        }
         let Some(end) = json_object_end(text, start) else {
-            search_from = start.saturating_add(8);
+            search_from = marker_start.saturating_add(marker.len());
             continue;
         };
         let raw = &text[start..end];
         if let Ok(parsed) = serde_json::from_str::<Value>(raw) {
-            if let Some(session) = claude_chat_session_from_value(&parsed) {
+            let conversation = parsed
+                .get("state")
+                .and_then(|state| state.get("data"))
+                .or_else(|| parsed.get("data"))
+                .unwrap_or(&parsed);
+            if let Some(session) = claude_chat_session_from_value(conversation) {
                 let key = session.session_id.clone();
                 if match conversations.get(&key) {
-                    Some(existing) => existing.timestamp_ms < session.timestamp_ms,
+                    Some(existing) => {
+                        existing.timestamp_ms < session.timestamp_ms
+                            || existing.message_count < session.message_count
+                    }
                     None => true,
                 } {
                     conversations.insert(key, session);
@@ -433,14 +486,65 @@ fn claude_chat_session_from_value(value: &Value) -> Option<ClaudeDesktopSession>
     if !timestamp_in_active_window(timestamp_ms) {
         return None;
     }
+    let (last_message_id, last_message_role, last_message_text, message_count) =
+        claude_chat_message_details(value);
     Some(ClaudeDesktopSession {
         session_id: session_id.clone(),
         desktop_session_id: Some(session_id),
         surface: "chat",
         title: normalize_inventory_title(Some(&title), "Chat session"),
         cwd: None,
+        initial_message: None,
+        last_message_id,
+        last_message_role,
+        last_message_text,
+        message_count,
         timestamp_ms,
     })
+}
+
+fn claude_chat_message_details(
+    value: &Value,
+) -> (Option<String>, Option<String>, Option<String>, usize) {
+    let Some(messages) = value
+        .get("chat_messages")
+        .or_else(|| value.get("chatMessages"))
+        .or_else(|| value.get("messages"))
+        .and_then(Value::as_array)
+    else {
+        return (
+            string_field(value, "current_leaf_message_uuid")
+                .or_else(|| string_field(value, "currentLeafMessageUuid")),
+            None,
+            None,
+            0,
+        );
+    };
+    let leaf_id = string_field(value, "current_leaf_message_uuid")
+        .or_else(|| string_field(value, "currentLeafMessageUuid"));
+    let message = leaf_id
+        .as_ref()
+        .and_then(|id| {
+            messages
+                .iter()
+                .find(|entry| string_field(entry, "uuid").as_deref() == Some(id.as_str()))
+        })
+        .or_else(|| messages.last());
+    let Some(message) = message else {
+        return (leaf_id, None, None, messages.len());
+    };
+    let message_id = string_field(message, "uuid").or_else(|| string_field(message, "id")).or(leaf_id);
+    let role = string_field(message, "sender")
+        .or_else(|| string_field(message, "type"))
+        .or_else(|| string_field(message, "role"))
+        .or_else(|| message.get("message").and_then(|value| string_field(value, "role")));
+    let text = compact_text(&flatten_text(message), 180);
+    (
+        message_id,
+        role,
+        (!text.is_empty()).then_some(text),
+        messages.len(),
+    )
 }
 
 fn json_object_end(text: &str, start: usize) -> Option<usize> {
@@ -528,6 +632,38 @@ fn timestamp_in_active_window(timestamp_ms: u128) -> bool {
     now.saturating_sub(timestamp_ms) <= active_window().as_millis()
 }
 
+fn activity_window() -> Duration {
+    let default_ms = active_window().as_millis().min(30 * 60 * 1000);
+    let millis = std::env::var("AIVATAR_CLAUDE_DESKTOP_ACTIVITY_WINDOW_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(u128::from)
+        .unwrap_or(default_ms);
+    Duration::from_millis(u64::try_from(millis).unwrap_or(u64::MAX))
+}
+
+fn timestamp_in_activity_window(timestamp_ms: u128) -> bool {
+    if timestamp_ms == 0 {
+        return false;
+    }
+    let now = unix_now_ms();
+    if timestamp_ms > now.saturating_add(60_000) {
+        return true;
+    }
+    now.saturating_sub(timestamp_ms) <= activity_window().as_millis()
+}
+
+fn claude_log_timestamp_ms(line: &str) -> Option<u128> {
+    let prefix = line.get(0..19)?;
+    let naive = chrono::NaiveDateTime::parse_from_str(prefix, "%Y-%m-%d %H:%M:%S").ok()?;
+    chrono::Local
+        .from_local_datetime(&naive)
+        .single()
+        .or_else(|| chrono::Local.from_local_datetime(&naive).earliest())
+        .and_then(|date| u128::try_from(date.timestamp_millis()).ok())
+}
+
 fn iso_from_timestamp_ms(timestamp_ms: u128) -> String {
     chrono::DateTime::from_timestamp_millis(i64::try_from(timestamp_ms).unwrap_or(i64::MAX))
         .map(|date| date.to_rfc3339())
@@ -549,6 +685,43 @@ fn normalize_inventory_title(value: Option<&str>, fallback: &str) -> String {
     } else {
         clean
     }
+}
+
+fn compact_text(value: &str, limit: usize) -> String {
+    let clean = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    clean.chars().take(limit).collect()
+}
+
+fn flatten_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Array(items) => items
+            .iter()
+            .map(flatten_text)
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join(" "),
+        Value::Object(object) => {
+            for key in ["text", "delta", "value", "content"] {
+                if let Some(value) = object.get(key) {
+                    let text = flatten_text(value);
+                    if !text.trim().is_empty() {
+                        return text;
+                    }
+                }
+            }
+            if let Some(message) = object.get("message") {
+                flatten_text(message)
+            } else {
+                String::new()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+fn extract_after<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    text.split(prefix).nth(1)
 }
 
 fn claude_desktop_inventory_status(session: &ClaudeDesktopSession) -> Value {
@@ -583,6 +756,295 @@ fn claude_desktop_inventory_status(session: &ClaudeDesktopSession) -> Value {
         }
     }
     value
+}
+
+fn remember_claude_desktop_session(
+    activity: &mut ClaudeDesktopActivityState,
+    session: &ClaudeDesktopSession,
+) {
+    activity
+        .session_index
+        .insert(session.session_id.clone(), session.clone());
+    if let Some(desktop_session_id) = &session.desktop_session_id {
+        activity
+            .session_index
+            .insert(desktop_session_id.clone(), session.clone());
+    }
+}
+
+fn resolve_claude_desktop_session(
+    activity: &mut ClaudeDesktopActivityState,
+    desktop_session_id: &str,
+    cli_session_id: Option<&str>,
+) -> ClaudeDesktopSession {
+    let mut session = activity
+        .session_index
+        .get(desktop_session_id)
+        .cloned()
+        .or_else(|| cli_session_id.and_then(|id| activity.session_index.get(id).cloned()))
+        .unwrap_or_else(|| ClaudeDesktopSession {
+            session_id: cli_session_id.unwrap_or(desktop_session_id).to_string(),
+            desktop_session_id: Some(desktop_session_id.to_string()),
+            surface: "code",
+            title: "Session".to_string(),
+            cwd: None,
+            initial_message: None,
+            last_message_id: None,
+            last_message_role: None,
+            last_message_text: None,
+            message_count: 0,
+            timestamp_ms: unix_now_ms(),
+        });
+    if let Some(cli_session_id) = cli_session_id {
+        session.session_id = cli_session_id.to_string();
+    }
+    session.desktop_session_id = Some(desktop_session_id.to_string());
+    remember_claude_desktop_session(activity, &session);
+    session
+}
+
+fn claude_desktop_session_label(session: &ClaudeDesktopSession) -> &'static str {
+    match session.surface {
+        "chat" => "Claude Chat",
+        "cowork" => "Claude Cowork",
+        _ => "Claude Code",
+    }
+}
+
+fn claude_desktop_activity_status(
+    session: &ClaudeDesktopSession,
+    status: &str,
+    phase: &str,
+    message: &str,
+    timestamp_ms: u128,
+) -> Value {
+    let label = claude_desktop_session_label(session);
+    let timestamp = iso_from_timestamp_ms(timestamp_ms);
+    let subject = if session.title.is_empty() {
+        session.initial_message.as_deref().unwrap_or_default()
+    } else {
+        &session.title
+    };
+    let summary = if subject.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label}: {subject}")
+    };
+    let mut value = json!({
+        "agent": CLAUDE_AGENT,
+        "sessionId": session.session_id,
+        "status": status,
+        "phase": phase,
+        "task": format!("{label} activity"),
+        "summary": summary,
+        "progress": if status == "complete" || status == "error" { 100 } else { 55 },
+        "message": message,
+        "severity": if status == "error" { "error" } else { "info" },
+        "timestamp": timestamp,
+        "presenceTimestamp": timestamp,
+        "expiresAt": expires_from_timestamp_ms(timestamp_ms),
+        "source": "claude-desktop-activity",
+        "surface": session.surface,
+    });
+    if let Some(object) = value.as_object_mut() {
+        if let Some(cwd) = &session.cwd {
+            object.insert("detail".to_string(), json!(cwd));
+        }
+        if let Some(desktop_session_id) = &session.desktop_session_id {
+            object.insert("desktopSessionId".to_string(), json!(desktop_session_id));
+        }
+    }
+    value
+}
+
+fn post_claude_desktop_chat_activity(activity: &mut ClaudeDesktopActivityState) {
+    let sessions = activity
+        .session_index
+        .values()
+        .filter(|session| session.surface == "chat" && timestamp_in_activity_window(session.timestamp_ms))
+        .cloned()
+        .collect::<Vec<_>>();
+    for session in sessions {
+        let signature = format!(
+            "{}:{}:{}:{}:{}",
+            session.timestamp_ms,
+            session.last_message_id.as_deref().unwrap_or_default(),
+            session.last_message_role.as_deref().unwrap_or_default(),
+            session.last_message_text.as_deref().unwrap_or_default(),
+            session.message_count
+        );
+        if activity
+            .chat_activity_signatures
+            .get(&session.session_id)
+            .is_some_and(|cached| cached == &signature)
+        {
+            continue;
+        }
+        activity
+            .chat_activity_signatures
+            .insert(session.session_id.clone(), signature);
+        let role = session
+            .last_message_role
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let user_like = role.contains("human") || role.contains("user");
+        let text = session
+            .last_message_text
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or(&session.title);
+        let message = if user_like {
+            format!("Claude Chat is thinking: {text}")
+        } else {
+            text.to_string()
+        };
+        let phase = if user_like {
+            "desktop-chat-user-message"
+        } else {
+            "desktop-chat-complete"
+        };
+        submit_status(claude_desktop_activity_status(
+            &session,
+            if user_like { "thinking" } else { "complete" },
+            phase,
+            &message,
+            session.timestamp_ms,
+        ));
+    }
+}
+
+fn tail_claude_desktop_activity_logs(activity: &mut ClaudeDesktopActivityState) {
+    for root in claude_desktop_roots() {
+        let path = root.join("logs").join("main.log");
+        let Ok(metadata) = fs::metadata(&path) else {
+            continue;
+        };
+        let mut offset = activity
+            .log_offsets
+            .get(&path)
+            .copied()
+            .unwrap_or_else(|| metadata.len().saturating_sub(CLAUDE_LOG_INITIAL_TAIL_BYTES));
+        if metadata.len() < offset {
+            offset = 0;
+        }
+        if metadata.len() == offset {
+            continue;
+        }
+        let Ok(mut file) = File::open(&path) else {
+            continue;
+        };
+        if file.seek(SeekFrom::Start(offset)).is_err() {
+            continue;
+        }
+        let mut appended = String::new();
+        if file.read_to_string(&mut appended).is_err() {
+            continue;
+        }
+        activity.log_offsets.insert(path, metadata.len());
+        for line in appended.lines().filter(|line| !line.trim().is_empty()) {
+            if let Some(status) = claude_desktop_activity_status_from_log_line(activity, line) {
+                let event_key = status_event_key(&status);
+                let session_id = string_field(&status, "sessionId").unwrap_or_default();
+                if activity
+                    .latest_log_events
+                    .get(&session_id)
+                    .is_some_and(|cached| cached == &event_key)
+                {
+                    continue;
+                }
+                activity.latest_log_events.insert(session_id, event_key);
+                submit_status(status);
+            }
+        }
+    }
+}
+
+fn claude_desktop_activity_status_from_log_line(
+    activity: &mut ClaudeDesktopActivityState,
+    line: &str,
+) -> Option<Value> {
+    let timestamp_ms = claude_log_timestamp_ms(line).unwrap_or_else(unix_now_ms);
+    if !timestamp_in_activity_window(timestamp_ms) {
+        return None;
+    }
+
+    if let Some(rest) = line.split("Mapping internal session ").nth(1) {
+        if let Some((desktop_session_id, cli_session_id)) = rest.split_once(" to CLI session ") {
+            let desktop_session_id = desktop_session_id.split_whitespace().next()?.trim();
+            let cli_session_id = cli_session_id.split_whitespace().next()?.trim();
+            resolve_claude_desktop_session(activity, desktop_session_id, Some(cli_session_id));
+        }
+        return None;
+    }
+
+    if line.contains("[Lifecycle] Session ")
+        && (line.contains("→ running") || line.contains("-> running"))
+    {
+        let desktop_session_id = extract_after(line, "[Lifecycle] Session ")?
+            .split(':')
+            .next()?
+            .trim();
+        let session = resolve_claude_desktop_session(activity, desktop_session_id, None);
+        let label = claude_desktop_session_label(&session);
+        let subject = if session.title.is_empty() {
+            session.initial_message.as_deref().unwrap_or_default()
+        } else {
+            &session.title
+        };
+        let message = if subject.is_empty() {
+            format!("{label} is running")
+        } else {
+            format!("{label} is running: {subject}")
+        };
+        return Some(claude_desktop_activity_status(
+            &session,
+            "executing",
+            &format!("desktop-{}-running", session.surface),
+            &message,
+            timestamp_ms,
+        ));
+    }
+
+    if let Some(desktop_session_id) = extract_after(line, "[Result] Turn succeeded for session ") {
+        let desktop_session_id = desktop_session_id.split_whitespace().next()?.trim();
+        let session = resolve_claude_desktop_session(activity, desktop_session_id, None);
+        return Some(claude_desktop_activity_status(
+            &session,
+            "complete",
+            &format!("desktop-{}-complete", session.surface),
+            &format!("{} turn complete", claude_desktop_session_label(&session)),
+            timestamp_ms,
+        ));
+    }
+
+    if let Some(desktop_session_id) = extract_after(line, "[Stop hook] Query completed for session ") {
+        let desktop_session_id = desktop_session_id.split_whitespace().next()?.trim();
+        let session = resolve_claude_desktop_session(activity, desktop_session_id, None);
+        return Some(claude_desktop_activity_status(
+            &session,
+            "complete",
+            &format!("desktop-{}-complete", session.surface),
+            &format!("{} turn complete", claude_desktop_session_label(&session)),
+            timestamp_ms,
+        ));
+    }
+
+    if line.contains("Turn failed") || line.contains("StopFailure") {
+        if let Some(desktop_session_id) = line.split("session ").nth(1) {
+            let desktop_session_id = desktop_session_id.split_whitespace().next()?.trim();
+            let session = resolve_claude_desktop_session(activity, desktop_session_id, None);
+            return Some(claude_desktop_activity_status(
+                &session,
+                "error",
+                &format!("desktop-{}-error", session.surface),
+                &format!("{} turn failed", claude_desktop_session_label(&session)),
+                timestamp_ms,
+            ));
+        }
+    }
+
+    None
 }
 
 fn collect_recent_jsonl(root: &Path, max_age: Duration, files: &mut Vec<(SystemTime, PathBuf)>) {

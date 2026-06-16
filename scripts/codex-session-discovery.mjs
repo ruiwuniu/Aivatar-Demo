@@ -54,7 +54,22 @@ const claudeLevelDbMaxBytes = Math.max(
   1024 * 1024,
   Number(process.env.AIVATAR_CLAUDE_DESKTOP_LEVELDB_MAX_BYTES ?? 25 * 1024 * 1024),
 );
+const claudeDesktopActivityWindowMs = Math.max(
+  discoveryIntervalMs,
+  Number(
+    process.env.AIVATAR_CLAUDE_DESKTOP_ACTIVITY_WINDOW_MS ??
+      Math.min(activeWindowMs, 30 * 60 * 1000),
+  ),
+);
+const claudeLogInitialTailBytes = Math.max(
+  16 * 1024,
+  Number(process.env.AIVATAR_CLAUDE_DESKTOP_LOG_TAIL_BYTES ?? 256 * 1024),
+);
 const claudeInventoryPostCache = new Map();
+const claudeDesktopSessionIndex = new Map();
+const claudeChatActivityCache = new Map();
+const claudeLogOffsets = new Map();
+const claudeLogEventCache = new Map();
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -87,6 +102,36 @@ const normalizeTitle = (title, fallback) => {
   return clean || fallback;
 };
 
+const compactText = (value, limit = 140) => {
+  if (typeof value !== "string") return "";
+  const clean = value
+    .replace(/\r/g, " ")
+    .replace(/\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return "";
+  return Array.from(clean).slice(0, limit).join("");
+};
+
+const flattenText = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value.map(flattenText).filter(Boolean).join(" ");
+  }
+  if (typeof value === "object") {
+    return flattenText(
+      value.text ??
+        value.delta ??
+        value.value ??
+        value.content ??
+        value.message?.content ??
+        value.message,
+    );
+  }
+  return "";
+};
+
 const timestampMsFromValue = (value) => {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return value > 10_000_000_000 ? Math.round(value) : Math.round(value * 1000);
@@ -113,6 +158,20 @@ const isInActiveWindowMs = (timestampMs) => {
   const now = Date.now();
   if (timestampMs > now + 60_000) return true;
   return now - timestampMs <= activeWindowMs;
+};
+
+const isInActivityWindowMs = (timestampMs) => {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) return false;
+  const now = Date.now();
+  if (timestampMs > now + 60_000) return true;
+  return now - timestampMs <= claudeDesktopActivityWindowMs;
+};
+
+const parseClaudeLogTimestampMs = (line) => {
+  const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/.exec(line);
+  if (!match) return Date.now();
+  const parsed = Date.parse(`${match[1]}T${match[2]}`);
+  return Number.isNaN(parsed) ? Date.now() : parsed;
 };
 
 const processIsRunning = (pid) => {
@@ -329,6 +388,7 @@ const readClaudeDesktopJsonSession = async (filePath, surface) => {
       surface === "cowork" ? "Cowork session" : "Code session",
     ),
     cwd: firstString(parsed, ["cwd", "originCwd"]),
+    initialMessage: compactText(firstString(parsed, ["initialMessage"]), 140),
     timestampMs,
   };
 };
@@ -345,16 +405,18 @@ const discoverClaudeDesktopJsonSessions = async (root, relativeDir, surface) => 
   return sessions;
 };
 
-const extractClaudeChatObjects = (text) => {
+const extractClaudeChatObjectsAt = (text, marker) => {
   const conversations = [];
   let index = 0;
-  while ((index = text.indexOf('{"uuid":"', index)) >= 0) {
+  while ((index = text.indexOf(marker, index)) >= 0) {
+    let start = index;
+    while (start > 0 && text[start] !== "{") start -= 1;
     let depth = 0;
     let inString = false;
     let escape = false;
     let end = -1;
 
-    for (let cursor = index; cursor < text.length; cursor += 1) {
+    for (let cursor = start; cursor < text.length; cursor += 1) {
       const character = text[cursor];
       if (escape) {
         escape = false;
@@ -380,25 +442,69 @@ const extractClaudeChatObjects = (text) => {
     }
 
     if (end < 0) {
-      index += 8;
+      index += marker.length;
       continue;
     }
 
     try {
-      const parsed = JSON.parse(text.slice(index, end));
-      if (
-        typeof parsed?.uuid === "string" &&
-        typeof parsed?.name === "string" &&
-        (!parsed.platform || parsed.platform === "CLAUDE_AI")
-      ) {
-        conversations.push(parsed);
+      const parsed = JSON.parse(text.slice(start, end));
+      const conversation = parsed?.state?.data ?? parsed?.data ?? parsed;
+      if (typeof conversation?.uuid !== "string" || typeof conversation?.name !== "string") {
+        index = end;
+        continue;
       }
+      if (conversation.platform && conversation.platform !== "CLAUDE_AI") {
+        index = end;
+        continue;
+      }
+      conversations.push(conversation);
     } catch {
       // LevelDB log chunks can contain partial objects.
     }
     index = end;
   }
   return conversations;
+};
+
+const extractClaudeChatObjects = (text) => [
+  ...extractClaudeChatObjectsAt(text, '{"uuid":"'),
+  ...extractClaudeChatObjectsAt(text, '{"state":{"data":{"uuid":"'),
+  ...extractClaudeChatObjectsAt(text, '"data":{"uuid":"'),
+];
+
+const claudeChatMessageDetails = (conversation) => {
+  const messages =
+    conversation.chat_messages ??
+    conversation.chatMessages ??
+    conversation.messages ??
+    [];
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return {
+      messageId:
+        firstString(conversation, ["current_leaf_message_uuid", "currentLeafMessageUuid"]) ??
+        undefined,
+      role: undefined,
+      text: "",
+      messageCount: 0,
+    };
+  }
+
+  const leafId = firstString(conversation, [
+    "current_leaf_message_uuid",
+    "currentLeafMessageUuid",
+  ]);
+  const message =
+    messages.find((entry) => firstString(entry, ["uuid", "id"]) === leafId) ??
+    messages[messages.length - 1];
+  const role =
+    firstString(message, ["sender", "type", "role"]) ??
+    firstString(message?.message, ["role"]);
+  return {
+    messageId: firstString(message, ["uuid", "id"]) ?? leafId,
+    role,
+    text: compactText(flattenText(message), 180),
+    messageCount: messages.length,
+  };
 };
 
 const discoverClaudeDesktopChatSessions = async (root) => {
@@ -431,12 +537,23 @@ const discoverClaudeDesktopChatSessions = async (root) => {
           timestampMsFromValue(conversation.created_at);
         if (!isInActiveWindowMs(timestampMs)) continue;
         const existing = sessions.get(conversation.uuid);
-        if (existing && existing.timestampMs >= timestampMs) continue;
+        const message = claudeChatMessageDetails(conversation);
+        if (
+          existing &&
+          existing.timestampMs >= timestampMs &&
+          (existing.messageCount ?? 0) >= message.messageCount
+        ) {
+          continue;
+        }
         sessions.set(conversation.uuid, {
           surface: "chat",
           sessionId: conversation.uuid,
           desktopSessionId: conversation.uuid,
           title: normalizeTitle(conversation.name, "Chat session"),
+          lastMessageId: message.messageId,
+          lastMessageRole: message.role,
+          lastMessageText: message.text,
+          messageCount: message.messageCount,
           timestampMs,
         });
       }
@@ -507,11 +624,215 @@ const claudeDesktopInventoryStatus = (session) => {
   };
 };
 
+const rememberClaudeDesktopSession = (session) => {
+  for (const key of [session.desktopSessionId, session.sessionId].filter(Boolean)) {
+    claudeDesktopSessionIndex.set(key, session);
+  }
+};
+
+const claudeDesktopSessionLabel = (session) =>
+  session?.surface === "chat"
+    ? "Claude Chat"
+    : session?.surface === "cowork"
+      ? "Claude Cowork"
+      : "Claude Code";
+
+const resolveClaudeDesktopSession = (desktopSessionId, cliSessionId) => {
+  const known =
+    claudeDesktopSessionIndex.get(desktopSessionId) ??
+    claudeDesktopSessionIndex.get(cliSessionId);
+  if (known) {
+    const merged = {
+      ...known,
+      sessionId: cliSessionId ?? known.sessionId,
+      desktopSessionId: desktopSessionId ?? known.desktopSessionId,
+    };
+    rememberClaudeDesktopSession(merged);
+    return merged;
+  }
+  const fallback = {
+    surface: "code",
+    sessionId: cliSessionId ?? desktopSessionId,
+    desktopSessionId,
+    title: "Session",
+    timestampMs: Date.now(),
+  };
+  rememberClaudeDesktopSession(fallback);
+  return fallback;
+};
+
+const claudeDesktopActivityStatus = (session, status, phase, message, timestampMs) => {
+  const label = claudeDesktopSessionLabel(session);
+  const title = session?.title ? `: ${session.title}` : "";
+  return {
+    agent: "claude-code",
+    sessionId: session.sessionId,
+    status,
+    phase,
+    task: `${label} activity`,
+    summary: `${label}${title}`,
+    detail: session.cwd,
+    progress: status === "complete" ? 100 : status === "error" ? 100 : 55,
+    message,
+    severity: status === "error" ? "error" : "info",
+    timestamp: timestampIsoFromMs(timestampMs),
+    presenceTimestamp: timestampIsoFromMs(timestampMs),
+    expiresAt: expiresIsoFromMs(timestampMs),
+    source: "claude-desktop-activity",
+    surface: session.surface,
+    desktopSessionId: session.desktopSessionId,
+  };
+};
+
+const claudeDesktopChatActivityStatus = (session) => {
+  const role = String(session.lastMessageRole ?? "").toLowerCase();
+  const userLike = role.includes("human") || role.includes("user");
+  const text = compactText(session.lastMessageText, 120);
+  const message = text || session.title;
+  return claudeDesktopActivityStatus(
+    session,
+    userLike ? "thinking" : "complete",
+    userLike ? "desktop-chat-user-message" : "desktop-chat-complete",
+    userLike ? `Claude Chat is thinking: ${message}` : message,
+    session.timestampMs,
+  );
+};
+
+const postClaudeDesktopChatActivity = async (sessions) => {
+  let posted = 0;
+  for (const session of sessions.filter((entry) => entry.surface === "chat")) {
+    if (!isInActivityWindowMs(session.timestampMs)) continue;
+    const signature = [
+      session.timestampMs,
+      session.lastMessageId ?? "",
+      session.lastMessageRole ?? "",
+      session.lastMessageText ?? "",
+      session.messageCount ?? 0,
+    ].join("|");
+    const cached = claudeChatActivityCache.get(session.sessionId);
+    if (cached === signature) continue;
+    claudeChatActivityCache.set(session.sessionId, signature);
+    await postJson(statusEndpoint, claudeDesktopChatActivityStatus(session));
+    posted += 1;
+  }
+  return posted;
+};
+
+const claudeDesktopActivityEvent = (line) => {
+  const timestampMs = parseClaudeLogTimestampMs(line);
+  if (!isInActivityWindowMs(timestampMs)) return null;
+
+  let match = /Mapping internal session (local_[a-zA-Z0-9-]+) to CLI session ([a-zA-Z0-9-]+)/.exec(line);
+  if (match) {
+    const session = resolveClaudeDesktopSession(match[1], match[2]);
+    rememberClaudeDesktopSession(session);
+    return null;
+  }
+
+  match = /\[Lifecycle\] Session (local_[a-zA-Z0-9-]+): .*?(?:→|->) running/.exec(line);
+  if (match) {
+    const session = resolveClaudeDesktopSession(match[1]);
+    const label = claudeDesktopSessionLabel(session);
+    return claudeDesktopActivityStatus(
+      session,
+      "executing",
+      `desktop-${session.surface}-running`,
+      `${label} is running${session.title ? `: ${session.title}` : ""}`,
+      timestampMs,
+    );
+  }
+
+  match = /\[Result\] Turn succeeded for session (local_[a-zA-Z0-9-]+)/.exec(line);
+  if (match) {
+    const session = resolveClaudeDesktopSession(match[1]);
+    return claudeDesktopActivityStatus(
+      session,
+      "complete",
+      `desktop-${session.surface}-complete`,
+      `${claudeDesktopSessionLabel(session)} turn complete`,
+      timestampMs,
+    );
+  }
+
+  match = /\[Stop hook\] Query completed for session (local_[a-zA-Z0-9-]+)/.exec(line);
+  if (match) {
+    const session = resolveClaudeDesktopSession(match[1]);
+    return claudeDesktopActivityStatus(
+      session,
+      "complete",
+      `desktop-${session.surface}-complete`,
+      `${claudeDesktopSessionLabel(session)} turn complete`,
+      timestampMs,
+    );
+  }
+
+  match = /(?:Turn failed|StopFailure|failed for session) (local_[a-zA-Z0-9-]+)/i.exec(line);
+  if (match) {
+    const session = resolveClaudeDesktopSession(match[1]);
+    return claudeDesktopActivityStatus(
+      session,
+      "error",
+      `desktop-${session.surface}-error`,
+      `${claudeDesktopSessionLabel(session)} turn failed`,
+      timestampMs,
+    );
+  }
+
+  return null;
+};
+
+const tailClaudeDesktopActivityLogs = async () => {
+  let posted = 0;
+  for (const root of await claudeDesktopRoots()) {
+    const logPath = join(root, "logs", "main.log");
+    let info;
+    try {
+      info = await stat(logPath);
+    } catch {
+      continue;
+    }
+
+    let offset = claudeLogOffsets.get(logPath);
+    if (!Number.isFinite(offset)) {
+      offset = Math.max(0, info.size - claudeLogInitialTailBytes);
+    }
+    if (info.size < offset) offset = 0;
+    if (info.size === offset) continue;
+
+    let buffer;
+    try {
+      buffer = await readFile(logPath);
+    } catch {
+      continue;
+    }
+    claudeLogOffsets.set(logPath, info.size);
+
+    for (const line of buffer.subarray(offset).toString("utf8").split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const event = claudeDesktopActivityEvent(line);
+      if (!event) continue;
+      const eventKey = [
+        event.sessionId,
+        event.phase,
+        event.status,
+        event.message,
+        event.timestamp,
+      ].join("|");
+      if (claudeLogEventCache.get(event.sessionId) === eventKey) continue;
+      claudeLogEventCache.set(event.sessionId, eventKey);
+      await postJson(statusEndpoint, event);
+      posted += 1;
+    }
+  }
+  return posted;
+};
+
 const postClaudeDesktopInventory = async () => {
   const sessions = await discoverClaudeDesktopInventory();
   const liveKeys = new Set();
   let posted = 0;
   for (const session of sessions) {
+    rememberClaudeDesktopSession(session);
     const key = `${session.surface}:${session.sessionId}`;
     liveKeys.add(key);
     const signature = [
@@ -539,6 +860,7 @@ const postClaudeDesktopInventory = async () => {
     if (!liveKeys.has(key)) claudeInventoryPostCache.delete(key);
   }
 
+  posted += await postClaudeDesktopChatActivity(sessions);
   return posted;
 };
 
@@ -763,6 +1085,7 @@ try {
         }
       }
       await postClaudeDesktopInventory();
+      await tailClaudeDesktopActivityLogs();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[codex-session-discovery] ${message}`);

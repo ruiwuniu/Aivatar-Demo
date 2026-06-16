@@ -268,6 +268,34 @@ try {
   assert.equal(inventorySession.status, "executing");
   assert.equal(inventorySession.phase, "tool-use");
 
+  await postStatus({
+    agent: "claude-code",
+    sessionId: inventorySessionId,
+    status: "complete",
+    phase: "desktop-chat-complete",
+    summary: "Claude Chat: Inventory smoke",
+    message: "A short Claude Chat reply",
+    progress: 100,
+    severity: "info",
+    timestamp: new Date().toISOString(),
+    source: "claude-desktop-activity",
+    surface: "chat",
+    desktopSessionId: "local_inventory_smoke",
+  });
+  await postStatus({
+    ...inventoryPayload,
+    timestamp: new Date().toISOString(),
+  });
+  snapshot = await readSnapshot();
+  inventorySession = snapshot.sessions.find(
+    (session) =>
+      session.agent === "claude-code" &&
+      session.sessionId === inventorySessionId,
+  );
+  assert.ok(inventorySession);
+  assert.equal(inventorySession.status, "complete");
+  assert.equal(inventorySession.phase, "desktop-chat-complete");
+
   await postHook({
     hook_event_name: "UserPromptSubmit",
     session_id: "claude_native_smoke",
