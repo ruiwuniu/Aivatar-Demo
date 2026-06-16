@@ -260,7 +260,8 @@ const sessionExpiresAt = () =>
 
 const withSessionExpiry = (status) => ({
   ...status,
-  expiresAt: sessionExpiresAt(),
+  expiresAt:
+    typeof status.expiresAt === "string" ? status.expiresAt : sessionExpiresAt(),
 });
 
 const isSessionExpired = (status) => {
@@ -575,6 +576,11 @@ const normalizeStatus = (value) => {
     usage: normalizeUsage(value.usage),
     idleBubbleCandidates: normalizeIdleBubbleCandidates(value.idleBubbleCandidates),
     learning: normalizeLearning(value.learning),
+    expiresAt: typeof value.expiresAt === "string" ? value.expiresAt : undefined,
+    source: typeof value.source === "string" ? value.source : undefined,
+    surface: typeof value.surface === "string" ? value.surface : undefined,
+    desktopSessionId:
+      typeof value.desktopSessionId === "string" ? value.desktopSessionId : undefined,
   };
 };
 
@@ -989,6 +995,29 @@ const isClaudeLifecycleOnlyIdleStatus = (status) =>
   ["session-start", "session-end", "other"].includes(status?.phase) &&
   !status?.usage &&
   !status?.learning;
+
+const isClaudeDesktopInventoryStatus = (status) =>
+  status?.agent === "claude-code" &&
+  status?.status === "idle" &&
+  [
+    "desktop-chat-session",
+    "desktop-cowork-session",
+    "desktop-code-session",
+  ].includes(status?.phase);
+
+const mergeClaudeDesktopInventoryStatus = (nextStatus, existing) => {
+  if (!existing || existing.status === "idle") return nextStatus;
+
+  return {
+    ...existing,
+    presenceTimestamp:
+      nextStatus.presenceTimestamp ?? existing.presenceTimestamp,
+    expiresAt: nextStatus.expiresAt ?? existing.expiresAt,
+    source: nextStatus.source ?? existing.source,
+    surface: nextStatus.surface ?? existing.surface,
+    desktopSessionId: nextStatus.desktopSessionId ?? existing.desktopSessionId,
+  };
+};
 
 const preserveClaudeSessionEndStatus = (event, nextStatus, existing) => {
   if (event !== "SessionEnd" || !existing || !isTerminalSessionStatus(existing)) {
@@ -1517,14 +1546,17 @@ const httpServer = http.createServer(async (request, response) => {
         });
         return;
       }
-      currentStatus = {
-        ...nextStatus,
-        presenceTimestamp: nextStatus.presenceTimestamp ?? existing?.presenceTimestamp,
-        usage: nextStatus.usage ?? existing?.usage,
-        idleBubbleCandidates:
-          nextStatus.idleBubbleCandidates ?? existing?.idleBubbleCandidates,
-        learning: nextStatus.learning ?? existing?.learning,
-      };
+      currentStatus = isClaudeDesktopInventoryStatus(nextStatus)
+        ? mergeClaudeDesktopInventoryStatus(nextStatus, existing)
+        : {
+            ...nextStatus,
+            presenceTimestamp:
+              nextStatus.presenceTimestamp ?? existing?.presenceTimestamp,
+            usage: nextStatus.usage ?? existing?.usage,
+            idleBubbleCandidates:
+              nextStatus.idleBubbleCandidates ?? existing?.idleBubbleCandidates,
+            learning: nextStatus.learning ?? existing?.learning,
+          };
       currentStatus = withSessionExpiry(currentStatus);
       sessions.set(key, currentStatus);
       pruneSessionOverflow();

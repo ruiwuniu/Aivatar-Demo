@@ -1,7 +1,7 @@
 use std::{
     collections::hash_map::DefaultHasher,
     collections::{HashMap, HashSet},
-    fs::File,
+    fs::{self, File},
     hash::{Hash, Hasher},
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -11,7 +11,7 @@ use std::{
         OnceLock,
     },
     thread,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{json, Value};
@@ -19,10 +19,14 @@ use serde_json::{json, Value};
 use crate::local_bridge;
 
 const AGENT: &str = "codex";
+const CLAUDE_AGENT: &str = "claude-code";
 const DEFAULT_ACTIVE_MS: u64 = 5 * 60 * 60 * 1000;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(3);
 const WATCH_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_ROLLOUTS_PER_SCAN: usize = 160;
+const MAX_CLAUDE_DESKTOP_SESSIONS_PER_SCAN: usize = 30;
+const CLAUDE_DESKTOP_INVENTORY_REPOST: Duration = Duration::from_secs(60);
+const MAX_CLAUDE_LEVELDB_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_LINE_CHARS: usize = 32 * 1024;
 const SUMMARY_CHARS: usize = 90;
 const DIGEST_ENTRY_LIMIT: usize = 8;
@@ -37,6 +41,16 @@ struct SessionMeta {
     cwd: Option<String>,
     timestamp: Option<String>,
     path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct ClaudeDesktopSession {
+    session_id: String,
+    desktop_session_id: Option<String>,
+    surface: &'static str,
+    title: String,
+    cwd: Option<String>,
+    timestamp_ms: u128,
 }
 
 struct WatchedSession {
@@ -94,6 +108,7 @@ pub fn start(learning_script: Option<PathBuf>) -> Result<(), String> {
 
 fn discovery_loop() {
     let mut watched = HashMap::<String, WatchedSession>::new();
+    let mut claude_inventory_posts = HashMap::<String, (String, Instant)>::new();
     let mut last_scan = Instant::now() - DISCOVERY_INTERVAL;
 
     loop {
@@ -106,6 +121,7 @@ fn discovery_loop() {
                         .or_insert_with(|| initialize_watched_session(&meta));
                 }
             }
+            refresh_claude_desktop_inventory(&mut claude_inventory_posts);
             last_scan = Instant::now();
         }
 
@@ -184,6 +200,389 @@ fn discover_sessions(root: &Path) -> Vec<SessionMeta> {
         .take(MAX_ROLLOUTS_PER_SCAN)
         .filter_map(|(_, path)| read_session_meta(path))
         .collect()
+}
+
+fn refresh_claude_desktop_inventory(
+    posted_cache: &mut HashMap<String, (String, Instant)>,
+) {
+    let sessions = discover_claude_desktop_inventory();
+    let mut live_keys = HashSet::new();
+
+    for session in sessions {
+        let key = format!("{}:{}", session.surface, session.session_id);
+        live_keys.insert(key.clone());
+        let signature = format!(
+            "{}:{}:{}:{}",
+            session.timestamp_ms,
+            session.title,
+            session.cwd.as_deref().unwrap_or_default(),
+            session.desktop_session_id.as_deref().unwrap_or_default()
+        );
+        if posted_cache
+            .get(&key)
+            .is_some_and(|(cached, posted_at)| {
+                cached == &signature && posted_at.elapsed() < CLAUDE_DESKTOP_INVENTORY_REPOST
+            })
+        {
+            continue;
+        }
+        submit_status(claude_desktop_inventory_status(&session));
+        posted_cache.insert(key, (signature, Instant::now()));
+    }
+
+    posted_cache.retain(|key, _| live_keys.contains(key));
+}
+
+fn discover_claude_desktop_inventory() -> Vec<ClaudeDesktopSession> {
+    let mut sessions = Vec::new();
+    for root in claude_desktop_roots() {
+        collect_claude_desktop_json_sessions(
+            &root.join("claude-code-sessions"),
+            "code",
+            &mut sessions,
+        );
+        collect_claude_desktop_json_sessions(
+            &root.join("local-agent-mode-sessions"),
+            "cowork",
+            &mut sessions,
+        );
+        collect_claude_desktop_chat_sessions(&root, &mut sessions);
+    }
+
+    let mut deduped = HashMap::<String, ClaudeDesktopSession>::new();
+    for session in sessions {
+        let key = format!("{}:{}", session.surface, session.session_id);
+        if match deduped.get(&key) {
+            Some(existing) => existing.timestamp_ms < session.timestamp_ms,
+            None => true,
+        } {
+            deduped.insert(key, session);
+        }
+    }
+
+    let mut sessions = deduped.into_values().collect::<Vec<_>>();
+    sessions.sort_by(|left, right| right.timestamp_ms.cmp(&left.timestamp_ms));
+    sessions.truncate(MAX_CLAUDE_DESKTOP_SESSIONS_PER_SCAN);
+    sessions
+}
+
+fn claude_desktop_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(raw) = std::env::var_os("AIVATAR_CLAUDE_DESKTOP_ROOT") {
+        roots.extend(std::env::split_paths(&raw));
+    }
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        roots.push(
+            local_app_data
+                .join("Packages")
+                .join("Claude_pzs8sxrjxfjjc")
+                .join("LocalCache")
+                .join("Roaming")
+                .join("Claude"),
+        );
+    }
+    if let Some(app_data) = std::env::var_os("APPDATA").map(PathBuf::from) {
+        roots.push(app_data.join("Claude"));
+    }
+
+    let mut seen = HashSet::new();
+    roots
+        .into_iter()
+        .filter(|root| root.is_dir())
+        .filter(|root| seen.insert(root.clone()))
+        .collect()
+}
+
+fn collect_claude_desktop_json_sessions(
+    root: &Path,
+    surface: &'static str,
+    sessions: &mut Vec<ClaudeDesktopSession>,
+) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if metadata.is_dir() {
+            collect_claude_desktop_json_sessions(&path, surface, sessions);
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("local_") || !name.ends_with(".json") {
+            continue;
+        }
+        if let Some(session) = read_claude_desktop_json_session(&path, surface) {
+            sessions.push(session);
+        }
+    }
+}
+
+fn read_claude_desktop_json_session(
+    path: &Path,
+    surface: &'static str,
+) -> Option<ClaudeDesktopSession> {
+    let content = fs::read_to_string(path).ok()?;
+    let parsed = serde_json::from_str::<Value>(&content).ok()?;
+    let desktop_session_id = string_field(&parsed, "sessionId").or_else(|| string_field(&parsed, "id"));
+    let session_id = string_field(&parsed, "cliSessionId").or_else(|| desktop_session_id.clone())?;
+    let timestamp_ms = timestamp_ms_from_value(parsed.get("lastActivityAt"))
+        .or_else(|| timestamp_ms_from_value(parsed.get("updatedAt")))
+        .or_else(|| timestamp_ms_from_value(parsed.get("createdAt")))?;
+    if !timestamp_in_active_window(timestamp_ms) {
+        return None;
+    }
+    let fallback = if surface == "cowork" {
+        "Cowork session"
+    } else {
+        "Code session"
+    };
+    Some(ClaudeDesktopSession {
+        session_id,
+        desktop_session_id,
+        surface,
+        title: normalize_inventory_title(
+            string_field(&parsed, "title")
+                .or_else(|| string_field(&parsed, "name"))
+                .or_else(|| string_field(&parsed, "summary"))
+                .as_deref(),
+            fallback,
+        ),
+        cwd: string_field(&parsed, "cwd").or_else(|| string_field(&parsed, "originCwd")),
+        timestamp_ms,
+    })
+}
+
+fn collect_claude_desktop_chat_sessions(root: &Path, sessions: &mut Vec<ClaudeDesktopSession>) {
+    let leveldb = root.join("Local Storage").join("leveldb");
+    let mut conversations = HashMap::<String, ClaudeDesktopSession>::new();
+    collect_claude_chat_leveldb_sessions(&leveldb, &mut conversations);
+    sessions.extend(conversations.into_values());
+}
+
+fn collect_claude_chat_leveldb_sessions(
+    root: &Path,
+    conversations: &mut HashMap<String, ClaudeDesktopSession>,
+) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if metadata.is_dir() {
+            collect_claude_chat_leveldb_sessions(&path, conversations);
+            continue;
+        }
+        let extension = path.extension().and_then(|value| value.to_str());
+        if !matches!(extension, Some("log" | "ldb")) || metadata.len() > MAX_CLAUDE_LEVELDB_BYTES {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&path) else {
+            continue;
+        };
+        let utf16 = decode_utf16le_lossy(&bytes);
+        collect_claude_chat_objects(&utf16, conversations);
+        if let Ok(utf8) = String::from_utf8(bytes) {
+            collect_claude_chat_objects(&utf8, conversations);
+        }
+    }
+}
+
+fn collect_claude_chat_objects(
+    text: &str,
+    conversations: &mut HashMap<String, ClaudeDesktopSession>,
+) {
+    let mut search_from = 0;
+    while let Some(relative) = text[search_from..].find("{\"uuid\":\"") {
+        let start = search_from + relative;
+        let Some(end) = json_object_end(text, start) else {
+            search_from = start.saturating_add(8);
+            continue;
+        };
+        let raw = &text[start..end];
+        if let Ok(parsed) = serde_json::from_str::<Value>(raw) {
+            if let Some(session) = claude_chat_session_from_value(&parsed) {
+                let key = session.session_id.clone();
+                if match conversations.get(&key) {
+                    Some(existing) => existing.timestamp_ms < session.timestamp_ms,
+                    None => true,
+                } {
+                    conversations.insert(key, session);
+                }
+            }
+        }
+        search_from = end;
+    }
+}
+
+fn claude_chat_session_from_value(value: &Value) -> Option<ClaudeDesktopSession> {
+    if string_field(value, "platform").is_some_and(|platform| platform != "CLAUDE_AI") {
+        return None;
+    }
+    let session_id = string_field(value, "uuid")?;
+    let title = string_field(value, "name")?;
+    let timestamp_ms = timestamp_ms_from_value(value.get("updated_at"))
+        .or_else(|| timestamp_ms_from_value(value.get("created_at")))?;
+    if !timestamp_in_active_window(timestamp_ms) {
+        return None;
+    }
+    Some(ClaudeDesktopSession {
+        session_id: session_id.clone(),
+        desktop_session_id: Some(session_id),
+        surface: "chat",
+        title: normalize_inventory_title(Some(&title), "Chat session"),
+        cwd: None,
+        timestamp_ms,
+    })
+}
+
+fn json_object_end(text: &str, start: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut depth = 0_i32;
+    let mut in_string = false;
+    let mut escape = false;
+    for (offset, byte) in bytes[start..].iter().enumerate() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if *byte == b'\\' {
+            escape = true;
+            continue;
+        }
+        if *byte == b'"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        if *byte == b'{' {
+            depth += 1;
+        } else if *byte == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(start + offset + 1);
+            }
+        }
+    }
+    None
+}
+
+fn decode_utf16le_lossy(bytes: &[u8]) -> String {
+    let units = bytes
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect::<Vec<_>>();
+    String::from_utf16_lossy(&units)
+}
+
+fn timestamp_ms_from_value(value: Option<&Value>) -> Option<u128> {
+    match value? {
+        Value::Number(number) => number
+            .as_u64()
+            .map(|value| if value > 10_000_000_000 { value } else { value * 1000 })
+            .map(u128::from),
+        Value::String(text) => {
+            let clean = text.trim();
+            if clean.is_empty() {
+                return None;
+            }
+            if let Ok(value) = clean.parse::<u64>() {
+                return Some(if value > 10_000_000_000 {
+                    u128::from(value)
+                } else {
+                    u128::from(value * 1000)
+                });
+            }
+            chrono::DateTime::parse_from_rfc3339(clean)
+                .ok()
+                .and_then(|date| u128::try_from(date.timestamp_millis()).ok())
+        }
+        _ => None,
+    }
+}
+
+fn unix_now_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+fn timestamp_in_active_window(timestamp_ms: u128) -> bool {
+    if timestamp_ms == 0 {
+        return false;
+    }
+    let now = unix_now_ms();
+    if timestamp_ms > now.saturating_add(60_000) {
+        return true;
+    }
+    now.saturating_sub(timestamp_ms) <= active_window().as_millis()
+}
+
+fn iso_from_timestamp_ms(timestamp_ms: u128) -> String {
+    chrono::DateTime::from_timestamp_millis(i64::try_from(timestamp_ms).unwrap_or(i64::MAX))
+        .map(|date| date.to_rfc3339())
+        .unwrap_or_else(iso_now)
+}
+
+fn expires_from_timestamp_ms(timestamp_ms: u128) -> String {
+    iso_from_timestamp_ms(timestamp_ms.saturating_add(active_window().as_millis()))
+}
+
+fn normalize_inventory_title(value: Option<&str>, fallback: &str) -> String {
+    let clean = value
+        .unwrap_or(fallback)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if clean.is_empty() {
+        fallback.to_string()
+    } else {
+        clean
+    }
+}
+
+fn claude_desktop_inventory_status(session: &ClaudeDesktopSession) -> Value {
+    let label = match session.surface {
+        "chat" => "Claude Chat",
+        "cowork" => "Claude Cowork",
+        _ => "Claude Code",
+    };
+    let timestamp = iso_from_timestamp_ms(session.timestamp_ms);
+    let mut value = json!({
+        "agent": CLAUDE_AGENT,
+        "sessionId": session.session_id,
+        "status": "idle",
+        "phase": format!("desktop-{}-session", session.surface),
+        "task": format!("{label} session discovered"),
+        "summary": format!("{label}: {}", session.title),
+        "progress": 0,
+        "message": session.title,
+        "severity": "info",
+        "timestamp": timestamp,
+        "presenceTimestamp": timestamp,
+        "expiresAt": expires_from_timestamp_ms(session.timestamp_ms),
+        "source": "claude-desktop-inventory",
+        "surface": session.surface,
+    });
+    if let Some(object) = value.as_object_mut() {
+        if let Some(cwd) = &session.cwd {
+            object.insert("detail".to_string(), json!(cwd));
+        }
+        if let Some(desktop_session_id) = &session.desktop_session_id {
+            object.insert("desktopSessionId".to_string(), json!(desktop_session_id));
+        }
+    }
+    value
 }
 
 fn collect_recent_jsonl(root: &Path, max_age: Duration, files: &mut Vec<(SystemTime, PathBuf)>) {

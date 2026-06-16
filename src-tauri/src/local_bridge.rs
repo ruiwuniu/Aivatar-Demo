@@ -142,7 +142,13 @@ fn parsed_ms(value: Option<&Value>) -> u128 {
 
 fn with_session_expiry(mut status: Value) -> Value {
     if let Some(object) = status.as_object_mut() {
-        object.insert("expiresAt".to_string(), Value::String(session_expires_at()));
+        if !object
+            .get("expiresAt")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            object.insert("expiresAt".to_string(), Value::String(session_expires_at()));
+        }
     }
     status
 }
@@ -189,6 +195,37 @@ fn is_claude_lifecycle_only_idle_status(status: &Value) -> bool {
         )
         && status.get("usage").is_none()
         && status.get("learning").is_none()
+}
+
+fn is_claude_desktop_inventory_status(status: &Value) -> bool {
+    string_field(status, "agent").as_deref() == Some("claude-code")
+        && string_field(status, "status").as_deref() == Some("idle")
+        && matches!(
+            string_field(status, "phase").as_deref(),
+            Some("desktop-chat-session" | "desktop-cowork-session" | "desktop-code-session")
+        )
+}
+
+fn merge_claude_desktop_inventory_status(status: Value, existing: &Value) -> Value {
+    if string_field(existing, "status").as_deref() == Some("idle") {
+        return status;
+    }
+
+    let mut merged = existing.clone();
+    if let Some(object) = merged.as_object_mut() {
+        for field in [
+            "presenceTimestamp",
+            "expiresAt",
+            "source",
+            "surface",
+            "desktopSessionId",
+        ] {
+            if let Some(value) = status.get(field) {
+                object.insert(field.to_string(), value.clone());
+            }
+        }
+    }
+    merged
 }
 
 fn sorted_sessions(state: &BridgeState) -> Vec<Value> {
@@ -407,7 +444,15 @@ fn normalize_status(payload: Value) -> Result<Value, String> {
             .unwrap_or(timestamp)
             .into(),
     );
-    for field in ["usage", "idleBubbleCandidates", "learning"] {
+    for field in [
+        "usage",
+        "idleBubbleCandidates",
+        "learning",
+        "expiresAt",
+        "source",
+        "surface",
+        "desktopSessionId",
+    ] {
         if let Some(value) = source.get(field) {
             object.insert(field.to_string(), value.clone());
         }
@@ -1124,6 +1169,8 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
                 }
             }
             status = merged;
+        } else if is_claude_desktop_inventory_status(&status) {
+            status = merge_claude_desktop_inventory_status(status, &existing);
         } else if let Some(object) = status.as_object_mut() {
             for field in ["presenceTimestamp", "usage", "idleBubbleCandidates", "learning"] {
                 if !object.contains_key(field) {

@@ -355,6 +355,19 @@ and low-detail tool/event summaries. On `Stop`, `TaskCompleted`, or
 with provider `claude-code` when the bundled worker path is available, and falls
 back to a heuristic `phase: "session-learning"` payload if the worker cannot be
 started.
+Claude Desktop's Chat and Cowork sidebar recents are also discovered from local
+desktop inventory metadata. The JS discovery script and native packaged
+discovery scan Claude's user data roots, including Windows Store
+`%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude` and
+`%APPDATA%\Claude`: Code sessions come from
+`claude-code-sessions\**\local_*.json`, Cowork sessions from
+`local-agent-mode-sessions\**\local_*.json`, and Chat recents from Claude
+Chromium Local Storage LevelDB conversation-list objects. This inventory scan
+only reads session ids, titles, cwd, and timestamps; it does not read full chat
+transcripts. Inventory statuses use `phase: "desktop-chat-session"`,
+`"desktop-cowork-session"`, or `"desktop-code-session"` and are treated as idle
+metadata, so they can create visible session rows but cannot downgrade an active
+or terminal Claude hook session.
 
 The app also publishes a low-sensitivity avatar state snapshot to the bridge via
 `POST /avatar-state`. The bridge writes `%TEMP%\aivatar-avatar-state.json`,
@@ -795,6 +808,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Only considers rollout files modified within `AIVATAR_DISCOVERY_ACTIVE_MS`, defaulting to `AIVATAR_SESSION_STALE_MS` (5 hours by default), so older chat history is not eagerly connected.
   - Posts `/agent-presence` for detected Codex sessions, starts the external plugin `aivatar-heartbeat.mjs` and `aivatar-watch.mjs` when helpers are missing or dead, records helper pids under `%TEMP%\aivatar-session-discovery\helpers`, and stops helper processes whose rollout files fall outside the active window.
   - When discovery stops an inactive helper, it also posts `/agent-sessions/disconnect` so the bridge immediately removes the stale session row and writes a disconnect tombstone. This prevents old auto-discovered Codex sessions from lingering in Agent Sessions until normal expiry.
+  - Also scans Claude Desktop local inventory metadata for recent Chat, Cowork, and Code sidebar sessions. It reads only ids, titles, cwd, and timestamps from Claude JSON/LevelDB metadata and posts idle `claude-code` inventory rows without setting `/agent-active`.
   - Passes `CODEX_ROLLOUT_PATH` to each watcher so it tails the exact discovered rollout JSONL instead of searching by session id.
   - Defaults token reward baselines to `%TEMP%\aivatar-usage-baselines.json` to avoid restricted `.codex\tmp` write contexts.
   - Passes `AIVATAR_LEARNING_ENABLED`, `AIVATAR_LEARNING_PROVIDER=codex`, and `AIVATAR_LEARNING_SCRIPT` into spawned Codex watcher helpers, so auto-discovered Desktop sessions can produce `phase: "session-learning"` payloads from sanitized rollout digests.
@@ -806,6 +820,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 - `src-tauri/src/codex_discovery.rs`
   - Native packaged-app Codex Desktop discovery path used when Tauri starts the bridge/discovery flow.
   - Watches local Codex rollout JSONL events read-only, emits ordinary turn status, writes sanitized learning context files, and starts `scripts/aivatar-learning-worker.mjs` after `final` / `final_answer` events when a provider command is available.
+  - Mirrors the JS discovery path for Claude Desktop local inventory, so packaged Windows builds can show recent Chat/Cowork/Code sidebar sessions even when those sessions only emitted lifecycle-only hook events.
   - Resolves `node`, `codex`, and `claude` through PATH, Windows command variants, and macOS Homebrew/user-bin fallback paths. It passes the resolved provider path to the worker via `AIVATAR_CODEX_COMMAND` or `AIVATAR_CLAUDE_COMMAND`.
   - On Windows, wraps `where.exe` command lookup and worker spawning with `CREATE_NO_WINDOW`, fixing the two quick terminal flashes that could appear after each Codex Desktop turn.
 

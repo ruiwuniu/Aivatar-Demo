@@ -143,8 +143,18 @@ try {
     `claude_desktop_hook_lifecycle_smoke_${hookSmokeSuffix}`;
   const nativeLifecycleSessionId = `claude_native_lifecycle_smoke_${hookSmokeSuffix}`;
   const coworkHookSessionId = `claude_cowork_hook_smoke_${hookSmokeSuffix}`;
+  const inventorySessionId = `claude_inventory_smoke_${hookSmokeSuffix}`;
   const postHook = async (payload, path = "/agent-hooks/claude-code") => {
     const response = await fetch(`http://127.0.0.1:${httpPort}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    assert.equal(response.ok, true);
+    return response.json();
+  };
+  const postStatus = async (payload) => {
+    const response = await fetch(`http://127.0.0.1:${httpPort}/agent-status`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
@@ -206,6 +216,57 @@ try {
     ),
     false,
   );
+
+  const inventoryPayload = {
+    agent: "claude-code",
+    sessionId: inventorySessionId,
+    status: "idle",
+    phase: "desktop-chat-session",
+    task: "Claude Chat session discovered",
+    summary: "Claude Chat: Inventory smoke",
+    message: "Inventory smoke",
+    progress: 0,
+    severity: "info",
+    timestamp: new Date().toISOString(),
+    source: "claude-desktop-inventory",
+    surface: "chat",
+    desktopSessionId: "local_inventory_smoke",
+  };
+  await postStatus(inventoryPayload);
+  snapshot = await readSnapshot();
+  let inventorySession = snapshot.sessions.find(
+    (session) =>
+      session.agent === "claude-code" &&
+      session.sessionId === inventorySessionId,
+  );
+  assert.ok(inventorySession);
+  assert.equal(inventorySession.status, "idle");
+  assert.equal(inventorySession.phase, "desktop-chat-session");
+
+  await postStatus({
+    agent: "claude-code",
+    sessionId: inventorySessionId,
+    status: "executing",
+    phase: "tool-use",
+    summary: "Claude Code is using a tool",
+    message: "Claude Code is using a tool",
+    progress: 50,
+    severity: "info",
+    timestamp: new Date().toISOString(),
+  });
+  await postStatus({
+    ...inventoryPayload,
+    timestamp: new Date().toISOString(),
+  });
+  snapshot = await readSnapshot();
+  inventorySession = snapshot.sessions.find(
+    (session) =>
+      session.agent === "claude-code" &&
+      session.sessionId === inventorySessionId,
+  );
+  assert.ok(inventorySession);
+  assert.equal(inventorySession.status, "executing");
+  assert.equal(inventorySession.phase, "tool-use");
 
   await postHook({
     hook_event_name: "UserPromptSubmit",

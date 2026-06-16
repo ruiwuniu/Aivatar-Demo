@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -42,6 +42,19 @@ const activeWindowMs = Math.max(
 const pidDir = join(tmpdir(), "aivatar-session-discovery");
 const pidFile = join(pidDir, "discovery.json");
 const helperDir = join(pidDir, "helpers");
+const claudeDesktopInventoryMaxSessions = Math.max(
+  1,
+  Number(process.env.AIVATAR_CLAUDE_DESKTOP_INVENTORY_MAX ?? 30),
+);
+const claudeDesktopInventoryRepostMs = Math.max(
+  discoveryIntervalMs,
+  Number(process.env.AIVATAR_CLAUDE_DESKTOP_INVENTORY_REPOST_MS ?? 60_000),
+);
+const claudeLevelDbMaxBytes = Math.max(
+  1024 * 1024,
+  Number(process.env.AIVATAR_CLAUDE_DESKTOP_LEVELDB_MAX_BYTES ?? 25 * 1024 * 1024),
+);
+const claudeInventoryPostCache = new Map();
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -57,6 +70,49 @@ const pathExists = async (path) => {
   } catch {
     return false;
   }
+};
+
+const firstString = (value, fields) => {
+  if (!value || typeof value !== "object") return undefined;
+  for (const field of fields) {
+    const text = value[field];
+    if (typeof text === "string" && text.trim()) return text.trim();
+  }
+  return undefined;
+};
+
+const normalizeTitle = (title, fallback) => {
+  if (typeof title !== "string") return fallback;
+  const clean = title.trim().replace(/\s+/g, " ");
+  return clean || fallback;
+};
+
+const timestampMsFromValue = (value) => {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value > 10_000_000_000 ? Math.round(value) : Math.round(value * 1000);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return timestampMsFromValue(numeric);
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return undefined;
+};
+
+const timestampIsoFromMs = (timestampMs) =>
+  new Date(Number.isFinite(timestampMs) ? timestampMs : Date.now()).toISOString();
+
+const expiresIsoFromMs = (timestampMs) =>
+  new Date(
+    (Number.isFinite(timestampMs) ? timestampMs : Date.now()) + sessionStaleMs,
+  ).toISOString();
+
+const isInActiveWindowMs = (timestampMs) => {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) return false;
+  const now = Date.now();
+  if (timestampMs > now + 60_000) return true;
+  return now - timestampMs <= activeWindowMs;
 };
 
 const processIsRunning = (pid) => {
@@ -187,6 +243,303 @@ const walkJsonl = async function* (directory) {
       yield entryPath;
     }
   }
+};
+
+const walkFiles = async function* (directory, matches) {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const entryPath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      yield* walkFiles(entryPath, matches);
+    } else if (entry.isFile() && matches(entryPath, entry.name)) {
+      yield entryPath;
+    }
+  }
+};
+
+const claudeDesktopRoots = async () => {
+  const roots = [];
+  const addRoot = (value) => {
+    if (typeof value !== "string" || !value.trim()) return;
+    for (const rawPath of value.split(delimiter)) {
+      const clean = rawPath.trim();
+      if (clean && !roots.includes(clean)) roots.push(clean);
+    }
+  };
+
+  addRoot(process.env.AIVATAR_CLAUDE_DESKTOP_ROOT);
+  if (process.env.LOCALAPPDATA) {
+    addRoot(
+      join(
+        process.env.LOCALAPPDATA,
+        "Packages",
+        "Claude_pzs8sxrjxfjjc",
+        "LocalCache",
+        "Roaming",
+        "Claude",
+      ),
+    );
+  }
+  if (process.env.APPDATA) addRoot(join(process.env.APPDATA, "Claude"));
+
+  const existing = [];
+  for (const root of roots) {
+    if ((await pathExists(root)) && !existing.includes(root)) existing.push(root);
+  }
+  return existing;
+};
+
+const readClaudeDesktopJsonSession = async (filePath, surface) => {
+  let content;
+  try {
+    content = await readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+
+  const desktopSessionId = firstString(parsed, ["sessionId", "id"]);
+  const sessionId = firstString(parsed, ["cliSessionId"]) ?? desktopSessionId;
+  if (!sessionId) return null;
+
+  const timestampMs =
+    timestampMsFromValue(parsed.lastActivityAt) ??
+    timestampMsFromValue(parsed.updatedAt) ??
+    timestampMsFromValue(parsed.createdAt);
+  if (!isInActiveWindowMs(timestampMs)) return null;
+
+  return {
+    surface,
+    sessionId,
+    desktopSessionId,
+    title: normalizeTitle(
+      firstString(parsed, ["title", "name", "summary"]),
+      surface === "cowork" ? "Cowork session" : "Code session",
+    ),
+    cwd: firstString(parsed, ["cwd", "originCwd"]),
+    timestampMs,
+  };
+};
+
+const discoverClaudeDesktopJsonSessions = async (root, relativeDir, surface) => {
+  const sessions = [];
+  for await (const filePath of walkFiles(
+    join(root, relativeDir),
+    (_filePath, name) => /^local_.*\.json$/i.test(name),
+  )) {
+    const session = await readClaudeDesktopJsonSession(filePath, surface);
+    if (session) sessions.push(session);
+  }
+  return sessions;
+};
+
+const extractClaudeChatObjects = (text) => {
+  const conversations = [];
+  let index = 0;
+  while ((index = text.indexOf('{"uuid":"', index)) >= 0) {
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let end = -1;
+
+    for (let cursor = index; cursor < text.length; cursor += 1) {
+      const character = text[cursor];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (character === "\\") {
+        escape = true;
+        continue;
+      }
+      if (character === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (character === "{") depth += 1;
+      if (character === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          end = cursor + 1;
+          break;
+        }
+      }
+    }
+
+    if (end < 0) {
+      index += 8;
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(text.slice(index, end));
+      if (
+        typeof parsed?.uuid === "string" &&
+        typeof parsed?.name === "string" &&
+        (!parsed.platform || parsed.platform === "CLAUDE_AI")
+      ) {
+        conversations.push(parsed);
+      }
+    } catch {
+      // LevelDB log chunks can contain partial objects.
+    }
+    index = end;
+  }
+  return conversations;
+};
+
+const discoverClaudeDesktopChatSessions = async (root) => {
+  const sessions = new Map();
+  for await (const filePath of walkFiles(
+    join(root, "Local Storage", "leveldb"),
+    (_filePath, name) => /\.(log|ldb)$/i.test(name),
+  )) {
+    let info;
+    try {
+      info = await stat(filePath);
+    } catch {
+      continue;
+    }
+    if (info.size > claudeLevelDbMaxBytes) continue;
+
+    let buffer;
+    try {
+      buffer = await readFile(filePath);
+    } catch {
+      continue;
+    }
+
+    for (const encoding of ["utf16le", "utf8"]) {
+      for (const conversation of extractClaudeChatObjects(
+        buffer.toString(encoding),
+      )) {
+        const timestampMs =
+          timestampMsFromValue(conversation.updated_at) ??
+          timestampMsFromValue(conversation.created_at);
+        if (!isInActiveWindowMs(timestampMs)) continue;
+        const existing = sessions.get(conversation.uuid);
+        if (existing && existing.timestampMs >= timestampMs) continue;
+        sessions.set(conversation.uuid, {
+          surface: "chat",
+          sessionId: conversation.uuid,
+          desktopSessionId: conversation.uuid,
+          title: normalizeTitle(conversation.name, "Chat session"),
+          timestampMs,
+        });
+      }
+    }
+  }
+  return [...sessions.values()];
+};
+
+const discoverClaudeDesktopInventory = async () => {
+  const sessions = [];
+  for (const root of await claudeDesktopRoots()) {
+    sessions.push(
+      ...(await discoverClaudeDesktopJsonSessions(
+        root,
+        "claude-code-sessions",
+        "code",
+      )),
+    );
+    sessions.push(
+      ...(await discoverClaudeDesktopJsonSessions(
+        root,
+        "local-agent-mode-sessions",
+        "cowork",
+      )),
+    );
+    sessions.push(...(await discoverClaudeDesktopChatSessions(root)));
+  }
+
+  const deduped = new Map();
+  for (const session of sessions) {
+    const key = `${session.surface}:${session.sessionId}`;
+    const existing = deduped.get(key);
+    if (!existing || existing.timestampMs < session.timestampMs) {
+      deduped.set(key, session);
+    }
+  }
+
+  return [...deduped.values()]
+    .sort((left, right) => right.timestampMs - left.timestampMs)
+    .slice(0, claudeDesktopInventoryMaxSessions);
+};
+
+const claudeDesktopInventoryStatus = (session) => {
+  const label =
+    session.surface === "chat"
+      ? "Claude Chat"
+      : session.surface === "cowork"
+        ? "Claude Cowork"
+        : "Claude Code";
+  const timestamp = timestampIsoFromMs(session.timestampMs);
+  return {
+    agent: "claude-code",
+    sessionId: session.sessionId,
+    status: "idle",
+    phase: `desktop-${session.surface}-session`,
+    task: `${label} session discovered`,
+    summary: `${label}: ${session.title}`,
+    detail: session.cwd,
+    progress: 0,
+    message: session.title,
+    severity: "info",
+    timestamp,
+    presenceTimestamp: timestamp,
+    expiresAt: expiresIsoFromMs(session.timestampMs),
+    source: "claude-desktop-inventory",
+    surface: session.surface,
+    desktopSessionId: session.desktopSessionId,
+  };
+};
+
+const postClaudeDesktopInventory = async () => {
+  const sessions = await discoverClaudeDesktopInventory();
+  const liveKeys = new Set();
+  let posted = 0;
+  for (const session of sessions) {
+    const key = `${session.surface}:${session.sessionId}`;
+    liveKeys.add(key);
+    const signature = [
+      session.timestampMs,
+      session.title,
+      session.cwd ?? "",
+      session.desktopSessionId ?? "",
+    ].join("|");
+    const cached = claudeInventoryPostCache.get(key);
+    if (
+      cached?.signature === signature &&
+      Date.now() - cached.postedAt < claudeDesktopInventoryRepostMs
+    ) {
+      continue;
+    }
+    await postJson(statusEndpoint, claudeDesktopInventoryStatus(session));
+    claudeInventoryPostCache.set(key, {
+      signature,
+      postedAt: Date.now(),
+    });
+    posted += 1;
+  }
+
+  for (const key of claudeInventoryPostCache.keys()) {
+    if (!liveKeys.has(key)) claudeInventoryPostCache.delete(key);
+  }
+
+  return posted;
 };
 
 const readSessionMeta = async (filePath) => {
@@ -409,6 +762,7 @@ try {
           await postDetectedStatus(session);
         }
       }
+      await postClaudeDesktopInventory();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[codex-session-discovery] ${message}`);
