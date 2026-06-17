@@ -311,6 +311,7 @@ const COLA_DRINK_AUDIO_VOLUME_MULTIPLIER = 0.45;
 const COLA_DRINK_AFTER_CAN_OPEN_DELAY_MS = 1200;
 const COFFEE_DRINK_AUDIO_VOLUME_MULTIPLIER = 0.42;
 const BENTO_EAT_AUDIO_VOLUME_MULTIPLIER = 0.42;
+const AUTONOMOUS_ACTION_STUCK_SECONDS = 120;
 const DEMO_BEHAVIORS: BehaviorName[] = [
   "idle",
   "phone",
@@ -1805,6 +1806,32 @@ type PendingWorldInteraction =
 
 const runtimeActionBehavior = (avatar: AvatarRuntime): BehaviorName =>
   avatar.actionIntent ?? avatar.behavior;
+
+const hasPlacedRecordPlayer = (content: AivatarContent) =>
+  Boolean(content.placedItems?.some((item) => item.itemId === RECORD_PLAYER_ITEM_ID));
+
+const avatarRuntimeHasFiniteNavigation = (avatar: AvatarRuntime) =>
+  [
+    avatar.x,
+    avatar.y,
+    avatar.targetX,
+    avatar.targetY,
+    avatar.behaviorTimer,
+  ].every(Number.isFinite);
+
+const resetRuntimeToIdle = (avatar: AvatarRuntime): AvatarRuntime => ({
+  ...avatar,
+  targetX: avatar.x,
+  targetY: avatar.y,
+  behavior: "idle",
+  behaviorTimer: 0,
+  expression: "calm",
+  activityLabel: undefined,
+  actionIntent: undefined,
+  actionActivityLabel: undefined,
+  interactionTargetAlternates: undefined,
+  navigationFailure: undefined,
+});
 
 type SceneContextMenuState = {
   x: number;
@@ -4476,11 +4503,16 @@ export const App = () => {
     let lastNavLearningTargetKey = "";
     let lastNavLearningSuccessKey = "";
     let lastNavLearningFailureKey = "";
+    let autonomousActionWatchKey = "";
+    let autonomousActionWatchSeconds = 0;
     let stopped = false;
 
     const loop = (now: number) => {
       if (stopped) return;
-      const elapsedSeconds = Math.min((now - previous) / 1000, 0.08);
+      const rawElapsedSeconds = (now - previous) / 1000;
+      const elapsedSeconds = Number.isFinite(rawElapsedSeconds)
+        ? Math.min(Math.max(rawElapsedSeconds, 0), 0.08)
+        : 0;
       previous = now;
       frame += 1;
       statAccumulator += elapsedSeconds;
@@ -4628,6 +4660,44 @@ export const App = () => {
           autoMusicEnabled: autoMusicEnabledRef.current,
         },
       );
+
+      if (
+        runtimeActionBehavior(runtimeRef.current) === "music" &&
+        !hasPlacedRecordPlayer(currentContent)
+      ) {
+        runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
+        setAvatar(runtimeRef.current);
+      }
+
+      const autonomousActionWatchActive =
+        !isHighPriorityStatus(currentStatus) &&
+        !busyRecoveryActive &&
+        !taskCabinetVisualFlowActive &&
+        !pendingWorldInteractionRef.current &&
+        !isBlockingInteraction(activeInteractionRef.current) &&
+        Boolean(runtimeRef.current.actionIntent);
+
+      if (!autonomousActionWatchActive) {
+        autonomousActionWatchKey = "";
+        autonomousActionWatchSeconds = 0;
+      } else {
+        const watchKey = `${runtimeRef.current.behavior}:${runtimeRef.current.actionIntent}`;
+        if (watchKey !== autonomousActionWatchKey) {
+          autonomousActionWatchKey = watchKey;
+          autonomousActionWatchSeconds = 0;
+        }
+        autonomousActionWatchSeconds += elapsedSeconds;
+
+        if (
+          !avatarRuntimeHasFiniteNavigation(runtimeRef.current) ||
+          autonomousActionWatchSeconds >= AUTONOMOUS_ACTION_STUCK_SECONDS
+        ) {
+          autonomousActionWatchKey = "";
+          autonomousActionWatchSeconds = 0;
+          runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
+          setAvatar(runtimeRef.current);
+        }
+      }
 
       if (runtimeRef.current.navigationFailure) {
         const failedInteraction = pendingWorldInteractionRef.current;
