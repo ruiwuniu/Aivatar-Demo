@@ -1,6 +1,6 @@
 [package]
 name = "aivatar"
-version = "0.1.2"
+version = "0.1.3"
 description = "A pixel room desktop companion for Codex status."
 authors = ["Aivatar"]
 edition = "2021"

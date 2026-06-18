@@ -22,6 +22,7 @@ const STALE_SESSIONS_PATH: &str = "/agent-sessions/stale";
 const DISCONNECT_SESSION_PATH: &str = "/agent-sessions/disconnect";
 const PRESENCE_PATH: &str = "/agent-presence";
 const AVATAR_STATE_PATH: &str = "/avatar-state";
+const PAINTING_PLAN_PATH: &str = "/painting-plan";
 const CLAUDE_HOOK_PATH: &str = "/agent-hooks/claude-code";
 const CLAUDE_STATUS_LINE_HOOK_PATH: &str = "/agent-hooks/claude-code/status-line";
 const HEALTH_PATH: &str = "/health";
@@ -29,6 +30,26 @@ const SESSION_STALE_MS: u64 = 5 * 60 * 60 * 1000;
 const ACTIVITY_STALE_MS: u64 = 5 * 60 * 1000;
 const MAX_SESSIONS: usize = 80;
 const MAX_CLAUDE_DIGEST_ENTRIES: usize = 12;
+const PAINTING_ARCHETYPES: [&str; 10] = [
+    "signal_tower",
+    "window_city",
+    "terminal_star_map",
+    "desk_still_life",
+    "harbor_beacon",
+    "mountain_path",
+    "circuit_grid",
+    "mosaic_garden",
+    "color_bloom",
+    "lantern_room",
+];
+const PAINTING_TRAITS: [&str; 6] = [
+    "focus",
+    "resilience",
+    "curiosity",
+    "efficiency",
+    "creativity",
+    "warmth",
+];
 
 static BRIDGE_STATE: OnceLock<Arc<Mutex<BridgeState>>> = OnceLock::new();
 
@@ -1384,6 +1405,293 @@ fn write_avatar_state(state: &Value) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+fn normalized_painting_text(value: Option<&Value>, limit: usize) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(|text| sanitized_digest_text(text, limit))
+        .filter(|text| !text.trim().is_empty())
+}
+
+fn normalized_painting_string_array(
+    value: Option<&Value>,
+    limit: usize,
+    text_limit: usize,
+) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| normalized_painting_text(Some(item), text_limit))
+                .take(limit)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_painting_event(value: &Value) -> Option<Value> {
+    let object = value.as_object()?;
+    let mut output = Map::new();
+    for field in ["type", "agent", "status", "behavior", "itemId"] {
+        if let Some(text) = normalized_painting_text(object.get(field), 80) {
+            output.insert(field.to_string(), json!(text));
+        }
+    }
+    if let Some(summary) = normalized_painting_text(object.get("summary"), 180) {
+        output.insert("summary".to_string(), json!(summary));
+    }
+    if let Some(bits) = object
+        .get("bits")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
+    {
+        output.insert("bits".to_string(), json!(bits.round()));
+    }
+    (!output.is_empty()).then_some(Value::Object(output))
+}
+
+fn normalized_painting_traits(payload: &Value) -> Map<String, Value> {
+    let source_traits = payload
+        .get("growth")
+        .and_then(|growth| growth.get("traits"))
+        .and_then(Value::as_object)
+        .or_else(|| payload.get("traits").and_then(Value::as_object));
+    let mut traits = Map::new();
+    for trait_name in PAINTING_TRAITS {
+        let value = source_traits
+            .and_then(|traits| traits.get(trait_name))
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or(0.0)
+            .round();
+        traits.insert(trait_name.to_string(), json!(value));
+    }
+    traits
+}
+
+fn sorted_painting_traits(traits: &Map<String, Value>) -> Vec<(String, f64)> {
+    let mut entries: Vec<_> = PAINTING_TRAITS
+        .iter()
+        .map(|trait_name| {
+            (
+                (*trait_name).to_string(),
+                traits
+                    .get(*trait_name)
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0),
+            )
+        })
+        .collect();
+    entries.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    entries
+}
+
+fn normalize_painting_plan_payload(payload: Value) -> Result<Value, String> {
+    let source = payload
+        .as_object()
+        .ok_or_else(|| "Painting plan payload must be a JSON object".to_string())?;
+    let traits = normalized_painting_traits(&payload);
+    let sorted_traits = sorted_painting_traits(&traits);
+    let dominant_trait = normalized_painting_text(source.get("dominantTrait"), 40)
+        .filter(|value| PAINTING_TRAITS.contains(&value.as_str()))
+        .unwrap_or_else(|| {
+            sorted_traits
+                .first()
+                .map(|entry| entry.0.clone())
+                .unwrap_or_else(|| "focus".to_string())
+        });
+    let secondary_trait = normalized_painting_text(source.get("secondaryTrait"), 40)
+        .filter(|value| PAINTING_TRAITS.contains(&value.as_str()))
+        .unwrap_or_else(|| {
+            sorted_traits
+                .get(1)
+                .map(|entry| entry.0.clone())
+                .unwrap_or_else(|| dominant_trait.clone())
+        });
+    let preferences = source.get("preferences").and_then(Value::as_object);
+    let draft = source.get("draft").and_then(Value::as_object);
+    let growth_level = source
+        .get("growthLevel")
+        .or_else(|| source.get("growth").and_then(|growth| growth.get("level")))
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(1.0)
+        .round();
+    let idle_bubble_language = preferences
+        .and_then(|prefs| prefs.get("idleBubbleLanguage"))
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "zh" | "en" | "mixed"))
+        .unwrap_or("auto");
+    let recent_events: Vec<Value> = source
+        .get("recentEvents")
+        .and_then(Value::as_array)
+        .map(|events| {
+            events
+                .iter()
+                .take(8)
+                .filter_map(normalize_painting_event)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(json!({
+        "avatarId": normalized_painting_text(source.get("avatarId"), 80),
+        "avatarName": normalized_painting_text(source.get("avatarName"), 40),
+        "growthLevel": growth_level,
+        "traits": traits,
+        "dominantTrait": dominant_trait,
+        "secondaryTrait": secondary_trait,
+        "preferences": {
+            "favoriteActivity": preferences
+                .and_then(|prefs| normalized_painting_text(prefs.get("favoriteActivity"), 40)),
+            "favoriteRecovery": preferences
+                .and_then(|prefs| normalized_painting_text(prefs.get("favoriteRecovery"), 40)),
+            "idleBubbleLanguage": idle_bubble_language,
+        },
+        "savedBubbles": normalized_painting_string_array(source.get("savedBubbles"), 8, 80),
+        "recentEvents": recent_events,
+        "draft": {
+            "id": draft.and_then(|value| normalized_painting_text(value.get("id"), 100)),
+            "easelItemId": draft.and_then(|value| normalized_painting_text(value.get("easelItemId"), 80)),
+            "createdAt": draft.and_then(|value| normalized_painting_text(value.get("createdAt"), 80)),
+            "progressSeconds": draft
+                .and_then(|value| value.get("progressSeconds"))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+                .max(0.0)
+                .round(),
+            "targetSeconds": draft
+                .and_then(|value| value.get("targetSeconds"))
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                .max(1.0)
+                .round(),
+            "sourceSummary": draft.and_then(|value| normalized_painting_text(value.get("sourceSummary"), 220)),
+        },
+        "seedHint": normalized_painting_text(source.get("seedHint"), 160),
+    }))
+}
+
+fn current_painting_script() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("AIVATAR_PAINTING_SCRIPT").map(PathBuf::from) {
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    current_learning_script()
+        .map(|path| path.with_file_name("aivatar-painting-worker.mjs"))
+        .filter(|path| path.is_file())
+}
+
+fn painting_provider() -> String {
+    std::env::var("AIVATAR_PAINTING_PROVIDER")
+        .or_else(|_| std::env::var("AIVATAR_LEARNING_PROVIDER"))
+        .or_else(|_| std::env::var("AIVATAR_PROVIDER"))
+        .unwrap_or_else(|_| "claude-code".to_string())
+}
+
+fn painting_payload_file(payload: &Value) -> Result<PathBuf, String> {
+    let directory = std::env::temp_dir().join("aivatar-painting-context");
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let avatar = payload
+        .get("avatarId")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("avatarName").and_then(Value::as_str))
+        .unwrap_or("avatar");
+    let path = directory.join(format!(
+        "painting-{}-{}.json",
+        safe_session_name(avatar),
+        now_ms()
+    ));
+    std::fs::write(&path, serde_json::to_vec_pretty(payload).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn normalize_painting_plan_response(value: Value) -> Result<Value, String> {
+    let source = value
+        .as_object()
+        .ok_or_else(|| "Painting worker returned an invalid plan".to_string())?;
+    let archetype = normalized_painting_text(source.get("archetype"), 80)
+        .filter(|value| PAINTING_ARCHETYPES.contains(&value.as_str()))
+        .unwrap_or_else(|| "color_bloom".to_string());
+    let composition = source.get("composition").and_then(Value::as_object);
+    let plan_source = source
+        .get("source")
+        .and_then(Value::as_str)
+        .filter(|value| *value == "heuristic")
+        .unwrap_or("llm");
+
+    Ok(json!({
+        "title": normalized_painting_text(source.get("title"), 42)
+            .unwrap_or_else(|| "Little Painting".to_string()),
+        "archetype": archetype,
+        "mood": normalized_painting_text(source.get("mood"), 60),
+        "paletteHint": normalized_painting_text(source.get("paletteHint"), 60),
+        "composition": {
+            "background": composition
+                .and_then(|value| normalized_painting_text(value.get("background"), 60)),
+            "subject": composition
+                .and_then(|value| normalized_painting_text(value.get("subject"), 60)),
+            "foreground": composition
+                .and_then(|value| normalized_painting_text(value.get("foreground"), 60)),
+            "accent": composition
+                .and_then(|value| normalized_painting_text(value.get("accent"), 60)),
+        },
+        "motifs": normalized_painting_string_array(source.get("motifs"), 5, 32),
+        "source": plan_source,
+    }))
+}
+
+fn run_painting_worker(payload: Value) -> Result<Value, String> {
+    let script = current_painting_script()
+        .ok_or_else(|| "Painting worker script is unavailable.".to_string())?;
+    let payload_file = painting_payload_file(&payload)?;
+    let mut command = std::process::Command::new(node_command());
+    command
+        .arg(script)
+        .arg("--provider")
+        .arg(painting_provider())
+        .arg("--payload-file")
+        .arg(payload_file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = sanitized_digest_text(
+            if stderr.trim().is_empty() {
+                stdout.as_ref()
+            } else {
+                stderr.as_ref()
+            },
+            240,
+        );
+        return Err(format!(
+            "Painting worker exited {}: {}",
+            output.status.code().unwrap_or(-1),
+            if detail.is_empty() { "no output" } else { detail.as_str() }
+        ));
+    }
+    let plan = serde_json::from_slice::<Value>(&output.stdout)
+        .map_err(|error| format!("Painting worker output is not JSON: {error}"))?;
+    normalize_painting_plan_response(plan)
+}
+
 fn handle_websocket(stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
     let Ok(mut websocket) = accept(stream) else {
         return;
@@ -1528,6 +1836,7 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                     "disconnectSessionHttp": format!("http://127.0.0.1:{HTTP_PORT}{DISCONNECT_SESSION_PATH}"),
                     "presenceHttp": format!("http://127.0.0.1:{HTTP_PORT}{PRESENCE_PATH}"),
                     "avatarStateHttp": format!("http://127.0.0.1:{HTTP_PORT}{AVATAR_STATE_PATH}"),
+                    "paintingPlanHttp": format!("http://127.0.0.1:{HTTP_PORT}{PAINTING_PLAN_PATH}"),
                     "clients": guard.clients.len(),
                     "sessionStaleMs": SESSION_STALE_MS,
                     "activityStaleMs": ACTIVITY_STALE_MS,
@@ -1727,6 +2036,22 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
         ("POST", AGENT_STATUS_PATH) | ("POST", LEGACY_STATUS_PATH) => {
             match parse_body(&request.body).and_then(submit_status) {
                 Ok(response) => send_json(&mut stream, 202, response),
+                Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+            }
+        }
+        ("POST", PAINTING_PLAN_PATH) => {
+            match parse_body(&request.body)
+                .and_then(normalize_painting_plan_payload)
+                .and_then(run_painting_worker)
+            {
+                Ok(painting_plan) => send_json(
+                    &mut stream,
+                    200,
+                    json!({
+                        "ok": true,
+                        "paintingPlan": painting_plan,
+                    }),
+                ),
                 Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
             }
         }

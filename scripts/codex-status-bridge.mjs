@@ -20,6 +20,7 @@ const staleSessionsPath = "/agent-sessions/stale";
 const disconnectSessionPath = "/agent-sessions/disconnect";
 const presencePath = "/agent-presence";
 const avatarStatePath = "/avatar-state";
+const paintingPlanPath = "/painting-plan";
 const claudeHookPath = "/agent-hooks/claude-code";
 const claudeStatusLineHookPath = "/agent-hooks/claude-code/status-line";
 const healthPath = "/health";
@@ -45,6 +46,13 @@ const learningScript =
   process.env.AIVATAR_LEARNING_SCRIPT ??
   join(scriptDir, "aivatar-learning-worker.mjs");
 const nodeCommand = process.env.AIVATAR_NODE_COMMAND ?? process.execPath;
+const paintingWorkerScript =
+  process.env.AIVATAR_PAINTING_SCRIPT ??
+  join(scriptDir, "aivatar-painting-worker.mjs");
+const paintingPlanTimeoutMs = Math.max(
+  5000,
+  Number(process.env.AIVATAR_PAINTING_TIMEOUT_MS ?? 55000),
+);
 const learningEnabled = !/^(0|false|no|off)$/i.test(
   process.env.AIVATAR_LEARNING_ENABLED ?? "1",
 );
@@ -526,6 +534,242 @@ const normalizeAvatarState = (value) => {
 const persistAvatarState = async (state) => {
   await mkdir(dirname(avatarStateFile), { recursive: true });
   await writeFile(avatarStateFile, JSON.stringify(state, null, 2), "utf8");
+};
+
+const paintingArchetypes = new Set([
+  "signal_tower",
+  "window_city",
+  "terminal_star_map",
+  "desk_still_life",
+  "harbor_beacon",
+  "mountain_path",
+  "circuit_grid",
+  "mosaic_garden",
+  "color_bloom",
+  "lantern_room",
+]);
+
+const paintingTraitNames = [
+  "focus",
+  "resilience",
+  "curiosity",
+  "efficiency",
+  "creativity",
+  "warmth",
+];
+
+const normalizedPaintingText = (value, limit) =>
+  sanitizedDigestText(value ?? "", limit);
+
+const normalizedPaintingStringArray = (value, limit, textLimit) =>
+  Array.isArray(value)
+    ? value
+        .map((entry) => normalizedPaintingText(entry, textLimit))
+        .filter(Boolean)
+        .slice(0, limit)
+    : [];
+
+const normalizePaintingEvent = (event) => {
+  if (!event || typeof event !== "object") return undefined;
+  const output = {};
+  for (const field of ["type", "agent", "status", "behavior", "itemId"]) {
+    const text = normalizedPaintingText(event[field], 80);
+    if (text) output[field] = text;
+  }
+  const summary = normalizedPaintingText(event.summary, 180);
+  if (summary) output.summary = summary;
+  const bits = Number(event.bits);
+  if (Number.isFinite(bits) && bits > 0) output.bits = Math.round(bits);
+  return Object.keys(output).length > 0 ? output : undefined;
+};
+
+const normalizePaintingPlanRequest = (value) => {
+  if (!value || typeof value !== "object") {
+    throw new Error("Painting plan payload must be a JSON object");
+  }
+
+  const sourceTraits = value.growth?.traits ?? value.traits ?? {};
+  const traits = {};
+  for (const trait of paintingTraitNames) {
+    const next = Number(sourceTraits[trait]);
+    traits[trait] = Number.isFinite(next) && next >= 0 ? Math.round(next) : 0;
+  }
+
+  const sortedTraits = Object.entries(traits).sort((left, right) => right[1] - left[1]);
+  const dominantTrait = paintingTraitNames.includes(value.dominantTrait)
+    ? value.dominantTrait
+    : sortedTraits[0]?.[0] ?? "focus";
+  const secondaryTrait = paintingTraitNames.includes(value.secondaryTrait)
+    ? value.secondaryTrait
+    : sortedTraits[1]?.[0] ?? dominantTrait;
+
+  const preferences =
+    value.preferences && typeof value.preferences === "object"
+      ? value.preferences
+      : {};
+  const draft = value.draft && typeof value.draft === "object" ? value.draft : {};
+  const growthLevel = Number(value.growthLevel ?? value.growth?.level);
+
+  return {
+    avatarId: normalizedPaintingText(value.avatarId, 80) || undefined,
+    avatarName: normalizedPaintingText(value.avatarName, 40) || undefined,
+    growthLevel:
+      Number.isFinite(growthLevel) && growthLevel > 0
+        ? Math.round(growthLevel)
+        : 1,
+    traits,
+    dominantTrait,
+    secondaryTrait,
+    preferences: {
+      favoriteActivity:
+        normalizedPaintingText(preferences.favoriteActivity, 40) || undefined,
+      favoriteRecovery:
+        normalizedPaintingText(preferences.favoriteRecovery, 40) || undefined,
+      idleBubbleLanguage: ["zh", "en", "mixed"].includes(
+        preferences.idleBubbleLanguage,
+      )
+        ? preferences.idleBubbleLanguage
+        : "auto",
+    },
+    savedBubbles: normalizedPaintingStringArray(value.savedBubbles, 8, 80),
+    recentEvents: Array.isArray(value.recentEvents)
+      ? value.recentEvents
+          .slice(0, 8)
+          .map(normalizePaintingEvent)
+          .filter(Boolean)
+      : [],
+    draft: {
+      id: normalizedPaintingText(draft.id, 100) || undefined,
+      easelItemId: normalizedPaintingText(draft.easelItemId, 80) || undefined,
+      createdAt: normalizedPaintingText(draft.createdAt, 80) || undefined,
+      progressSeconds: Math.max(0, Math.round(Number(draft.progressSeconds) || 0)),
+      targetSeconds: Math.max(1, Math.round(Number(draft.targetSeconds) || 1)),
+      sourceSummary:
+        normalizedPaintingText(draft.sourceSummary, 220) || undefined,
+    },
+    seedHint: normalizedPaintingText(value.seedHint, 160) || undefined,
+  };
+};
+
+const normalizePaintingPlanResponse = (value) => {
+  if (!value || typeof value !== "object") {
+    throw new Error("Painting worker returned an invalid plan");
+  }
+  const archetype = paintingArchetypes.has(value.archetype)
+    ? value.archetype
+    : "color_bloom";
+  const composition =
+    value.composition && typeof value.composition === "object"
+      ? value.composition
+      : {};
+
+  return {
+    title: normalizedPaintingText(value.title, 42) || "Little Painting",
+    archetype,
+    mood: normalizedPaintingText(value.mood, 60) || undefined,
+    paletteHint: normalizedPaintingText(value.paletteHint, 60) || undefined,
+    composition: {
+      background:
+        normalizedPaintingText(composition.background, 60) || undefined,
+      subject: normalizedPaintingText(composition.subject, 60) || undefined,
+      foreground:
+        normalizedPaintingText(composition.foreground, 60) || undefined,
+      accent: normalizedPaintingText(composition.accent, 60) || undefined,
+    },
+    motifs: normalizedPaintingStringArray(value.motifs, 5, 32),
+    source: value.source === "heuristic" ? "heuristic" : "llm",
+  };
+};
+
+const extractJsonObject = (text) => {
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error("Painting worker returned empty output");
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start < 0 || end <= start) {
+      throw new Error("Painting worker output is not JSON");
+    }
+    return JSON.parse(trimmed.slice(start, end + 1));
+  }
+};
+
+const paintingProvider = () =>
+  process.env.AIVATAR_PAINTING_PROVIDER ??
+  process.env.AIVATAR_LEARNING_PROVIDER ??
+  process.env.AIVATAR_PROVIDER ??
+  "claude-code";
+
+const paintingPayloadPath = async (payload) => {
+  const avatar = safeSessionName(payload.avatarId ?? payload.avatarName ?? "avatar");
+  const path = join(
+    tmpdir(),
+    "aivatar-painting-context",
+    `painting-${avatar}-${Date.now()}.json`,
+  );
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(payload, null, 2), "utf8");
+  return path;
+};
+
+const runPaintingWorker = async (payload) => {
+  if (!existsSync(paintingWorkerScript)) {
+    throw new Error("Painting worker script is unavailable");
+  }
+  const payloadFile = await paintingPayloadPath(payload);
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      nodeCommand,
+      [
+        paintingWorkerScript,
+        "--provider",
+        paintingProvider(),
+        "--payload-file",
+        payloadFile,
+      ],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("Painting worker timed out"));
+    }, paintingPlanTimeoutMs);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(
+          new Error(
+            `Painting worker exited ${code}: ${
+              sanitizedDigestText(stderr || stdout, 240) || "no output"
+            }`,
+          ),
+        );
+        return;
+      }
+      try {
+        resolve(normalizePaintingPlanResponse(extractJsonObject(stdout)));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
 };
 
 const makeSnapshot = () => ({
@@ -1314,6 +1558,7 @@ const httpServer = http.createServer(async (request, response) => {
       disconnectSessionHttp: `http://127.0.0.1:${httpPort}${disconnectSessionPath}`,
       presenceHttp: `http://127.0.0.1:${httpPort}${presencePath}`,
       avatarStateHttp: `http://127.0.0.1:${httpPort}${avatarStatePath}`,
+      paintingPlanHttp: `http://127.0.0.1:${httpPort}${paintingPlanPath}`,
       claudeHookHttp: `http://127.0.0.1:${httpPort}${claudeHookPath}`,
       claudeStatusLineHookHttp: `http://127.0.0.1:${httpPort}${claudeStatusLineHookPath}`,
       clients: wsServer.clients.size,
@@ -1346,6 +1591,24 @@ const httpServer = http.createServer(async (request, response) => {
     } catch (error) {
       sendJson(response, 400, {
         error: error instanceof Error ? error.message : "Invalid avatar state payload",
+      });
+    }
+    return;
+  }
+
+  if (request.url === paintingPlanPath && request.method === "POST") {
+    try {
+      const body = await readBody(request);
+      const payload = normalizePaintingPlanRequest(JSON.parse(body));
+      const paintingPlan = await runPaintingWorker(payload);
+      sendJson(response, 200, {
+        ok: true,
+        paintingPlan,
+      });
+    } catch (error) {
+      sendJson(response, 400, {
+        error:
+          error instanceof Error ? error.message : "Invalid painting plan payload",
       });
     }
     return;
@@ -1652,6 +1915,7 @@ httpServer.listen(httpPort, "127.0.0.1", () => {
   console.log(`Aivatar disconnect session: http://127.0.0.1:${httpPort}${disconnectSessionPath}`);
   console.log(`Aivatar presence: http://127.0.0.1:${httpPort}${presencePath}`);
   console.log(`Aivatar avatar state: http://127.0.0.1:${httpPort}${avatarStatePath}`);
+  console.log(`Aivatar painting plan: http://127.0.0.1:${httpPort}${paintingPlanPath}`);
   console.log(`Aivatar Claude hook: http://127.0.0.1:${httpPort}${claudeHookPath}`);
   console.log(
     `Aivatar Claude statusLine hook: http://127.0.0.1:${httpPort}${claudeStatusLineHookPath}`,

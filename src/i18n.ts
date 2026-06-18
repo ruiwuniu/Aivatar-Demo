@@ -1293,9 +1293,64 @@ const surfaceNames: Record<Locale, Record<string, string>> = {
   en: {},
 };
 
+const paintingDictionary: Record<Locale, Record<string, string>> = {
+  "zh-Hant": {
+    "paintingGallery.title": "\u756b\u5eca",
+    "paintingGallery.count": "{value} \u5e45",
+    "paintingGallery.inProgress": "\u5275\u4f5c\u4e2d",
+    "paintingGallery.noDraft": "\u66ab\u7121\u8349\u7a3f",
+    "paintingGallery.empty": "\u9084\u6c92\u6709\u4f5c\u54c1",
+    "paintingGallery.targetReady": "\u639b\u756b\u5df2\u9078\u53d6",
+    "paintingGallery.targetMissing": "\u9078\u53d6\u639b\u756b",
+    "paintingGallery.quality": "\u54c1\u8cea {value}",
+    "paintingGallery.saleValue": "\u552e\u50f9 {value} bits",
+    "paintingGallery.noSaleValue": "\u820a\u7248\u5df2\u7d50\u7b97",
+    "message.paintingComplete": "\u5b8c\u6210\u300a{name}\u300b\uff0c\u5df2\u6536\u5165\u756b\u5eca\u3002",
+    "message.paintingApplied": "\u5df2\u639b\u4e0a\u300a{name}\u300b\u3002",
+    "message.paintingCleared": "\u5df2\u53d6\u6d88\u639b\u756b\u3002",
+    "message.paintingSold": "\u552e\u51fa\u300a{name}\u300b\uff0c\u7372\u5f97 {bits} bits\u3002",
+    "bubble.painting": "\u756b\u4f5c",
+  },
+  "zh-Hans": {
+    "paintingGallery.title": "\u753b\u5eca",
+    "paintingGallery.count": "{value} \u5e45",
+    "paintingGallery.inProgress": "\u521b\u4f5c\u4e2d",
+    "paintingGallery.noDraft": "\u6682\u65e0\u8349\u7a3f",
+    "paintingGallery.empty": "\u8fd8\u6ca1\u6709\u4f5c\u54c1",
+    "paintingGallery.targetReady": "\u6302\u753b\u5df2\u9009\u4e2d",
+    "paintingGallery.targetMissing": "\u9009\u4e2d\u6302\u753b",
+    "paintingGallery.quality": "\u54c1\u8d28 {value}",
+    "paintingGallery.saleValue": "\u552e\u4ef7 {value} bits",
+    "paintingGallery.noSaleValue": "\u65e7\u7248\u5df2\u7ed3\u7b97",
+    "message.paintingComplete": "\u5b8c\u6210\u300a{name}\u300b\uff0c\u5df2\u6536\u5165\u753b\u5eca\u3002",
+    "message.paintingApplied": "\u5df2\u6302\u4e0a\u300a{name}\u300b\u3002",
+    "message.paintingCleared": "\u5df2\u53d6\u6d88\u6302\u753b\u3002",
+    "message.paintingSold": "\u5356\u51fa\u300a{name}\u300b\uff0c\u83b7\u5f97 {bits} bits\u3002",
+    "bubble.painting": "\u753b\u4f5c",
+  },
+  en: {
+    "paintingGallery.title": "Gallery",
+    "paintingGallery.count": "{value} works",
+    "paintingGallery.inProgress": "In progress",
+    "paintingGallery.noDraft": "No draft",
+    "paintingGallery.empty": "No paintings yet",
+    "paintingGallery.targetReady": "Hanging selected",
+    "paintingGallery.targetMissing": "Select hanging",
+    "paintingGallery.quality": "Quality {value}",
+    "paintingGallery.saleValue": "Sale {value} bits",
+    "paintingGallery.noSaleValue": "Legacy settled",
+    "message.paintingComplete": "Finished {name}; added to Gallery.",
+    "message.paintingApplied": "{name} is hanging now.",
+    "message.paintingCleared": "Painting cleared from hanging.",
+    "message.paintingSold": "Sold {name} for {bits} bits.",
+    "bubble.painting": "Art",
+  },
+};
+
 const getDictionary = (locale: Locale): Record<string, string> => ({
   ...englishDictionary,
   ...(locale === "en" ? {} : dictionaries[locale]),
+  ...paintingDictionary[locale],
 });
 
 const format = (template: string, params: CopyParams = {}) =>

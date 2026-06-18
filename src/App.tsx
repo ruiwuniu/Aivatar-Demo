@@ -31,6 +31,15 @@ import {
   setFurnitureBehavior,
   tickAvatar,
 } from "./game/simulation";
+import {
+  PAINTING_GALLERY_LIMIT,
+  advancePaintingDraft,
+  createPaintingDraft,
+  normalizePaintingGallery,
+  paintingPixelVisible,
+  paintingProgressRatio,
+  rewardBitsForPaintingQuality,
+} from "./game/paintings";
 import { useCodexStatus } from "./hooks/useCodexStatus";
 import {
   agentDisplayName,
@@ -58,6 +67,9 @@ import type {
   AivatarMemory,
   AivatarMemoryEvent,
   AivatarNavMemory,
+  AivatarPaintingArtwork,
+  AivatarPaintingDraft,
+  AivatarPaintingPlan,
   AivatarSaveState,
   AvatarRuntime,
   BehaviorName,
@@ -68,6 +80,7 @@ import type {
   FurnitureInteractionKind,
   FurnitureInteractionState,
   FurnitureStorageEntry,
+  GrowthTrait,
   IdleBubbleLanguagePreference,
   InventoryEntry,
   ItemDefinition,
@@ -110,6 +123,7 @@ const BGM_VOLUME_KEY = "aivatar.bgmVolume.v1";
 const BGM_TRACK_KEY = "aivatar.bgmTrack.v1";
 const AUTO_MUSIC_KEY = "aivatar.autoMusic.v1";
 const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
+const PAINTING_PLAN_URL = "http://127.0.0.1:38988/painting-plan";
 const SAVE_LAYOUT_VERSION = 2;
 const MAX_SAVE_SLOTS = 4;
 const DEFAULT_AVATAR_APPEARANCE_ID = "octopus";
@@ -123,6 +137,9 @@ const PLAY_MOOD_RECOVERY_INTERVAL_SECONDS = 14;
 const PLAY_ACTIVE_TARGET_REACH = 24;
 const PAINT_MOOD_RECOVERY_PER_TICK = 1;
 const PAINT_RECOVERY_INTERVAL_SECONDS = 16;
+const PAINT_INTERACTION_SECONDS = 24;
+const PAINTING_PROGRESS_SAVE_INTERVAL_SECONDS = 1;
+const PAINTING_PLAN_REQUEST_TIMEOUT_MS = 52_000;
 const MUSIC_MOOD_DECAY_MULTIPLIER = 0.35;
 const BGM_AUTONOMOUS_STOP_MIN_SECONDS = 45;
 const BGM_AUTONOMOUS_STOP_CHECK_SECONDS = 60;
@@ -131,6 +148,7 @@ const COFFEE_MACHINE_ITEM_ID = "coffee-machine";
 const EASEL_ITEM_ID = "oil-easel";
 const RECORD_PLAYER_ITEM_ID = "record-player";
 const COFFEE_CUP_ITEM_ID = "coffee-cup";
+const PAINTING_REPLACEABLE_ITEM_IDS = new Set(["poster", "sky-sentinel-poster"]);
 const COFFEE_ITEM_ID = "coffee";
 const COLA_ITEM_ID = "cola";
 const BENTO_ITEM_ID = "bento";
@@ -2143,6 +2161,7 @@ const saveFromContent = (
   avatarName: options.avatarName?.trim() || content.avatar.name,
   memory: defaultMemory(),
   navMemory: defaultNavMemory(),
+  paintingGallery: normalizePaintingGallery(),
   petStats: content.petStats,
   inventory: removeDeprecatedInventoryItems(content.inventory),
   furnitureStorage: defaultFurnitureStorage(),
@@ -2184,6 +2203,7 @@ const normalizeSavePayload = (
     furnitureStorage: normalizeFurnitureStorage(parsed.furnitureStorage),
     memory: normalizeMemory(parsed.memory),
     navMemory: normalizeNavMemory(parsed.navMemory),
+    paintingGallery: normalizePaintingGallery(parsed.paintingGallery),
     activeFurnitureSkinIds: normalizeFurnitureSkinIds(parsed.activeFurnitureSkinIds),
     inventory: removeDeprecatedInventoryItems(
       parsed.inventory ?? fallback.inventory,
@@ -2235,6 +2255,7 @@ const parseImportedSave = (content: AivatarContent, raw: string): AivatarSaveSta
     "placedItems",
     "wallet",
     "memory",
+    "paintingGallery",
   ];
   if (!recognizableKeys.some((key) => key in parsed)) return null;
 
@@ -2795,6 +2816,7 @@ export const App = () => {
   const [activeDecorSurfaceCategory, setActiveDecorSurfaceCategory] =
     useState<DecorSurfaceCategoryId>("wallpaper");
   const [decorPanelOpen, setDecorPanelOpen] = useState(false);
+  const [paintingGalleryPanelOpen, setPaintingGalleryPanelOpen] = useState(false);
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
   const [growthPanelOpen, setGrowthPanelOpen] = useState(false);
   const [sessionsPanelOpen, setSessionsPanelOpen] = useState(false);
@@ -2929,6 +2951,7 @@ export const App = () => {
   const taskCabinetVisualFlowRef = useRef<TaskCabinetVisualFlow | null>(null);
   const lastRewardedCompleteKeyRef = useRef<string | null>(null);
   const appliedLearningIdsRef = useRef(new Set<string>());
+  const paintingPlanRequestsRef = useRef(new Set<string>());
   const behaviorDemoTimerRef = useRef<number | null>(null);
   const previousSessionStatusRef = useRef(
     new Map<string, CodexStatusMessage["status"]>(),
@@ -3606,6 +3629,36 @@ export const App = () => {
     });
   };
 
+  const ensurePaintingDraftForEasel = (placedItem: PlacedItem) => {
+    let nextProgress = 0;
+
+    setSave((current) => {
+      const gallery = normalizePaintingGallery(current.paintingGallery);
+      const activeDraft = gallery.activeDraft
+        ? {
+            ...gallery.activeDraft,
+            easelItemId: placedItem.id,
+            updatedAt: new Date().toISOString(),
+          }
+        : createPaintingDraft(normalizeMemory(current.memory), {
+            avatarId: current.avatarId,
+            easelItemId: placedItem.id,
+          });
+
+      nextProgress = paintingProgressRatio(activeDraft);
+
+      return {
+        ...current,
+        paintingGallery: {
+          ...gallery,
+          activeDraft,
+        },
+      };
+    });
+
+    return nextProgress;
+  };
+
   const placedItemContextAction = (
     placedItem: PlacedItem,
   ): PlacedItemInteractionKind | null => {
@@ -4039,6 +4092,7 @@ export const App = () => {
         taskCabinetEntries.filter((entry) => entry.status === "failed").length,
         uiTheme,
         navDebugOverlay,
+        save.paintingGallery,
         activeRecordPlayerId,
       );
     }
@@ -4059,6 +4113,7 @@ export const App = () => {
     furniturePlacementPreview,
     movingFurniture,
     save.memory,
+    save.paintingGallery,
     taskCabinetEntries,
     uiTheme,
     navDebugOverlay,
@@ -4088,6 +4143,129 @@ export const App = () => {
     persistSave(savedState, saveSlotStorageKey(activeSaveSlotId));
     updateSaveSlotSummary(activeSaveSlotId, savedState);
   }, [activeSaveSlotId, save]);
+
+  const compactPaintingPlanText = (value: unknown, maxLength: number) =>
+    Array.from(String(value ?? "").replace(/\s+/g, " ").trim())
+      .slice(0, maxLength)
+      .join("");
+
+  const paintingPlanPayloadForDraft = (draft: AivatarPaintingDraft) => {
+    const current = saveRef.current;
+    const currentMemory = normalizeMemory(current.memory);
+    const sortedTraits = (
+      Object.entries(currentMemory.growth.traits) as Array<[GrowthTrait, number]>
+    ).sort((left, right) => right[1] - left[1]);
+    const dominantTrait = sortedTraits[0]?.[0] ?? "focus";
+    const secondaryTrait = sortedTraits[1]?.[0] ?? dominantTrait;
+
+    return {
+      avatarId: compactPaintingPlanText(current.avatarId, 80),
+      avatarName: compactPaintingPlanText(
+        current.avatarName ?? contentBase.avatar.name,
+        40,
+      ),
+      growthLevel: currentMemory.growth.level,
+      traits: currentMemory.growth.traits,
+      dominantTrait,
+      secondaryTrait,
+      preferences: {
+        favoriteActivity: currentMemory.preferences.favoriteActivity,
+        favoriteRecovery: currentMemory.preferences.favoriteRecovery,
+        idleBubbleLanguage:
+          currentMemory.preferences.idleBubbleLanguage ?? "auto",
+      },
+      savedBubbles: (currentMemory.preferences.idleBubblePhrases ?? [])
+        .slice(0, 6)
+        .map((phrase) => compactPaintingPlanText(phrase, 80))
+        .filter(Boolean),
+      recentEvents: currentMemory.recentEvents.slice(0, 8).map((event) => ({
+        type: event.type,
+        summary: compactPaintingPlanText(event.summary, 180),
+        agent: compactPaintingPlanText(event.agent, 40) || undefined,
+        status: event.status,
+        behavior: event.behavior,
+        itemId: compactPaintingPlanText(event.itemId, 80) || undefined,
+        bits: event.bits,
+      })),
+      draft: {
+        id: draft.id,
+        easelItemId: draft.easelItemId,
+        createdAt: draft.artwork.createdAt,
+        progressSeconds: Math.round(draft.progressSeconds),
+        targetSeconds: Math.round(draft.targetSeconds),
+        sourceSummary: compactPaintingPlanText(draft.artwork.sourceSummary, 220),
+      },
+      seedHint: `${current.avatarId}:${draft.id}:${draft.artwork.seed}:${Date.now()}`,
+    };
+  };
+
+  const requestPaintingPlanForDraft = async (draft: AivatarPaintingDraft) => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(
+      () => controller.abort(),
+      PAINTING_PLAN_REQUEST_TIMEOUT_MS,
+    );
+
+    try {
+      const response = await fetch(PAINTING_PLAN_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(paintingPlanPayloadForDraft(draft)),
+        signal: controller.signal,
+      });
+      if (!response.ok) return;
+
+      const parsed = (await response.json()) as {
+        paintingPlan?: Partial<AivatarPaintingPlan>;
+        plan?: Partial<AivatarPaintingPlan>;
+      };
+      const paintingPlan = parsed.paintingPlan ?? parsed.plan;
+      if (!paintingPlan || typeof paintingPlan !== "object") return;
+
+      setSave((current) => {
+        const gallery = normalizePaintingGallery(current.paintingGallery);
+        const activeDraft = gallery.activeDraft;
+        if (!activeDraft || activeDraft.id !== draft.id) return current;
+        if (
+          draft.easelItemId &&
+          activeDraft.easelItemId &&
+          activeDraft.easelItemId !== draft.easelItemId
+        ) {
+          return current;
+        }
+        if (activeDraft.artwork.paintingPlan?.source === "llm") return current;
+
+        const replacementDraft = createPaintingDraft(normalizeMemory(current.memory), {
+          avatarId: current.avatarId,
+          easelItemId: activeDraft.easelItemId,
+          nowIso: activeDraft.artwork.createdAt,
+          paintingPlan,
+        });
+
+        return {
+          ...current,
+          paintingGallery: {
+            ...gallery,
+            activeDraft: {
+              ...activeDraft,
+              artwork: replacementDraft.artwork,
+              updatedAt: new Date().toISOString(),
+            },
+          },
+        };
+      });
+    } finally {
+      window.clearTimeout(timer);
+    }
+  };
+
+  useEffect(() => {
+    const activeDraft = normalizePaintingGallery(save.paintingGallery).activeDraft;
+    if (!activeDraft || activeDraft.artwork.paintingPlan?.source === "llm") return;
+    if (paintingPlanRequestsRef.current.has(activeDraft.id)) return;
+    paintingPlanRequestsRef.current.add(activeDraft.id);
+    void requestPaintingPlanForDraft(activeDraft).catch(() => undefined);
+  }, [save.paintingGallery]);
 
   useEffect(() => {
     const currentMemory = normalizeMemory(save.memory);
@@ -4491,6 +4669,7 @@ export const App = () => {
     let sleepAccumulator = 0;
     let playAccumulator = 0;
     let paintAccumulator = 0;
+    let paintingProgressAccumulator = 0;
     let coffeeAccumulator = 0;
     let bgmAutonomousStopAccumulator = 0;
     let uiAccumulator = 0;
@@ -5037,10 +5216,13 @@ export const App = () => {
             } else if (pendingWorldInteraction.kind === "brew") {
               startCoffeeMachineInteraction(pendingWorldInteraction.placedItem);
             } else if (pendingWorldInteraction.kind === "paint") {
+              const progress = ensurePaintingDraftForEasel(
+                pendingWorldInteraction.placedItem,
+              );
               runtimeRef.current = {
                 ...runtimeRef.current,
                 behavior: "paint",
-                behaviorTimer: 8,
+                behaviorTimer: PAINT_INTERACTION_SECONDS,
                 expression: "happy",
                 facing: "front",
                 activityLabel: "Painting",
@@ -5053,6 +5235,7 @@ export const App = () => {
                 message: ui("message.selected", { name: pendingWorldInteraction.item.name }),
                 startedAt: performance.now(),
                 bubbleText: ui("thought.paint"),
+                progress,
               });
             } else if (pendingWorldInteraction.kind === "play") {
               runtimeRef.current = {
@@ -5389,6 +5572,124 @@ export const App = () => {
           isNearPlacedItemInteractionTarget(runtimeRef.current, easel, currentContent)
         ) {
           paintAccumulator += elapsedSeconds;
+          paintingProgressAccumulator += elapsedSeconds;
+
+          if (paintingProgressAccumulator >= PAINTING_PROGRESS_SAVE_INTERVAL_SECONDS) {
+            const progressElapsed = paintingProgressAccumulator;
+            paintingProgressAccumulator = 0;
+            let nextProgress: number | null = null;
+            const completionFeedbackRef: {
+              current: AivatarPaintingArtwork | null;
+            } = { current: null };
+
+            setSave((current) => {
+              const nowIso = new Date().toISOString();
+              const gallery = normalizePaintingGallery(current.paintingGallery);
+              const draft = gallery.activeDraft
+                ? {
+                    ...gallery.activeDraft,
+                    easelItemId: easel.id,
+                  }
+                : createPaintingDraft(normalizeMemory(current.memory), {
+                    avatarId: current.avatarId,
+                    easelItemId: easel.id,
+                    nowIso,
+                  });
+              const advancedDraft = advancePaintingDraft(
+                draft,
+                progressElapsed,
+                nowIso,
+              );
+              nextProgress = paintingProgressRatio(advancedDraft);
+
+              if (nextProgress < 1) {
+                return {
+                  ...current,
+                  paintingGallery: {
+                    ...gallery,
+                    activeDraft: advancedDraft,
+                  },
+                };
+              }
+
+              const saleBits = rewardBitsForPaintingQuality(
+                advancedDraft.artwork.quality,
+              );
+              const completedArtwork = {
+                ...advancedDraft.artwork,
+                completedAt: nowIso,
+                saleBits,
+              };
+              completionFeedbackRef.current = completedArtwork;
+
+              return {
+                ...current,
+                paintingGallery: {
+                  artworks: [
+                    completedArtwork,
+                    ...gallery.artworks.filter(
+                      (artwork) => artwork.id !== completedArtwork.id,
+                    ),
+                  ].slice(0, PAINTING_GALLERY_LIMIT),
+                },
+                memory: recordLifeMemory(
+                  current.memory,
+                  {
+                    type: "painting_complete",
+                    summary: `Finished painting ${completedArtwork.title}`,
+                    behavior: "paint",
+                    itemId: EASEL_ITEM_ID,
+                  },
+                  {
+                    creativity: completedArtwork.quality,
+                    ...(completedArtwork.quality >= 4 ? { warmth: 1 } : {}),
+                  },
+                ),
+              };
+            });
+
+            const completionFeedback = completionFeedbackRef.current;
+            if (completionFeedback) {
+              runtimeRef.current = {
+                ...runtimeRef.current,
+                targetX: runtimeRef.current.x,
+                targetY: runtimeRef.current.y,
+                behavior: "idle",
+                behaviorTimer: 2,
+                expression: "happy",
+                activityLabel: "Idle",
+                actionIntent: undefined,
+                actionActivityLabel: undefined,
+                interactionTargetAlternates: undefined,
+              };
+              setAvatar(runtimeRef.current);
+              updateActiveInteraction({
+                kind: "none",
+                furnitureId: easel.id,
+                furnitureName:
+                  currentContent.itemDefinitions.find(
+                    (item) => item.id === EASEL_ITEM_ID,
+                  )?.name ?? "Oil Easel",
+                message: ui("message.paintingComplete", {
+                  name: completionFeedback.title,
+                }),
+                startedAt: now,
+                endsAt: now + REWARD_BUBBLE_SECONDS * 1000,
+                bubbleText: ui("bubble.painting"),
+                progress: 1,
+              });
+            } else if (
+              nextProgress !== null &&
+              activeInteractionRef.current?.furnitureId === easel.id
+            ) {
+              updateActiveInteraction({
+                ...activeInteractionRef.current,
+                startedAt: now,
+                bubbleText: ui("thought.paint"),
+                progress: nextProgress,
+              });
+            }
+          }
 
           if (paintAccumulator >= PAINT_RECOVERY_INTERVAL_SECONDS) {
             paintAccumulator = 0;
@@ -5412,9 +5713,11 @@ export const App = () => {
           }
         } else {
           paintAccumulator = 0;
+          paintingProgressAccumulator = 0;
         }
       } else {
         paintAccumulator = 0;
+        paintingProgressAccumulator = 0;
       }
 
       if (
@@ -5676,6 +5979,7 @@ export const App = () => {
             ).length,
             uiThemeRef.current,
             navDebugOverlayRef.current,
+            saveRef.current.paintingGallery,
             activeRecordPlayerIdRef.current,
           );
       }
@@ -6862,6 +7166,12 @@ export const App = () => {
     ? findItemDefinition(content, selectedPlacedItem.itemId)
     : null;
   const selectedPlacedItemLocked = isBuiltinTerminalPlacedItem(selectedPlacedItem);
+  const selectedPlacedItemCanShowPainting = Boolean(
+    selectedPlacedItem &&
+      selectedPlacedItemDefinition &&
+      PAINTING_REPLACEABLE_ITEM_IDS.has(selectedPlacedItemDefinition.id) &&
+      getItemPlacementKind(selectedPlacedItemDefinition) === "wall",
+  );
   const selectedWindowDefinition = selectedWindow
     ? findItemDefinition(content, selectedWindow.id)
     : null;
@@ -6869,6 +7179,126 @@ export const App = () => {
     selectedFurniture?.id === TASK_CABINET_FURNITURE_ID
       ? findItemDefinition(content, TASK_CABINET_FURNITURE_ID)
       : null;
+
+  const applyPaintingToSelectedHanging = (artwork: AivatarPaintingArtwork) => {
+    if (!selectedPlacedItem || !selectedPlacedItemCanShowPainting) return;
+
+    const updatedPlacedItem = {
+      ...selectedPlacedItem,
+      artworkId: artwork.id,
+    };
+
+    setSave((current) => ({
+      ...current,
+      placedItems: current.placedItems.map((item) =>
+        item.id === selectedPlacedItem.id ? updatedPlacedItem : item,
+      ),
+    }));
+    updateSelectedPlacedItem(updatedPlacedItem);
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: selectedPlacedItem.id,
+      furnitureName: selectedPlacedItemDefinition?.name ?? ui("roomEdit.title"),
+      message: ui("message.paintingApplied", { name: artwork.title }),
+      startedAt: performance.now(),
+      bubbleText: ui("bubble.painting"),
+    });
+  };
+
+  const clearPaintingFromSelectedHanging = () => {
+    if (
+      !selectedPlacedItem ||
+      !selectedPlacedItemCanShowPainting ||
+      !selectedPlacedItem.artworkId
+    ) {
+      return;
+    }
+
+    const updatedPlacedItem = {
+      ...selectedPlacedItem,
+      artworkId: undefined,
+    };
+
+    setSave((current) => ({
+      ...current,
+      placedItems: current.placedItems.map((item) =>
+        item.id === selectedPlacedItem.id ? updatedPlacedItem : item,
+      ),
+    }));
+    updateSelectedPlacedItem(updatedPlacedItem);
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: selectedPlacedItem.id,
+      furnitureName: selectedPlacedItemDefinition?.name ?? ui("roomEdit.title"),
+      message: ui("message.paintingCleared"),
+      startedAt: performance.now(),
+      bubbleText: ui("bubble.painting"),
+    });
+  };
+
+  const sellPaintingArtwork = (artwork: AivatarPaintingArtwork) => {
+    const savedArtwork = normalizePaintingGallery(
+      saveRef.current.paintingGallery,
+    ).artworks.find((entry) => entry.id === artwork.id);
+    const saleBits = Math.max(0, Math.round(savedArtwork?.saleBits ?? 0));
+    if (!savedArtwork || saleBits <= 0) return;
+
+    setSave((current) => {
+      const gallery = normalizePaintingGallery(current.paintingGallery);
+      const currentArtwork = gallery.artworks.find(
+        (entry) => entry.id === savedArtwork.id,
+      );
+      const currentSaleBits = Math.max(0, Math.round(currentArtwork?.saleBits ?? 0));
+      if (!currentArtwork || currentSaleBits <= 0) return current;
+
+      return {
+        ...current,
+        wallet: { bits: current.wallet.bits + currentSaleBits },
+        placedItems: current.placedItems.map((item) =>
+          item.artworkId === currentArtwork.id
+            ? { ...item, artworkId: undefined }
+            : item,
+        ),
+        paintingGallery: {
+          ...gallery,
+          artworks: gallery.artworks.filter((entry) => entry.id !== currentArtwork.id),
+        },
+        memory: recordLifeMemory(
+          current.memory,
+          {
+            type: "painting_sold",
+            summary: `Sold painting ${currentArtwork.title}`,
+            behavior: "paint",
+            itemId: EASEL_ITEM_ID,
+            bits: currentSaleBits,
+          },
+          { efficiency: 1 },
+        ),
+      };
+    });
+
+    if (selectedPlacedItem?.artworkId === savedArtwork.id) {
+      updateSelectedPlacedItem({
+        ...selectedPlacedItem,
+        artworkId: undefined,
+      });
+    }
+
+    const now = performance.now();
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: "painting-gallery",
+      furnitureName: ui("paintingGallery.title"),
+      message: ui("message.paintingSold", {
+        name: savedArtwork.title,
+        bits: saleBits,
+      }),
+      startedAt: now,
+      endsAt: now + REWARD_BUBBLE_SECONDS * 1000,
+      bubbleText: `+${saleBits} ${ui("currency.bits")}`,
+      rewardBits: saleBits,
+    });
+  };
 
   const placeInventoryItem = (item: ItemDefinition, x: number, y: number) => {
     if (!isPlacedItemPlacementValid(contentRef.current, item.id, x, y)) {
@@ -8330,6 +8760,7 @@ export const App = () => {
       (category) => category.id === activeDecorSurfaceCategory,
     )?.copyKey ?? "decor.wallpaper";
   const memory = normalizeMemory(save.memory);
+  const paintingGallery = normalizePaintingGallery(save.paintingGallery);
   const growth = memory.growth;
   const canDispatchTasks = isTaskCabinetPlaced(content);
   const taskCabinetReadyCount = taskCabinetEntries.filter(
@@ -8568,6 +8999,31 @@ export const App = () => {
       : sceneContextMenu
         ? behaviorLabel(locale, sceneContextMenu.target.furniture.interaction)
         : "";
+  const PaintingThumbnail = ({
+    artwork,
+    progress = 1,
+  }: {
+    artwork: AivatarPaintingArtwork;
+    progress?: number;
+  }) => (
+    <svg
+      className="painting-thumbnail"
+      viewBox={`0 0 ${artwork.width} ${artwork.height}`}
+      preserveAspectRatio="none"
+      aria-label={artwork.title}
+      role="img"
+    >
+      <rect width={artwork.width} height={artwork.height} fill="#fff8df" />
+      {artwork.pixels.flatMap((row, y) =>
+        [...row].map((pixel, x) => {
+          if (!paintingPixelVisible(artwork, x, y, progress)) return null;
+          const colorIndex = Number.parseInt(pixel, 36);
+          const fill = artwork.palette[colorIndex] ?? artwork.palette[0] ?? "#111624";
+          return <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill={fill} />;
+        }),
+      )}
+    </svg>
+  );
   const ItemThumbnail = ({ itemId }: { itemId: string }) => {
     if (itemId === BED_INDUSTRIAL_SKIN_ID) {
       return (
@@ -11088,6 +11544,118 @@ export const App = () => {
                   })}
                 </div>
               </div>
+            </>
+          ) : null}
+        </section>
+
+        <section className="control-section painting-gallery-panel">
+          <button
+            type="button"
+            className="pixel-button decor-toggle-button painting-gallery-toggle-button"
+            aria-expanded={paintingGalleryPanelOpen}
+            onClick={() => setPaintingGalleryPanelOpen((open) => !open)}
+          >
+            <span>{ui("paintingGallery.title")}</span>
+            <span>
+              {ui("paintingGallery.count", {
+                value: paintingGallery.artworks.length,
+              })}
+            </span>
+            <span aria-hidden="true">{paintingGalleryPanelOpen ? "-" : "+"}</span>
+          </button>
+          {paintingGalleryPanelOpen ? (
+            <>
+              {paintingGallery.activeDraft ? (
+                <div className="painting-draft-card">
+                  <PaintingThumbnail
+                    artwork={paintingGallery.activeDraft.artwork}
+                    progress={paintingProgressRatio(paintingGallery.activeDraft)}
+                  />
+                  <div>
+                    <strong>{ui("paintingGallery.inProgress")}</strong>
+                    <span>
+                      {Math.round(paintingProgressRatio(paintingGallery.activeDraft) * 100)}%
+                    </span>
+                    <meter
+                      min={0}
+                      max={1}
+                      value={paintingProgressRatio(paintingGallery.activeDraft)}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <p className="painting-gallery-empty">
+                  {ui("paintingGallery.noDraft")}
+                </p>
+              )}
+              {paintingGallery.artworks.length > 0 ? (
+                <div className="painting-gallery-list">
+                  {paintingGallery.artworks.map((artwork) => {
+                    const saleBits = Math.max(0, Math.round(artwork.saleBits ?? 0));
+                    return (
+                      <article
+                        key={artwork.id}
+                        className="painting-gallery-artwork"
+                        title={artwork.title}
+                        aria-label={`${artwork.title} ${ui("paintingGallery.quality", {
+                          value: artwork.quality,
+                        })}`}
+                      >
+                        <PaintingThumbnail artwork={artwork} />
+                        <div className="painting-gallery-artwork-copy">
+                          <span>{artwork.title}</span>
+                          <small>
+                            {ui("paintingGallery.quality", { value: artwork.quality })}
+                          </small>
+                          <small>
+                            {saleBits > 0
+                              ? ui("paintingGallery.saleValue", { value: saleBits })
+                              : ui("paintingGallery.noSaleValue")}
+                          </small>
+                        </div>
+                        <div className="painting-gallery-actions">
+                          <button
+                            type="button"
+                            className="pixel-button painting-gallery-action"
+                            disabled={!selectedPlacedItemCanShowPainting}
+                            onClick={() => applyPaintingToSelectedHanging(artwork)}
+                          >
+                            {ui("action.apply")}
+                          </button>
+                          <button
+                            type="button"
+                            className="pixel-button painting-gallery-action"
+                            disabled={saleBits <= 0}
+                            onClick={() => sellPaintingArtwork(artwork)}
+                          >
+                            {saleBits > 0
+                              ? ui("action.sell", { value: saleBits })
+                              : ui("paintingGallery.noSaleValue")}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="painting-gallery-empty">
+                  {ui("paintingGallery.empty")}
+                </p>
+              )}
+              <span className="painting-gallery-state">
+                {selectedPlacedItemCanShowPainting
+                  ? ui("paintingGallery.targetReady")
+                  : ui("paintingGallery.targetMissing")}
+              </span>
+              {selectedPlacedItemCanShowPainting && selectedPlacedItem?.artworkId ? (
+                <button
+                  type="button"
+                  className="pixel-button painting-gallery-clear"
+                  onClick={clearPaintingFromSelectedHanging}
+                >
+                  {ui("action.clearApplied")}
+                </button>
+              ) : null}
             </>
           ) : null}
         </section>

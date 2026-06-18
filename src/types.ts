@@ -31,6 +31,21 @@ export interface AivatarLearningResult {
   privacyRisk: "low" | "medium" | "high";
 }
 
+export interface AivatarPaintingPlan {
+  title: string;
+  archetype: string;
+  mood?: string;
+  paletteHint?: string;
+  composition?: {
+    background?: string;
+    subject?: string;
+    foreground?: string;
+    accent?: string;
+  };
+  motifs?: string[];
+  source?: "llm" | "heuristic";
+}
+
 export interface CodexStatusMessage {
   agent?: string;
   sessionId?: string;
@@ -120,6 +135,8 @@ export type AivatarMemoryEventType =
   | "waited_for_user"
   | "session_learning"
   | "recovery_used"
+  | "painting_complete"
+  | "painting_sold"
   | "item_bought"
   | "item_used"
   | "level_up";
@@ -174,6 +191,39 @@ export interface AivatarMemory {
   growth: AivatarGrowth;
   preferences: AivatarPreferences;
   milestones: AivatarMilestone[];
+}
+
+export interface AivatarPaintingArtwork {
+  id: string;
+  title: string;
+  createdAt: string;
+  completedAt?: string;
+  width: number;
+  height: number;
+  palette: string[];
+  pixels: string[];
+  seed: number;
+  theme: GrowthTrait;
+  archetype?: string;
+  quality: number;
+  saleBits?: number;
+  paintingPlan?: AivatarPaintingPlan;
+  sourceSummary: string;
+}
+
+export interface AivatarPaintingDraft {
+  id: string;
+  artwork: AivatarPaintingArtwork;
+  startedAt: string;
+  updatedAt: string;
+  progressSeconds: number;
+  targetSeconds: number;
+  easelItemId?: string;
+}
+
+export interface AivatarPaintingGallery {
+  activeDraft?: AivatarPaintingDraft;
+  artworks: AivatarPaintingArtwork[];
 }
 
 export interface ConsumableEffect {
@@ -238,6 +288,7 @@ export interface PlacedItem {
   surfaceFurnitureId?: string;
   surfaceOffsetX?: number;
   surfaceOffsetY?: number;
+  artworkId?: string;
 }
 
 export interface FurniturePlacement {
@@ -406,6 +457,7 @@ export interface AivatarSaveState {
   avatarRuntime?: AvatarRuntime;
   memory?: AivatarMemory;
   navMemory?: AivatarNavMemory;
+  paintingGallery?: AivatarPaintingGallery;
   petStats: PetStats;
   inventory: InventoryEntry[];
   placedItems: PlacedItem[];

@@ -2,6 +2,8 @@ import { isTerminalBubbleAgent } from "../agentRegistry";
 import type {
   AivatarContent,
   AivatarMemory,
+  AivatarPaintingArtwork,
+  AivatarPaintingGallery,
   AvatarRuntime,
   CodexStatusMessage,
   FurnitureDefinition,
@@ -27,6 +29,12 @@ import {
   getNavigationDebugPath,
   getPlacedItemInteractionStandpoints,
 } from "./simulation";
+import {
+  normalizePaintingGallery,
+  paintingArtworkById,
+  paintingPixelVisible,
+  paintingProgressRatio,
+} from "./paintings";
 
 const CJK_CANVAS_FONT =
   '"Noto Sans TC", "Noto Sans SC", "Noto Sans HK", "Microsoft JhengHei UI", "Microsoft YaHei UI", "Microsoft JhengHei", "Microsoft YaHei", sans-serif';
@@ -3392,11 +3400,13 @@ const drawAvatarBubble = (
   const ageSeconds = (now - interaction.startedAt) / 1000;
   const hasDuration = typeof interaction.endsAt === "number";
 
-  if (!hasDuration && ageSeconds > 4) return;
-
   const progress = hasDuration
     ? Math.min(1, Math.max(0, (now - interaction.startedAt) / (interaction.endsAt! - interaction.startedAt)))
     : interaction.progress;
+  const hasProgress = typeof progress === "number";
+  const bubbleHeight = hasDuration || hasProgress ? 25 : 18;
+
+  if (!hasDuration && !hasProgress && ageSeconds > 4) return;
   ctx.font = "8px monospace";
   const maxTextWidth = 118;
   const text = ellipsizeToWidth(ctx, interaction.bubbleText, maxTextWidth);
@@ -3405,16 +3415,16 @@ const drawAvatarBubble = (
   const y = Math.round(Math.max(18, avatar.y - 64));
   const palette = bubblePaletteForTheme(uiTheme);
 
-  drawPixelRect(ctx, x + 3, y + 4, width, hasDuration ? 25 : 18, palette.shadow);
-  drawPixelRect(ctx, x, y, width, hasDuration ? 25 : 18, palette.border);
-  drawPixelRect(ctx, x + 2, y + 2, width - 4, hasDuration ? 21 : 14, palette.fill);
+  drawPixelRect(ctx, x + 3, y + 4, width, bubbleHeight, palette.shadow);
+  drawPixelRect(ctx, x, y, width, bubbleHeight, palette.border);
+  drawPixelRect(ctx, x + 2, y + 2, width - 4, bubbleHeight - 4, palette.fill);
   if (isTerminalTheme(uiTheme)) {
     drawPixelRect(ctx, x + 4, y + 4, width - 8, 1, terminalScanlineForTheme(uiTheme));
   }
   drawPixelRect(
     ctx,
     x + Math.floor(width / 2) - 3,
-    y + (hasDuration ? 25 : 18),
+    y + bubbleHeight,
     6,
     5,
     palette.tail,
@@ -3975,11 +3985,47 @@ const drawDeskLamp = (
   ctx.restore();
 };
 
+const drawGeneratedPainting = (
+  ctx: CanvasRenderingContext2D,
+  artwork: AivatarPaintingArtwork,
+  x: number,
+  y: number,
+  progress = 1,
+  pixelSize = 1,
+) => {
+  drawPixelRect(
+    ctx,
+    x,
+    y,
+    artwork.width * pixelSize,
+    artwork.height * pixelSize,
+    "#fff8df",
+  );
+
+  artwork.pixels.forEach((row, rowIndex) => {
+    [...row].forEach((pixel, columnIndex) => {
+      if (!paintingPixelVisible(artwork, columnIndex, rowIndex, progress)) return;
+      const colorIndex = Number.parseInt(pixel, 36);
+      const color = artwork.palette[colorIndex] ?? artwork.palette[0] ?? "#111624";
+      drawPixelRect(
+        ctx,
+        x + columnIndex * pixelSize,
+        y + rowIndex * pixelSize,
+        pixelSize,
+        pixelSize,
+        color,
+      );
+    });
+  });
+};
+
 const drawPoster = (
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   ghost: "none" | "valid" | "invalid" = "none",
+  artwork?: AivatarPaintingArtwork,
+  progress = 1,
 ) => {
   ctx.save();
   if (ghost !== "none") ctx.globalAlpha = 0.62;
@@ -3993,18 +4039,22 @@ const drawPoster = (
   drawPixelRect(ctx, baseX - 14, baseY - 37, 28, 39, "#f4ead2");
   drawPixelRect(ctx, baseX - 12, baseY - 35, 24, 35, "#202638");
 
-  drawPixelRect(ctx, baseX - 11, baseY - 34, 22, 12, sky);
-  drawPixelRect(ctx, baseX - 11, baseY - 22, 22, 7, "#9ee6ff");
-  drawPixelRect(ctx, baseX - 11, baseY - 15, 22, 14, "#2f6f4e");
-  drawPixelRect(ctx, baseX - 11, baseY - 5, 22, 5, "#1b3b33");
+  if (artwork && ghost === "none") {
+    drawGeneratedPainting(ctx, artwork, baseX - 12, baseY - 35, progress);
+  } else {
+    drawPixelRect(ctx, baseX - 11, baseY - 34, 22, 12, sky);
+    drawPixelRect(ctx, baseX - 11, baseY - 22, 22, 7, "#9ee6ff");
+    drawPixelRect(ctx, baseX - 11, baseY - 15, 22, 14, "#2f6f4e");
+    drawPixelRect(ctx, baseX - 11, baseY - 5, 22, 5, "#1b3b33");
 
-  drawPixelRect(ctx, baseX + 4, baseY - 32, 5, 5, sun);
-  drawPixelRect(ctx, baseX - 10, baseY - 19, 8, 4, skyDark);
-  drawPixelRect(ctx, baseX - 4, baseY - 23, 10, 8, "#4b315f");
-  drawPixelRect(ctx, baseX + 3, baseY - 18, 9, 5, "#6d7794");
-  drawPixelRect(ctx, baseX - 8, baseY - 10, 6, 9, "#4f8f5f");
-  drawPixelRect(ctx, baseX - 1, baseY - 12, 5, 11, "#65a96f");
-  drawPixelRect(ctx, baseX + 6, baseY - 9, 4, 8, "#3f7d55");
+    drawPixelRect(ctx, baseX + 4, baseY - 32, 5, 5, sun);
+    drawPixelRect(ctx, baseX - 10, baseY - 19, 8, 4, skyDark);
+    drawPixelRect(ctx, baseX - 4, baseY - 23, 10, 8, "#4b315f");
+    drawPixelRect(ctx, baseX + 3, baseY - 18, 9, 5, "#6d7794");
+    drawPixelRect(ctx, baseX - 8, baseY - 10, 6, 9, "#4f8f5f");
+    drawPixelRect(ctx, baseX - 1, baseY - 12, 5, 11, "#65a96f");
+    drawPixelRect(ctx, baseX + 6, baseY - 9, 4, 8, "#3f7d55");
+  }
 
   drawPixelRect(ctx, baseX - 13, baseY - 36, 26, 1, "#fff7c7");
   drawPixelRect(ctx, baseX - 13, baseY + 1, 26, 1, "#c8af79");
@@ -4330,6 +4380,8 @@ const drawOilEasel = (
   ghost: "none" | "valid" | "invalid" = "none",
   frame = 0,
   avatar?: AvatarRuntime,
+  artwork?: AivatarPaintingArtwork,
+  artworkProgress = 1,
 ) => {
   ctx.save();
   if (ghost !== "none") ctx.globalAlpha = 0.62;
@@ -4414,25 +4466,35 @@ const drawOilEasel = (
   drawPixelRect(ctx, canvasX + 34, canvasY + 3, 3, 37, canvasShade);
   drawPixelRect(ctx, canvasX + 4, canvasY + 37, 31, 3, canvasShade);
   drawPixelRect(ctx, canvasX + 2, canvasY + 1, 4, 39, "#ffffff");
-  drawPixelRect(ctx, canvasX + 7, canvasY + 7, 11, 4, "#bfeaff");
-  drawPixelRect(ctx, canvasX + 19, canvasY + 7, 11, 2, "#e7f7ff");
-  drawPixelRect(ctx, canvasX + 20, canvasY + 9, 9, 3, "#c9f0ff");
-  drawPixelRect(ctx, canvasX + 5, canvasY + 22, 27, 8, "#b9d987");
-  drawPixelRect(ctx, canvasX + 6, canvasY + 25, 26, 3, "#8fbe74");
-  drawPixelRect(ctx, canvasX + 8, canvasY + 18, 9, 6, "#78a76d");
-  drawPixelRect(ctx, canvasX + 18, canvasY + 16, 10, 9, "#8dc07a");
-  drawPixelRect(ctx, canvasX + 21, canvasY + 18, 6, 5, "#679a63");
-  drawPixelRect(ctx, canvasX + 10, canvasY + 12, 3, 3, "#ffe66d");
-  drawPixelRect(ctx, canvasX + 13, canvasY + 13, 2, 2, "#ffd16a");
-  drawPixelRect(ctx, canvasX + 9, canvasY + 11, 7, 1, "#fff2a8");
-  drawPixelRect(ctx, canvasX + 6, canvasY + 31, 24, 2, "#7b8f65");
-  drawPixelRect(ctx, canvasX + 8, canvasY + 34, 18, 2, "#6b7e5e");
-  drawPixelRect(ctx, canvasX + 7, canvasY + 8, 10, 1, "#f0eadc");
-  drawPixelRect(ctx, canvasX + 10, canvasY + 15, 7, 1, "#8a7f76");
-  drawPixelRect(ctx, canvasX + 23, canvasY + 10, 8, 1, "#eee5d4");
-  drawPixelRect(ctx, canvasX + 25, canvasY + 25, 7, 1, "#7e9b6a");
-  drawPixelRect(ctx, canvasX + 14, canvasY + 27, 4, 2, "#fffdf0");
-  drawPixelRect(ctx, canvasX + 22, canvasY + 29, 5, 2, "#fffdf0");
+  if (artwork && ghost === "none") {
+    drawGeneratedPainting(
+      ctx,
+      artwork,
+      canvasX + 6,
+      canvasY + 3,
+      artworkProgress,
+    );
+  } else {
+    drawPixelRect(ctx, canvasX + 7, canvasY + 7, 11, 4, "#bfeaff");
+    drawPixelRect(ctx, canvasX + 19, canvasY + 7, 11, 2, "#e7f7ff");
+    drawPixelRect(ctx, canvasX + 20, canvasY + 9, 9, 3, "#c9f0ff");
+    drawPixelRect(ctx, canvasX + 5, canvasY + 22, 27, 8, "#b9d987");
+    drawPixelRect(ctx, canvasX + 6, canvasY + 25, 26, 3, "#8fbe74");
+    drawPixelRect(ctx, canvasX + 8, canvasY + 18, 9, 6, "#78a76d");
+    drawPixelRect(ctx, canvasX + 18, canvasY + 16, 10, 9, "#8dc07a");
+    drawPixelRect(ctx, canvasX + 21, canvasY + 18, 6, 5, "#679a63");
+    drawPixelRect(ctx, canvasX + 10, canvasY + 12, 3, 3, "#ffe66d");
+    drawPixelRect(ctx, canvasX + 13, canvasY + 13, 2, 2, "#ffd16a");
+    drawPixelRect(ctx, canvasX + 9, canvasY + 11, 7, 1, "#fff2a8");
+    drawPixelRect(ctx, canvasX + 6, canvasY + 31, 24, 2, "#7b8f65");
+    drawPixelRect(ctx, canvasX + 8, canvasY + 34, 18, 2, "#6b7e5e");
+    drawPixelRect(ctx, canvasX + 7, canvasY + 8, 10, 1, "#f0eadc");
+    drawPixelRect(ctx, canvasX + 10, canvasY + 15, 7, 1, "#8a7f76");
+    drawPixelRect(ctx, canvasX + 23, canvasY + 10, 8, 1, "#eee5d4");
+    drawPixelRect(ctx, canvasX + 25, canvasY + 25, 7, 1, "#7e9b6a");
+    drawPixelRect(ctx, canvasX + 14, canvasY + 27, 4, 2, "#fffdf0");
+    drawPixelRect(ctx, canvasX + 22, canvasY + 29, 5, 2, "#fffdf0");
+  }
   drawPixelRect(ctx, canvasX + 2, canvasY + 2, 2, 2, brass);
   drawPixelRect(ctx, canvasX + 32, canvasY + 2, 2, 2, brass);
   drawPixelRect(ctx, canvasX + 2, canvasY + 36, 2, 2, brass);
@@ -4759,6 +4821,8 @@ const drawPlaceableItem = (
   failedTaskFileCount = 0,
   gameConsolePlaying = false,
   recordPlayerPlaying = false,
+  paintingArtwork?: AivatarPaintingArtwork,
+  paintingProgress = 1,
 ) => {
   switch (itemId) {
     case "cozy-rug":
@@ -4774,9 +4838,13 @@ const drawPlaceableItem = (
       drawDeskLamp(ctx, x, y, ghost);
       return;
     case "poster":
-      drawPoster(ctx, x, y, ghost);
+      drawPoster(ctx, x, y, ghost, paintingArtwork, paintingProgress);
       return;
     case "sky-sentinel-poster":
+      if (paintingArtwork) {
+        drawPoster(ctx, x, y, ghost, paintingArtwork, paintingProgress);
+        return;
+      }
       drawSkySentinelPoster(ctx, x, y, ghost);
       return;
     case "digital-wall-clock":
@@ -4789,7 +4857,7 @@ const drawPlaceableItem = (
       drawRecordPlayer(ctx, x, y, ghost, frame, avatar, recordPlayerPlaying);
       return;
     case "oil-easel":
-      drawOilEasel(ctx, x, y, ghost, frame, avatar);
+      drawOilEasel(ctx, x, y, ghost, frame, avatar, paintingArtwork, paintingProgress);
       return;
     case "terminal-monitor":
       drawTerminalMonitor(ctx, x, y, ghost, frame, avatar);
@@ -4901,9 +4969,20 @@ const drawPlacedItem = (
   coffeeCupHasCoffee = false,
   taskFileCount = 0,
   failedTaskFileCount = 0,
+  paintingGallery?: AivatarPaintingGallery,
 ) => {
   const definition = content.itemDefinitions.find((candidate) => candidate.id === item.itemId);
   if (!definition) return;
+  const gallery = normalizePaintingGallery(paintingGallery);
+  const activeDraft =
+    item.itemId === "oil-easel" &&
+    gallery.activeDraft &&
+    (!gallery.activeDraft.easelItemId || gallery.activeDraft.easelItemId === item.id)
+      ? gallery.activeDraft
+      : undefined;
+  const placedArtwork = paintingArtworkById(gallery, item.artworkId);
+  const paintingArtwork = activeDraft?.artwork ?? placedArtwork;
+  const paintingProgress = activeDraft ? paintingProgressRatio(activeDraft) : 1;
   const brewing =
     definition.id === "coffee-machine" &&
     activeInteraction?.kind === "brew" &&
@@ -4935,6 +5014,8 @@ const drawPlacedItem = (
         failedTaskFileCount,
         gameConsolePlaying,
         recordPlayerPlaying,
+        paintingArtwork,
+        paintingProgress,
       );
       ctx.restore();
       return;
@@ -4954,6 +5035,8 @@ const drawPlacedItem = (
       failedTaskFileCount,
       gameConsolePlaying,
       recordPlayerPlaying,
+      paintingArtwork,
+      paintingProgress,
     );
   }
 };
@@ -4986,6 +5069,7 @@ const drawPlacedItems = (
   taskCabinetFileCount = 0,
   failedTaskCabinetFileCount = 0,
   layer: PlacedItemRenderLayer = "all",
+  paintingGallery?: AivatarPaintingGallery,
   activeRecordPlayerId?: string | null,
 ) => {
   const placedItems = content.placedItems ?? [];
@@ -5016,6 +5100,7 @@ const drawPlacedItems = (
         filledCoffeeCups.has(item.id),
         item.itemId === "file-cabinet" ? taskCabinetFileCount : 0,
         item.itemId === "file-cabinet" ? failedTaskCabinetFileCount : 0,
+        paintingGallery,
       );
       if (item.id === selectedPlacedItemId) {
         drawPlacedItemHighlight(ctx, item);
@@ -5046,13 +5131,26 @@ const drawWallPlacedItems = (
   avatar: AvatarRuntime,
   selectedPlacedItemId?: string | null,
   preview?: PlacementPreview | null,
+  paintingGallery?: AivatarPaintingGallery,
 ) => {
   (content.placedItems ?? [])
     .filter((item) => isWallPlacedItem(content, item))
     .slice()
     .sort((left, right) => left.y - right.y || left.x - right.x)
     .forEach((item) => {
-      drawPlacedItem(ctx, item, content, frame, avatar);
+      drawPlacedItem(
+        ctx,
+        item,
+        content,
+        frame,
+        avatar,
+        undefined,
+        undefined,
+        false,
+        0,
+        0,
+        paintingGallery,
+      );
       if (item.id === selectedPlacedItemId) {
         drawPlacedItemHighlight(ctx, item);
       }
@@ -5081,6 +5179,7 @@ const drawPlacedItemsForSurface = (
   activeInteraction?: FurnitureInteractionState | null,
   tableCoffeeQuantity = 0,
   activeRecordPlayerId?: string | null,
+  paintingGallery?: AivatarPaintingGallery,
 ) => {
   const filledCoffeeCups = tableCoffeeCupFillSet(content, tableCoffeeQuantity);
   (content.placedItems ?? [])
@@ -5096,6 +5195,9 @@ const drawPlacedItemsForSurface = (
         activeInteraction,
         activeRecordPlayerId,
         filledCoffeeCups.has(item.id),
+        0,
+        0,
+        paintingGallery,
       );
       if (item.id === selectedPlacedItemId) {
         drawPlacedItemHighlight(ctx, item);
@@ -7587,6 +7689,7 @@ export const renderScene = (
   failedTaskCabinetFileCount = 0,
   uiTheme: UiThemeId = "classic",
   showNavigationDebug = false,
+  paintingGallery?: AivatarPaintingGallery,
   activeRecordPlayerId?: string | null,
 ) => {
   const ctx = canvas.getContext("2d");
@@ -7622,6 +7725,7 @@ export const renderScene = (
         avatar,
         selectedPlacedItemId,
         placementPreview,
+        paintingGallery,
       ),
     "behind-avatar",
     windowTimeMs,
@@ -7641,6 +7745,7 @@ export const renderScene = (
     taskCabinetFileCount,
     failedTaskCabinetFileCount,
     "behind-avatar",
+    paintingGallery,
     activeRecordPlayerId,
   );
   drawAvatar(ctx, avatar, frame, content.petStats, status, memory);
@@ -7656,6 +7761,7 @@ export const renderScene = (
     taskCabinetFileCount,
     failedTaskCabinetFileCount,
     "in-front-of-avatar",
+    paintingGallery,
     activeRecordPlayerId,
   );
   furnitureByDepth(content.room.furniture).forEach((item) => {
@@ -7696,6 +7802,7 @@ export const renderScene = (
       activeInteraction,
       tableCoffeeQuantity,
       activeRecordPlayerId,
+      paintingGallery,
     );
     const surfacePreview = placementPreview;
     if (surfacePreview && isPreviewOnSurface(surfacePreview, item)) {

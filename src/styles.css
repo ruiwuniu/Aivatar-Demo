@@ -1114,6 +1114,7 @@ meter {
 .app-shell.theme-terminal .asset-editor-entry,
 .app-shell.theme-terminal .asset-editor,
 .app-shell.theme-terminal .decor-panel,
+.app-shell.theme-terminal .painting-gallery-panel,
 .app-shell.theme-terminal .save-slot-dialog,
 .app-shell.theme-terminal .save-delete-dialog,
 .app-shell.theme-terminal .placement-panel,
@@ -2193,6 +2194,7 @@ meter {
 .app-shell.theme-terminal.theme-terminal-amber .asset-editor-entry,
 .app-shell.theme-terminal.theme-terminal-amber .asset-editor,
 .app-shell.theme-terminal.theme-terminal-amber .decor-panel,
+.app-shell.theme-terminal.theme-terminal-amber .painting-gallery-panel,
 .app-shell.theme-terminal.theme-terminal-amber .placement-panel,
 .app-shell.theme-terminal.theme-terminal-amber .edit-panel {
   border-color: #ffb02e;
@@ -4437,6 +4439,121 @@ input[type="range"]::-moz-range-thumb {
   background: #171c2b;
 }
 
+.painting-gallery-panel {
+  padding: 7px;
+  border: 2px solid #52607d;
+  background: #171c2b;
+}
+
+.painting-draft-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 58px;
+  padding: 5px;
+  border: 2px solid #39445f;
+  background: #202638;
+}
+
+.painting-draft-card div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.painting-draft-card strong,
+.painting-draft-card span,
+.painting-gallery-state,
+.painting-gallery-empty {
+  color: #ffe66d;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.painting-draft-card meter {
+  width: 100%;
+  height: 8px;
+}
+
+.painting-thumbnail {
+  display: block;
+  width: 36px;
+  height: 52px;
+  border: 2px solid #111624;
+  background: #fff8df;
+  image-rendering: pixelated;
+  box-shadow:
+    0 0 0 1px #f4ead2,
+    2px 2px 0 rgba(0, 0, 0, 0.35);
+}
+
+.painting-gallery-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+}
+
+.painting-gallery-artwork {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 6px;
+  row-gap: 5px;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 62px;
+  padding: 5px;
+  border: 2px solid #39445f;
+  background: #202638;
+  text-align: left;
+}
+
+.painting-gallery-artwork .painting-thumbnail {
+  grid-row: 1;
+}
+
+.painting-gallery-artwork-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.painting-gallery-artwork-copy span,
+.painting-gallery-artwork-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.painting-gallery-artwork-copy small {
+  color: #cfc5a8;
+  font-size: 10px;
+}
+
+.painting-gallery-actions {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.painting-gallery-action {
+  min-height: 24px;
+  font-size: 10px;
+}
+
+.painting-gallery-clear {
+  width: 100%;
+  min-height: 26px;
+  font-size: 10px;
+}
+
+.painting-gallery-state,
+.painting-gallery-empty {
+  margin: 0;
+}
+
 .decor-toggle-button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -5810,6 +5927,11 @@ input[type="range"]::-moz-range-thumb {
 .app-shell.theme-classic .idle-bubble-language > span,
 .app-shell.theme-classic .idle-bubble-empty,
 .app-shell.theme-classic .audio-control-hint,
+.app-shell.theme-classic .painting-draft-card strong,
+.app-shell.theme-classic .painting-draft-card span,
+.app-shell.theme-classic .painting-gallery-state,
+.app-shell.theme-classic .painting-gallery-empty,
+.app-shell.theme-classic .painting-gallery-artwork small,
 .app-shell.theme-classic .meta-list {
   font-size: 11px;
   font-weight: 400;
@@ -5830,6 +5952,7 @@ input[type="range"]::-moz-range-thumb {
 .app-shell.theme-classic .asset-editor-entry,
 .app-shell.theme-classic .asset-editor,
 .app-shell.theme-classic .decor-panel,
+.app-shell.theme-classic .painting-gallery-panel,
 .app-shell.theme-classic .placement-panel,
 .app-shell.theme-classic .edit-panel,
 .app-shell.theme-classic .stats-grid {
@@ -5847,6 +5970,23 @@ input[type="range"]::-moz-range-thumb {
   box-shadow:
     inset 2px 2px 0 #404040,
     inset -2px -2px 0 #dfdfdf;
+}
+
+.app-shell.theme-classic .painting-draft-card,
+.app-shell.theme-classic .painting-gallery-artwork {
+  border-color: #808080 #fff #fff #808080;
+  background: #dfdfdf;
+}
+
+.app-shell.theme-classic .painting-draft-card strong,
+.app-shell.theme-classic .painting-draft-card span,
+.app-shell.theme-classic .painting-gallery-state,
+.app-shell.theme-classic .painting-gallery-empty {
+  color: #000;
+}
+
+.app-shell.theme-classic .painting-gallery-artwork small {
+  color: #404040;
 }
 
 .app-shell.theme-classic .save-slot-overlay {
