@@ -51,6 +51,7 @@ import type {
   AivatarMemoryEvent,
   AivatarNavMemory,
   AivatarSaveState,
+  AvatarAppearanceId,
   AvatarRuntime,
   BehaviorName,
   CodexStatusMessage,
@@ -90,7 +91,7 @@ const BGM_TRACK_KEY = "aivatar.bgmTrack.v1";
 const AUTO_MUSIC_KEY = "aivatar.autoMusic.v1";
 const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
 const SAVE_LAYOUT_VERSION = 2;
-const MAX_SAVE_SLOTS = 4;
+const MAX_SAVE_SLOTS = 8;
 const DEFAULT_AVATAR_APPEARANCE_ID = "octopus";
 const SLEEP_INTERACTION_SECONDS = 12;
 const SLEEP_RECOVERY_PER_TICK = 4;
@@ -115,6 +116,47 @@ const COLA_ITEM_ID = "cola";
 const BENTO_ITEM_ID = "bento";
 const COOKIE_ITEM_ID = "cookie";
 const REPAIR_KIT_ITEM_ID = "repair-kit";
+const ITEM_ARCADE_A_THUMBNAIL_CELL_SIZE = 16;
+const ITEM_ARCADE_A_THUMBNAIL_INDICES: Record<string, number> = {
+  [COFFEE_ITEM_ID]: 0,
+  [COLA_ITEM_ID]: 1,
+  [BENTO_ITEM_ID]: 2,
+  [COOKIE_ITEM_ID]: 3,
+  [RECORD_PLAYER_ITEM_ID]: 4,
+  "game-console": 5,
+  [EASEL_ITEM_ID]: 6,
+  "file-cabinet": 7,
+  "tiny-plant": 8,
+  "cyberpunk-city-window": 9,
+  "cozy-rug": 10,
+  "morph-blob-rug": 11,
+  "blue-persian-rug": 12,
+  "desk-lamp": 13,
+  [COFFEE_CUP_ITEM_ID]: 14,
+  "digital-wall-clock": 15,
+  "terminal-monitor": 16,
+  "coffee-machine": 17,
+  "poster": 18,
+  "sky-sentinel-poster": 19,
+  "cozy-window": 20,
+  "city-night-window": 21,
+  "ocean-window": 22,
+  "industrial-bed-skin": 23,
+  "wood-red-bed-skin": 24,
+  "ivory-pink-plaid-bed-skin": 25,
+  "modern-minimal-bed-skin": 26,
+  "space-white-deep-gray-bed-skin": 27,
+  "industrial-desk-skin": 28,
+  "rococo-ivory-desk-skin": 29,
+  "transparent-acrylic-desk-skin": 30,
+  "rococo-ivory-table-skin": 31,
+  "dark-oak-table-skin": 32,
+  "white-tech-table-skin": 33,
+  "ivory-fridge-skin": 34,
+  "red-retro-fridge-skin": 35,
+  "white-tech-fridge-skin": 36,
+  [REPAIR_KIT_ITEM_ID]: 37,
+};
 const BED_INDUSTRIAL_SKIN_ID = "industrial-bed-skin";
 const BED_WOOD_RED_SKIN_ID = "wood-red-bed-skin";
 const BED_IVORY_PINK_PLAID_SKIN_ID = "ivory-pink-plaid-bed-skin";
@@ -173,7 +215,7 @@ const DEFAULT_SCENE_PANEL_WIDTH =
   DEFAULT_EXPANDED_WINDOW_WIDTH - APP_HORIZONTAL_PADDING - APP_GRID_GAP - SIDE_PANEL_WIDTH;
 const COLLAPSED_WINDOW_MIN_WIDTH = DEFAULT_SCENE_PANEL_WIDTH + APP_HORIZONTAL_PADDING;
 const DEFAULT_WINDOW_HEIGHT = 520;
-const SHOW_DEBUG_CARD = false;
+const SHOW_DEBUG_CARD = true;
 const EXPANDED_WINDOW_MIN_WIDTH = 720;
 const MEMORY_RECENT_EVENT_LIMIT = 20;
 const BEHAVIOR_DEMO_SECONDS = 3;
@@ -303,6 +345,7 @@ const DEMO_BEHAVIORS: BehaviorName[] = [
   "paint",
   "play",
   "music",
+  "workout",
   "thinking",
   "coding",
   "waiting",
@@ -320,10 +363,10 @@ type ShopCategoryId =
 type DecorSurfaceCategoryId = "wallpaper" | "flooring";
 
 type LauncherAgentId = "codex" | "claude-code";
-type UiThemeId = "classic" | "terminal" | "terminal-amber";
+type UiThemeId = "classic" | "terminal" | "terminal-amber" | "arcade-cabinet";
+type SceneUiThemeId = Exclude<UiThemeId, "arcade-cabinet">;
 type BgmTrack = (typeof BGM_TRACKS)[number];
 type BgmTrackId = BgmTrack["id"];
-type AvatarAppearanceId = "octopus";
 
 type SaveSlotSummary = {
   id: string;
@@ -336,30 +379,72 @@ type SaveSlotSummary = {
   updatedAt: string;
 };
 
-const AVATAR_APPEARANCES: Array<{
+type AvatarAppearanceOption = {
   id: AvatarAppearanceId;
   copyKey: string;
   descriptionKey: string;
-}> = [
+};
+
+const REGISTERED_AVATAR_APPEARANCES: AvatarAppearanceOption[] = [
   {
     id: DEFAULT_AVATAR_APPEARANCE_ID,
     copyKey: "saveSlots.avatar.octopus",
     descriptionKey: "saveSlots.avatar.octopusDescription",
   },
+  {
+    id: "demo-spark",
+    copyKey: "saveSlots.avatar.demoSpark",
+    descriptionKey: "saveSlots.avatar.demoSparkDescription",
+  },
+  {
+    id: "mood-slime",
+    copyKey: "saveSlots.avatar.moodSlime",
+    descriptionKey: "saveSlots.avatar.moodSlimeDescription",
+  },
+  {
+    id: "cute-crayfish",
+    copyKey: "saveSlots.avatar.cuteCrayfish",
+    descriptionKey: "saveSlots.avatar.cuteCrayfishDescription",
+  },
+  {
+    id: "cute-ghost",
+    copyKey: "saveSlots.avatar.cuteGhost",
+    descriptionKey: "saveSlots.avatar.cuteGhostDescription",
+  },
+  {
+    id: "cute-penguin",
+    copyKey: "saveSlots.avatar.cutePenguin",
+    descriptionKey: "saveSlots.avatar.cutePenguinDescription",
+  },
+  // Development-only: keep the renderer/type/copy wired, but hide it from new-save creation.
+  {
+    id: "wave-lizard",
+    copyKey: "saveSlots.avatar.waveLizard",
+    descriptionKey: "saveSlots.avatar.waveLizardDescription",
+  },
 ];
+
+const AVATAR_APPEARANCES = REGISTERED_AVATAR_APPEARANCES.filter(
+  (appearance) => appearance.id !== "wave-lizard",
+);
 
 const UI_THEME_OPTIONS: Array<{ id: UiThemeId; copyKey: string }> = [
   { id: "classic", copyKey: "theme.classic" },
   { id: "terminal", copyKey: "theme.terminal" },
   { id: "terminal-amber", copyKey: "theme.amber" },
+  { id: "arcade-cabinet", copyKey: "theme.arcade" },
 ];
 
 const loadInitialUiTheme = (): UiThemeId => {
   const saved = localStorage.getItem(UI_THEME_KEY);
   if (saved === "terminal-amber") return "terminal-amber";
+  if (saved === "arcade-cabinet") return "arcade-cabinet";
   if (saved === "classic" || saved === "terminal") return saved;
   return "terminal";
 };
+
+const uiThemeForScene = (theme: UiThemeId): SceneUiThemeId =>
+  theme === "arcade-cabinet" ? "terminal" : theme;
 
 const loadInitialAudioVolume = () => {
   const saved = Number(localStorage.getItem(AUDIO_VOLUME_KEY));
@@ -2051,7 +2136,7 @@ const normalizeRoomId = (roomId: unknown) =>
   typeof roomId === "string" && roomId.trim().length > 0 ? roomId : createRoomId();
 
 const isAvatarAppearanceId = (value: unknown): value is AvatarAppearanceId =>
-  AVATAR_APPEARANCES.some((appearance) => appearance.id === value);
+  REGISTERED_AVATAR_APPEARANCES.some((appearance) => appearance.id === value);
 
 const normalizeAvatarAppearanceId = (appearanceId: unknown): AvatarAppearanceId =>
   isAvatarAppearanceId(appearanceId) ? appearanceId : DEFAULT_AVATAR_APPEARANCE_ID;
@@ -3679,8 +3764,13 @@ export const App = () => {
   const createSaveSlot = () => {
     if (creatingSaveSlotIndex === null) return;
 
+    const creatableAppearanceId = AVATAR_APPEARANCES.some(
+      (appearance) => appearance.id === selectedAvatarAppearanceId,
+    )
+      ? selectedAvatarAppearanceId
+      : DEFAULT_AVATAR_APPEARANCE_ID;
     const nextSave = saveFromContent(contentBase, {
-      avatarAppearanceId: selectedAvatarAppearanceId,
+      avatarAppearanceId: creatableAppearanceId,
       avatarName: newSaveAvatarName,
     });
     installSaveIntoSlot(creatingSaveSlotIndex, nextSave);
@@ -3885,9 +3975,10 @@ export const App = () => {
           (entry) => entry.status === "ready" || entry.status === "failed",
         ).length,
         taskCabinetEntries.filter((entry) => entry.status === "failed").length,
-        uiTheme,
+        uiThemeForScene(uiTheme),
         navDebugOverlay,
         activeRecordPlayerId,
+        normalizeAvatarAppearanceId(save.avatarAppearanceId),
       );
     }
   }, [
@@ -3906,6 +3997,7 @@ export const App = () => {
     windowPlacementPreview,
     furniturePlacementPreview,
     movingFurniture,
+    save.avatarAppearanceId,
     save.memory,
     taskCabinetEntries,
     uiTheme,
@@ -4501,6 +4593,7 @@ export const App = () => {
             ),
           navMemory: saveRef.current.navMemory,
           autoMusicEnabled: autoMusicEnabledRef.current,
+          avatarAppearanceId: normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
         },
       );
 
@@ -5479,9 +5572,10 @@ export const App = () => {
             taskCabinetEntriesRef.current.filter(
               (entry) => entry.status === "failed",
             ).length,
-            uiThemeRef.current,
+            uiThemeForScene(uiThemeRef.current),
             navDebugOverlayRef.current,
             activeRecordPlayerIdRef.current,
+            normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
           );
       }
 
@@ -8378,6 +8472,22 @@ export const App = () => {
         ? behaviorLabel(locale, sceneContextMenu.target.furniture.interaction)
         : "";
   const ItemThumbnail = ({ itemId }: { itemId: string }) => {
+    const arcadeThumbnailIndex = ITEM_ARCADE_A_THUMBNAIL_INDICES[itemId];
+
+    if (arcadeThumbnailIndex !== undefined) {
+      return (
+        <span
+          className="item-button-thumbnail item-thumbnail-arcade-a"
+          style={
+            {
+              "--item-thumbnail-x": `-${arcadeThumbnailIndex * ITEM_ARCADE_A_THUMBNAIL_CELL_SIZE}px`,
+            } as React.CSSProperties
+          }
+          aria-hidden="true"
+        />
+      );
+    }
+
     if (itemId === BED_INDUSTRIAL_SKIN_ID) {
       return (
         <span className="item-button-thumbnail" aria-hidden="true">

@@ -91,6 +91,25 @@ meter {
   background: rgba(8, 11, 20, 0.78);
 }
 
+.app-shell.theme-terminal .save-slot-overlay {
+  background: rgba(1, 6, 3, 0.88);
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.58);
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .save-slot-overlay {
+  background: rgba(9, 5, 0, 0.88);
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.56);
+}
+
+.app-shell.theme-classic .save-slot-overlay {
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.app-shell.theme-arcade-cabinet .save-slot-overlay {
+  background: rgba(5, 7, 11, 0.9);
+  box-shadow: inset 0 0 140px rgba(0, 0, 0, 0.62);
+}
+
 .save-slot-dialog {
   display: grid;
   gap: 14px;
@@ -376,6 +395,350 @@ meter {
     27px 2px 0 -1px #d45fbd,
     27px 2px 0 1px #3b163f;
   content: "";
+}
+
+.avatar-preview-demo-spark > span {
+  left: 14px;
+  top: 7px;
+  width: 30px;
+  height: 25px;
+  border-color: #083344;
+  border-radius: 6px 6px 8px 8px;
+  background: #16c7d9;
+  box-shadow:
+    inset 4px 0 0 #67e8f9,
+    inset -5px -4px 0 #0e7490;
+}
+
+.avatar-preview-demo-spark > span::before {
+  left: 5px;
+  top: 8px;
+  width: 20px;
+  height: 7px;
+  background: #0f172a;
+  box-shadow:
+    inset 3px 2px 0 #a7f3d0,
+    7px -17px 0 -2px #22d3ee,
+    15px -16px 0 -3px #e0f2fe;
+}
+
+.avatar-preview-demo-spark > span::after {
+  left: 0;
+  bottom: -10px;
+  width: 6px;
+  height: 8px;
+  border-color: #083344;
+  background: #0891b2;
+  box-shadow:
+    8px 2px 0 -1px #67e8f9,
+    8px 2px 0 1px #083344,
+    17px 0 0 -1px #0891b2,
+    17px 0 0 1px #083344,
+    25px 2px 0 -1px #67e8f9,
+    25px 2px 0 1px #083344;
+}
+
+.avatar-preview-mood-slime > span {
+  left: 13px;
+  top: 10px;
+  width: 32px;
+  height: 24px;
+  border-color: #14532d;
+  border-radius: 12px 12px 9px 9px;
+  background: #4ade80;
+  box-shadow:
+    inset 5px 2px 0 #bbf7d0,
+    inset -5px -4px 0 #16a34a,
+    0 7px 0 -2px #15803d;
+}
+
+.avatar-preview-mood-slime > span::before {
+  left: 8px;
+  top: 9px;
+  width: 4px;
+  height: 5px;
+  background: #052e16;
+  box-shadow:
+    12px 0 0 #052e16,
+    -2px -5px 0 -1px #ecfccb;
+}
+
+.avatar-preview-mood-slime > span::after {
+  left: 10px;
+  bottom: 5px;
+  width: 12px;
+  height: 2px;
+  border: 0;
+  background: #052e16;
+  box-shadow:
+    -10px 10px 0 -1px #86efac,
+    12px 10px 0 -1px #22c55e;
+}
+
+.avatar-preview-cute-ghost > span {
+  left: 14px;
+  top: 6px;
+  width: 30px;
+  height: 31px;
+  border-color: #7dd3fc;
+  border-radius: 16px 16px 8px 8px;
+  background: rgba(224, 247, 255, 0.72);
+  box-shadow:
+    inset 4px 2px 0 rgba(255, 255, 255, 0.9),
+    inset -4px -3px 0 rgba(147, 197, 253, 0.62),
+    0 3px 0 -1px rgba(125, 211, 252, 0.45);
+}
+
+.avatar-preview-cute-ghost > span::before {
+  left: 5px;
+  top: 10px;
+  width: 20px;
+  height: 12px;
+  background:
+    linear-gradient(#123447 0 0) 4px 0 / 3px 3px no-repeat,
+    linear-gradient(#123447 0 0) 14px 0 / 3px 3px no-repeat,
+    linear-gradient(#ffffff 0 0) 4px 1px / 1px 1px no-repeat,
+    linear-gradient(#ffffff 0 0) 14px 1px / 1px 1px no-repeat,
+    linear-gradient(#ff9ad5 0 0) 0 7px / 4px 2px no-repeat,
+    linear-gradient(#ff9ad5 0 0) 16px 7px / 4px 2px no-repeat,
+    linear-gradient(#123447 0 0) 5px 8px / 11px 1px no-repeat;
+  box-shadow: none;
+}
+
+.avatar-preview-cute-ghost > span::after {
+  left: 3px;
+  bottom: -5px;
+  width: 24px;
+  height: 6px;
+  border-color: #7dd3fc;
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background:
+    linear-gradient(rgba(147, 197, 253, 0.42) 0 0) 5px 0 / 2px 5px no-repeat,
+    linear-gradient(rgba(147, 197, 253, 0.42) 0 0) 12px 1px / 2px 4px no-repeat,
+    linear-gradient(rgba(147, 197, 253, 0.42) 0 0) 19px 0 / 2px 5px no-repeat,
+    rgba(224, 247, 255, 0.72);
+  box-shadow: inset 0 -1px 0 rgba(147, 197, 253, 0.36);
+}
+
+.avatar-preview-cute-penguin > span {
+  z-index: 1;
+  left: 13px;
+  top: 4px;
+  width: 32px;
+  height: 35px;
+  border-color: #080d14;
+  border-radius: 18px 18px 15px 15px;
+  background: #151b24;
+  box-shadow:
+    inset 4px 2px 0 #303846,
+    inset -4px -5px 0 #05080d,
+    0 3px 0 -1px rgba(8, 13, 20, 0.42);
+}
+
+.avatar-preview-cute-penguin > span::before {
+  left: 5px;
+  top: 6px;
+  width: 22px;
+  height: 27px;
+  border-radius: 12px 12px 10px 10px;
+  background:
+    linear-gradient(#0b1220 0 0) 5px 5px / 3px 5px no-repeat,
+    linear-gradient(#0b1220 0 0) 14px 5px / 3px 5px no-repeat,
+    linear-gradient(#ffffff 0 0) 6px 6px / 1px 1px no-repeat,
+    linear-gradient(#ffffff 0 0) 15px 6px / 1px 1px no-repeat,
+    linear-gradient(#ffbf3d 0 0) 9px 11px / 5px 1px no-repeat,
+    linear-gradient(#f59e0b 0 0) 8px 10px / 7px 4px no-repeat,
+    linear-gradient(#080d14 0 0) 7px 11px / 9px 4px no-repeat,
+    linear-gradient(#f7a8b8 0 0) 1px 13px / 4px 3px no-repeat,
+    linear-gradient(#f7a8b8 0 0) 17px 13px / 4px 3px no-repeat,
+    linear-gradient(#e7dfce 0 0) 6px 22px / 11px 2px no-repeat,
+    #fff8ea;
+  box-shadow: none;
+}
+
+.avatar-preview-cute-penguin > span::after {
+  left: 4px;
+  bottom: -7px;
+  width: 24px;
+  height: 9px;
+  border: 0;
+  background:
+    linear-gradient(#080d14 0 0) 0 5px / 11px 3px no-repeat,
+    linear-gradient(#080d14 0 0) 13px 5px / 11px 3px no-repeat,
+    linear-gradient(#b96805 0 0) 1px 3px / 10px 4px no-repeat,
+    linear-gradient(#b96805 0 0) 13px 3px / 10px 4px no-repeat,
+    linear-gradient(#f59e0b 0 0) 2px 1px / 9px 5px no-repeat,
+    linear-gradient(#f59e0b 0 0) 13px 1px / 9px 5px no-repeat,
+    linear-gradient(#ffbf3d 0 0) 3px 2px / 6px 2px no-repeat,
+    linear-gradient(#ffbf3d 0 0) 14px 2px / 6px 2px no-repeat;
+  box-shadow:
+    5px 7px 0 -2px rgba(8, 13, 20, 0.32),
+    15px 7px 0 -2px rgba(8, 13, 20, 0.32);
+}
+
+.avatar-preview-cute-penguin {
+  background: none;
+}
+
+.avatar-preview-cute-penguin::before,
+.avatar-preview-cute-penguin::after {
+  position: absolute;
+  z-index: 0;
+  top: 24px;
+  width: 5px;
+  height: 12px;
+  border: 2px solid #080d14;
+  border-radius: 5px 3px 7px 4px;
+  background: #151b24;
+  box-shadow:
+    inset 1px 1px 0 #303846,
+    inset -2px -2px 0 #05080d;
+  content: "";
+}
+
+.avatar-preview-cute-penguin::before {
+  left: 10px;
+  transform: skewY(-6deg) rotate(7deg);
+}
+
+.avatar-preview-cute-penguin::after {
+  right: 10px;
+  transform: scaleX(-1) skewY(-6deg) rotate(7deg);
+}
+
+.avatar-preview-cute-crayfish > span {
+  z-index: 1;
+  left: 15px;
+  top: 6px;
+  width: 28px;
+  height: 29px;
+  border-color: #6f1d1b;
+  border-radius: 15px 15px 10px 10px;
+  background:
+    linear-gradient(#fecaca 0 0) 8px 4px / 12px 3px no-repeat,
+    #ef4444;
+  box-shadow:
+    inset 4px 2px 0 #fca5a5,
+    inset -4px -5px 0 #b91c1c;
+}
+
+.avatar-preview-cute-crayfish {
+  background:
+    linear-gradient(#fca5a5 0 0) 16px 0 / 3px 3px no-repeat,
+    linear-gradient(#6f1d1b 0 0) 18px 2px / 6px 2px no-repeat,
+    linear-gradient(#6f1d1b 0 0) 23px 4px / 2px 5px no-repeat,
+    linear-gradient(#fca5a5 0 0) 39px 0 / 3px 3px no-repeat,
+    linear-gradient(#6f1d1b 0 0) 34px 2px / 6px 2px no-repeat,
+    linear-gradient(#6f1d1b 0 0) 33px 4px / 2px 5px no-repeat;
+}
+
+.avatar-preview-cute-crayfish > span::before {
+  left: 4px;
+  top: 9px;
+  width: 20px;
+  height: 13px;
+  background:
+    linear-gradient(#240b0b 0 0) 3px 0 / 4px 5px no-repeat,
+    linear-gradient(#240b0b 0 0) 13px 0 / 4px 5px no-repeat,
+    linear-gradient(#fecaca 0 0) 0 7px / 4px 3px no-repeat,
+    linear-gradient(#fecaca 0 0) 16px 7px / 4px 3px no-repeat,
+    linear-gradient(#6f1d1b 0 0) 7px 10px / 7px 2px no-repeat;
+  box-shadow: none;
+}
+
+.avatar-preview-cute-crayfish > span::after {
+  left: 8px;
+  bottom: -8px;
+  width: 10px;
+  height: 8px;
+  border-color: #6f1d1b;
+  border-top: 0;
+  border-radius: 0 0 7px 7px;
+  background: #dc2626;
+  box-shadow:
+    inset 0 2px 0 #f87171,
+    -7px 4px 0 -3px #dc2626,
+    -7px 4px 0 -1px #6f1d1b,
+    7px 4px 0 -3px #dc2626,
+    7px 4px 0 -1px #6f1d1b;
+}
+
+.avatar-preview-cute-crayfish::before,
+.avatar-preview-cute-crayfish::after {
+  position: absolute;
+  top: 22px;
+  width: 12px;
+  height: 9px;
+  border: 2px solid #6f1d1b;
+  border-radius: 8px 8px 6px 6px;
+  background:
+    linear-gradient(#dc2626 0 0) 7px 4px / 5px 2px no-repeat,
+    #f87171;
+  box-shadow:
+    inset 3px 1px 0 #fecaca,
+    inset -2px -2px 0 #dc2626;
+  content: "";
+}
+
+.avatar-preview-cute-crayfish::before {
+  left: 5px;
+  transform: rotate(-10deg);
+}
+
+.avatar-preview-cute-crayfish::after {
+  right: 5px;
+  transform: scaleX(-1) rotate(-10deg);
+}
+
+.avatar-preview-wave-lizard > span {
+  left: 20px;
+  top: 9px;
+  width: 17px;
+  height: 30px;
+  border-color: #14532d;
+  border-radius: 11px 11px 9px 9px;
+  background: #4ade80;
+  box-shadow:
+    inset 3px 2px 0 #bbf7d0,
+    inset -3px -4px 0 #16a34a,
+    -14px 16px 0 -6px #22c55e,
+    -16px 15px 0 -4px #14532d,
+    -23px 9px 0 -8px #86efac,
+    -25px 8px 0 -6px #14532d,
+    10px 10px 0 -6px #4ade80,
+    10px 10px 0 -4px #14532d;
+}
+
+.avatar-preview-wave-lizard > span::before {
+  left: 2px;
+  top: -7px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #14532d;
+  border-radius: 50%;
+  background: #f8fafc;
+  box-shadow:
+    11px 0 0 -2px #f8fafc,
+    11px 0 0 0 #14532d,
+    3px 3px 0 -1px #111827,
+    14px 3px 0 -1px #111827;
+}
+
+.avatar-preview-wave-lizard > span::after {
+  left: 3px;
+  bottom: -9px;
+  width: 4px;
+  height: 8px;
+  border-color: #14532d;
+  background: #22c55e;
+  box-shadow:
+    10px 0 0 -1px #22c55e,
+    10px 0 0 1px #14532d,
+    -10px -13px 0 -4px #86efac,
+    -10px -13px 0 -2px #14532d,
+    19px -18px 0 -4px #86efac,
+    19px -18px 0 -2px #14532d;
 }
 
 @media (max-width: 620px) {
@@ -729,6 +1092,16 @@ meter {
   gap: 10px;
 }
 
+.status-header > div {
+  min-width: 0;
+}
+
+.status-header h1 {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  line-height: 1;
+}
+
 .name-editor {
   padding: 6px 8px;
   border: 2px solid #39445f;
@@ -759,7 +1132,7 @@ meter {
 
 .theme-switch {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
 }
 
@@ -875,12 +1248,12 @@ meter {
 
 .settings-submenu {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
   margin: 0 7px 7px;
-  padding: 7px;
+  padding: 6px;
   border: 1px solid #39445f;
   background: #202638;
 }
@@ -910,23 +1283,23 @@ meter {
 }
 
 .settings-submenu .audio-control {
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  padding: 6px 7px;
+  padding: 5px 6px;
 }
 
 .settings-submenu .audio-control span {
   gap: 6px;
-  font-size: 9px;
-  line-height: 1.15;
+  font-size: 9.5px;
+  line-height: 1.2;
 }
 
 .settings-submenu .audio-control b {
-  max-width: 86px;
+  max-width: 82px;
   overflow: hidden;
-  font-size: 9px;
+  font-size: 9.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -937,7 +1310,7 @@ meter {
 }
 
 .settings-submenu .audio-control select {
-  min-height: 24px;
+  min-height: 23px;
   padding: 3px 5px;
   font-family: inherit;
   font-size: 9px;
@@ -1122,6 +1495,21 @@ meter {
   box-shadow:
     inset 0 0 0 2px #06260d,
     0 0 12px rgba(76, 255, 87, 0.16);
+}
+
+.app-shell.theme-terminal .settings-card,
+.app-shell.theme-terminal .sound-card,
+.app-shell.theme-terminal .sessions-card,
+.app-shell.theme-terminal .task-cabinet-card,
+.app-shell.theme-terminal .launcher-card,
+.app-shell.theme-terminal .growth-card,
+.app-shell.theme-terminal .debug-card,
+.app-shell.theme-terminal .decor-panel {
+  border-color: #2a9f39;
+  background: #031207;
+  box-shadow:
+    inset 0 0 0 2px #041a09,
+    0 0 8px rgba(76, 255, 87, 0.1);
 }
 
 .app-shell.theme-terminal .side-panel {
@@ -1313,6 +1701,21 @@ meter {
   color: #b8ff9c;
   background: #06160a;
   box-shadow: inset -2px -2px 0 #021f08;
+}
+
+.app-shell.theme-terminal .sessions-toggle,
+.app-shell.theme-terminal .task-cabinet-toggle,
+.app-shell.theme-terminal .launcher-toggle,
+.app-shell.theme-terminal .growth-toggle,
+.app-shell.theme-terminal .debug-toggle {
+  border-color: #176625;
+  background: #041108;
+  box-shadow: inset -2px -2px 0 #021506;
+}
+
+.app-shell.theme-terminal .settings-toggle {
+  border-left-color: #258d34;
+  background: #041108;
 }
 
 .app-shell.theme-terminal .sessions-toggle:hover,
@@ -1518,7 +1921,7 @@ meter {
 }
 
 .app-shell.theme-terminal .status-header {
-  padding: 8px;
+  padding: 9px;
   background:
     repeating-linear-gradient(
       0deg,
@@ -2447,6 +2850,21 @@ meter {
   accent-color: #ffb23f;
 }
 
+.app-shell.theme-terminal.theme-terminal-amber .settings-card,
+.app-shell.theme-terminal.theme-terminal-amber .sound-card,
+.app-shell.theme-terminal.theme-terminal-amber .sessions-card,
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-card,
+.app-shell.theme-terminal.theme-terminal-amber .launcher-card,
+.app-shell.theme-terminal.theme-terminal-amber .growth-card,
+.app-shell.theme-terminal.theme-terminal-amber .debug-card,
+.app-shell.theme-terminal.theme-terminal-amber .decor-panel {
+  border-color: #9f5b1a;
+  background: #120801;
+  box-shadow:
+    inset 0 0 0 2px #2a1302,
+    0 0 8px rgba(255, 176, 46, 0.1);
+}
+
 .app-shell.theme-terminal.theme-terminal-amber .sessions-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .task-cabinet-toggle,
 .app-shell.theme-terminal.theme-terminal-amber .launcher-toggle,
@@ -2476,6 +2894,21 @@ meter {
   color: #ffd166;
   background: #241204;
   box-shadow: inset -2px -2px 0 #090500;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .sessions-toggle,
+.app-shell.theme-terminal.theme-terminal-amber .task-cabinet-toggle,
+.app-shell.theme-terminal.theme-terminal-amber .launcher-toggle,
+.app-shell.theme-terminal.theme-terminal-amber .growth-toggle,
+.app-shell.theme-terminal.theme-terminal-amber .debug-toggle {
+  border-color: #5f2f08;
+  background: #190b02;
+  box-shadow: inset -2px -2px 0 #090500;
+}
+
+.app-shell.theme-terminal.theme-terminal-amber .settings-toggle {
+  border-left-color: #9f5b1a;
+  background: #190b02;
 }
 
 .app-shell.theme-terminal.theme-terminal-amber .idle-bubble-candidate.llm {
@@ -4782,6 +5215,20 @@ input[type="range"]::-moz-range-thumb {
   flex: 0 0 auto;
 }
 
+.item-thumbnail-arcade-a::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  background-image: url("/icons/item-icons-arcade-a.png?v=3");
+  background-repeat: no-repeat;
+  background-position: var(--item-thumbnail-x, 0) 0;
+  background-size: 608px 16px;
+  image-rendering: pixelated;
+}
+
 .item-thumb-shape,
 .item-thumb-accent,
 .item-thumb-detail,
@@ -6396,6 +6843,760 @@ input[type="range"]::-moz-range-thumb {
   border-color: #000;
   color: #fff;
   background: #000080;
+}
+
+.app-shell.theme-arcade-cabinet {
+  color: #f8f1d8;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(126, 241, 255, 0.045) 0 1px,
+      transparent 1px 5px
+    ),
+    radial-gradient(circle at 12% 10%, rgba(0, 229, 255, 0.2), transparent 31%),
+    radial-gradient(circle at 90% 12%, rgba(255, 42, 156, 0.18), transparent 28%),
+    linear-gradient(135deg, #151923, #05070b 58%, #171014);
+  text-shadow: 0 0 5px rgba(0, 229, 255, 0.28);
+}
+
+.app-shell.theme-arcade-cabinet .scene-panel,
+.app-shell.theme-arcade-cabinet .side-panel,
+.app-shell.theme-arcade-cabinet .status-header,
+.app-shell.theme-arcade-cabinet .status-card,
+.app-shell.theme-arcade-cabinet .name-editor,
+.app-shell.theme-arcade-cabinet .stats-grid,
+.app-shell.theme-arcade-cabinet .settings-card,
+.app-shell.theme-arcade-cabinet .sound-card,
+.app-shell.theme-arcade-cabinet .sessions-card,
+.app-shell.theme-arcade-cabinet .task-cabinet-card,
+.app-shell.theme-arcade-cabinet .launcher-card,
+.app-shell.theme-arcade-cabinet .growth-card,
+.app-shell.theme-arcade-cabinet .debug-card,
+.app-shell.theme-arcade-cabinet .asset-editor-entry,
+.app-shell.theme-arcade-cabinet .asset-editor,
+.app-shell.theme-arcade-cabinet .decor-panel,
+.app-shell.theme-arcade-cabinet .save-slot-dialog,
+.app-shell.theme-arcade-cabinet .save-delete-dialog,
+.app-shell.theme-arcade-cabinet .placement-panel,
+.app-shell.theme-arcade-cabinet .edit-panel {
+  border-color: #00e5ff;
+  color: #f8f1d8;
+  background:
+    linear-gradient(180deg, rgba(31, 36, 47, 0.98), rgba(7, 10, 15, 0.98));
+  box-shadow:
+    inset 0 0 0 2px #05070b,
+    inset 0 0 0 3px rgba(255, 42, 156, 0.2),
+    4px 4px 0 #05070b,
+    0 0 16px rgba(0, 229, 255, 0.16);
+}
+
+.app-shell.theme-arcade-cabinet .scene-panel {
+  position: relative;
+  border-color: #05070b;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(248, 241, 216, 0.045) 0 1px,
+      transparent 1px 4px
+    ),
+    #06080d;
+  box-shadow:
+    inset 0 0 0 4px #151923,
+    inset 0 0 0 8px #05070b,
+    inset 0 0 34px rgba(0, 229, 255, 0.16),
+    0 0 0 2px #00e5ff,
+    0 0 22px rgba(255, 42, 156, 0.2);
+}
+
+.app-shell.theme-arcade-cabinet .scene-panel::after {
+  position: absolute;
+  inset: 10px;
+  z-index: 1;
+  border: 1px solid rgba(126, 241, 255, 0.18);
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.045) 0 1px,
+      transparent 1px 5px
+    ),
+    radial-gradient(circle at 50% 35%, transparent 0 55%, rgba(0, 0, 0, 0.16) 100%);
+  box-shadow: inset 0 0 32px rgba(0, 0, 0, 0.34);
+  pointer-events: none;
+  content: "";
+}
+
+.app-shell.theme-arcade-cabinet .side-panel {
+  scrollbar-color: #00e5ff #05070b;
+  background:
+    linear-gradient(90deg, rgba(0, 229, 255, 0.09), transparent 18% 82%, rgba(255, 42, 156, 0.1)),
+    linear-gradient(180deg, #20242f, #080a10);
+}
+
+.app-shell.theme-arcade-cabinet .status-header {
+  padding: 8px 9px;
+  background:
+    linear-gradient(90deg, #00e5ff 0 5px, transparent 5px calc(100% - 5px), #ff2a9c calc(100% - 5px)),
+    #111722;
+}
+
+.app-shell.theme-arcade-cabinet .status-card,
+.app-shell.theme-arcade-cabinet .settings-card,
+.app-shell.theme-arcade-cabinet .sound-card,
+.app-shell.theme-arcade-cabinet .sessions-card,
+.app-shell.theme-arcade-cabinet .task-cabinet-card,
+.app-shell.theme-arcade-cabinet .launcher-card,
+.app-shell.theme-arcade-cabinet .growth-card,
+.app-shell.theme-arcade-cabinet .debug-card,
+.app-shell.theme-arcade-cabinet .decor-panel,
+.app-shell.theme-arcade-cabinet .placement-panel,
+.app-shell.theme-arcade-cabinet .edit-panel {
+  background:
+    radial-gradient(circle, rgba(248, 241, 216, 0.13) 0 0.8px, transparent 1px) 0 0 / 9px 9px,
+    linear-gradient(180deg, rgba(27, 31, 42, 0.97), rgba(7, 10, 15, 0.97));
+}
+
+.app-shell.theme-arcade-cabinet .status-card {
+  border-color: #ffb32c;
+  box-shadow:
+    inset 0 0 0 2px #05070b,
+    inset 0 4px 0 rgba(255, 179, 44, 0.22),
+    4px 4px 0 #05070b,
+    0 0 14px rgba(255, 179, 44, 0.22);
+}
+
+.app-shell.theme-arcade-cabinet h1,
+.app-shell.theme-arcade-cabinet h2,
+.app-shell.theme-arcade-cabinet .status-card strong,
+.app-shell.theme-arcade-cabinet .settings-toggle-main b,
+.app-shell.theme-arcade-cabinet .sound-toggle-main b,
+.app-shell.theme-arcade-cabinet .sessions-toggle-main b,
+.app-shell.theme-arcade-cabinet .task-cabinet-toggle-main b,
+.app-shell.theme-arcade-cabinet .launcher-toggle-main b,
+.app-shell.theme-arcade-cabinet .growth-toggle-main b,
+.app-shell.theme-arcade-cabinet .debug-toggle-main b,
+.app-shell.theme-arcade-cabinet .idle-bubble-heading b,
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate b {
+  color: #fff6bf;
+  text-shadow:
+    0 0 4px rgba(255, 179, 44, 0.38),
+    0 0 8px rgba(0, 229, 255, 0.2);
+}
+
+.app-shell.theme-arcade-cabinet .eyebrow,
+.app-shell.theme-arcade-cabinet .status-card span,
+.app-shell.theme-arcade-cabinet .settings-toggle-main span,
+.app-shell.theme-arcade-cabinet .settings-toggle-status,
+.app-shell.theme-arcade-cabinet .sound-toggle-main span,
+.app-shell.theme-arcade-cabinet .sound-toggle-status,
+.app-shell.theme-arcade-cabinet .sessions-toggle-status,
+.app-shell.theme-arcade-cabinet .task-cabinet-toggle-status,
+.app-shell.theme-arcade-cabinet .launcher-toggle-status,
+.app-shell.theme-arcade-cabinet .debug-toggle-status,
+.app-shell.theme-arcade-cabinet .room-context-overlay span,
+.app-shell.theme-arcade-cabinet .room-stats-overlay span,
+.app-shell.theme-arcade-cabinet .room-growth-overlay span,
+.app-shell.theme-arcade-cabinet .side-panel p,
+.app-shell.theme-arcade-cabinet .side-panel small,
+.app-shell.theme-arcade-cabinet .side-panel label,
+.app-shell.theme-arcade-cabinet .side-panel dt,
+.app-shell.theme-arcade-cabinet .side-panel dd,
+.app-shell.theme-arcade-cabinet .side-panel > span,
+.app-shell.theme-arcade-cabinet .launcher-message,
+.app-shell.theme-arcade-cabinet .task-cabinet-hint,
+.app-shell.theme-arcade-cabinet .task-cabinet-message,
+.app-shell.theme-arcade-cabinet .task-cabinet-empty,
+.app-shell.theme-arcade-cabinet .audio-control-hint,
+.app-shell.theme-arcade-cabinet .launcher-field-hint,
+.app-shell.theme-arcade-cabinet .decor-surface-cost {
+  color: #9af7ff;
+}
+
+.app-shell.theme-arcade-cabinet .status-card p,
+.app-shell.theme-arcade-cabinet .asset-editor-entry p,
+.app-shell.theme-arcade-cabinet .asset-editor p,
+.app-shell.theme-arcade-cabinet .stat-row,
+.app-shell.theme-arcade-cabinet .launcher-field span,
+.app-shell.theme-arcade-cabinet .launcher-option,
+.app-shell.theme-arcade-cabinet .task-cabinet-path {
+  color: #f8f1d8;
+}
+
+.app-shell.theme-arcade-cabinet .sessions-toggle,
+.app-shell.theme-arcade-cabinet .task-cabinet-toggle,
+.app-shell.theme-arcade-cabinet .launcher-toggle,
+.app-shell.theme-arcade-cabinet .growth-toggle,
+.app-shell.theme-arcade-cabinet .settings-toggle,
+.app-shell.theme-arcade-cabinet .sound-toggle,
+.app-shell.theme-arcade-cabinet .debug-toggle,
+.app-shell.theme-arcade-cabinet .save-slot-card,
+.app-shell.theme-arcade-cabinet .avatar-choice-card,
+.app-shell.theme-arcade-cabinet .language-button,
+.app-shell.theme-arcade-cabinet .theme-button,
+.app-shell.theme-arcade-cabinet .pixel-button,
+.app-shell.theme-arcade-cabinet .path-picker-button,
+.app-shell.theme-arcade-cabinet .debug-button,
+.app-shell.theme-arcade-cabinet .asset-editor-locked-button,
+.app-shell.theme-arcade-cabinet .asset-mini-button,
+.app-shell.theme-arcade-cabinet .asset-frame-tab,
+.app-shell.theme-arcade-cabinet .shop-category-tab,
+.app-shell.theme-arcade-cabinet .decor-surface-tab,
+.app-shell.theme-arcade-cabinet .idle-bubble-language-button,
+.app-shell.theme-arcade-cabinet .idle-bubble-pill,
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate,
+.app-shell.theme-arcade-cabinet .session-clear-button,
+.app-shell.theme-arcade-cabinet .session-follow-button,
+.app-shell.theme-arcade-cabinet .session-disconnect-button,
+.app-shell.theme-arcade-cabinet .launcher-agent-choice button,
+.app-shell.theme-arcade-cabinet .launcher-start,
+.app-shell.theme-arcade-cabinet .task-cabinet-remove,
+.app-shell.theme-arcade-cabinet .decor-toggle-button {
+  border-color: #00e5ff;
+  color: #f8f1d8;
+  background:
+    linear-gradient(180deg, #283140, #111722);
+  box-shadow:
+    inset 2px 2px 0 rgba(255, 255, 255, 0.12),
+    inset -3px -3px 0 #05070b,
+    0 0 0 1px rgba(255, 42, 156, 0.18);
+}
+
+.app-shell.theme-arcade-cabinet .decor-toggle-button span:first-child {
+  color: #fff6bf;
+  text-shadow:
+    0 0 4px rgba(255, 179, 44, 0.42),
+    0 0 8px rgba(0, 229, 255, 0.18);
+}
+
+.app-shell.theme-arcade-cabinet .decor-toggle-button span:nth-child(2),
+.app-shell.theme-arcade-cabinet .decor-toggle-button span:nth-child(3) {
+  color: #ffeb63;
+  text-shadow:
+    0 0 4px rgba(255, 179, 44, 0.44),
+    0 0 8px rgba(255, 42, 156, 0.18);
+}
+
+.app-shell.theme-arcade-cabinet .decor-toggle-button:hover:not(:disabled) span:first-child,
+.app-shell.theme-arcade-cabinet .decor-toggle-button:hover:not(:disabled) span:nth-child(2),
+.app-shell.theme-arcade-cabinet .decor-toggle-button:hover:not(:disabled) span:nth-child(3) {
+  color: #05070b;
+  text-shadow: none;
+}
+
+.app-shell.theme-arcade-cabinet .language-button:hover,
+.app-shell.theme-arcade-cabinet .language-button.active,
+.app-shell.theme-arcade-cabinet .theme-button:hover,
+.app-shell.theme-arcade-cabinet .theme-button.active,
+.app-shell.theme-arcade-cabinet .pixel-button:hover:not(:disabled),
+.app-shell.theme-arcade-cabinet .path-picker-button:hover,
+.app-shell.theme-arcade-cabinet .debug-button:hover,
+.app-shell.theme-arcade-cabinet .asset-mini-button:hover,
+.app-shell.theme-arcade-cabinet .asset-mini-button.active,
+.app-shell.theme-arcade-cabinet .asset-frame-tab:hover,
+.app-shell.theme-arcade-cabinet .asset-frame-tab.active,
+.app-shell.theme-arcade-cabinet .shop-category-tab:hover,
+.app-shell.theme-arcade-cabinet .shop-category-tab.active,
+.app-shell.theme-arcade-cabinet .decor-surface-tab:hover,
+.app-shell.theme-arcade-cabinet .decor-surface-tab.active,
+.app-shell.theme-arcade-cabinet .idle-bubble-language-button:hover,
+.app-shell.theme-arcade-cabinet .idle-bubble-language-button.active,
+.app-shell.theme-arcade-cabinet .idle-bubble-pill:hover,
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate:hover:not(:disabled),
+.app-shell.theme-arcade-cabinet .session-clear-button:hover,
+.app-shell.theme-arcade-cabinet .session-follow-button:hover:not(:disabled),
+.app-shell.theme-arcade-cabinet .launcher-agent-choice button:hover,
+.app-shell.theme-arcade-cabinet .launcher-agent-choice button.active,
+.app-shell.theme-arcade-cabinet .launcher-start:hover:not(:disabled) {
+  border-color: #fff6bf;
+  color: #05070b;
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.72) 0 7%, transparent 8%),
+    linear-gradient(180deg, #ffeb63, #ffb32c 68%, #a85a09);
+  text-shadow: none;
+  box-shadow:
+    inset 2px 2px 0 rgba(255, 255, 255, 0.52),
+    inset -3px -3px 0 rgba(80, 35, 0, 0.72),
+    0 0 12px rgba(255, 179, 44, 0.34);
+}
+
+.app-shell.theme-arcade-cabinet .sessions-toggle:hover,
+.app-shell.theme-arcade-cabinet .sessions-toggle.active,
+.app-shell.theme-arcade-cabinet .task-cabinet-toggle:hover,
+.app-shell.theme-arcade-cabinet .task-cabinet-toggle.active,
+.app-shell.theme-arcade-cabinet .launcher-toggle:hover,
+.app-shell.theme-arcade-cabinet .launcher-toggle.active,
+.app-shell.theme-arcade-cabinet .growth-toggle:hover,
+.app-shell.theme-arcade-cabinet .growth-toggle.active,
+.app-shell.theme-arcade-cabinet .settings-toggle:hover,
+.app-shell.theme-arcade-cabinet .settings-toggle.active,
+.app-shell.theme-arcade-cabinet .sound-toggle:hover,
+.app-shell.theme-arcade-cabinet .sound-toggle.active,
+.app-shell.theme-arcade-cabinet .debug-toggle:hover,
+.app-shell.theme-arcade-cabinet .debug-toggle.active {
+  border-color: #ff2a9c;
+  background:
+    linear-gradient(90deg, rgba(255, 42, 156, 0.28), transparent 20% 80%, rgba(0, 229, 255, 0.22)),
+    #141a25;
+  box-shadow:
+    inset 0 0 0 2px #05070b,
+    0 0 12px rgba(255, 42, 156, 0.2);
+}
+
+.app-shell.theme-arcade-cabinet .save-slot-card:hover,
+.app-shell.theme-arcade-cabinet .save-slot-card.active,
+.app-shell.theme-arcade-cabinet .avatar-choice-card:hover,
+.app-shell.theme-arcade-cabinet .avatar-choice-card.active {
+  border-color: #ffb32c;
+  color: #05070b;
+  background:
+    linear-gradient(180deg, #fff6bf, #ffb32c);
+  text-shadow: none;
+}
+
+.app-shell.theme-arcade-cabinet .save-slot-card:hover strong,
+.app-shell.theme-arcade-cabinet .save-slot-card.active strong,
+.app-shell.theme-arcade-cabinet .avatar-choice-card:hover strong,
+.app-shell.theme-arcade-cabinet .avatar-choice-card.active strong {
+  color: #05070b;
+  text-shadow: none;
+}
+
+.app-shell.theme-arcade-cabinet .save-slot-card:hover small,
+.app-shell.theme-arcade-cabinet .save-slot-card.active small,
+.app-shell.theme-arcade-cabinet .save-slot-card:hover .save-slot-card-kicker,
+.app-shell.theme-arcade-cabinet .save-slot-card.active .save-slot-card-kicker,
+.app-shell.theme-arcade-cabinet .avatar-choice-card:hover small,
+.app-shell.theme-arcade-cabinet .avatar-choice-card.active small {
+  color: #3f2607;
+}
+
+.app-shell.theme-arcade-cabinet .save-slot-card.empty {
+  border-color: #ff2a9c;
+  color: #9af7ff;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 42, 156, 0.1) 0 3px,
+      transparent 3px 9px
+    ),
+    rgba(10, 13, 20, 0.88);
+}
+
+.app-shell.theme-arcade-cabinet .save-slot-message {
+  border-color: #ffb32c;
+  color: #fff6bf;
+  background: rgba(10, 13, 20, 0.86);
+}
+
+.app-shell.theme-arcade-cabinet .side-panel-edge-toggle {
+  border-color: #00e5ff;
+  color: #9af7ff;
+  background: #0b1018;
+  box-shadow:
+    inset 0 0 0 2px #05070b,
+    0 0 12px rgba(0, 229, 255, 0.22);
+}
+
+.app-shell.theme-arcade-cabinet .side-panel-edge-toggle.expanded .side-panel-edge-icon {
+  border-right-color: #9af7ff;
+}
+
+.app-shell.theme-arcade-cabinet .side-panel-edge-toggle.collapsed {
+  color: #05070b;
+  background: #ffb32c;
+}
+
+.app-shell.theme-arcade-cabinet .side-panel-edge-toggle.collapsed .side-panel-edge-icon {
+  border-left-color: #05070b;
+}
+
+.app-shell.theme-arcade-cabinet .side-panel-edge-toggle:hover {
+  border-color: #fff6bf;
+  color: #05070b;
+  background: #9af7ff;
+}
+
+.app-shell.theme-arcade-cabinet .side-panel-edge-toggle.expanded:hover .side-panel-edge-icon {
+  border-right-color: #05070b;
+}
+
+.app-shell.theme-arcade-cabinet .scene-context-menu {
+  border-color: #00e5ff;
+  color: #f8f1d8;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(126, 241, 255, 0.08) 0 1px,
+      transparent 1px 5px
+    ),
+    rgba(8, 10, 16, 0.97);
+  box-shadow:
+    inset 0 0 0 2px #05070b,
+    4px 4px 0 #05070b,
+    0 0 16px rgba(0, 229, 255, 0.2);
+}
+
+.app-shell.theme-arcade-cabinet .scene-context-menu span,
+.app-shell.theme-arcade-cabinet .scene-context-control b {
+  color: #9af7ff;
+}
+
+.app-shell.theme-arcade-cabinet .scene-context-button,
+.app-shell.theme-arcade-cabinet .scene-context-stop-button {
+  border-color: #00e5ff;
+  color: #f8f1d8;
+  background: #121721;
+  box-shadow: inset -2px -2px 0 #05070b;
+}
+
+.app-shell.theme-arcade-cabinet .scene-context-button:hover {
+  border-color: #fff6bf;
+  color: #05070b;
+  background: #ffb32c;
+}
+
+.app-shell.theme-arcade-cabinet .scene-context-stop-button,
+.app-shell.theme-arcade-cabinet .session-disconnect-button,
+.app-shell.theme-arcade-cabinet .danger-button,
+.app-shell.theme-arcade-cabinet .task-cabinet-remove {
+  border-color: #ff2a57;
+}
+
+.app-shell.theme-arcade-cabinet .scene-context-stop-button:hover,
+.app-shell.theme-arcade-cabinet .session-disconnect-button:hover:not(:disabled),
+.app-shell.theme-arcade-cabinet .danger-button:hover:not(:disabled),
+.app-shell.theme-arcade-cabinet .task-cabinet-remove:hover:not(:disabled) {
+  border-color: #ffd2dc;
+  color: #05070b;
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.58) 0 8%, transparent 9%),
+    linear-gradient(180deg, #ff7a94, #ff2a57 72%, #7e1028);
+  text-shadow: none;
+}
+
+.app-shell.theme-arcade-cabinet .scene-context-control,
+.app-shell.theme-arcade-cabinet .settings-submenu,
+.app-shell.theme-arcade-cabinet .sound-submenu,
+.app-shell.theme-arcade-cabinet .sessions-submenu,
+.app-shell.theme-arcade-cabinet .task-cabinet-submenu,
+.app-shell.theme-arcade-cabinet .launcher-submenu,
+.app-shell.theme-arcade-cabinet .growth-submenu,
+.app-shell.theme-arcade-cabinet .debug-submenu,
+.app-shell.theme-arcade-cabinet .decor-surface-group,
+.app-shell.theme-arcade-cabinet .idle-bubble-editor,
+.app-shell.theme-arcade-cabinet .session-context-meter,
+.app-shell.theme-arcade-cabinet .session-command-hint,
+.app-shell.theme-arcade-cabinet .task-cabinet-schedule,
+.app-shell.theme-arcade-cabinet .audio-control {
+  border-color: rgba(0, 229, 255, 0.74);
+  background:
+    linear-gradient(180deg, rgba(5, 7, 11, 0.92), rgba(17, 23, 34, 0.92));
+  box-shadow: inset 0 0 0 1px rgba(255, 42, 156, 0.15);
+}
+
+.app-shell.theme-arcade-cabinet input,
+.app-shell.theme-arcade-cabinet select,
+.app-shell.theme-arcade-cabinet .name-editor input,
+.app-shell.theme-arcade-cabinet .settings-submenu .name-editor input,
+.app-shell.theme-arcade-cabinet .settings-submenu .audio-control select,
+.app-shell.theme-arcade-cabinet .audio-control select,
+.app-shell.theme-arcade-cabinet .launcher-field input,
+.app-shell.theme-arcade-cabinet .task-cabinet-field input,
+.app-shell.theme-arcade-cabinet .task-cabinet-field select,
+.app-shell.theme-arcade-cabinet .asset-field input,
+.app-shell.theme-arcade-cabinet .asset-size-row input,
+.app-shell.theme-arcade-cabinet .asset-anchor-row input {
+  border-color: #00e5ff;
+  color: #f8f1d8;
+  background: #05070b;
+  accent-color: #ffb32c;
+  box-shadow: inset 2px 2px 0 #000;
+}
+
+.app-shell.theme-arcade-cabinet input:focus,
+.app-shell.theme-arcade-cabinet select:focus,
+.app-shell.theme-arcade-cabinet .name-editor input:focus,
+.app-shell.theme-arcade-cabinet .launcher-field input:focus,
+.app-shell.theme-arcade-cabinet .task-cabinet-field input:focus,
+.app-shell.theme-arcade-cabinet .task-cabinet-field select:focus {
+  border-color: #fff6bf;
+  outline: 1px solid #ff2a9c;
+  box-shadow:
+    inset 2px 2px 0 #000,
+    0 0 10px rgba(255, 42, 156, 0.24);
+}
+
+.app-shell.theme-arcade-cabinet input::placeholder {
+  color: #4fa7b3;
+}
+
+.app-shell.theme-arcade-cabinet input[type="range"],
+.app-shell.theme-arcade-cabinet .settings-submenu .audio-control input,
+.app-shell.theme-arcade-cabinet .audio-control input {
+  height: 18px;
+  accent-color: #ffb32c;
+}
+
+.app-shell.theme-arcade-cabinet input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  border: 2px solid #05070b;
+  background:
+    linear-gradient(90deg, #00e5ff, #ffb32c 58%, #ff2a9c);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.app-shell.theme-arcade-cabinet input[type="range"]::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border: 2px solid #05070b;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 30%, #fff6bf 0 18%, transparent 19%),
+    #ff2a57;
+  box-shadow:
+    inset -2px -2px 0 #7e1028,
+    0 0 8px rgba(255, 42, 87, 0.35);
+}
+
+.app-shell.theme-arcade-cabinet input[type="range"]::-moz-range-track {
+  height: 8px;
+  border: 2px solid #05070b;
+  background: #00e5ff;
+}
+
+.app-shell.theme-arcade-cabinet input[type="range"]::-moz-range-progress,
+.app-shell.theme-arcade-cabinet input[type="range"]::-moz-range-thumb {
+  background: #ffb32c;
+}
+
+.app-shell.theme-arcade-cabinet meter,
+.app-shell.theme-arcade-cabinet .stats-grid meter,
+.app-shell.theme-arcade-cabinet .growth-toggle-progress meter,
+.app-shell.theme-arcade-cabinet .room-stat-mini meter,
+.app-shell.theme-arcade-cabinet .room-growth-xp meter {
+  border: 1px solid #05070b;
+  background: #05070b;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 229, 255, 0.42),
+    0 0 8px rgba(0, 229, 255, 0.14);
+}
+
+.app-shell.theme-arcade-cabinet meter::-webkit-meter-bar {
+  border: 1px solid #05070b;
+  background: #05070b;
+}
+
+.app-shell.theme-arcade-cabinet meter::-webkit-meter-optimum-value,
+.app-shell.theme-arcade-cabinet meter::-webkit-meter-suboptimum-value,
+.app-shell.theme-arcade-cabinet meter::-webkit-meter-even-less-good-value {
+  background:
+    repeating-linear-gradient(90deg, rgba(5, 7, 11, 0.2) 0 2px, transparent 2px 5px),
+    linear-gradient(90deg, #00e5ff, #ffb32c);
+}
+
+.app-shell.theme-arcade-cabinet .sessions-toggle-context-bar,
+.app-shell.theme-arcade-cabinet .session-context-bar,
+.app-shell.theme-arcade-cabinet .room-context-bar {
+  border-color: #05070b;
+  background: #05070b;
+  box-shadow: inset 0 0 0 1px rgba(0, 229, 255, 0.42);
+}
+
+.app-shell.theme-arcade-cabinet .sessions-toggle-context-fill,
+.app-shell.theme-arcade-cabinet .session-context-fill,
+.app-shell.theme-arcade-cabinet .room-context-fill {
+  background:
+    repeating-linear-gradient(90deg, rgba(5, 7, 11, 0.24) 0 2px, transparent 2px 6px),
+    #00e5ff;
+}
+
+.app-shell.theme-arcade-cabinet .sessions-toggle-context.warm .sessions-toggle-context-fill,
+.app-shell.theme-arcade-cabinet .session-context-meter.warm .session-context-fill,
+.app-shell.theme-arcade-cabinet .room-context-overlay.warm .room-context-fill {
+  background:
+    repeating-linear-gradient(90deg, rgba(5, 7, 11, 0.22) 0 2px, transparent 2px 6px),
+    #ffb32c;
+}
+
+.app-shell.theme-arcade-cabinet .sessions-toggle-context.high .sessions-toggle-context-fill,
+.app-shell.theme-arcade-cabinet .session-context-meter.high .session-context-fill,
+.app-shell.theme-arcade-cabinet .room-context-overlay.high .room-context-fill {
+  background:
+    repeating-linear-gradient(90deg, rgba(5, 7, 11, 0.22) 0 2px, transparent 2px 6px),
+    #ff2a57;
+}
+
+.app-shell.theme-arcade-cabinet .room-stats-overlay,
+.app-shell.theme-arcade-cabinet .room-growth-overlay,
+.app-shell.theme-arcade-cabinet .room-context-overlay {
+  border-color: #00e5ff;
+  color: #f8f1d8;
+  background: rgba(5, 7, 11, 0.86);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 42, 156, 0.2),
+    0 0 12px rgba(0, 229, 255, 0.14);
+}
+
+.app-shell.theme-arcade-cabinet .room-stats-overlay b,
+.app-shell.theme-arcade-cabinet .room-growth-overlay b,
+.app-shell.theme-arcade-cabinet .room-growth-overlay strong,
+.app-shell.theme-arcade-cabinet .room-context-overlay strong {
+  color: #fff6bf;
+}
+
+.app-shell.theme-arcade-cabinet .session-card,
+.app-shell.theme-arcade-cabinet .task-cabinet-entry {
+  border-color: #263446;
+  border-left-color: #00e5ff;
+  color: #f8f1d8;
+  background:
+    linear-gradient(90deg, rgba(0, 229, 255, 0.11), transparent 22%),
+    #0d121b;
+  box-shadow: inset 0 0 0 1px rgba(255, 42, 156, 0.14);
+}
+
+.app-shell.theme-arcade-cabinet .session-card.current,
+.app-shell.theme-arcade-cabinet .session-card.active,
+.app-shell.theme-arcade-cabinet .session-card.connected,
+.app-shell.theme-arcade-cabinet .session-card.active.connected {
+  border-color: #ffb32c;
+  box-shadow:
+    inset 0 0 0 2px #ffb32c,
+    0 0 12px rgba(255, 179, 44, 0.2);
+}
+
+.app-shell.theme-arcade-cabinet .session-card.status-thinking,
+.app-shell.theme-arcade-cabinet .task-cabinet-entry.task-running {
+  border-left-color: #00e5ff;
+}
+
+.app-shell.theme-arcade-cabinet .session-card.status-executing {
+  border-left-color: #ffb32c;
+}
+
+.app-shell.theme-arcade-cabinet .session-card.status-waiting_for_user {
+  border-left-color: #ff2a9c;
+}
+
+.app-shell.theme-arcade-cabinet .session-card.status-error,
+.app-shell.theme-arcade-cabinet .task-cabinet-entry.task-failed,
+.app-shell.theme-arcade-cabinet .task-cabinet-error {
+  border-left-color: #ff2a57;
+  color: #ff9cac;
+}
+
+.app-shell.theme-arcade-cabinet .session-card.status-complete,
+.app-shell.theme-arcade-cabinet .task-cabinet-entry.task-completed {
+  border-left-color: #36f28b;
+}
+
+.app-shell.theme-arcade-cabinet .session-card strong,
+.app-shell.theme-arcade-cabinet .task-cabinet-entry-heading strong,
+.app-shell.theme-arcade-cabinet .decor-surface-state,
+.app-shell.theme-arcade-cabinet .session-command-hint code {
+  color: #fff6bf;
+}
+
+.app-shell.theme-arcade-cabinet .session-card span,
+.app-shell.theme-arcade-cabinet .session-card small,
+.app-shell.theme-arcade-cabinet .session-empty,
+.app-shell.theme-arcade-cabinet .task-cabinet-entry-heading span,
+.app-shell.theme-arcade-cabinet .task-cabinet-entry-footer small,
+.app-shell.theme-arcade-cabinet .task-cabinet-schedule-next,
+.app-shell.theme-arcade-cabinet .session-command-hint span,
+.app-shell.theme-arcade-cabinet .session-chip {
+  color: #9af7ff;
+}
+
+.app-shell.theme-arcade-cabinet .session-card p {
+  color: #f8f1d8;
+}
+
+.app-shell.theme-arcade-cabinet .session-card .session-usage,
+.app-shell.theme-arcade-cabinet .boost-active,
+.app-shell.theme-arcade-cabinet .decor-clear-button,
+.app-shell.theme-arcade-cabinet .idle-bubble-pill b {
+  color: #ffb32c;
+}
+
+.app-shell.theme-arcade-cabinet .session-follow-button:disabled,
+.app-shell.theme-arcade-cabinet .session-disconnect-button:disabled,
+.app-shell.theme-arcade-cabinet .pixel-button:disabled,
+.app-shell.theme-arcade-cabinet .asset-editor-locked-button:disabled,
+.app-shell.theme-arcade-cabinet .launcher-start:disabled,
+.app-shell.theme-arcade-cabinet .task-cabinet-remove:disabled {
+  border-color: #263446;
+  color: #55727b;
+  background: #0a0d13;
+  box-shadow: inset -2px -2px 0 #05070b;
+}
+
+.app-shell.theme-arcade-cabinet .settings-toggle-chevron,
+.app-shell.theme-arcade-cabinet .sound-toggle-chevron,
+.app-shell.theme-arcade-cabinet .sessions-toggle-chevron,
+.app-shell.theme-arcade-cabinet .task-cabinet-toggle-chevron,
+.app-shell.theme-arcade-cabinet .launcher-toggle-chevron,
+.app-shell.theme-arcade-cabinet .growth-toggle-chevron,
+.app-shell.theme-arcade-cabinet .debug-toggle-chevron {
+  color: #ffb32c;
+}
+
+.app-shell.theme-arcade-cabinet .growth-trait-hex,
+.app-shell.theme-arcade-cabinet .asset-canvas,
+.app-shell.theme-arcade-cabinet .asset-preview-row canvas,
+.app-shell.theme-arcade-cabinet .asset-room-reference,
+.app-shell.theme-arcade-cabinet .decor-surface-preview {
+  border-color: #00e5ff;
+  background-color: #05070b;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 42, 156, 0.2),
+    0 0 10px rgba(0, 229, 255, 0.12);
+}
+
+.app-shell.theme-arcade-cabinet .growth-trait-grid {
+  stroke: rgba(154, 247, 255, 0.48);
+}
+
+.app-shell.theme-arcade-cabinet .growth-trait-grid.grid-0,
+.app-shell.theme-arcade-cabinet .growth-trait-outline {
+  stroke: #00e5ff;
+}
+
+.app-shell.theme-arcade-cabinet .growth-trait-axis {
+  stroke: #ffb32c;
+}
+
+.app-shell.theme-arcade-cabinet .growth-trait-fill {
+  fill: rgba(0, 229, 255, 0.18);
+}
+
+.app-shell.theme-arcade-cabinet .growth-trait-dot {
+  fill: #ffb32c;
+  stroke: #05070b;
+}
+
+.app-shell.theme-arcade-cabinet .growth-trait-hover:hover .growth-trait-dot,
+.app-shell.theme-arcade-cabinet .growth-trait-hover:focus .growth-trait-dot {
+  fill: #ff2a9c;
+  stroke: #fff6bf;
+}
+
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate.llm,
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate.agent-claude-code:not(.llm),
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate.agent-codex:not(.llm),
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate.llm:disabled {
+  border-color: #ffb32c;
+  background:
+    linear-gradient(180deg, rgba(255, 179, 44, 0.14), rgba(5, 7, 11, 0.9));
+}
+
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate .idle-bubble-source,
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate .idle-bubble-source.llm,
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate:disabled .idle-bubble-source {
+  border-color: #00e5ff;
+  color: #05070b;
+  background: #9af7ff;
+  text-shadow: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

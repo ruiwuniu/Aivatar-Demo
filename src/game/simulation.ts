@@ -2,6 +2,7 @@ import type {
   AivatarContent,
   AivatarMemory,
   AivatarNavMemory,
+  AvatarAppearanceId,
   AvatarRuntime,
   BehaviorName,
   CodexStatusMessage,
@@ -69,6 +70,7 @@ const ARRIVAL_GATED_BEHAVIORS: BehaviorName[] = [
   "paint",
   "play",
   "music",
+  "workout",
   "thinking",
   "coding",
   "fetch_task_file",
@@ -872,6 +874,13 @@ export const targetForBehavior = (
     };
   }
 
+  if (behavior === "workout") {
+    return {
+      targetX: 150 + Math.random() * 150,
+      targetY: 182 + Math.random() * 52,
+    };
+  }
+
   if (behavior === "fetch_task_file") {
     const cabinet = content.room.furniture.find(
       (item) => item.id === TASK_CABINET_ITEM_ID,
@@ -1012,6 +1021,7 @@ export const expressionForBehavior = (
     case "coding":
     case "thinking":
     case "read_task_file":
+    case "workout":
       return "focused";
     case "coffee":
     case "cola":
@@ -1060,6 +1070,7 @@ const shouldFaceFrontAtTarget = (behavior: BehaviorName) =>
     "brew",
     "paint",
     "phone",
+    "workout",
     "fetch_task_file",
     "carry_task_file",
     "read_task_file",
@@ -1133,6 +1144,7 @@ const interactionStopDistanceForBehavior = (behavior: BehaviorName) => {
       "paint",
       "play",
       "music",
+      "workout",
       "relax",
       "sleep",
       "admire",
@@ -2027,6 +2039,8 @@ const activityLabelForBehavior = (behavior: BehaviorName): string => {
       return "Playing games";
     case "music":
       return "Playing music";
+    case "workout":
+      return "Working out";
     case "paint":
       return "Painting";
     case "phone":
@@ -2053,6 +2067,8 @@ const autonomousBehaviorDurationSeconds = (behavior: BehaviorName) => {
       return randomRange(36, 58);
     case "paint":
       return randomRange(32, 48);
+    case "workout":
+      return randomRange(12, 20);
     case "relax":
       return randomRange(16, 26);
     case "admire":
@@ -2109,6 +2125,7 @@ const chooseAutonomousBehavior = (
   memory?: AivatarMemory,
   options?: {
     autoMusicEnabled?: boolean;
+    avatarAppearanceId?: AvatarAppearanceId;
   },
 ): BehaviorName => {
   const placedItems = content.placedItems ?? [];
@@ -2117,6 +2134,7 @@ const chooseAutonomousBehavior = (
   const hasCoffeeMachine = placedItems.some((item) => item.itemId === "coffee-machine");
   const hasRecordPlayer = placedItems.some((item) => item.itemId === RECORD_PLAYER_ITEM_ID);
   const hasEasel = placedItems.some((item) => item.itemId === EASEL_ITEM_ID);
+  const isCuteCrayfish = options?.avatarAppearanceId === "cute-crayfish";
   const coffeeCount =
     content.inventory.find((entry) => entry.itemId === "coffee")?.quantity ?? 0;
   const traits = memory?.growth.traits;
@@ -2134,6 +2152,10 @@ const chooseAutonomousBehavior = (
         resilienceBoost * 10 +
         curiosityBoost * 8 +
         focusBoost * 5
+      : 0;
+  const workoutWeight =
+    isCuteCrayfish && content.petStats.energy > 55
+      ? 5 + resilienceBoost * 18 + focusBoost * 10
       : 0;
   const canExplore =
     content.petStats.energy > EXPLORE_MIN_ENERGY &&
@@ -2219,6 +2241,10 @@ const chooseAutonomousBehavior = (
         weight: musicWeight,
       },
       {
+        behavior: "workout",
+        weight: canExplore ? workoutWeight : 0,
+      },
+      {
         behavior: "brew",
         weight: hasCoffeeMachine && coffeeCount < 5 ? 3 + efficiencyBoost * 12 : 0,
       },
@@ -2250,6 +2276,7 @@ export const tickAvatar = (
     ignoredFurnitureId?: string;
     navMemory?: AivatarNavMemory;
     autoMusicEnabled?: boolean;
+    avatarAppearanceId?: AvatarAppearanceId;
   },
 ): AvatarRuntime => {
   const forcedBehavior = deriveBehaviorFromCodex(codexStatus);
@@ -2271,6 +2298,7 @@ export const tickAvatar = (
   } else if (!forcedBehavior && !avatar.actionIntent && avatar.behaviorTimer <= 0) {
     const autonomous = chooseAutonomousBehavior(content, memory, {
       autoMusicEnabled: options?.autoMusicEnabled,
+      avatarAppearanceId: options?.avatarAppearanceId,
     });
     next = setBehavior(
       avatar,

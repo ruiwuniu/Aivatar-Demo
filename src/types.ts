@@ -84,6 +84,7 @@ export type BehaviorName =
   | "paint"
   | "play"
   | "music"
+  | "workout"
   | "thinking"
   | "coding"
   | "waiting"
@@ -386,6 +387,15 @@ export interface AvatarRuntime {
     reason: "blocked" | "stalled";
   };
 }
+
+export type AvatarAppearanceId =
+  | "octopus"
+  | "demo-spark"
+  | "mood-slime"
+  | "cute-crayfish"
+  | "cute-ghost"
+  | "cute-penguin"
+  | "wave-lizard";
 
 export interface AivatarNavMemory {
   exploredCells: Record<string, number>;
