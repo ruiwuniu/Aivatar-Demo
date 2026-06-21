@@ -123,6 +123,7 @@ const STARTUP_SOUND_KEY = "aivatar.startupSound.v1";
 const BGM_VOLUME_KEY = "aivatar.bgmVolume.v1";
 const BGM_TRACK_KEY = "aivatar.bgmTrack.v1";
 const AUTO_MUSIC_KEY = "aivatar.autoMusic.v1";
+const ALWAYS_ON_TOP_KEY = "aivatar.alwaysOnTop.v1";
 const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
 const PAINTING_PLAN_URL = "http://127.0.0.1:38988/painting-plan";
 const SAVE_LAYOUT_VERSION = 2;
@@ -419,7 +420,7 @@ type ShopCategoryId =
 type DecorSurfaceCategoryId = "wallpaper" | "flooring";
 
 type UiThemeId = "classic" | "terminal" | "terminal-amber" | "arcade-cabinet";
-type SceneUiThemeId = Exclude<UiThemeId, "arcade-cabinet">;
+type SceneUiThemeId = UiThemeId;
 type BgmTrack = (typeof BGM_TRACKS)[number];
 type BgmTrackId = BgmTrack["id"];
 
@@ -498,8 +499,7 @@ const loadInitialUiTheme = (): UiThemeId => {
   return "terminal";
 };
 
-const uiThemeForScene = (theme: UiThemeId): SceneUiThemeId =>
-  theme === "arcade-cabinet" ? "terminal" : theme;
+const uiThemeForScene = (theme: UiThemeId): SceneUiThemeId => theme;
 
 const loadInitialAudioVolume = () => {
   const saved = Number(localStorage.getItem(AUDIO_VOLUME_KEY));
@@ -537,6 +537,9 @@ const randomBgmTrackId = (currentTrackId: BgmTrackId): BgmTrackId => {
 
 const loadInitialAutoMusicEnabled = () =>
   localStorage.getItem(AUTO_MUSIC_KEY) !== "false";
+
+const loadInitialAlwaysOnTopEnabled = () =>
+  localStorage.getItem(ALWAYS_ON_TOP_KEY) === "true";
 
 const TASK_CABINET_STATUSES: TaskCabinetStatus[] = [
   "ready",
@@ -2988,6 +2991,9 @@ export const App = () => {
   const [autoMusicEnabled, setAutoMusicEnabled] = useState(() =>
     loadInitialAutoMusicEnabled(),
   );
+  const [alwaysOnTopEnabled, setAlwaysOnTopEnabled] = useState(() =>
+    loadInitialAlwaysOnTopEnabled(),
+  );
   const uiThemeRef = useRef(uiTheme);
   const autoMusicEnabledRef = useRef(autoMusicEnabled);
   const keyboardTypingAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -4623,6 +4629,17 @@ export const App = () => {
     localStorage.setItem(AUTO_MUSIC_KEY, String(autoMusicEnabled));
     autoMusicEnabledRef.current = autoMusicEnabled;
   }, [autoMusicEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem(ALWAYS_ON_TOP_KEY, String(alwaysOnTopEnabled));
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) =>
+        getCurrentWindow().setAlwaysOnTop(alwaysOnTopEnabled),
+      )
+      .catch(() => {
+        // Web preview has no native window to update.
+      });
+  }, [alwaysOnTopEnabled]);
 
   useEffect(() => {
     const unlockOnFirstInteraction = () => {
@@ -10455,6 +10472,20 @@ export const App = () => {
                   onKeyDown={unlockAppAudio}
                   onChange={(event) => setAutoMusicEnabled(event.target.checked)}
                   aria-label={ui("audio.autoMusic")}
+                  style={{ width: "auto", justifySelf: "start" }}
+                />
+              </label>
+
+              <label className="audio-control">
+                <span>
+                  {ui("app.alwaysOnTop")}
+                  <b>{alwaysOnTopEnabled ? ui("common.on") : ui("common.off")}</b>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={alwaysOnTopEnabled}
+                  onChange={(event) => setAlwaysOnTopEnabled(event.target.checked)}
+                  aria-label={ui("app.alwaysOnTop")}
                   style={{ width: "auto", justifySelf: "start" }}
                 />
               </label>

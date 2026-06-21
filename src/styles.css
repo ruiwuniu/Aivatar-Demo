@@ -7231,6 +7231,23 @@ input[type="range"]::-moz-range-thumb {
     0 0 22px rgba(255, 42, 156, 0.2);
 }
 
+.app-shell.theme-arcade-cabinet .scene-panel::before {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  left: 16px;
+  z-index: 2;
+  height: 3px;
+  background:
+    linear-gradient(90deg, transparent, rgba(154, 247, 255, 0.86) 14% 28%, transparent 42%),
+    linear-gradient(90deg, rgba(0, 229, 255, 0.28), rgba(255, 246, 191, 0.82), rgba(255, 42, 156, 0.36));
+  box-shadow:
+    0 0 8px rgba(0, 229, 255, 0.38),
+    0 1px 0 rgba(255, 246, 191, 0.16);
+  pointer-events: none;
+  content: "";
+}
+
 .app-shell.theme-arcade-cabinet .scene-panel::after {
   position: absolute;
   inset: 10px;

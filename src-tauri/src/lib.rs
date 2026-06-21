@@ -83,77 +83,88 @@ fn development_project_root() -> Option<std::path::PathBuf> {
 }
 
 fn connector_root(app: Option<&tauri::AppHandle>) -> Option<std::path::PathBuf> {
-    if let Some(path) = std::env::var_os("AIVATAR_SESSION_PLUGIN_ROOT").map(std::path::PathBuf::from)
-    {
-        if path.join("scripts").join("aivatar-heartbeat.mjs").is_file() {
+    if let Some(app) = app {
+        let mut candidates = Vec::new();
+        if let Ok(path) = app
+            .path()
+            .resolve("../plugins/aivatar-session-bridge", BaseDirectory::Resource)
+        {
+            candidates.push(path);
+        }
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            candidates.push(
+                resource_dir
+                    .join("_up_")
+                    .join("plugins")
+                    .join("aivatar-session-bridge"),
+            );
+            candidates.push(resource_dir.join("plugins").join("aivatar-session-bridge"));
+            candidates.push(resource_dir.join("aivatar-session-bridge"));
+        }
+
+        if let Some(path) = candidates
+            .into_iter()
+            .find(|path| path.join("scripts").join("aivatar-heartbeat.mjs").is_file())
+        {
             return Some(path);
         }
     }
 
-    if let Ok(root) = project_root() {
-        let path = root.join("plugins").join("aivatar-session-bridge");
-        if path.join("scripts").join("aivatar-heartbeat.mjs").is_file() {
-            return Some(path);
+    if cfg!(debug_assertions) || app.is_none() {
+        if let Some(path) =
+            std::env::var_os("AIVATAR_SESSION_PLUGIN_ROOT").map(std::path::PathBuf::from)
+        {
+            if path.join("scripts").join("aivatar-heartbeat.mjs").is_file() {
+                return Some(path);
+            }
+        }
+
+        if let Ok(root) = project_root() {
+            let path = root.join("plugins").join("aivatar-session-bridge");
+            if path.join("scripts").join("aivatar-heartbeat.mjs").is_file() {
+                return Some(path);
+            }
         }
     }
 
-    let Some(app) = app else {
-        return None;
-    };
-
-    let mut candidates = Vec::new();
-    if let Ok(path) = app
-        .path()
-        .resolve("../plugins/aivatar-session-bridge", BaseDirectory::Resource)
-    {
-        candidates.push(path);
-    }
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(
-            resource_dir
-                .join("_up_")
-                .join("plugins")
-                .join("aivatar-session-bridge"),
-        );
-        candidates.push(resource_dir.join("plugins").join("aivatar-session-bridge"));
-        candidates.push(resource_dir.join("aivatar-session-bridge"));
-    }
-
-    candidates
-        .into_iter()
-        .find(|path| path.join("scripts").join("aivatar-heartbeat.mjs").is_file())
+    None
 }
 
 fn scripts_root(app: Option<&tauri::AppHandle>) -> Option<std::path::PathBuf> {
-    if let Some(path) = std::env::var_os("AIVATAR_SCRIPTS_ROOT").map(std::path::PathBuf::from) {
-        if path.join("aivatar-connected-run.mjs").is_file() {
+    if let Some(app) = app {
+        let mut candidates = Vec::new();
+        if let Ok(path) = app.path().resolve("../scripts", BaseDirectory::Resource) {
+            candidates.push(path);
+        }
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            candidates.push(resource_dir.join("_up_").join("scripts"));
+            candidates.push(resource_dir.join("scripts"));
+        }
+
+        if let Some(path) = candidates
+            .into_iter()
+            .find(|path| path.join("aivatar-connected-run.mjs").is_file())
+        {
             return Some(path);
         }
     }
 
-    if let Some(root) = development_project_root() {
-        let path = root.join("scripts");
-        if path.join("aivatar-connected-run.mjs").is_file() {
-            return Some(path);
+    if cfg!(debug_assertions) || app.is_none() {
+        if let Some(path) = std::env::var_os("AIVATAR_SCRIPTS_ROOT").map(std::path::PathBuf::from) {
+            if path.join("aivatar-connected-run.mjs").is_file() {
+                return Some(path);
+            }
+        }
+
+        if let Some(root) = development_project_root() {
+            let path = root.join("scripts");
+            if path.join("aivatar-connected-run.mjs").is_file() {
+                return Some(path);
+            }
         }
     }
 
-    let Some(app) = app else {
-        return None;
-    };
-
-    let mut candidates = Vec::new();
-    if let Ok(path) = app.path().resolve("../scripts", BaseDirectory::Resource) {
-        candidates.push(path);
-    }
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("_up_").join("scripts"));
-        candidates.push(resource_dir.join("scripts"));
-    }
-
-    candidates
-        .into_iter()
-        .find(|path| path.join("aivatar-connected-run.mjs").is_file())
+    None
 }
 
 #[cfg(target_os = "windows")]
@@ -1192,7 +1203,6 @@ pub fn run() {
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_always_on_top(true);
                 let closing = Arc::new(AtomicBool::new(false));
                 let window_for_event = window.clone();
                 let closing_for_event = Arc::clone(&closing);

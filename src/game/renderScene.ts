@@ -54,6 +54,14 @@ import {
   ROCOCO_DESK_SPRITE_ROWS,
 } from "./deskSprites";
 import {
+  FILE_CABINET_SPRITE_DATA,
+  FILE_CABINET_SPRITE_HEIGHT,
+  FILE_CABINET_SPRITE_WIDTH,
+  FILE_CABINET_SPRITE_X_OFFSET,
+  FILE_CABINET_SPRITE_Y_OFFSET,
+  type FileCabinetSpriteState,
+} from "./fileCabinetSprites";
+import {
   FLOOR_SURFACE_SPRITE_DATA,
   FLOOR_SURFACE_SPRITE_HEIGHT,
   FLOOR_SURFACE_SPRITE_WIDTH,
@@ -145,7 +153,7 @@ type TerminalMonitorSkinKey = "classic" | TerminalMonitorSkinId;
 
 type DominantTrait = keyof AivatarMemory["growth"]["traits"];
 type MoodBand = "high" | "normal" | "low" | "depleted";
-type UiThemeId = "classic" | "terminal" | "terminal-amber";
+type UiThemeId = "classic" | "terminal" | "terminal-amber" | "arcade-cabinet";
 
 interface BubblePalette {
   shadow: string;
@@ -193,6 +201,17 @@ const bubblePalettes: Record<UiThemeId, BubblePalette> = {
     progressTrack: "#090500",
     progressFill: "#ffb02e",
   },
+  "arcade-cabinet": {
+    shadow: "#5a123f",
+    border: "#00e5ff",
+    fill: "#0b1018",
+    tail: "#00e5ff",
+    infoText: "#fff6bf",
+    warningText: "#ffe66d",
+    errorText: "#ff5c7a",
+    progressTrack: "#05070b",
+    progressFill: "#ffb32c",
+  },
 };
 
 const bubblePaletteForTheme = (uiTheme: UiThemeId): BubblePalette =>
@@ -201,16 +220,32 @@ const bubblePaletteForTheme = (uiTheme: UiThemeId): BubblePalette =>
 const isTerminalTheme = (uiTheme: UiThemeId) => uiTheme !== "classic";
 
 const terminalScanlineForTheme = (uiTheme: UiThemeId) =>
-  uiTheme === "terminal-amber" ? "#7a3d08" : "#145c22";
+  uiTheme === "terminal-amber"
+    ? "#7a3d08"
+    : uiTheme === "arcade-cabinet"
+      ? "#00e5ff"
+      : "#145c22";
 
 const terminalRoomBackdropForTheme = (uiTheme: UiThemeId) =>
-  uiTheme === "terminal-amber" ? "#090500" : "#020804";
+  uiTheme === "terminal-amber"
+    ? "#090500"
+    : uiTheme === "arcade-cabinet"
+      ? "#05070b"
+      : "#020804";
 
 const terminalStatusPanelForTheme = (uiTheme: UiThemeId) =>
-  uiTheme === "terminal-amber" ? "#160c03" : "#031207";
+  uiTheme === "terminal-amber"
+    ? "#160c03"
+    : uiTheme === "arcade-cabinet"
+      ? "#0b1018"
+      : "#031207";
 
 const terminalStatusTextForTheme = (uiTheme: UiThemeId) =>
-  uiTheme === "terminal-amber" ? "#ffe4a3" : "#d8ffd0";
+  uiTheme === "terminal-amber"
+    ? "#ffe4a3"
+    : uiTheme === "arcade-cabinet"
+      ? "#fff6bf"
+      : "#d8ffd0";
 
 interface TraitVisualTheme {
   body: string;
@@ -916,95 +951,31 @@ const drawFileCabinet = (
 ) => {
   const count = Math.max(0, Math.min(12, Math.round(taskFileCount)));
   const failedCount = Math.max(0, Math.min(count, Math.round(failedTaskFileCount)));
-  const pulse = Math.round(Math.sin(frame / 10));
-  const openLevel = count === 0 ? 0 : count <= 2 ? 1 : count <= 5 ? 2 : 3;
-  const openDepth = [0, 2, 4, 5][openLevel];
-  const body = item.color || "#54606f";
+  const state: FileCabinetSpriteState =
+    count <= 0
+      ? "empty"
+      : failedCount > 0
+        ? "failed"
+        : count <= 2
+          ? "few"
+          : count <= 5
+            ? "several"
+            : "full";
+  const sprite = FILE_CABINET_SPRITE_DATA[state];
+  const spriteX = item.x + FILE_CABINET_SPRITE_X_OFFSET;
+  const spriteY = item.y + FILE_CABINET_SPRITE_Y_OFFSET;
 
-  drawPixelRect(ctx, item.x + 4, item.y + item.height + 1, item.width - 6, 5, "#151321");
-  drawPixelRect(ctx, item.x - 2, item.y - 4, item.width + 4, item.height + 8, "#222936");
-  drawPixelRect(ctx, item.x, item.y - 2, item.width, item.height + 4, "#3a4655");
-  const faceX = item.x + 4;
-  const faceWidth = item.width - 8;
-  drawPixelRect(ctx, faceX, item.y + 3, faceWidth, item.height - 3, body);
-  drawPixelRect(ctx, item.x + 2, item.y - 8, item.width - 4, 10, "#7d8998");
-  drawPixelRect(ctx, item.x + 6, item.y - 11, item.width - 12, 4, "#a5afbc");
-  drawPixelRect(ctx, item.x + 5, item.y - 7, item.width - 11, 3, "#c1c9d2");
-  drawPixelRect(ctx, item.x + 2, item.y + 1, item.width - 5, 2, "#4b5666");
-  drawPixelRect(ctx, item.x + item.width - 8, item.y - 8, 5, 10, "#566272");
-  drawPixelRect(ctx, faceX + 3, item.y + 6, faceWidth - 8, 2, "#84909f");
-  drawPixelRect(ctx, faceX + faceWidth - 4, item.y + 2, 3, item.height - 3, "#36404e");
-  drawPixelRect(ctx, item.x + 3, item.y + item.height - 4, item.width - 8, 3, "#2b3440");
-
-  const drawerHeight = 16;
-  const drawerY = [item.y + 10, item.y + 28, item.y + 46];
-  drawerY.forEach((y, index) => {
-    const isOpen = openLevel > index;
-    const depth = isOpen ? Math.max(1, openDepth - index) : 0;
-    const drawerX = faceX + 2;
-    const drawerWidth = faceWidth - 4;
-    const drawerFrontY = y + depth;
-
-    drawPixelRect(
-      ctx,
-      drawerX - 1,
-      y - 1,
-      drawerWidth + 2,
-      drawerHeight + depth + 2,
-      "#27313d",
-    );
-    if (depth > 0) {
-      drawPixelRect(ctx, drawerX + 2, y, drawerWidth - 4, depth + 3, "#1f2732");
-      drawPixelRect(ctx, drawerX + 4, y - 4, drawerWidth - 8, 5, "#d7caa8");
-      const fileSlots = Math.min(4, Math.max(0, count - index * 3));
-      for (let fileIndex = 0; fileIndex < fileSlots; fileIndex += 1) {
-        const taskIndex = index * 3 + fileIndex;
-        const fileX = drawerX + 3 + fileIndex * 5;
-        const fileY = y - 5 - (fileIndex % 2);
-        drawTaskFileSheet(
-          ctx,
-          fileX,
-          fileY,
-          10,
-          13,
-          fileIndex % 3 === 0 ? "#9ee6ff" : fileIndex % 3 === 1 ? "#ffe66d" : "#ff8fa3",
-          taskIndex < failedCount,
-        );
-      }
-    }
-    drawPixelRect(
-      ctx,
-      drawerX,
-      drawerFrontY,
-      drawerWidth,
-      drawerHeight,
-      isOpen ? "#788493" : "#566271",
-    );
-    drawPixelRect(ctx, drawerX + 3, drawerFrontY + 3, drawerWidth - 6, 2, "#9aa6b5");
-    drawPixelRect(ctx, drawerX + drawerWidth / 2 - 6, drawerFrontY + 9, 12, 3, "#202936");
-    drawPixelRect(ctx, drawerX + drawerWidth / 2 - 4, drawerFrontY + 8, 8, 2, "#d2a24a");
-  });
-
-  if (count > 0) {
-    drawPixelRect(ctx, item.x + item.width - 10, item.y - 10 + pulse, 7, 9, "#ffe66d");
-    drawPixelRect(ctx, item.x + item.width - 8, item.y - 7 + pulse, 3, 1, "#5a3c13");
-    drawPixelRect(ctx, item.x + 6, item.y - 11, 16, 9, "#f4ead2");
-    drawPixelRect(ctx, item.x + 8, item.y - 8, 11, 1, "#8f8270");
-  }
-
-  if (count >= 6) {
-    drawPixelRect(ctx, item.x - 7, item.y + item.height - 6, 16, 10, "#f4ead2");
-    drawPixelRect(ctx, item.x - 5, item.y + item.height - 3, 10, 1, "#8f8270");
-  }
+  void frame;
+  drawTableSprite(ctx, spriteX, spriteY, sprite.palette, sprite.rows);
 
   if (highlight !== "none") {
     ctx.strokeStyle = highlight === "selected" ? "#ffe66d" : "#9ee6ff";
     ctx.lineWidth = 2;
     ctx.strokeRect(
-      Math.round(item.x - 5),
-      Math.round(item.y - 8),
-      Math.round(item.width + 10),
-      Math.round(item.height + 16),
+      Math.round(spriteX),
+      Math.round(spriteY),
+      FILE_CABINET_SPRITE_WIDTH,
+      FILE_CABINET_SPRITE_HEIGHT,
     );
   }
 };
@@ -1779,10 +1750,10 @@ const foregroundFurnitureOverlayBounds = (item: FurnitureDefinition) => {
 
   if (item.id === "file-cabinet") {
     return {
-      x: item.x - 2,
-      y: item.y - 11,
-      width: item.width + 4,
-      height: item.height + 17,
+      x: item.x + FILE_CABINET_SPRITE_X_OFFSET,
+      y: item.y + FILE_CABINET_SPRITE_Y_OFFSET,
+      width: FILE_CABINET_SPRITE_WIDTH,
+      height: FILE_CABINET_SPRITE_HEIGHT,
     };
   }
 
@@ -10369,7 +10340,14 @@ const furnitureGlowBlockers = (item: FurnitureDefinition): GlowBlockerRect[] => 
   }
 
   if (item.id === "file-cabinet") {
-    return [{ x: item.x - 5, y: item.y - 8, width: item.width + 10, height: item.height + 16 }];
+    return [
+      {
+        x: item.x + FILE_CABINET_SPRITE_X_OFFSET,
+        y: item.y + FILE_CABINET_SPRITE_Y_OFFSET,
+        width: FILE_CABINET_SPRITE_WIDTH,
+        height: FILE_CABINET_SPRITE_HEIGHT,
+      },
+    ];
   }
 
   return [{ x: item.x - 2, y: item.y - 2, width: item.width + 8, height: item.height + 10 }];

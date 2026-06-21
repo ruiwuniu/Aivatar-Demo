@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default desktop permissions for Aivatar.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-set-always-on-top"]
 }
