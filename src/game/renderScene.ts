@@ -66,6 +66,10 @@ import {
   FLOOR_SURFACE_SPRITE_HEIGHT,
   FLOOR_SURFACE_SPRITE_WIDTH,
 } from "./floorSurfaceSprites";
+import { GAME_CONSOLE_SCREEN_REGION, GAME_CONSOLE_SPRITE_DATA } from "./gameConsoleSprites";
+import { RECORD_PLAYER_SPRITE_DATA } from "./recordPlayerSprites";
+import { RUG_SPRITE_DATA, type RugSpriteId } from "./rugSprites";
+import { SMALL_ITEM_SPRITE_DATA, type SmallItemSpriteId } from "./smallItemSprites";
 import {
   FRIDGE_DEFAULT_BODY_WIDTH,
   FRIDGE_DEFAULT_BODY_X,
@@ -8160,64 +8164,61 @@ const drawActivityBubble = (
   }, uiTheme);
 };
 
+const drawSmallItemSprite = (
+  ctx: CanvasRenderingContext2D,
+  itemId: SmallItemSpriteId,
+  x: number,
+  y: number,
+  ghost: "none" | "valid" | "invalid" = "none",
+) => {
+  const sprite = SMALL_ITEM_SPRITE_DATA[itemId];
+  const spriteX = Math.round(x) + sprite.xOffset;
+  const spriteY = Math.round(y) + sprite.yOffset;
+
+  ctx.save();
+  if (ghost !== "none") {
+    ctx.globalAlpha = 0.62;
+  }
+
+  drawTableSprite(ctx, spriteX, spriteY, sprite.palette, sprite.rows);
+
+  if (ghost !== "none") {
+    ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(spriteX, spriteY, sprite.width, sprite.height);
+  }
+
+  ctx.restore();
+};
+
 const drawTinyPlant = (
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   ghost: "none" | "valid" | "invalid" = "none",
 ) => {
+  drawSmallItemSprite(ctx, "tiny-plant", x, y, ghost);
+};
+
+const drawRugSprite = (
+  ctx: CanvasRenderingContext2D,
+  itemId: RugSpriteId,
+  x: number,
+  y: number,
+  ghost: "none" | "valid" | "invalid" = "none",
+) => {
+  const sprite = RUG_SPRITE_DATA[itemId];
+  const spriteX = Math.round(x) + sprite.xOffset;
+  const spriteY = Math.round(y) + sprite.yOffset;
+
   ctx.save();
-  if (ghost !== "none") {
-    ctx.globalAlpha = 0.62;
-  }
-
-  const pot = ghost === "invalid" ? "#ff8fa3" : "#c48650";
-  const potDark = ghost === "invalid" ? "#d95575" : "#8d5436";
-  const potLight = ghost === "invalid" ? "#ffc0cf" : "#e1a06d";
-  const soil = ghost === "invalid" ? "#7d2f48" : "#4a2f25";
-  const stem = ghost === "invalid" ? "#ffd1dc" : "#4f8a8f";
-  const leaf = ghost === "invalid" ? "#ffd1dc" : "#8df7c4";
-  const leafDark = ghost === "invalid" ? "#ff9bb4" : "#2f9f73";
-  const leafMid = ghost === "invalid" ? "#ffc0cf" : "#5bd898";
-  const leafLight = ghost === "invalid" ? "#fff0f4" : "#b4f56c";
-  const outline = ghost === "valid" ? "#ffe66d" : "#111624";
-  const baseX = Math.round(x);
-  const baseY = Math.round(y);
-
-  drawPixelRect(ctx, baseX - 8, baseY - 7, 16, 2, "rgba(17, 22, 36, 0.24)");
-
-  drawPixelRect(ctx, baseX - 8, baseY - 13, 16, 4, outline);
-  drawPixelRect(ctx, baseX - 6, baseY - 15, 12, 5, pot);
-  drawPixelRect(ctx, baseX - 5, baseY - 14, 10, 2, potLight);
-  drawPixelRect(ctx, baseX - 4, baseY - 12, 8, 2, soil);
-  drawPixelRect(ctx, baseX - 7, baseY - 9, 14, 8, outline);
-  drawPixelRect(ctx, baseX - 5, baseY - 11, 10, 10, pot);
-  drawPixelRect(ctx, baseX - 5, baseY - 4, 10, 3, potDark);
-  drawPixelRect(ctx, baseX - 2, baseY - 10, 2, 8, potLight);
-  drawPixelRect(ctx, baseX + 4, baseY - 8, 1, 5, potDark);
-
-  drawPixelRect(ctx, baseX - 1, baseY - 25, 2, 13, stem);
-  drawPixelRect(ctx, baseX - 5, baseY - 22, 2, 9, stem);
-  drawPixelRect(ctx, baseX + 4, baseY - 24, 2, 10, stem);
-
-  drawPixelRect(ctx, baseX - 13, baseY - 23, 9, 5, leafDark);
-  drawPixelRect(ctx, baseX - 12, baseY - 25, 7, 3, leafMid);
-  drawPixelRect(ctx, baseX - 10, baseY - 26, 4, 2, leaf);
-  drawPixelRect(ctx, baseX + 4, baseY - 26, 10, 6, leafDark);
-  drawPixelRect(ctx, baseX + 5, baseY - 28, 8, 4, leafMid);
-  drawPixelRect(ctx, baseX + 7, baseY - 29, 5, 2, leaf);
-  drawPixelRect(ctx, baseX - 5, baseY - 32, 10, 6, leafDark);
-  drawPixelRect(ctx, baseX - 4, baseY - 34, 8, 5, leafLight);
-  drawPixelRect(ctx, baseX - 2, baseY - 35, 5, 2, leaf);
-  drawPixelRect(ctx, baseX + 1, baseY - 21, 7, 4, leafMid);
-  drawPixelRect(ctx, baseX + 3, baseY - 22, 4, 2, leafLight);
-  drawPixelRect(ctx, baseX - 8, baseY - 18, 5, 3, leafMid);
-  drawPixelRect(ctx, baseX - 7, baseY - 19, 3, 2, leafLight);
+  if (ghost !== "none") ctx.globalAlpha = 0.58;
+  drawTableSprite(ctx, spriteX, spriteY, sprite.palette, sprite.rows);
 
   if (ghost !== "none") {
     ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
     ctx.lineWidth = 1;
-    ctx.strokeRect(baseX - 13, baseY - 32, 26, 34);
+    ctx.strokeRect(spriteX, spriteY, sprite.width, sprite.height);
   }
 
   ctx.restore();
@@ -8229,49 +8230,7 @@ const drawCozyRug = (
   y: number,
   ghost: "none" | "valid" | "invalid" = "none",
 ) => {
-  ctx.save();
-  if (ghost !== "none") ctx.globalAlpha = 0.58;
-  const baseX = Math.round(x);
-  const baseY = Math.round(y);
-  const edge = ghost === "invalid" ? "#b64c54" : "#f4ead2";
-  const stripeColors =
-    ghost === "invalid"
-      ? ["#ff8fa3", "#ffb3c1", "#ff8fa3", "#ffd1dc", "#ff8fa3", "#b64c54"]
-      : ["#ff5c7a", "#f2a65a", "#ffe66d", "#8df7c4", "#5ce1e6", "#a98ed0"];
-
-  drawPixelRect(ctx, baseX - 38, baseY + 18, 78, 3, "rgba(17, 22, 36, 0.32)");
-  drawPixelRect(ctx, baseX + 38, baseY - 16, 3, 34, "rgba(17, 22, 36, 0.24)");
-  drawPixelRect(ctx, baseX - 37, baseY - 18, 74, 36, edge);
-  drawPixelRect(ctx, baseX - 35, baseY - 16, 70, 32, "#f4ead2");
-
-  stripeColors.forEach((color, index) => {
-    const stripeY = baseY - 16 + index * 5;
-    const stripeHeight = index === stripeColors.length - 1 ? 7 : 5;
-    drawPixelRect(ctx, baseX - 33, stripeY, 66, stripeHeight, color);
-  });
-
-  drawPixelRect(ctx, baseX - 35, baseY - 16, 2, 32, "#f4ead2");
-  drawPixelRect(ctx, baseX + 33, baseY - 16, 2, 32, "#c8af79");
-  drawPixelRect(ctx, baseX - 33, baseY - 15, 66, 2, "rgba(255, 255, 255, 0.18)");
-  drawPixelRect(ctx, baseX - 33, baseY + 13, 66, 3, "rgba(17, 22, 36, 0.18)");
-
-  for (let tuftX = -34; tuftX <= 32; tuftX += 6) {
-    const tuftColor = tuftX % 12 === 0 ? "#f4ead2" : "#cfc5a8";
-    drawPixelRect(ctx, baseX + tuftX, baseY - 23, 3, 4, tuftColor);
-    drawPixelRect(ctx, baseX + tuftX + 2, baseY + 19, 3, 4, tuftColor);
-  }
-
-  for (let textureX = -30; textureX <= 30; textureX += 10) {
-    drawPixelRect(ctx, baseX + textureX, baseY - 10, 4, 1, "rgba(255, 255, 255, 0.28)");
-    drawPixelRect(ctx, baseX + textureX + 5, baseY, 4, 1, "rgba(17, 22, 36, 0.22)");
-    drawPixelRect(ctx, baseX + textureX - 2, baseY + 9, 3, 1, "rgba(255, 255, 255, 0.22)");
-  }
-
-  if (ghost !== "none") {
-    ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
-    ctx.strokeRect(baseX - 44, baseY - 24, 88, 48);
-  }
-  ctx.restore();
+  drawRugSprite(ctx, "cozy-rug", x, y, ghost);
 };
 
 const drawMorphBlobRug = (
@@ -8280,70 +8239,7 @@ const drawMorphBlobRug = (
   y: number,
   ghost: "none" | "valid" | "invalid" = "none",
 ) => {
-  ctx.save();
-  if (ghost !== "none") ctx.globalAlpha = 0.58;
-  const baseX = Math.round(x);
-  const baseY = Math.round(y);
-  const body = ghost === "invalid" ? "#ff8fa3" : "#b86fe6";
-  const bodyLight = ghost === "invalid" ? "#ffd1dc" : "#d58cff";
-  const bodyDark = ghost === "invalid" ? "#b64c54" : "#8b46bd";
-  const edge = ghost === "invalid" ? "#732b39" : "#6d319f";
-  const shadow = ghost === "invalid" ? "#732b39" : "#63318e";
-  const face = ghost === "invalid" ? "#732b39" : "#4d2478";
-
-  drawPixelRect(ctx, baseX - 38, baseY + 4, 84, 10, shadow);
-  drawPixelRect(ctx, baseX - 36, baseY - 7, 80, 20, edge);
-  drawPixelRect(ctx, baseX - 32, baseY - 20, 72, 30, edge);
-  drawPixelRect(ctx, baseX - 25, baseY - 31, 58, 30, edge);
-  drawPixelRect(ctx, baseX - 34, baseY - 5, 76, 15, bodyDark);
-  drawPixelRect(ctx, baseX - 30, baseY - 18, 66, 25, body);
-  drawPixelRect(ctx, baseX - 22, baseY - 28, 50, 22, body);
-  drawPixelRect(ctx, baseX - 30, baseY - 16, 13, 16, bodyLight);
-  drawPixelRect(ctx, baseX + 17, baseY - 15, 12, 16, bodyDark);
-  drawPixelRect(ctx, baseX - 13, baseY + 3, 28, 8, bodyLight);
-  drawPixelRect(ctx, baseX - 36, baseY - 3, 8, 10, edge);
-  drawPixelRect(ctx, baseX + 29, baseY - 2, 13, 12, edge);
-  drawPixelRect(ctx, baseX - 34, baseY - 14, 6, 8, bodyDark);
-  drawPixelRect(ctx, baseX + 28, baseY - 12, 10, 8, bodyDark);
-  drawPixelRect(ctx, baseX - 36, baseY - 9, 5, 7, bodyDark);
-  drawPixelRect(ctx, baseX + 31, baseY - 7, 8, 8, bodyDark);
-  drawPixelRect(ctx, baseX - 24, baseY - 28, 8, 5, body);
-  drawPixelRect(ctx, baseX + 18, baseY - 26, 12, 5, body);
-  drawPixelRect(ctx, baseX - 29, baseY - 23, 7, 6, body);
-  drawPixelRect(ctx, baseX + 24, baseY - 21, 12, 6, body);
-  drawPixelRect(ctx, baseX - 34, baseY + 6, 10, 4, bodyDark);
-  drawPixelRect(ctx, baseX + 24, baseY + 6, 16, 4, bodyDark);
-  drawPixelRect(ctx, baseX - 18, baseY - 34, 20, 7, edge);
-  drawPixelRect(ctx, baseX + 7, baseY - 34, 24, 7, edge);
-  drawPixelRect(ctx, baseX - 13, baseY - 38, 14, 5, edge);
-  drawPixelRect(ctx, baseX + 13, baseY - 38, 13, 5, edge);
-  drawPixelRect(ctx, baseX - 11, baseY - 37, 11, 4, body);
-  drawPixelRect(ctx, baseX + 15, baseY - 37, 9, 4, body);
-  drawPixelRect(ctx, baseX - 8, baseY - 39, 7, 2, bodyLight);
-  drawPixelRect(ctx, baseX + 17, baseY - 39, 6, 2, bodyLight);
-  drawPixelRect(ctx, baseX + 1, baseY - 33, 7, 3, body);
-  drawPixelRect(ctx, baseX + 4, baseY - 35, 3, 2, bodyLight);
-  drawPixelRect(ctx, baseX - 19, baseY - 17, 4, 4, face);
-  drawPixelRect(ctx, baseX + 7, baseY - 17, 4, 4, face);
-  drawPixelRect(ctx, baseX - 20, baseY - 10, 4, 2, face);
-  drawPixelRect(ctx, baseX - 16, baseY - 8, 8, 2, face);
-  drawPixelRect(ctx, baseX - 8, baseY - 7, 16, 2, face);
-  drawPixelRect(ctx, baseX + 8, baseY - 8, 8, 2, face);
-  drawPixelRect(ctx, baseX + 16, baseY - 10, 4, 2, face);
-  drawPixelRect(ctx, baseX - 24, baseY - 23, 10, 2, "#e6a8ff");
-  drawPixelRect(ctx, baseX - 8, baseY - 27, 13, 2, "#e6a8ff");
-  drawPixelRect(ctx, baseX + 14, baseY - 22, 10, 2, "#a855d4");
-  drawPixelRect(ctx, baseX - 28, baseY - 1, 5, 2, "#e6a8ff");
-  drawPixelRect(ctx, baseX + 27, baseY + 2, 6, 2, "#a855d4");
-  for (let fringeX = -32; fringeX <= 32; fringeX += 8) {
-    drawPixelRect(ctx, baseX + fringeX, baseY + 12, 3, 4, edge);
-  }
-
-  if (ghost !== "none") {
-    ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
-    ctx.strokeRect(baseX - 40, baseY - 44, 88, 62);
-  }
-  ctx.restore();
+  drawRugSprite(ctx, "morph-blob-rug", x, y, ghost);
 };
 
 const drawBluePersianRug = (
@@ -8352,150 +8248,18 @@ const drawBluePersianRug = (
   y: number,
   ghost: "none" | "valid" | "invalid" = "none",
 ) => {
-  ctx.save();
-  if (ghost !== "none") ctx.globalAlpha = 0.58;
+  drawRugSprite(ctx, "blue-persian-rug", x, y, ghost);
+};
+
+const drawDeskLampGlow = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
   const baseX = Math.round(x);
   const baseY = Math.round(y);
-  const outline = ghost === "invalid" ? "#7d2f47" : "#102f62";
-  const navy = ghost === "invalid" ? "#b64c54" : "#174b8a";
-  const deepBlue = ghost === "invalid" ? "#d95575" : "#1d5fa8";
-  const midBlue = ghost === "invalid" ? "#ff8fa3" : "#4fa3d9";
-  const ice = ghost === "invalid" ? "#ffd1dc" : "#d7f0ff";
-  const ivory = ghost === "invalid" ? "#fff0f4" : "#f7fbff";
-  const pale = ghost === "invalid" ? "#ffc0cf" : "#b9def6";
-  const drawMirroredDetail = (
-    dx: number,
-    dy: number,
-    draw: (detailX: number, detailY: number) => void,
-  ) => {
-    draw(baseX + dx, baseY + dy);
-    draw(baseX - dx, baseY + dy);
-    draw(baseX + dx, baseY - dy);
-    draw(baseX - dx, baseY - dy);
-  };
 
-  drawPixelRect(ctx, baseX - 48, baseY + 31, 100, 5, "rgba(17, 22, 36, 0.3)");
-  drawPixelRect(ctx, baseX + 47, baseY - 30, 5, 64, "rgba(17, 22, 36, 0.18)");
-
-  drawPixelRect(ctx, baseX - 52, baseY - 36, 104, 72, outline);
-  drawPixelRect(ctx, baseX - 50, baseY - 34, 100, 68, navy);
-  drawPixelRect(ctx, baseX - 44, baseY - 28, 88, 56, ice);
-  drawPixelRect(ctx, baseX - 38, baseY - 22, 76, 44, ivory);
-
-  drawPixelRect(ctx, baseX - 48, baseY - 32, 96, 3, midBlue);
-  drawPixelRect(ctx, baseX - 48, baseY + 29, 96, 3, midBlue);
-  drawPixelRect(ctx, baseX - 48, baseY - 29, 3, 58, deepBlue);
-  drawPixelRect(ctx, baseX + 45, baseY - 29, 3, 58, deepBlue);
-  drawPixelRect(ctx, baseX - 42, baseY - 26, 84, 2, ivory);
-  drawPixelRect(ctx, baseX - 42, baseY + 24, 84, 2, pale);
-  drawPixelRect(ctx, baseX - 42, baseY - 24, 2, 48, pale);
-  drawPixelRect(ctx, baseX + 40, baseY - 24, 2, 48, ivory);
-  drawPixelRect(ctx, baseX - 34, baseY - 18, 68, 1, midBlue);
-  drawPixelRect(ctx, baseX - 34, baseY + 17, 68, 1, midBlue);
-
-  for (let offset = -34; offset <= 34; offset += 17) {
-    drawPixelRect(ctx, baseX + offset, baseY - 27, 5, 3, ivory);
-    drawPixelRect(ctx, baseX + offset + 6, baseY + 24, 5, 3, ivory);
-    drawPixelRect(ctx, baseX - 46, baseY + Math.round(offset * 0.58), 3, 5, pale);
-    drawPixelRect(ctx, baseX + 43, baseY - Math.round(offset * 0.58), 3, 5, pale);
-  }
-
-  for (let guardX = -36; guardX <= 36; guardX += 12) {
-    drawPixelRect(ctx, baseX + guardX, baseY - 31, 3, 2, navy);
-    drawPixelRect(ctx, baseX + guardX + 6, baseY + 30, 3, 2, navy);
-  }
-
-  drawPixelRect(ctx, baseX - 8, baseY - 18, 16, 36, deepBlue);
-  drawPixelRect(ctx, baseX - 18, baseY - 10, 36, 20, deepBlue);
-  drawPixelRect(ctx, baseX - 11, baseY - 13, 22, 26, midBlue);
-  drawPixelRect(ctx, baseX - 15, baseY - 7, 30, 14, midBlue);
-  drawPixelRect(ctx, baseX - 6, baseY - 8, 12, 16, ivory);
-  drawPixelRect(ctx, baseX - 9, baseY - 4, 18, 8, ivory);
-  drawPixelRect(ctx, baseX - 3, baseY - 3, 6, 6, navy);
-  drawPixelRect(ctx, baseX - 2, baseY - 13, 4, 4, ivory);
-  drawPixelRect(ctx, baseX - 2, baseY + 9, 4, 4, pale);
-  drawPixelRect(ctx, baseX - 13, baseY - 1, 4, 2, navy);
-  drawPixelRect(ctx, baseX + 9, baseY - 1, 4, 2, navy);
-  drawPixelRect(ctx, baseX - 5, baseY - 16, 10, 2, navy);
-  drawPixelRect(ctx, baseX - 5, baseY + 14, 10, 2, navy);
-  drawPixelRect(ctx, baseX - 20, baseY - 2, 5, 4, midBlue);
-  drawPixelRect(ctx, baseX + 15, baseY - 2, 5, 4, midBlue);
-
-  const heratiMarks = [
-    { x: -24, y: -11 },
-    { x: 24, y: -11 },
-    { x: -24, y: 11 },
-    { x: 24, y: 11 },
-  ];
-  for (const mark of heratiMarks) {
-    drawPixelRect(ctx, baseX + mark.x - 2, baseY + mark.y - 2, 4, 4, deepBlue);
-    drawPixelRect(ctx, baseX + mark.x - 4, baseY + mark.y, 8, 1, pale);
-    drawPixelRect(ctx, baseX + mark.x, baseY + mark.y - 4, 1, 8, pale);
-  }
-
-  const cornerMotifs = [
-    { sx: -1, sy: -1 },
-    { sx: 1, sy: -1 },
-    { sx: -1, sy: 1 },
-    { sx: 1, sy: 1 },
-  ];
-  for (const motif of cornerMotifs) {
-    const cornerX = baseX + motif.sx * 31;
-    const cornerY = baseY + motif.sy * 18;
-    drawPixelRect(ctx, cornerX - 5, cornerY - 3, 10, 6, midBlue);
-    drawPixelRect(ctx, cornerX - 2, cornerY - 7, 4, 14, deepBlue);
-    drawPixelRect(ctx, cornerX - 7, cornerY - 1, 14, 2, deepBlue);
-    drawPixelRect(ctx, cornerX - 1, cornerY - 1, 2, 2, ivory);
-    drawPixelRect(ctx, cornerX + motif.sx * 6, cornerY, 3, 2, pale);
-    drawPixelRect(ctx, cornerX, cornerY + motif.sy * 5, 2, 3, ivory);
-  }
-
-  for (const [dx, dy] of [
-    [16, 14],
-    [30, 14],
-  ] as const) {
-    drawMirroredDetail(dx, dy, (detailX, detailY) => {
-      drawPixelRect(ctx, detailX - 4, detailY, 8, 1, pale);
-      drawPixelRect(ctx, detailX - 1, detailY + (detailY > baseY ? -2 : 1), 2, 2, midBlue);
-    });
-  }
-
-  for (const [dx, dy] of [
-    [16, 5],
-    [32, 5],
-  ] as const) {
-    drawMirroredDetail(dx, dy, (detailX, detailY) => {
-      drawPixelRect(ctx, detailX - 1, detailY - 2, 3, 5, midBlue);
-      drawPixelRect(ctx, detailX + 1, detailY - 4, 2, 3, deepBlue);
-      drawPixelRect(ctx, detailX - 2, detailY + 2, 2, 2, pale);
-    });
-  }
-
-  for (const [dx, dy] of [
-    [12, 6],
-    [30, 6],
-  ] as const) {
-    drawMirroredDetail(dx, dy, (detailX, detailY) => {
-      drawPixelRect(ctx, detailX - 1, detailY - 1, 2, 2, pale);
-    });
-  }
-
-  for (let threadX = -45; threadX <= 45; threadX += 6) {
-    drawPixelRect(ctx, baseX + threadX, baseY - 40, 3, 4, threadX % 12 === 0 ? ice : ivory);
-    drawPixelRect(ctx, baseX + threadX + 2, baseY + 36, 3, 4, threadX % 12 === 0 ? pale : ivory);
-  }
-  for (let threadY = -28; threadY <= 28; threadY += 7) {
-    drawPixelRect(ctx, baseX - 56, baseY + threadY, 4, 3, threadY % 14 === 0 ? ice : ivory);
-    drawPixelRect(ctx, baseX + 52, baseY + threadY + 2, 4, 3, threadY % 14 === 0 ? pale : ivory);
-  }
-
-  drawPixelRect(ctx, baseX - 38, baseY - 20, 76, 2, "rgba(255, 255, 255, 0.28)");
-  drawPixelRect(ctx, baseX - 38, baseY + 18, 76, 3, "rgba(17, 22, 36, 0.14)");
-
-  if (ghost !== "none") {
-    ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
-    ctx.strokeRect(baseX - 52, baseY - 36, 104, 72);
-  }
+  ctx.save();
+  drawPixelRect(ctx, baseX - 14, baseY - 18, 16, 3, "rgba(245, 208, 106, 0.11)");
+  drawPixelRect(ctx, baseX - 16, baseY - 15, 20, 4, "rgba(245, 208, 106, 0.09)");
+  drawPixelRect(ctx, baseX - 14, baseY - 11, 16, 3, "rgba(245, 208, 106, 0.07)");
+  drawPixelRect(ctx, baseX - 10, baseY - 8, 10, 2, "rgba(245, 208, 106, 0.05)");
   ctx.restore();
 };
 
@@ -8505,49 +8269,11 @@ const drawDeskLamp = (
   y: number,
   ghost: "none" | "valid" | "invalid" = "none",
 ) => {
-  ctx.save();
-  if (ghost !== "none") ctx.globalAlpha = 0.62;
-  const baseX = Math.round(x);
-  const baseY = Math.round(y);
-  const shade = ghost === "invalid" ? "#ff8fa3" : "#ffe66d";
-  const shadeDark = ghost === "invalid" ? "#d95575" : "#d19b2f";
-  const shadeLight = ghost === "invalid" ? "#ffd1dc" : "#fff3a6";
-  const metal = ghost === "invalid" ? "#ffd1dc" : "#6d7794";
-  const metalLight = ghost === "invalid" ? "#fff0f4" : "#aab4cc";
-  const glow =
-    ghost === "invalid" ? "rgba(255, 143, 163, 0.22)" : "rgba(255, 230, 109, 0.28)";
-
-  drawPixelRect(ctx, baseX - 13, baseY + 1, 26, 3, glow);
-  drawPixelRect(ctx, baseX - 10, baseY - 3, 20, 5, "#111624");
-  drawPixelRect(ctx, baseX - 8, baseY - 5, 16, 4, metal);
-  drawPixelRect(ctx, baseX - 6, baseY - 4, 10, 1, metalLight);
-  drawPixelRect(ctx, baseX + 5, baseY - 3, 2, 3, "#3f465f");
-
-  drawPixelRect(ctx, baseX - 4, baseY - 19, 3, 15, "#111624");
-  drawPixelRect(ctx, baseX - 3, baseY - 19, 3, 15, metal);
-  drawPixelRect(ctx, baseX - 2, baseY - 18, 1, 12, metalLight);
-  drawPixelRect(ctx, baseX + 1, baseY - 18, 3, 3, "#111624");
-  drawPixelRect(ctx, baseX + 2, baseY - 17, 2, 2, metalLight);
-
-  drawPixelRect(ctx, baseX + 1, baseY - 22, 8, 3, "#111624");
-  drawPixelRect(ctx, baseX + 2, baseY - 22, 7, 2, metal);
-  drawPixelRect(ctx, baseX + 5, baseY - 24, 3, 5, "#111624");
-  drawPixelRect(ctx, baseX + 6, baseY - 24, 2, 4, metalLight);
-
-  drawPixelRect(ctx, baseX - 9, baseY - 27, 19, 3, "#111624");
-  drawPixelRect(ctx, baseX - 10, baseY - 24, 21, 6, "#111624");
-  drawPixelRect(ctx, baseX - 8, baseY - 28, 16, 3, shadeLight);
-  drawPixelRect(ctx, baseX - 9, baseY - 24, 19, 5, shade);
-  drawPixelRect(ctx, baseX - 6, baseY - 20, 13, 3, shadeDark);
-  drawPixelRect(ctx, baseX - 5, baseY - 19, 11, 2, "#f4ead2");
-  drawPixelRect(ctx, baseX + 6, baseY - 24, 2, 4, shadeDark);
-  drawPixelRect(ctx, baseX - 7, baseY - 26, 4, 1, "#fff7c7");
-  drawPixelRect(ctx, baseX - 3, baseY - 17, 7, 2, "rgba(255, 243, 166, 0.5)");
-  if (ghost !== "none") {
-    ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
-    ctx.strokeRect(baseX - 12, baseY - 31, 24, 35);
+  if (ghost === "none") {
+    drawDeskLampGlow(ctx, x, y);
   }
-  ctx.restore();
+
+  drawSmallItemSprite(ctx, "desk-lamp", x, y, ghost);
 };
 
 const drawGeneratedPainting = (
@@ -8741,6 +8467,59 @@ const drawDigitalWallClock = (
   ctx.restore();
 };
 
+const drawGameConsoleScreenAnimation = (
+  ctx: CanvasRenderingContext2D,
+  spriteX: number,
+  spriteY: number,
+  frame: number,
+) => {
+  const screenX = spriteX + GAME_CONSOLE_SCREEN_REGION.x;
+  const screenY = spriteY + GAME_CONSOLE_SCREEN_REGION.y;
+  const runnerX = screenX + 4 + (Math.floor(frame / 4) % 10);
+  const jump = Math.floor(frame / 8) % 4 === 1 ? 1 : 0;
+  const pulse = Math.floor(frame / 6) % 4;
+
+  drawPixelRect(ctx, screenX + 1, screenY + 1, GAME_CONSOLE_SCREEN_REGION.width - 2, 1, "#133438");
+  drawPixelRect(ctx, screenX + 3, screenY + 10, 16, 1, "#4fc2a8");
+  drawPixelRect(ctx, screenX + 5, screenY + 11, 15, 1, "#2b7a72");
+  drawPixelRect(ctx, screenX + 7, screenY + 8 - jump, 3, 3, "#b4f56c");
+  drawPixelRect(ctx, screenX + 8, screenY + 9 - jump, 1, 1, "#102f27");
+  drawPixelRect(ctx, runnerX, screenY + 7, 2, 2, "#ffe66d");
+  drawPixelRect(ctx, screenX + 15 + (pulse % 2), screenY + 4, 4, 2, "#7ed9b2");
+  drawPixelRect(ctx, screenX + 16 + (pulse % 2), screenY + 3, 2, 1, "#b4f56c");
+  drawPixelRect(ctx, screenX + 4 + pulse * 3, screenY + 5, 1, 1, "#8df7c4");
+};
+
+const drawGameConsoleScreenBase = (
+  ctx: CanvasRenderingContext2D,
+  spriteX: number,
+  spriteY: number,
+) => {
+  const screenX = spriteX + GAME_CONSOLE_SCREEN_REGION.x;
+  const screenY = spriteY + GAME_CONSOLE_SCREEN_REGION.y;
+
+  drawPixelRect(
+    ctx,
+    screenX,
+    screenY,
+    GAME_CONSOLE_SCREEN_REGION.width,
+    GAME_CONSOLE_SCREEN_REGION.height,
+    "#010407",
+  );
+  drawPixelRect(
+    ctx,
+    screenX + 1,
+    screenY + 1,
+    GAME_CONSOLE_SCREEN_REGION.width - 2,
+    GAME_CONSOLE_SCREEN_REGION.height - 2,
+    "#03080d",
+  );
+  drawPixelRect(ctx, screenX + 2, screenY + 2, 7, 1, "#26343b");
+  drawPixelRect(ctx, screenX + 2, screenY + 3, 4, 1, "#111b22");
+  drawPixelRect(ctx, screenX + 11, screenY + 1, 6, 1, "#17262d");
+  drawPixelRect(ctx, screenX + 17, screenY + 2, 2, 1, "#22343b");
+};
+
 const drawGameConsole = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -8759,36 +8538,138 @@ const drawGameConsole = (
     (playingOverride ||
       (avatar?.behavior === "play" &&
         Math.hypot(avatar.x - baseX, avatar.y - baseY) < 24));
-  const screen = ghost === "invalid" ? "#ff8fa3" : playing ? "#1bffd2" : "#8df7c4";
+  const sprite = GAME_CONSOLE_SPRITE_DATA["game-console-c"];
+  const spriteX = baseX + sprite.xOffset;
+  const spriteY = baseY + sprite.yOffset;
 
-  drawPixelRect(ctx, baseX - 21, baseY - 20, 42, 18, "#0b0d10");
-  drawPixelRect(ctx, baseX - 20, baseY - 19, 7, 16, ghost === "invalid" ? "#ff8fa3" : "#2ca8ff");
-  drawPixelRect(ctx, baseX + 13, baseY - 19, 7, 16, ghost === "invalid" ? "#ff8fa3" : "#ff5c5c");
-  drawPixelRect(ctx, baseX - 13, baseY - 19, 26, 16, "#111624");
-  drawPixelRect(ctx, baseX - 12, baseY - 18, 24, 14, "#263b4a");
-  drawPixelRect(ctx, baseX - 10, baseY - 17, 20, 12, screen);
-  drawPixelRect(ctx, baseX - 9, baseY - 16, 13, 2, "#d8fff7");
+  drawTableSprite(ctx, spriteX, spriteY, sprite.palette, sprite.rows);
+  drawGameConsoleScreenBase(ctx, spriteX, spriteY);
+
   if (playing) {
-    const pulse = Math.floor(frame / 5) % 4;
-    drawPixelRect(ctx, baseX - 9 + pulse * 3, baseY - 14, 3, 2, "#ffe66d");
-    drawPixelRect(ctx, baseX + 4 - pulse * 2, baseY - 11, 4, 2, "#ff5c7a");
-    drawPixelRect(ctx, baseX - 8, baseY - 8 + (pulse % 2), 16, 1, "#141823");
-    drawPixelRect(ctx, baseX - 6 + (Math.floor(frame / 3) % 10), baseY - 15, 1, 1, "#ffffff");
+    drawGameConsoleScreenAnimation(ctx, spriteX, spriteY, frame);
   }
-  drawPixelRect(ctx, baseX - 19, baseY - 16, 3, 3, "#111624");
-  drawPixelRect(ctx, baseX - 18, baseY - 15, 1, 1, "#d8fff7");
-  drawPixelRect(ctx, baseX - 17, baseY - 8, 2, 2, "#111624");
-  drawPixelRect(ctx, baseX + 16, baseY - 16, 2, 2, "#111624");
-  drawPixelRect(ctx, baseX + 15, baseY - 10, 2, 2, "#111624");
-  drawPixelRect(ctx, baseX + 18, baseY - 10, 1, 1, "#f4ead2");
-  drawPixelRect(ctx, baseX - 15, baseY - 2, 30, 3, "#302f4f");
-  drawPixelRect(ctx, baseX - 8, baseY + 1, 16, 2, "#111624");
 
   if (ghost !== "none") {
     ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
-    ctx.strokeRect(baseX - 21, baseY - 25, 42, 33);
+    ctx.strokeRect(spriteX, spriteY, sprite.width, sprite.height);
   }
   ctx.restore();
+};
+
+const drawRecordPlayerVinylMotion = (
+  ctx: CanvasRenderingContext2D,
+  spriteX: number,
+  spriteY: number,
+  frame: number,
+) => {
+  const spinPhase = Math.floor(frame / 6) % 4;
+  const spinStreaks = [
+    [
+      { x: 12, y: 9, width: 8, color: "#3a4558" },
+      { x: 23, y: 21, width: 6, color: "#596174" },
+    ],
+    [
+      { x: 20, y: 10, width: 7, color: "#596174" },
+      { x: 10, y: 18, width: 7, color: "#30394c" },
+    ],
+    [
+      { x: 10, y: 13, width: 8, color: "#4a5368" },
+      { x: 20, y: 23, width: 7, color: "#30394c" },
+    ],
+    [
+      { x: 18, y: 8, width: 7, color: "#4a5368" },
+      { x: 9, y: 20, width: 8, color: "#596174" },
+    ],
+  ][spinPhase];
+
+  spinStreaks.forEach((streak) => {
+    drawPixelRect(
+      ctx,
+      spriteX + streak.x,
+      spriteY + streak.y,
+      streak.width,
+      1,
+      streak.color,
+    );
+  });
+
+  const labelGlints = [
+    { x: 19, y: 16 },
+    { x: 21, y: 18 },
+    { x: 18, y: 19 },
+    { x: 20, y: 15 },
+  ];
+  const glint = labelGlints[spinPhase];
+  drawPixelRect(ctx, spriteX + glint.x, spriteY + glint.y, 1, 1, "#fff8df");
+};
+
+const drawRecordPlayerVinyl = (ctx: CanvasRenderingContext2D, spriteX: number, spriteY: number) => {
+  const outer = "#06090e";
+  const rim = "#111827";
+  const groove = "#263044";
+  const grooveDark = "#161d2a";
+
+  drawPixelRect(ctx, spriteX + 13, spriteY + 7, 17, 1, rim);
+  drawPixelRect(ctx, spriteX + 9, spriteY + 8, 25, 2, outer);
+  drawPixelRect(ctx, spriteX + 7, spriteY + 10, 29, 3, outer);
+  drawPixelRect(ctx, spriteX + 6, spriteY + 13, 31, 8, outer);
+  drawPixelRect(ctx, spriteX + 8, spriteY + 21, 27, 3, outer);
+  drawPixelRect(ctx, spriteX + 12, spriteY + 24, 18, 1, rim);
+  drawPixelRect(ctx, spriteX + 13, spriteY + 25, 15, 1, rim);
+
+  drawPixelRect(ctx, spriteX + 11, spriteY + 9, 18, 1, "#30394c");
+  drawPixelRect(ctx, spriteX + 8, spriteY + 13, 25, 1, groove);
+  drawPixelRect(ctx, spriteX + 7, spriteY + 18, 27, 1, grooveDark);
+  drawPixelRect(ctx, spriteX + 10, spriteY + 22, 19, 1, "#323b50");
+};
+
+const drawRecordPlayerIndicator = (
+  ctx: CanvasRenderingContext2D,
+  spriteX: number,
+  spriteY: number,
+  playing: boolean,
+) => {
+  drawPixelRect(ctx, spriteX + 34, spriteY + 31, 5, 3, "#2a1e1d");
+  drawPixelRect(ctx, spriteX + 35, spriteY + 32, 4, 2, "#382227");
+
+  if (!playing) {
+    drawPixelRect(ctx, spriteX + 36, spriteY + 31, 2, 2, "#4a291a");
+    drawPixelRect(ctx, spriteX + 37, spriteY + 32, 1, 1, "#553522");
+    return;
+  }
+
+  drawPixelRect(ctx, spriteX + 35, spriteY + 31, 3, 2, "#961418");
+  drawPixelRect(ctx, spriteX + 37, spriteY + 31, 2, 2, "#f1524c");
+  drawPixelRect(ctx, spriteX + 36, spriteY + 32, 3, 2, "#dc403b");
+  drawPixelRect(ctx, spriteX + 38, spriteY + 32, 1, 1, "#f6816f");
+};
+
+const drawRecordPlayerNotes = (ctx: CanvasRenderingContext2D, x: number, y: number, frame: number) => {
+  const baseX = Math.round(x);
+  const baseY = Math.round(y);
+  const notes = [
+    { color: "#ffe66d", duration: 76, offset: 0, startX: 20, startY: -9, distance: 24 },
+    { color: "#9ee6ff", duration: 86, offset: 38, startX: 28, startY: -12, distance: 28 },
+  ];
+
+  notes.forEach((note) => {
+    const phase = ((frame + note.offset) % note.duration) / note.duration;
+    const rise = Math.round(phase * note.distance);
+    const drift = Math.round(Math.sin(phase * Math.PI * 2) * 2);
+    const noteX = baseX + note.startX + drift;
+    const noteY = baseY + note.startY - rise;
+    const fadeIn = Math.min(1, phase / 0.16);
+    const fadeOut = Math.min(1, (1 - phase) / 0.28);
+
+    ctx.save();
+    ctx.globalAlpha *= Math.max(0, Math.min(fadeIn, fadeOut));
+    drawPixelRect(ctx, noteX + 3, noteY, 2, 8, note.color);
+    drawPixelRect(ctx, noteX, noteY + 6, 5, 4, note.color);
+    drawPixelRect(ctx, noteX + 5, noteY + 1, 4, 1, note.color);
+    drawPixelRect(ctx, noteX + 8, noteY + 2, 2, 6, note.color);
+    drawPixelRect(ctx, noteX + 6, noteY + 7, 5, 4, note.color);
+    ctx.restore();
+  });
 };
 
 const drawRecordPlayer = (
@@ -8801,140 +8682,32 @@ const drawRecordPlayer = (
   recordPlayerPlaying = false,
 ) => {
   void avatar;
+  const playing = ghost === "none" && recordPlayerPlaying;
+  const sprite = RECORD_PLAYER_SPRITE_DATA["record-player-idle"];
+  const spriteX = Math.round(x) + sprite.xOffset;
+  const spriteY = Math.round(y) + sprite.yOffset;
+
   ctx.save();
   if (ghost !== "none") ctx.globalAlpha = 0.62;
-  const baseX = Math.round(x);
-  const baseY = Math.round(y);
-  const playing = ghost === "none" && recordPlayerPlaying;
-  const pulse = Math.floor(frame / 6) % 4;
-  const spinPhase = playing ? Math.floor(frame / 4) % 4 : 0;
-  const recordHighlight = playing
-    ? ["#ffe66d", "#9ee6ff", "#ff8fa3", "#b4f56c"][pulse]
-    : "#2f3648";
 
-  drawPixelRect(ctx, baseX - 23, baseY - 18, 46, 24, "#111624");
-  drawPixelRect(
-    ctx,
-    baseX - 21,
-    baseY - 20,
-    42,
-    23,
-    ghost === "invalid" ? "#7d3144" : "#6d4c41",
-  );
-  drawPixelRect(
-    ctx,
-    baseX - 18,
-    baseY - 17,
-    36,
-    17,
-    ghost === "invalid" ? "#ff8fa3" : "#9a6a4c",
-  );
-  drawPixelRect(ctx, baseX - 20, baseY + 1, 40, 6, "#3b2430");
-  drawPixelRect(ctx, baseX - 17, baseY + 3, 34, 2, "#4a2b3a");
-  drawPixelRect(ctx, baseX + 14, baseY + 2, 4, 4, "#111624");
-  drawPixelRect(ctx, baseX + 15, baseY + 3, 2, 2, playing ? "#ff304f" : "#5a1f2c");
+  drawRecordPlayerVinyl(ctx, spriteX, spriteY);
   if (playing) {
-    drawPixelRect(ctx, baseX + 15, baseY + 3, 1, 1, "#ffd1dc");
+    drawRecordPlayerVinylMotion(ctx, spriteX, spriteY, frame);
   }
-  drawPixelRect(ctx, baseX - 15, baseY + 7, 5, 4, "#111624");
-  drawPixelRect(ctx, baseX + 10, baseY + 7, 5, 4, "#111624");
-  drawPixelRect(ctx, baseX - 14, baseY + 6, 3, 2, "#273044");
-  drawPixelRect(ctx, baseX + 11, baseY + 6, 3, 2, "#273044");
-
-  const recordY = baseY - 4;
-  drawPixelRect(ctx, baseX - 8, recordY - 12, 16, 2, "#0b0d10");
-  drawPixelRect(ctx, baseX - 13, recordY - 10, 26, 2, "#0b0d10");
-  drawPixelRect(ctx, baseX - 16, recordY - 8, 32, 4, "#0b0d10");
-  drawPixelRect(ctx, baseX - 16, recordY - 4, 32, 4, "#0b0d10");
-  drawPixelRect(ctx, baseX - 13, recordY, 26, 2, "#0b0d10");
-  drawPixelRect(ctx, baseX - 8, recordY + 2, 16, 2, "#0b0d10");
-
-  drawPixelRect(ctx, baseX - 6, recordY - 9, 12, 1, "#273044");
-  drawPixelRect(ctx, baseX - 10, recordY - 8, 20, 2, "#273044");
-  drawPixelRect(ctx, baseX - 11, recordY - 6, 22, 4, "#273044");
-  drawPixelRect(ctx, baseX - 9, recordY - 2, 18, 1, "#273044");
-  drawPixelRect(ctx, baseX - 6, recordY - 1, 12, 1, "#273044");
+  drawTableSprite(ctx, spriteX, spriteY, sprite.palette, sprite.rows);
+  drawPixelRect(ctx, spriteX + 13, spriteY + 25, 15, 1, "#111827");
+  drawRecordPlayerIndicator(ctx, spriteX, spriteY, playing);
 
   if (playing) {
-    const spinStreaks = [
-      [
-        { x: -10, y: -8, width: 8 },
-        { x: 3, y: -5, width: 7 },
-        { x: -5, y: -2, width: 10 },
-      ],
-      [
-        { x: -2, y: -9, width: 10 },
-        { x: -11, y: -5, width: 8 },
-        { x: 4, y: -2, width: 6 },
-      ],
-      [
-        { x: 2, y: -8, width: 8 },
-        { x: -10, y: -5, width: 7 },
-        { x: -5, y: -1, width: 10 },
-      ],
-      [
-        { x: -9, y: -9, width: 7 },
-        { x: 2, y: -6, width: 10 },
-        { x: -11, y: -3, width: 6 },
-      ],
-    ][spinPhase];
-    spinStreaks.forEach((streak, index) => {
-      drawPixelRect(
-        ctx,
-        baseX + streak.x,
-        recordY + streak.y,
-        streak.width,
-        1,
-        index === 0 ? recordHighlight : "#465068",
-      );
-    });
-  }
-
-  drawPixelRect(ctx, baseX - 4, recordY - 7, 8, 6, "#111624");
-  drawPixelRect(ctx, baseX - 2, recordY - 5, 4, 3, "#273044");
-  drawPixelRect(ctx, baseX - 1, recordY - 4, 2, 1, "#f4ead2");
-  if (playing) {
-    const labelGlints = [
-      { x: -2, y: -6 },
-      { x: 1, y: -6 },
-      { x: 1, y: -3 },
-      { x: -2, y: -3 },
-    ];
-    const glint = labelGlints[spinPhase];
-    drawPixelRect(ctx, baseX + glint.x, recordY + glint.y, 1, 1, "#fff8df");
-  }
-  if (playing) {
-    drawPixelRect(ctx, baseX - 11 + pulse, recordY - 9 + pulse, 7, 1, recordHighlight);
-    drawPixelRect(
-      ctx,
-      baseX + 4 - pulse,
-      recordY - 3 - Math.min(pulse, 2),
-      7,
-      1,
-      recordHighlight,
-    );
-  } else {
-    drawPixelRect(ctx, baseX - 10, recordY - 10, 9, 1, "#465068");
-  }
-
-  drawPixelRect(ctx, baseX + 9, recordY - 14, 10, 3, "#d7caa8");
-  drawPixelRect(ctx, baseX + 15, recordY - 12, 3, 11, "#8f8270");
-  drawPixelRect(ctx, baseX + 10, recordY - 4, 8, 3, "#d7caa8");
-  drawPixelRect(ctx, baseX + 7, recordY - 5, 4, 2, "#f4ead2");
-  drawPixelRect(ctx, baseX + 12, recordY - 16, 5, 2, "#ffe66d");
-
-  if (playing) {
-    const noteY = baseY - 32 + (pulse % 2);
-    drawPixelRect(ctx, baseX + 21, noteY, 2, 9, "#ffe66d");
-    drawPixelRect(ctx, baseX + 18, noteY + 7, 5, 4, "#ffe66d");
-    drawPixelRect(ctx, baseX + 27, noteY - 5, 2, 8, "#9ee6ff");
-    drawPixelRect(ctx, baseX + 24, noteY + 1, 5, 4, "#9ee6ff");
+    drawRecordPlayerNotes(ctx, x, y, frame);
   }
 
   if (ghost !== "none") {
     ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
-    ctx.strokeRect(baseX - 24, baseY - 29, 48, 36);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(spriteX, spriteY, sprite.width, sprite.height);
   }
+
   ctx.restore();
 };
 
@@ -9349,6 +9122,83 @@ const drawCoffeeMachine = (
   ctx.restore();
 };
 
+const drawCoffeeCupSteam = (
+  ctx: CanvasRenderingContext2D,
+  baseX: number,
+  baseY: number,
+  frame: number,
+) => {
+  const steamLines = [
+    {
+      x: -4,
+      delay: 0,
+      speed: 0.9,
+      sway: 1.2,
+      phaseOffset: 0.2,
+      segments: [
+        { x: 0, y: -22, height: 3, drift: 0 },
+        { x: 1, y: -26, height: 3, drift: 0.6 },
+        { x: 0, y: -30, height: 2, drift: 1.1 },
+      ],
+    },
+    {
+      x: 1,
+      delay: 18,
+      speed: 1,
+      sway: 1.5,
+      phaseOffset: 1.6,
+      segments: [
+        { x: 0, y: -21, height: 4, drift: 0 },
+        { x: -1, y: -25, height: 3, drift: 0.5 },
+        { x: 0, y: -29, height: 2, drift: 1.1 },
+      ],
+    },
+    {
+      x: 5,
+      delay: 36,
+      speed: 0.82,
+      sway: 1.1,
+      phaseOffset: 2.7,
+      segments: [
+        { x: 0, y: -23, height: 3, drift: 0 },
+        { x: 1, y: -27, height: 3, drift: 0.7 },
+        { x: 0, y: -31, height: 2, drift: 1.2 },
+      ],
+    },
+  ];
+
+  for (const line of steamLines) {
+    const phase = ((frame * line.speed + line.delay) % 120) / 120;
+    const rise = Math.round(phase * 3);
+    const lineSway = Math.round(Math.sin(phase * Math.PI * 2 + line.phaseOffset) * line.sway);
+
+    line.segments.forEach((segment, segmentIndex) => {
+      const segmentPhase = Math.min(1, Math.max(0, phase * 1.4 - segmentIndex * 0.22));
+      if (segmentPhase <= 0 || segmentPhase >= 1) return;
+
+      const segmentSway = Math.round(
+        Math.sin(segmentPhase * Math.PI * 2 + line.phaseOffset + segment.drift) * 0.8,
+      );
+      const segmentRise = rise + Math.round(segmentPhase * 2);
+      const fadeIn = Math.min(1, segmentPhase / 0.24);
+      const fadeOut = Math.min(1, (1 - segmentPhase) / 0.36);
+      const segmentAlpha = Math.max(
+        0.08,
+        0.18 + 0.44 * Math.min(fadeIn, fadeOut) - segmentIndex * 0.08,
+      );
+
+      drawPixelRect(
+        ctx,
+        baseX + line.x + segment.x + lineSway + segmentSway,
+        baseY + segment.y - segmentRise,
+        1,
+        segment.height,
+        `rgba(230, 235, 235, ${segmentAlpha})`,
+      );
+    });
+  }
+};
+
 const drawCoffeeCup = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -9357,126 +9207,11 @@ const drawCoffeeCup = (
   hasCoffee = false,
   frame = 0,
 ) => {
-  ctx.save();
-  if (ghost !== "none") ctx.globalAlpha = 0.62;
-  const baseX = Math.round(x);
-  const baseY = Math.round(y);
-  const outline = ghost === "valid" ? "#ffe66d" : "#111624";
-  const glass = ghost === "invalid" ? "#ffd1dc" : "#dff7ff";
-  const glassLight = ghost === "invalid" ? "#ffe0e8" : "#f5fdff";
-  const glassShade = ghost === "invalid" ? "#ff8fa3" : "#8fc4d6";
-  const glassDeepShade = ghost === "invalid" ? "#d95575" : "#5e91a8";
-  const coffee = ghost === "invalid" ? "#d95575" : "#8c4a16";
-  const coffeeLight = ghost === "invalid" ? "#ffc0cf" : "#c48650";
-  const coffeeDark = ghost === "invalid" ? "#a73555" : "#5b2a10";
+  drawSmallItemSprite(ctx, hasCoffee ? "coffee-cup-filled" : "coffee-cup-empty", x, y, ghost);
 
-  drawPixelRect(ctx, baseX - 10, baseY + 2, 22, 2, "rgba(17, 22, 36, 0.32)");
-  drawPixelRect(ctx, baseX - 6, baseY + 4, 13, 1, "rgba(17, 22, 36, 0.22)");
-
-  drawPixelRect(ctx, baseX - 10, baseY, 23, 2, outline);
-  drawPixelRect(ctx, baseX - 8, baseY - 1, 19, 1, outline);
-  drawPixelRect(ctx, baseX - 7, baseY - 2, 17, 1, glassShade);
-  drawPixelRect(ctx, baseX - 9, baseY + 1, 21, 2, "rgba(223, 247, 255, 0.72)");
-  drawPixelRect(ctx, baseX - 6, baseY + 2, 14, 1, glassLight);
-  drawPixelRect(ctx, baseX + 7, baseY + 1, 4, 1, glassShade);
-
-  drawPixelRect(ctx, baseX - 5, baseY - 15, 11, 1, outline);
-  drawPixelRect(ctx, baseX - 8, baseY - 14, 17, 1, outline);
-  drawPixelRect(ctx, baseX - 9, baseY - 13, 19, 2, outline);
-  drawPixelRect(ctx, baseX - 8, baseY - 12, 3, 1, outline);
-  drawPixelRect(ctx, baseX - 5, baseY - 11, 11, 1, outline);
-  drawPixelRect(ctx, baseX + 6, baseY - 12, 3, 1, outline);
-  drawPixelRect(ctx, baseX - 8, baseY - 10, 17, 8, outline);
-  drawPixelRect(ctx, baseX - 6, baseY - 2, 13, 2, outline);
-  drawPixelRect(ctx, baseX - 4, baseY, 9, 1, outline);
-
-  drawPixelRect(ctx, baseX - 4, baseY - 14, 9, 1, glassLight);
-  drawPixelRect(ctx, baseX - 7, baseY - 13, 15, 1, "rgba(223, 247, 255, 0.78)");
-  drawPixelRect(ctx, baseX - 8, baseY - 12, 17, 1, glassLight);
-  drawPixelRect(ctx, baseX - 6, baseY - 11, 13, 1, "rgba(223, 247, 255, 0.72)");
-  drawPixelRect(ctx, baseX - 7, baseY - 10, 15, 8, "rgba(223, 247, 255, 0.34)");
-  drawPixelRect(ctx, baseX - 5, baseY - 2, 11, 2, "rgba(223, 247, 255, 0.54)");
-  drawPixelRect(ctx, baseX - 3, baseY, 7, 1, glassShade);
-  drawPixelRect(ctx, baseX + 5, baseY - 8, 3, 7, "rgba(143, 196, 214, 0.58)");
-  drawPixelRect(ctx, baseX + 7, baseY - 7, 1, 5, glassDeepShade);
-  drawPixelRect(ctx, baseX - 6, baseY - 8, 2, 6, "rgba(245, 253, 255, 0.76)");
-  drawPixelRect(ctx, baseX - 4, baseY - 10, 1, 1, glassLight);
-
-  drawPixelRect(ctx, baseX + 9, baseY - 10, 5, 2, outline);
-  drawPixelRect(ctx, baseX + 13, baseY - 8, 2, 7, outline);
-  drawPixelRect(ctx, baseX + 9, baseY - 1, 5, 2, outline);
-  drawPixelRect(ctx, baseX + 10, baseY - 8, 3, 1, glassLight);
-  drawPixelRect(ctx, baseX + 10, baseY - 2, 3, 1, glass);
-  drawPixelRect(ctx, baseX + 12, baseY - 7, 1, 5, glassLight);
-  drawPixelRect(ctx, baseX + 13, baseY - 6, 1, 4, glassShade);
-
-  if (hasCoffee) {
-    drawPixelRect(ctx, baseX - 6, baseY - 13, 13, 1, coffee);
-    drawPixelRect(ctx, baseX - 7, baseY - 12, 15, 1, coffee);
-    drawPixelRect(ctx, baseX - 5, baseY - 11, 11, 1, "#6f3513");
-    drawPixelRect(ctx, baseX - 4, baseY - 13, 5, 1, coffeeLight);
-    drawPixelRect(ctx, baseX + 3, baseY - 12, 3, 1, coffeeLight);
-    drawPixelRect(ctx, baseX - 8, baseY - 12, 3, 1, outline);
-    drawPixelRect(ctx, baseX - 5, baseY - 11, 11, 1, outline);
-    drawPixelRect(ctx, baseX + 6, baseY - 12, 3, 1, outline);
-    drawPixelRect(ctx, baseX - 7, baseY - 10, 15, 1, coffeeLight);
-    drawPixelRect(ctx, baseX - 7, baseY - 9, 15, 5, coffee);
-    drawPixelRect(ctx, baseX - 6, baseY - 4, 13, 2, coffeeDark);
-    drawPixelRect(ctx, baseX - 5, baseY - 8, 4, 2, coffeeLight);
-    drawPixelRect(ctx, baseX + 4, baseY - 9, 3, 4, "#6f3513");
-    drawPixelRect(ctx, baseX - 7, baseY - 10, 1, 8, glassLight);
-    drawPixelRect(ctx, baseX + 7, baseY - 10, 1, 8, glassShade);
-    if (ghost === "none") {
-      const steamColumns = [
-        { x: -5, delay: 0, height: 4 },
-        { x: 1, delay: 18, height: 5 },
-        { x: 5, delay: 34, height: 3 },
-      ];
-
-      for (const steam of steamColumns) {
-        const phase = (frame + steam.delay) % 72;
-        const rise = Math.floor(phase / 14);
-        const sway = phase < 36 ? 0 : 1;
-        const alpha = phase < 14 || phase > 60 ? 0.3 : 0.62;
-        const steamColor = `rgba(245, 253, 255, ${alpha})`;
-        drawPixelRect(
-          ctx,
-          baseX + steam.x + sway,
-          baseY - 19 - rise,
-          1,
-          steam.height,
-          steamColor,
-        );
-        if (phase > 16 && phase < 56) {
-          drawPixelRect(
-            ctx,
-            baseX + steam.x + sway + 1,
-            baseY - 23 - rise,
-            2,
-            2,
-            `rgba(223, 247, 255, ${alpha})`,
-          );
-        }
-      }
-    }
-  } else {
-    drawPixelRect(ctx, baseX - 6, baseY - 13, 13, 1, "#e5d6c2");
-    drawPixelRect(ctx, baseX - 7, baseY - 12, 15, 1, "rgba(245, 253, 255, 0.7)");
-    drawPixelRect(ctx, baseX - 5, baseY - 11, 11, 1, glassLight);
-    drawPixelRect(ctx, baseX - 8, baseY - 12, 3, 1, outline);
-    drawPixelRect(ctx, baseX - 5, baseY - 11, 11, 1, outline);
-    drawPixelRect(ctx, baseX + 6, baseY - 12, 3, 1, outline);
-    drawPixelRect(ctx, baseX + 4, baseY - 12, 3, 2, glassShade);
+  if (hasCoffee && ghost === "none") {
+    drawCoffeeCupSteam(ctx, Math.round(x), Math.round(y), frame);
   }
-
-  drawPixelRect(ctx, baseX - 6, baseY - 6, 2, 4, "rgba(255, 255, 255, 0.42)");
-  drawPixelRect(ctx, baseX - 3, baseY - 1, 7, 1, glassDeepShade);
-
-  if (ghost !== "none") {
-    ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
-    ctx.strokeRect(baseX - 11, baseY - 24, 28, 28);
-  }
-  ctx.restore();
 };
 
 const drawPlaceableItem = (
@@ -10007,15 +9742,25 @@ const drawFloorUnderlayItems = (
 const isPreviewOnSurface = (
   preview: PlacementPreview | null | undefined,
   surface: FurnitureDefinition,
-) =>
-  Boolean(
-    preview &&
-      (surface.id === "desk" || surface.id === "table") &&
-      preview.x >= surface.x &&
-      preview.x <= surface.x + surface.width &&
-      preview.y >= surface.y - 4 &&
-      preview.y <= surface.y + 28,
+) => {
+  if (!preview) return false;
+  if (surface.id === "file-cabinet") {
+    return (
+      preview.x >= surface.x + 2 &&
+      preview.x <= surface.x + surface.width - 2 &&
+      preview.y >= surface.y - 10 &&
+      preview.y <= surface.y + 18
+    );
+  }
+
+  return (
+    (surface.id === "desk" || surface.id === "table") &&
+    preview.x >= surface.x &&
+    preview.x <= surface.x + surface.width &&
+    preview.y >= surface.y - 4 &&
+    preview.y <= surface.y + 28
   );
+};
 
 const drawWoodFloor = (
   ctx: CanvasRenderingContext2D,

@@ -2082,11 +2082,16 @@ const isTerminalOnDesktopSurface = (
   terminal: Pick<PlacedItem, "x" | "y">,
   surface: FurnitureDefinition,
 ) =>
-  (surface.id === "desk" || surface.id === "table") &&
-  terminal.x >= surface.x + 8 &&
-  terminal.x <= surface.x + surface.width - 8 &&
-  terminal.y >= surface.y - 2 &&
-  terminal.y <= surface.y + 28;
+  surface.id === "file-cabinet"
+    ? terminal.x >= surface.x + 2 &&
+      terminal.x <= surface.x + surface.width - 2 &&
+      terminal.y >= surface.y - 10 &&
+      terminal.y <= surface.y + 18
+    : (surface.id === "desk" || surface.id === "table") &&
+      terminal.x >= surface.x + 8 &&
+      terminal.x <= surface.x + surface.width - 8 &&
+      terminal.y >= surface.y - 2 &&
+      terminal.y <= surface.y + 28;
 
 const builtinTerminalFromContent = (
   content: AivatarContent,
@@ -2602,7 +2607,9 @@ const normalizeTaskCabinetSchedule = (
 
 const datetimeLocalToIso = (value: string) => {
   if (!value) return undefined;
-  const date = new Date(value);
+  const normalizedValue = taskScheduleRunAtToDatetimeLocal(value);
+  if (!normalizedValue) return undefined;
+  const date = new Date(normalizedValue);
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 };
 
@@ -2612,6 +2619,102 @@ const isoToDatetimeLocal = (value?: string) => {
   if (Number.isNaN(date.getTime())) return "";
   const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return offsetDate.toISOString().slice(0, 16);
+};
+
+type TaskScheduleRunAtPart = "date" | "hour" | "minute";
+
+type TaskScheduleRunAtParts = {
+  date: string;
+  hour: string;
+  minute: string;
+};
+
+const emptyTaskScheduleRunAtParts = (): TaskScheduleRunAtParts => ({
+  date: "",
+  hour: "",
+  minute: "",
+});
+
+const taskScheduleRunAtParts = (value?: string): TaskScheduleRunAtParts => {
+  if (!value) return emptyTaskScheduleRunAtParts();
+  const partialMatch = value.match(
+    /^(\d{0,4}(?:-\d{0,2}(?:-\d{0,2})?)?)(?:T(\d{0,2})(?::(\d{0,2})?)?)?$/,
+  );
+  if (partialMatch) {
+    return {
+      date: partialMatch[1] ?? "",
+      hour: partialMatch[2] ?? "",
+      minute: partialMatch[3] ?? "",
+    };
+  }
+
+  const datetimeLocal = isoToDatetimeLocal(value);
+  if (!datetimeLocal) return emptyTaskScheduleRunAtParts();
+  const [date = "", time = ""] = datetimeLocal.split("T");
+  const [hour = "", minute = ""] = time.split(":");
+  return { date, hour, minute };
+};
+
+const taskScheduleRunAtFromParts = ({
+  date,
+  hour,
+  minute,
+}: TaskScheduleRunAtParts) => {
+  if (!date && !hour && !minute) return undefined;
+  return `${date}${
+    hour || minute ? `T${hour}${minute ? `:${minute}` : ""}` : ""
+  }`;
+};
+
+const taskScheduleRunAtToDatetimeLocal = (value: string) => {
+  const { date, hour, minute } = taskScheduleRunAtParts(value);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !/^\d{2}$/.test(hour) ||
+    !/^\d{2}$/.test(minute)
+  ) {
+    return undefined;
+  }
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  const hourNumber = Number(hour);
+  const minuteNumber = Number(minute);
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hourNumber > 23 ||
+    minuteNumber > 59
+  ) {
+    return undefined;
+  }
+  const localDate = new Date(year, month - 1, day, hourNumber, minuteNumber);
+  if (
+    localDate.getFullYear() !== year ||
+    localDate.getMonth() !== month - 1 ||
+    localDate.getDate() !== day
+  ) {
+    return undefined;
+  }
+  return `${date}T${hour}:${minute}`;
+};
+
+const formatTaskScheduleDateInput = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+};
+
+const formatTaskScheduleTimeInput = (value: string) =>
+  value.replace(/\D/g, "").slice(0, 2);
+
+const normalizeTaskScheduleTimeInput = (value: string, max: number) => {
+  const digits = formatTaskScheduleTimeInput(value);
+  if (!digits) return "";
+  return String(Math.min(max, Number(digits))).padStart(2, "0");
 };
 
 const calculateTaskScheduleNextRunAt = (
@@ -6609,12 +6712,28 @@ export const App = () => {
     });
   };
 
-  const setTaskCabinetScheduleRunAt = (taskId: string, runAt: string) => {
+  const setTaskCabinetScheduleRunAtPart = (
+    taskId: string,
+    part: TaskScheduleRunAtPart,
+    value: string,
+    options: { normalize?: boolean } = {},
+  ) => {
     updateTaskCabinetSchedule(taskId, (schedule) => {
+      const parts = taskScheduleRunAtParts(schedule?.runAt);
+      if (part === "date") {
+        parts.date = formatTaskScheduleDateInput(value);
+      } else if (options.normalize) {
+        parts[part] = normalizeTaskScheduleTimeInput(
+          value,
+          part === "hour" ? 23 : 59,
+        );
+      } else {
+        parts[part] = formatTaskScheduleTimeInput(value);
+      }
       const nextSchedule: TaskCabinetSchedule = {
         enabled: schedule?.enabled ?? false,
         mode: schedule?.mode ?? "once",
-        runAt,
+        runAt: taskScheduleRunAtFromParts(parts),
         intervalMinutes:
           schedule?.intervalMinutes ?? TASK_CABINET_DEFAULT_REPEAT_MINUTES,
         condition: schedule?.condition ?? "always",
@@ -11098,18 +11217,95 @@ export const App = () => {
                               </option>
                             </select>
                           </label>
-                          <label className="task-cabinet-field">
+                          <label className="task-cabinet-field task-cabinet-run-at-field">
                             <span>{ui("schedule.runAt")}</span>
-                            <input
-                              type="datetime-local"
-                              value={isoToDatetimeLocal(entry.schedule?.runAt)}
-                              onChange={(event) =>
-                                setTaskCabinetScheduleRunAt(
-                                  entry.id,
-                                  event.currentTarget.value,
-                                )
-                              }
-                            />
+                            <span className="task-cabinet-run-at-control">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                maxLength={10}
+                                placeholder="YYYY-MM-DD"
+                                aria-label={ui("schedule.date")}
+                                className="task-cabinet-date-input"
+                                value={
+                                  taskScheduleRunAtParts(entry.schedule?.runAt)
+                                    .date
+                                }
+                                onChange={(event) =>
+                                  setTaskCabinetScheduleRunAtPart(
+                                    entry.id,
+                                    "date",
+                                    event.currentTarget.value,
+                                  )
+                                }
+                              />
+                              <span
+                                className="task-cabinet-run-at-separator"
+                                aria-hidden="true"
+                              >
+                                @
+                              </span>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                maxLength={2}
+                                placeholder="HH"
+                                aria-label={ui("schedule.hour")}
+                                className="task-cabinet-time-input"
+                                value={
+                                  taskScheduleRunAtParts(entry.schedule?.runAt)
+                                    .hour
+                                }
+                                onChange={(event) =>
+                                  setTaskCabinetScheduleRunAtPart(
+                                    entry.id,
+                                    "hour",
+                                    event.currentTarget.value,
+                                  )
+                                }
+                                onBlur={(event) =>
+                                  setTaskCabinetScheduleRunAtPart(
+                                    entry.id,
+                                    "hour",
+                                    event.currentTarget.value,
+                                    { normalize: true },
+                                  )
+                                }
+                              />
+                              <span
+                                className="task-cabinet-run-at-separator"
+                                aria-hidden="true"
+                              >
+                                :
+                              </span>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                maxLength={2}
+                                placeholder="MM"
+                                aria-label={ui("schedule.minute")}
+                                className="task-cabinet-time-input"
+                                value={
+                                  taskScheduleRunAtParts(entry.schedule?.runAt)
+                                    .minute
+                                }
+                                onChange={(event) =>
+                                  setTaskCabinetScheduleRunAtPart(
+                                    entry.id,
+                                    "minute",
+                                    event.currentTarget.value,
+                                  )
+                                }
+                                onBlur={(event) =>
+                                  setTaskCabinetScheduleRunAtPart(
+                                    entry.id,
+                                    "minute",
+                                    event.currentTarget.value,
+                                    { normalize: true },
+                                  )
+                                }
+                              />
+                            </span>
                           </label>
                           <label className="task-cabinet-field">
                             <span>{ui("schedule.everyMin")}</span>

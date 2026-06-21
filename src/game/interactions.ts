@@ -190,22 +190,42 @@ const FRIDGE_WALL_ALIGNED_Y = 96;
 const FILE_CABINET_WALL_ALIGNED_Y = 110;
 
 const isDesktopSurfaceFurniture = (furniture: FurnitureDefinition) =>
-  furniture.id === "desk" || furniture.id === "table";
+  furniture.id === "desk" ||
+  furniture.id === "table" ||
+  furniture.id === "file-cabinet";
+
+const desktopSurfaceHitBounds = (surface: FurnitureDefinition): Rect => {
+  if (surface.id === "table") {
+    return {
+      x: surface.x + 8,
+      y: surface.y - 2,
+      width: surface.width - 16,
+      height: 28,
+    };
+  }
+
+  if (surface.id === "file-cabinet") {
+    return {
+      x: surface.x + 2,
+      y: surface.y - 10,
+      width: surface.width - 4,
+      height: 26,
+    };
+  }
+
+  return {
+    x: surface.x + 10,
+    y: surface.y - 2,
+    width: surface.width - 20,
+    height: 24,
+  };
+};
 
 const isPointOnFurnitureDesktopSurface = (
   surface: FurnitureDefinition,
   x: number,
   y: number,
-) =>
-  surface.id === "table"
-    ? x >= surface.x + 8 &&
-      x <= surface.x + surface.width - 8 &&
-      y >= surface.y - 2 &&
-      y <= surface.y + 26
-    : x >= surface.x + 10 &&
-      x <= surface.x + surface.width - 10 &&
-      y >= surface.y - 2 &&
-      y <= surface.y + 22;
+) => isRectInside({ x, y, width: 0, height: 0 }, desktopSurfaceHitBounds(surface));
 
 const findClosestFurnitureDesktopSurface = (
   content: AivatarContent,
@@ -232,8 +252,11 @@ const getComputerDesktopPlacement = (
   surface: FurnitureDefinition,
   x: number,
 ) => {
-  const minX = surface.x + 10;
-  const maxX = surface.x + surface.width - computer.width - 8;
+  const minX = surface.id === "file-cabinet" ? surface.x + 5 : surface.x + 10;
+  const maxX =
+    surface.id === "file-cabinet"
+      ? surface.x + surface.width - computer.width - 5
+      : surface.x + surface.width - computer.width - 8;
   const placedX = snapWithin(minX, maxX, x);
   const placedY = surface.y - computer.height;
 
@@ -424,33 +447,41 @@ export const getPlacedItemPlacementFootBounds = (item: PlacedItem) => {
 };
 
 const findDesktopSurfaces = (content: AivatarContent) =>
-  content.room.furniture.filter((item) => item.id === "desk" || item.id === "table");
+  content.room.furniture.filter(isDesktopSurfaceFurniture);
+
+const desktopSurfacePlacementBounds = (surface: FurnitureDefinition) => {
+  if (surface.id === "table") {
+    return {
+      minX: surface.x + 10,
+      maxX: surface.x + surface.width - 10,
+      minY: surface.y,
+      maxY: surface.y + 24,
+    };
+  }
+
+  if (surface.id === "file-cabinet") {
+    return {
+      minX: surface.x + 4,
+      maxX: surface.x + surface.width - 4,
+      minY: surface.y - 6,
+      maxY: surface.y + 14,
+    };
+  }
+
+  return {
+    minX: surface.x + 12,
+    maxX: surface.x + surface.width - 12,
+    minY: surface.y,
+    maxY: surface.y + 20,
+  };
+};
 
 const getDesktopSurfacePlacement = (
   surface: FurnitureDefinition,
   x: number,
   y: number,
 ) => {
-  if (surface.id === "table") {
-    const minX = surface.x + 10;
-    const maxX = surface.x + surface.width - 10;
-    const minY = surface.y;
-    const maxY = surface.y + 24;
-    const placedX = snapWithin(minX, maxX, x);
-    const placedY = snapWithin(minY, maxY, y);
-    return {
-      x: placedX,
-      y: placedY,
-      surfaceFurnitureId: surface.id,
-      surfaceOffsetX: placedX - surface.x,
-      surfaceOffsetY: placedY - surface.y,
-    };
-  }
-
-  const minX = surface.x + 12;
-  const maxX = surface.x + surface.width - 12;
-  const minY = surface.y;
-  const maxY = surface.y + 20;
+  const { minX, maxX, minY, maxY } = desktopSurfacePlacementBounds(surface);
   const placedX = snapWithin(minX, maxX, x);
   const placedY = snapWithin(minY, maxY, y);
   return {
@@ -466,16 +497,7 @@ const isPointOnDesktopSurface = (
   surface: FurnitureDefinition,
   x: number,
   y: number,
-) =>
-  surface.id === "table"
-    ? x >= surface.x + 8 &&
-      x <= surface.x + surface.width - 8 &&
-      y >= surface.y - 2 &&
-      y <= surface.y + 26
-    : x >= surface.x + 10 &&
-      x <= surface.x + surface.width - 10 &&
-      y >= surface.y - 2 &&
-      y <= surface.y + 22;
+) => isRectInside({ x, y, width: 0, height: 0 }, desktopSurfaceHitBounds(surface));
 
 const findClosestDesktopSurface = (
   content: AivatarContent,
