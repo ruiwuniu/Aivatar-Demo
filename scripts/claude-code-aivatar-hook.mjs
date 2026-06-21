@@ -71,12 +71,113 @@ const postJson = async (url, payload) => {
 const firstString = (...values) =>
   values.find((value) => typeof value === "string" && value.trim())?.trim();
 
+const hookEventName = (input, statusLine = false) => {
+  const event =
+    firstString(
+      input?.hook_event_name,
+      input?.hookEventName,
+      input?.event_name,
+      input?.eventName,
+      typeof input?.event === "string" ? input.event : undefined,
+      input?.type,
+      input?.name,
+      input?.kind,
+      input?.phase,
+      input?.status,
+    ) ??
+    firstString(
+      input?.event?.hook_event_name,
+      input?.event?.hookEventName,
+      input?.event?.event_name,
+      input?.event?.eventName,
+      input?.event?.type,
+      input?.event?.name,
+      input?.event?.kind,
+      input?.event?.phase,
+      input?.payload?.hook_event_name,
+      input?.payload?.type,
+      input?.payload?.name,
+      input?.data?.hook_event_name,
+      input?.data?.type,
+      input?.data?.name,
+    );
+  return event ?? (statusLine || input?.context_window ? "StatusLine" : "Unknown");
+};
+
+const claudeSurfaceLabel = (input) => {
+  const text = [
+    input?.mode,
+    input?.surface,
+    input?.channel,
+    input?.client_mode,
+    input?.clientMode,
+    input?.app_mode,
+    input?.appMode,
+    input?.source,
+    hookEventName(input),
+  ]
+    .filter((value) => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  if (/\bcowork\b|co-work|teammate|subagent/u.test(text)) return "Claude Cowork";
+  if (/\bchat\b|conversation/u.test(text)) return "Claude Chat";
+  return "Claude Code";
+};
+
 const numberField = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 };
 
+const hashString = (value) => {
+  let hash = 2166136261;
+  for (const character of String(value)) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+};
+
 const safeName = (value) => String(value).replace(/[^a-zA-Z0-9_.-]/g, "_");
+const sessionIdForInput = (input) => {
+  const explicit = firstString(
+    process.env.AIVATAR_SESSION_ID,
+    input?.session_id,
+    input?.sessionId,
+    input?.sessionID,
+    input?.conversation_id,
+    input?.conversationId,
+    input?.thread_id,
+    input?.threadId,
+    input?.chat_id,
+    input?.chatId,
+    input?.cowork_session_id,
+    input?.coworkSessionId,
+    input?.session?.id,
+    input?.conversation?.id,
+    input?.thread?.id,
+    input?.chat?.id,
+    input?.cowork?.id,
+    process.env.CLAUDE_SESSION_ID,
+  );
+  if (explicit) return explicit;
+
+  const basis = firstString(
+    input?.session_name,
+    input?.conversation_title,
+    input?.conversationTitle,
+    input?.title,
+    input?.workspace?.repo?.name,
+    input?.workspace?.path,
+    input?.cwd,
+  );
+  if (!basis) return "claude-code-session";
+  return `claude-${safeName(`${claudeSurfaceLabel(input)}-${basis}`).slice(
+    0,
+    48,
+  )}-${hashString(basis)}`;
+};
+
 const statePathFor = (sessionId) =>
   join(tmpdir(), "aivatar-claude-code-state", `${safeName(sessionId)}.json`);
 const eventLogPathFor = (sessionId) =>
@@ -104,7 +205,7 @@ const appendEventLog = async (sessionId, input, payload, mode) => {
     `${JSON.stringify({
       loggedAt: new Date().toISOString(),
       mode,
-      event: input?.hook_event_name ?? (input?.context_window ? "StatusLine" : "Unknown"),
+      event: hookEventName(input, mode === "statusLine"),
       tool: input?.tool_name,
       hasContextWindow: Boolean(input?.context_window),
       payload,
@@ -204,39 +305,41 @@ const toolName = (input) =>
   firstString(input?.tool_name, input?.tool?.name, input?.tool_use?.name);
 
 const statusForEvent = (input) => {
-  const event = input?.hook_event_name ?? (input?.context_window ? "StatusLine" : "Unknown");
+  const event = hookEventName(input);
+  const lowerEvent = event.toLowerCase();
+  const label = claudeSurfaceLabel(input);
 
   switch (event) {
     case "SessionStart":
       return {
         status: "idle",
         phase: "session-start",
-        message: "Claude Code session connected",
+        message: `${label} session connected`,
       };
     case "UserPromptSubmit":
       return {
         status: "thinking",
         phase: "user-prompt",
-        message: "Claude Code is thinking",
+        message: `${label} is thinking`,
       };
     case "MessageDisplay":
       return {
         status: "thinking",
         phase: "message-display",
-        message: "Claude Code is responding",
+        message: `${label} is responding`,
       };
     case "PostToolBatch":
       return {
         status: "thinking",
         phase: "tool-batch-complete",
-        message: "Claude Code is reading tool results",
+        message: `${label} is reading tool results`,
       };
     case "PostToolUse": {
       const name = toolName(input);
       return {
         status: "thinking",
         phase: name ? `tool-result:${name}` : "tool-result",
-        message: name ? `Claude Code read ${name} result` : "Claude Code is reading tool results",
+        message: name ? `${label} read ${name} result` : `${label} is reading tool results`,
       };
     }
     case "PreToolUse": {
@@ -244,27 +347,27 @@ const statusForEvent = (input) => {
       return {
         status: "executing",
         phase: name ? `tool:${name}` : "tool",
-        message: name ? `Claude Code is using ${name}` : "Claude Code is using a tool",
+        message: name ? `${label} is using ${name}` : `${label} is using a tool`,
       };
     }
     case "PermissionRequest":
       return {
         status: "waiting_for_user",
         phase: "permission",
-        message: "Claude Code is waiting for permission",
+        message: `${label} is waiting for permission`,
       };
     case "PermissionDenied":
       return {
         status: "error",
         phase: "permission-denied",
-        message: "Claude Code permission was denied",
+        message: `${label} permission was denied`,
       };
     case "PostToolUseFailure": {
       const name = toolName(input);
       return {
         status: "error",
         phase: name ? `tool-failed:${name}` : "tool-failed",
-        message: name ? `Claude Code tool failed: ${name}` : "Claude Code tool failed",
+        message: name ? `${label} tool failed: ${name}` : `${label} tool failed`,
       };
     }
     case "Notification": {
@@ -273,7 +376,7 @@ const statusForEvent = (input) => {
       return {
         status: waiting ? "waiting_for_user" : "thinking",
         phase: "notification",
-        message: message ?? "Claude Code notification",
+        message: message ?? `${label} notification`,
       };
     }
     case "Stop":
@@ -283,7 +386,7 @@ const statusForEvent = (input) => {
       return {
         status: "complete",
         phase: event,
-        message: firstString(input?.last_assistant_message, "Claude Code turn complete"),
+        message: firstString(input?.last_assistant_message, `${label} turn complete`),
       };
     case "StopFailure":
       return {
@@ -295,19 +398,47 @@ const statusForEvent = (input) => {
       return {
         status: "idle",
         phase: firstString(input?.reason, "SessionEnd"),
-        message: "Claude Code session ended",
+        message: `${label} session ended`,
       };
     default:
+      if (/permission|approval|waiting|input_required/u.test(lowerEvent)) {
+        return {
+          status: "waiting_for_user",
+          phase: event,
+          message: `${label} is waiting for input`,
+        };
+      }
+      if (/fail|failed|error|exception/u.test(lowerEvent)) {
+        return {
+          status: "error",
+          phase: event,
+          message: `${label} reported an error`,
+        };
+      }
+      if (/stop|complete|completed|done|idle/u.test(lowerEvent)) {
+        return {
+          status: "complete",
+          phase: event,
+          message: `${label} turn complete`,
+        };
+      }
+      if (/tool|command|execute|executing|running/u.test(lowerEvent)) {
+        return {
+          status: "executing",
+          phase: event,
+          message: `${label} is using a tool`,
+        };
+      }
       return {
         status: "thinking",
         phase: event,
-        message: "Claude Code activity",
+        message: `${label} activity`,
       };
   }
 };
 
 const preserveTerminalStatusAfterTurnEnd = (input, status, previousState) => {
-  const event = input?.hook_event_name ?? (input?.context_window ? "StatusLine" : "Unknown");
+  const event = hookEventName(input);
   if (previousState.status !== "complete" && previousState.status !== "error") return status;
   if (event === "UserPromptSubmit") return status;
   if (status.status === "complete" || status.status === "error") return status;
@@ -320,6 +451,9 @@ const preserveTerminalStatusAfterTurnEnd = (input, status, previousState) => {
 };
 
 const isTerminalStatusName = (status) => status === "complete" || status === "error";
+
+const isLifecycleOnlyEvent = (event) =>
+  event === "SessionStart" || event === "SessionEnd";
 
 const shouldStatusLineComplete = (previousState, usage) => {
   if (!usage?.outputTokens || usage.outputTokens <= 0) return false;
@@ -361,6 +495,8 @@ const idleBubbleCandidatesFromInput = (input) => {
   };
 
   add(input?.session_name);
+  add(input?.conversation_title);
+  add(input?.conversationTitle);
   add(input?.workspace?.repo?.name);
   add(input?.agent?.name);
 
@@ -428,8 +564,8 @@ const learningDigestFromTranscript = async (input) => {
 const learningDigestFromInput = async (input, payload) => {
   const directSnippets = [
     firstString(input?.session_name) ? `session: ${input.session_name}` : "",
-    firstString(input?.hook_event_name)
-      ? `event: ${input.hook_event_name}`
+    firstString(hookEventName(input))
+      ? `event: ${hookEventName(input)}`
       : input?.context_window
         ? "event: StatusLine"
         : "",
@@ -513,16 +649,17 @@ const spawnLearningWorker = async (sessionId, input, payload) => {
 try {
   const statusLineMode = process.argv.includes("--status-line");
   const rawInput = await readStdin();
-  const input = rawInput.trim() ? JSON.parse(rawInput) : {};
-  const hookEvent = input?.hook_event_name ?? (input?.context_window ? "StatusLine" : "Unknown");
+  const inputText = rawInput.replace(/^\uFEFF/u, "").trim();
+  const input = inputText ? JSON.parse(inputText) : {};
+  const hookEvent = hookEventName(input, statusLineMode);
   const isSessionEnd = !statusLineMode && hookEvent === "SessionEnd";
-  const sessionId =
-    firstString(
-      process.env.AIVATAR_SESSION_ID,
-      input.session_id,
-      process.env.CLAUDE_SESSION_ID,
-    ) ?? "claude-code-session";
+  const managedSessionId = firstString(process.env.AIVATAR_SESSION_ID);
+  const sessionId = sessionIdForInput(input);
   const previousState = await readSessionState(sessionId);
+  const eventShowsRealActivity =
+    !statusLineMode && !isLifecycleOnlyEvent(hookEvent);
+  const realActivitySeen =
+    Boolean(previousState.realActivitySeen) || eventShowsRealActivity;
   const usage =
     usageFromClaudeInput(input, "context-window") ??
     (await usageFromClaudeTranscript(input, "context-window")) ??
@@ -576,6 +713,7 @@ try {
     phase: payload.phase,
     message: payload.message,
     timestamp: payload.timestamp,
+    realActivitySeen,
     latestUsage: payload.usage ?? previousState.latestUsage,
     lastLearningKey: isTerminalStatus
       ? previousState.lastLearningKey
@@ -583,30 +721,37 @@ try {
   });
   await appendEventLog(sessionId, input, payload, statusLineMode ? "statusLine" : "hook");
 
-  await postJson(endpoint, payload);
-  if (isSessionEnd) {
-    await postJson(disconnectEndpoint, {
-      agent: payload.agent,
-      sessionId,
-    });
-  } else {
-    await postJson(presenceEndpoint, {
-      agent: payload.agent,
-      sessionId,
-      timestamp,
-    });
+  const shouldIgnoreLifecycleOnly =
+    !managedSessionId && !realActivitySeen && isLifecycleOnlyEvent(hookEvent);
 
-    if (status.status === "idle") {
-      await postJson(activeEndpoint, {
-        clear: true,
+  if (!shouldIgnoreLifecycleOnly) {
+    await postJson(endpoint, payload);
+    if (isSessionEnd && managedSessionId) {
+      await postJson(disconnectEndpoint, {
         agent: payload.agent,
         sessionId,
       });
     } else {
-      await postJson(activeEndpoint, {
-        agent: payload.agent,
-        sessionId,
-      });
+      if (!isSessionEnd) {
+        await postJson(presenceEndpoint, {
+          agent: payload.agent,
+          sessionId,
+          timestamp,
+        });
+      }
+
+      if (status.status === "idle" || isSessionEnd) {
+        await postJson(activeEndpoint, {
+          clear: true,
+          agent: payload.agent,
+          sessionId,
+        });
+      } else {
+        await postJson(activeEndpoint, {
+          agent: payload.agent,
+          sessionId,
+        });
+      }
     }
   }
 
@@ -618,6 +763,7 @@ try {
 
   if (
     learningEnabled &&
+    !shouldIgnoreLifecycleOnly &&
     isTerminalStatus &&
     !preservedTerminalStatus &&
     learningTriggerKey !== previousState.lastLearningKey
@@ -627,6 +773,7 @@ try {
       phase: payload.phase,
       message: payload.message,
       timestamp: payload.timestamp,
+      realActivitySeen,
       latestUsage: payload.usage ?? previousState.latestUsage,
       lastLearningKey: learningTriggerKey,
     });

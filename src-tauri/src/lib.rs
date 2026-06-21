@@ -44,6 +44,25 @@ struct TaskAgentLaunchResult {
     session_id: String,
 }
 
+#[derive(serde::Deserialize)]
+struct AgentIntegrationRequest {
+    agent: String,
+}
+
+#[derive(serde::Serialize)]
+struct AgentIntegrationStatus {
+    agent: String,
+    label: String,
+    detected: bool,
+    enabled: bool,
+    cli_available: bool,
+    needs_restart: bool,
+    detail: String,
+    config_path: Option<String>,
+    connector_path: Option<String>,
+    cli_path: Option<String>,
+}
+
 const MAX_TASK_PROMPT_CHARS: usize = 24_000;
 
 fn project_root() -> Result<std::path::PathBuf, String> {
@@ -138,6 +157,19 @@ fn scripts_root(app: Option<&tauri::AppHandle>) -> Option<std::path::PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
+fn windows_command_fallback(command: &str) -> Option<std::path::PathBuf> {
+    if command.eq_ignore_ascii_case("opencode") {
+        let path = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)?
+            .join("opencode")
+            .join("opencode-cli.exe");
+        return path.is_file().then_some(path);
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
 fn resolve_command(command: &str) -> Option<std::path::PathBuf> {
     let mut process = std::process::Command::new("where.exe");
     process
@@ -154,7 +186,7 @@ fn resolve_command(command: &str) -> Option<std::path::PathBuf> {
         .ok()?;
 
     if !output.status.success() {
-        return None;
+        return windows_command_fallback(command);
     }
 
     String::from_utf8_lossy(&output.stdout)
@@ -163,6 +195,7 @@ fn resolve_command(command: &str) -> Option<std::path::PathBuf> {
         .filter(|line| !line.is_empty())
         .map(std::path::PathBuf::from)
         .find(|path| path.is_file())
+        .or_else(|| windows_command_fallback(command))
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -196,6 +229,446 @@ fn resolve_command(command: &str) -> Option<std::path::PathBuf> {
         .find(|path| path.is_file())
 }
 
+fn user_home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+}
+
+fn path_text(path: &std::path::Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn opencode_plugin_path() -> Option<std::path::PathBuf> {
+    Some(
+        user_home_dir()?
+            .join(".config")
+            .join("opencode")
+            .join("plugins")
+            .join("aivatar-opencode-plugin.js"),
+    )
+}
+
+fn claude_settings_path() -> Option<std::path::PathBuf> {
+    Some(user_home_dir()?.join(".claude").join("settings.json"))
+}
+
+#[cfg(target_os = "windows")]
+fn claude_wrapper_paths() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let dir = user_home_dir()?.join(".claude");
+    Some((
+        dir.join("aivatar-hook.ps1"),
+        dir.join("aivatar-statusline.ps1"),
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn claude_wrapper_paths() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let dir = user_home_dir()?.join(".claude");
+    Some((dir.join("aivatar-hook.sh"), dir.join("aivatar-statusline.sh")))
+}
+
+fn json_contains_aivatar(value: &serde_json::Value) -> bool {
+    value.to_string().to_ascii_lowercase().contains("aivatar")
+}
+
+const CLAUDE_REQUIRED_ORDINARY_EVENTS: &[&str] = &[
+    "SessionStart",
+    "UserPromptSubmit",
+    "MessageDisplay",
+    "Notification",
+    "PostToolBatch",
+    "Stop",
+    "SubagentStop",
+    "TeammateIdle",
+    "StopFailure",
+    "TaskCompleted",
+    "SessionEnd",
+];
+
+const CLAUDE_REQUIRED_TOOL_EVENTS: &[&str] = &[
+    "PreToolUse",
+    "PermissionRequest",
+    "PermissionDenied",
+    "PostToolUse",
+    "PostToolUseFailure",
+];
+
+fn claude_hook_event_has_aivatar(settings: &serde_json::Value, event: &str) -> bool {
+    settings
+        .get("hooks")
+        .and_then(|hooks| hooks.get(event))
+        .is_some_and(json_contains_aivatar)
+}
+
+fn claude_hooks_complete(settings: &serde_json::Value) -> bool {
+    CLAUDE_REQUIRED_ORDINARY_EVENTS
+        .iter()
+        .chain(CLAUDE_REQUIRED_TOOL_EVENTS.iter())
+        .all(|event| claude_hook_event_has_aivatar(settings, event))
+        && settings
+            .get("statusLine")
+            .is_some_and(json_contains_aivatar)
+}
+
+fn read_json_file(path: &std::path::Path) -> serde_json::Value {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn atomic_write_text(path: &std::path::Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(path, text).map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn make_executable(path: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = std::fs::metadata(path)
+        .map_err(|error| error.to_string())?
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn make_executable(_path: &std::path::Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn remove_existing_aivatar_hook_entries(entries: &mut Vec<serde_json::Value>) {
+    entries.retain(|entry| !json_contains_aivatar(entry));
+}
+
+fn upsert_claude_hook(
+    settings: &mut serde_json::Value,
+    event: &str,
+    group: serde_json::Value,
+) -> Result<(), String> {
+    let root = settings
+        .as_object_mut()
+        .ok_or_else(|| "Claude settings must be a JSON object.".to_string())?;
+    let hooks = root
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "Claude settings hooks must be a JSON object.".to_string())?;
+    let entry = hooks
+        .entry(event.to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    if !entry.is_array() {
+        *entry = serde_json::json!([]);
+    }
+    let entries = entry
+        .as_array_mut()
+        .ok_or_else(|| "Claude hook entry must be an array.".to_string())?;
+    remove_existing_aivatar_hook_entries(entries);
+    entries.push(group);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_shell_path_quote(path: &std::path::Path) -> String {
+    format!("\"{}\"", path_text(path).replace('\\', "/").replace('"', ""))
+}
+
+#[cfg(target_os = "windows")]
+fn claude_hook_handler(path: &std::path::Path) -> serde_json::Value {
+    serde_json::json!({
+        "type": "command",
+        "command": "powershell",
+        "args": [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            path_text(path),
+            "-Mode",
+            "hook"
+        ],
+        "timeout": 10
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn claude_hook_handler(path: &std::path::Path) -> serde_json::Value {
+    serde_json::json!({
+        "type": "command",
+        "command": "/bin/sh",
+        "args": [path_text(path), "hook"],
+        "timeout": 10
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn claude_status_line_command(path: &std::path::Path) -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -File {} -Mode status-line",
+        windows_shell_path_quote(path)
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn claude_status_line_command(path: &std::path::Path) -> String {
+    format!("/bin/sh '{}' status-line", path_text(path).replace('\'', "'\\''"))
+}
+
+#[cfg(target_os = "windows")]
+fn claude_wrapper_content(default_mode: &str) -> String {
+    format!(
+        r#"$ErrorActionPreference = "SilentlyContinue"
+param([string]$Mode = "{default_mode}")
+$body = [Console]::In.ReadToEnd()
+if ([string]::IsNullOrWhiteSpace($body)) {{ $body = "{{}}" }}
+$target = "http://127.0.0.1:38988/agent-hooks/claude-code"
+if ($Mode -eq "status-line") {{ $target = "http://127.0.0.1:38988/agent-hooks/claude-code/status-line" }}
+try {{
+  $response = Invoke-WebRequest -Uri $target -Method Post -ContentType "application/json" -Body $body -UseBasicParsing -TimeoutSec 2
+  if ($Mode -eq "status-line") {{
+    try {{
+      $parsed = $response.Content | ConvertFrom-Json
+      if ($parsed.label) {{ [Console]::Write($parsed.label) }} else {{ [Console]::Write("Aivatar linked") }}
+    }} catch {{ [Console]::Write("Aivatar linked") }}
+  }}
+}} catch {{
+  if ($Mode -eq "status-line") {{ [Console]::Write("Aivatar offline") }}
+}}
+"#
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn claude_wrapper_content(default_mode: &str) -> String {
+    format!(
+        r#"#!/bin/sh
+mode="${{1:-{default_mode}}}"
+body="$(cat)"
+if [ -z "$body" ]; then body="{{}}"; fi
+target="http://127.0.0.1:38988/agent-hooks/claude-code"
+if [ "$mode" = "status-line" ]; then
+  target="http://127.0.0.1:38988/agent-hooks/claude-code/status-line"
+fi
+response="$(/usr/bin/curl -fsS -m 2 -H 'content-type: application/json' --data-binary "$body" "$target" 2>/dev/null)"
+if [ "$mode" = "status-line" ]; then
+  label="$(printf '%s' "$response" | /usr/bin/sed -n 's/.*"label"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  if [ -n "$label" ]; then
+    printf '%s' "$label"
+  else
+    printf '%s' "Aivatar linked"
+  fi
+fi
+"#
+    )
+}
+
+fn enable_claude_code_integration() -> Result<(), String> {
+    let settings_path =
+        claude_settings_path().ok_or_else(|| "Could not resolve ~/.claude.".to_string())?;
+    let (hook_path, status_line_path) =
+        claude_wrapper_paths().ok_or_else(|| "Could not resolve Claude wrapper path.".to_string())?;
+    atomic_write_text(&hook_path, &claude_wrapper_content("hook"))?;
+    atomic_write_text(&status_line_path, &claude_wrapper_content("status-line"))?;
+    make_executable(&hook_path)?;
+    make_executable(&status_line_path)?;
+
+    let mut settings = read_json_file(&settings_path);
+    if !settings.is_object() {
+        settings = serde_json::json!({});
+    }
+    if let Some(root) = settings.as_object_mut() {
+        let env = root
+            .entry("env")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or_else(|| "Claude settings env must be a JSON object.".to_string())?;
+        env.insert("AIVATAR_LEARNING_ENABLED".to_string(), serde_json::json!("1"));
+        env.insert(
+            "AIVATAR_LEARNING_PROVIDER".to_string(),
+            serde_json::json!("claude-code"),
+        );
+    }
+
+    let ordinary = serde_json::json!({ "hooks": [claude_hook_handler(&hook_path)] });
+    let tool = serde_json::json!({
+        "matcher": "*",
+        "hooks": [claude_hook_handler(&hook_path)]
+    });
+    for event in [
+        "SessionStart",
+        "UserPromptSubmit",
+        "MessageDisplay",
+        "Notification",
+        "PostToolBatch",
+        "Stop",
+        "SubagentStop",
+        "TeammateIdle",
+        "StopFailure",
+        "TaskCompleted",
+        "SessionEnd",
+    ] {
+        upsert_claude_hook(&mut settings, event, ordinary.clone())?;
+    }
+    for event in [
+        "PreToolUse",
+        "PermissionRequest",
+        "PermissionDenied",
+        "PostToolUse",
+        "PostToolUseFailure",
+    ] {
+        upsert_claude_hook(&mut settings, event, tool.clone())?;
+    }
+    if let Some(root) = settings.as_object_mut() {
+        root.insert(
+            "statusLine".to_string(),
+            serde_json::json!({
+                "type": "command",
+                "command": claude_status_line_command(&status_line_path),
+                "refreshInterval": 5
+            }),
+        );
+    }
+    atomic_write_text(
+        &settings_path,
+        &serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?,
+    )
+}
+
+fn enable_opencode_integration(app: Option<&tauri::AppHandle>) -> Result<(), String> {
+    let target =
+        opencode_plugin_path().ok_or_else(|| "Could not resolve opencode plugin path.".to_string())?;
+    let scripts = scripts_root(app)
+        .ok_or_else(|| "Aivatar scripts were not found in the app resources.".to_string())?;
+    let source = scripts.join("aivatar-opencode-plugin.mjs");
+    let mut content = std::fs::read_to_string(&source)
+        .map_err(|error| format!("Could not read opencode plugin: {error}"))?;
+    let learning_script = scripts.join("aivatar-learning-worker.mjs");
+    let learning_script_value = if learning_script.is_file() {
+        path_text(&learning_script)
+    } else {
+        String::new()
+    };
+    let node_value = resolve_command("node").map(|path| path_text(&path)).unwrap_or_default();
+    content = content.replace(
+        "\"__AIVATAR_LEARNING_SCRIPT__\"",
+        &serde_json::to_string(&learning_script_value).map_err(|error| error.to_string())?,
+    );
+    content = content.replace(
+        "\"__AIVATAR_NODE_COMMAND__\"",
+        &serde_json::to_string(&node_value).map_err(|error| error.to_string())?,
+    );
+    atomic_write_text(&target, &content)
+}
+
+fn claude_code_integration_status() -> AgentIntegrationStatus {
+    let settings_path = claude_settings_path();
+    let settings = settings_path
+        .as_deref()
+        .map(read_json_file)
+        .unwrap_or_else(|| serde_json::json!({}));
+    let cli_path = resolve_command("claude");
+    let has_aivatar_config = json_contains_aivatar(&settings);
+    let enabled = claude_hooks_complete(&settings);
+    let detected = cli_path.is_some()
+        || settings_path
+            .as_ref()
+            .and_then(|path| path.parent().map(std::path::Path::is_dir))
+            .unwrap_or(false);
+    AgentIntegrationStatus {
+        agent: "claude-code".to_string(),
+        label: "Claude Code".to_string(),
+        detected,
+        enabled,
+        cli_available: cli_path.is_some(),
+        needs_restart: has_aivatar_config && !enabled,
+        detail: if enabled {
+            "Hooks/statusLine installed for Claude Code, Chat, and Cowork sessions.".to_string()
+        } else if has_aivatar_config {
+            "Aivatar Claude hooks are incomplete; repair to restore Chat and Cowork tracking.".to_string()
+        } else if detected {
+            "Claude Code detected; enable Aivatar hooks from this app.".to_string()
+        } else {
+            "Claude Code was not found yet.".to_string()
+        },
+        config_path: settings_path.as_ref().map(|path| path_text(path)),
+        connector_path: claude_wrapper_paths().map(|(path, _)| path_text(&path)),
+        cli_path: cli_path.as_ref().map(|path| path_text(path)),
+    }
+}
+
+fn opencode_integration_status() -> AgentIntegrationStatus {
+    let plugin_path = opencode_plugin_path();
+    let cli_path = resolve_command("opencode");
+    #[cfg(target_os = "windows")]
+    let desktop_detected = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .map(|path| path.join("Programs").join("@opencode-aidesktop").join("OpenCode.exe").is_file())
+        .unwrap_or(false);
+    #[cfg(target_os = "macos")]
+    let desktop_detected = [
+        std::path::PathBuf::from("/Applications/OpenCode.app"),
+        std::path::PathBuf::from("/Applications/opencode.app"),
+    ]
+    .iter()
+    .any(|path| path.exists());
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let desktop_detected = false;
+    let enabled = plugin_path.as_ref().is_some_and(|path| path.is_file());
+    let detected = desktop_detected || cli_path.is_some() || enabled;
+    AgentIntegrationStatus {
+        agent: "opencode".to_string(),
+        label: "opencode".to_string(),
+        detected,
+        enabled,
+        cli_available: cli_path.is_some(),
+        needs_restart: false,
+        detail: if enabled {
+            "Plugin installed for opencode Desktop/TUI.".to_string()
+        } else if detected {
+            "opencode detected; enable the Aivatar plugin from this app.".to_string()
+        } else {
+            "opencode was not found yet.".to_string()
+        },
+        config_path: user_home_dir().map(|path| {
+            path.join(".config")
+                .join("opencode")
+                .to_string_lossy()
+                .to_string()
+        }),
+        connector_path: plugin_path.as_ref().map(|path| path_text(path)),
+        cli_path: cli_path.as_ref().map(|path| path_text(path)),
+    }
+}
+
+#[tauri::command]
+fn get_agent_integrations() -> Result<Vec<AgentIntegrationStatus>, String> {
+    Ok(vec![
+        claude_code_integration_status(),
+        opencode_integration_status(),
+    ])
+}
+
+#[tauri::command]
+fn enable_agent_integration(
+    app: tauri::AppHandle,
+    request: AgentIntegrationRequest,
+) -> Result<AgentIntegrationStatus, String> {
+    match request.agent.as_str() {
+        "claude-code" => {
+            enable_claude_code_integration()?;
+            Ok(claude_code_integration_status())
+        }
+        "opencode" => {
+            enable_opencode_integration(Some(&app))?;
+            Ok(opencode_integration_status())
+        }
+        _ => Err("Unsupported agent integration.".to_string()),
+    }
+}
+
 fn is_status_bridge_running() -> bool {
     std::net::TcpStream::connect_timeout(
         &std::net::SocketAddr::from(([127, 0, 0, 1], 38988)),
@@ -215,7 +688,7 @@ fn start_status_bridge_inner(app: Option<&tauri::AppHandle>) -> Result<BridgeSta
         });
     }
 
-    local_bridge::start()?;
+    local_bridge::start(learning_script.clone())?;
     let _ = codex_discovery::start(learning_script);
 
     Ok(BridgeStartResult {
@@ -368,10 +841,12 @@ fn powershell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+#[cfg(target_os = "macos")]
 fn posix_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r#"'\''"#))
 }
 
+#[cfg(target_os = "macos")]
 fn applescript_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -513,6 +988,7 @@ fn start_agent_cli(
     let (agent, command) = match request.agent.as_str() {
         "codex" => ("codex", "codex"),
         "claude-code" => ("claude-code", "claude"),
+        "opencode" => ("opencode", "opencode"),
         _ => return Err("Unsupported agent.".to_string()),
     };
 
@@ -605,6 +1081,7 @@ fn start_task_agent(
     let (agent, command) = match request.agent.as_str() {
         "codex" => ("codex", "codex"),
         "claude-code" => ("claude-code", "claude"),
+        "opencode" => ("opencode", "opencode"),
         _ => return Err("Unsupported agent.".to_string()),
     };
 
@@ -709,7 +1186,9 @@ pub fn run() {
             pick_launcher_directory,
             start_agent_cli,
             start_task_agent,
-            resize_main_window_for_side_panel
+            resize_main_window_for_side_panel,
+            get_agent_integrations,
+            enable_agent_integration
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {

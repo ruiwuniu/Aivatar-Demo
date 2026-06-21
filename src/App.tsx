@@ -31,7 +31,24 @@ import {
   setFurnitureBehavior,
   tickAvatar,
 } from "./game/simulation";
+import {
+  PAINTING_GALLERY_LIMIT,
+  advancePaintingDraft,
+  createPaintingDraft,
+  normalizePaintingGallery,
+  paintingPixelVisible,
+  paintingProgressRatio,
+  rewardBitsForPaintingQuality,
+} from "./game/paintings";
 import { useCodexStatus } from "./hooks/useCodexStatus";
+import {
+  agentDisplayName,
+  agentSourceBadge,
+  agentSourceClassName,
+  isRewardAgent,
+  launcherAgentDefinitions,
+  type LauncherAgentId,
+} from "./agentRegistry";
 import {
   LOCALE_KEY,
   activityLabel,
@@ -50,6 +67,9 @@ import type {
   AivatarMemory,
   AivatarMemoryEvent,
   AivatarNavMemory,
+  AivatarPaintingArtwork,
+  AivatarPaintingDraft,
+  AivatarPaintingPlan,
   AivatarSaveState,
   AvatarAppearanceId,
   AvatarRuntime,
@@ -61,6 +81,7 @@ import type {
   FurnitureInteractionKind,
   FurnitureInteractionState,
   FurnitureStorageEntry,
+  GrowthTrait,
   IdleBubbleLanguagePreference,
   InventoryEntry,
   ItemDefinition,
@@ -76,6 +97,19 @@ import type {
   TokenUsage,
 } from "./types";
 
+type AgentIntegrationStatus = {
+  agent: LauncherAgentId;
+  label: string;
+  detected: boolean;
+  enabled: boolean;
+  cli_available: boolean;
+  needs_restart: boolean;
+  detail: string;
+  config_path?: string | null;
+  connector_path?: string | null;
+  cli_path?: string | null;
+};
+
 const SAVE_KEY = "aivatar.save.v1";
 const SAVE_SLOTS_KEY = "aivatar.saveSlots.v1";
 const ACTIVE_SAVE_SLOT_KEY = "aivatar.activeSaveSlot.v1";
@@ -90,6 +124,7 @@ const BGM_VOLUME_KEY = "aivatar.bgmVolume.v1";
 const BGM_TRACK_KEY = "aivatar.bgmTrack.v1";
 const AUTO_MUSIC_KEY = "aivatar.autoMusic.v1";
 const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
+const PAINTING_PLAN_URL = "http://127.0.0.1:38988/painting-plan";
 const SAVE_LAYOUT_VERSION = 2;
 const MAX_SAVE_SLOTS = 8;
 const DEFAULT_AVATAR_APPEARANCE_ID = "octopus";
@@ -103,6 +138,9 @@ const PLAY_MOOD_RECOVERY_INTERVAL_SECONDS = 14;
 const PLAY_ACTIVE_TARGET_REACH = 24;
 const PAINT_MOOD_RECOVERY_PER_TICK = 1;
 const PAINT_RECOVERY_INTERVAL_SECONDS = 16;
+const PAINT_INTERACTION_SECONDS = 24;
+const PAINTING_PROGRESS_SAVE_INTERVAL_SECONDS = 1;
+const PAINTING_PLAN_REQUEST_TIMEOUT_MS = 52_000;
 const MUSIC_MOOD_DECAY_MULTIPLIER = 0.35;
 const BGM_AUTONOMOUS_STOP_MIN_SECONDS = 45;
 const BGM_AUTONOMOUS_STOP_CHECK_SECONDS = 60;
@@ -111,6 +149,7 @@ const COFFEE_MACHINE_ITEM_ID = "coffee-machine";
 const EASEL_ITEM_ID = "oil-easel";
 const RECORD_PLAYER_ITEM_ID = "record-player";
 const COFFEE_CUP_ITEM_ID = "coffee-cup";
+const PAINTING_REPLACEABLE_ITEM_IDS = new Set(["poster", "sky-sentinel-poster"]);
 const COFFEE_ITEM_ID = "coffee";
 const COLA_ITEM_ID = "cola";
 const BENTO_ITEM_ID = "bento";
@@ -191,7 +230,11 @@ const COFFEE_AUTONOMOUS_COOLDOWN_SECONDS = 90;
 const WORK_BOOST_SECONDS = 120;
 const WORK_BOOST_COMPLETE_BONUS = 3;
 const TOKEN_REWARD_TOKEN_STEP = 1000;
-const TOKEN_REWARD_MAX_BITS = 40;
+const TOKEN_REWARD_DEFAULT_MAX_BITS = 40;
+const TOKEN_REWARD_HIGH_USAGE_TOKEN_THRESHOLD = 100_000;
+const TOKEN_REWARD_EXTREME_USAGE_TOKEN_THRESHOLD = 1_000_000;
+const TOKEN_REWARD_HIGH_USAGE_MAX_BITS = 100;
+const TOKEN_REWARD_EXTREME_USAGE_MAX_BITS = 1000;
 const TOKEN_REWARD_CACHED_INPUT_WEIGHT = 0.1;
 const INTERACTION_ARRIVAL_DISTANCE = 8;
 const AVATAR_FOOTPRINT_HALF_WIDTH = 6;
@@ -226,6 +269,9 @@ const COLLAPSED_WINDOW_MIN_WIDTH = DEFAULT_SCENE_PANEL_WIDTH + APP_HORIZONTAL_PA
 const DEFAULT_WINDOW_HEIGHT = 520;
 const SHOW_DEBUG_CARD = true;
 const EXPANDED_WINDOW_MIN_WIDTH = 720;
+const COLLAPSED_WINDOW_CLIENT_WIDTH_GUARD = 2;
+const COLLAPSED_WINDOW_RESIZE_RETRY_DELAY_MS = 50;
+const COLLAPSED_WINDOW_RESIZE_RETRY_LIMIT = 2;
 const MEMORY_RECENT_EVENT_LIMIT = 20;
 const BEHAVIOR_DEMO_SECONDS = 3;
 const SIDE_PANEL_TRANSITION_MS = 80;
@@ -334,6 +380,7 @@ const COLA_DRINK_AUDIO_VOLUME_MULTIPLIER = 0.45;
 const COLA_DRINK_AFTER_CAN_OPEN_DELAY_MS = 1200;
 const COFFEE_DRINK_AUDIO_VOLUME_MULTIPLIER = 0.42;
 const BENTO_EAT_AUDIO_VOLUME_MULTIPLIER = 0.42;
+const AUTONOMOUS_ACTION_STUCK_SECONDS = 120;
 const DEMO_BEHAVIORS: BehaviorName[] = [
   "idle",
   "phone",
@@ -371,7 +418,6 @@ type ShopCategoryId =
 
 type DecorSurfaceCategoryId = "wallpaper" | "flooring";
 
-type LauncherAgentId = "codex" | "claude-code";
 type UiThemeId = "classic" | "terminal" | "terminal-amber" | "arcade-cabinet";
 type SceneUiThemeId = Exclude<UiThemeId, "arcade-cabinet">;
 type BgmTrack = (typeof BGM_TRACKS)[number];
@@ -618,12 +664,23 @@ const weightedTokensForUsage = (usage?: TokenUsage) => {
   );
 };
 
+const maxRewardBitsForUsage = (usage?: TokenUsage) => {
+  const totalTokens = usage?.totalTokens ?? 0;
+  if (totalTokens > TOKEN_REWARD_EXTREME_USAGE_TOKEN_THRESHOLD) {
+    return TOKEN_REWARD_EXTREME_USAGE_MAX_BITS;
+  }
+  if (totalTokens > TOKEN_REWARD_HIGH_USAGE_TOKEN_THRESHOLD) {
+    return TOKEN_REWARD_HIGH_USAGE_MAX_BITS;
+  }
+  return TOKEN_REWARD_DEFAULT_MAX_BITS;
+};
+
 const rewardBitsForUsage = (usage?: TokenUsage) => {
   if (!usage?.totalTokens || usage.totalTokens <= 0) return 4;
   const weightedTokens = weightedTokensForUsage(usage);
 
   return Math.min(
-    TOKEN_REWARD_MAX_BITS,
+    maxRewardBitsForUsage(usage),
     4 + Math.floor(weightedTokens / TOKEN_REWARD_TOKEN_STEP),
   );
 };
@@ -639,7 +696,7 @@ const rewardSummaryForUsage = (usage?: TokenUsage) => {
   if (usage.scope === "context-window") return null;
   const weightedTokens = weightedTokensForUsage(usage);
   const bits = rewardBitsForUsage(usage);
-  const capped = bits >= TOKEN_REWARD_MAX_BITS ? " cap" : "";
+  const capped = bits >= maxRewardBitsForUsage(usage) ? " cap" : "";
   return `${formatTokenCount(usage.totalTokens)} tokens -> ${bits} bits${capped} (${formatTokenCount(weightedTokens)} weighted)`;
 };
 
@@ -1370,15 +1427,6 @@ const traitChangesForPurchase = (
     ? { efficiency: 1 }
     : { curiosity: 1, creativity: 1 };
 
-const agentDisplayName = (status: Pick<CodexStatusMessage, "agent">) => {
-  if (status.agent === "codex") return "Codex";
-  if (status.agent === "claude-code") return "Claude Code";
-  return status.agent?.trim() || "agent";
-};
-
-const isRewardAgent = (status: Pick<CodexStatusMessage, "agent">) =>
-  status.agent === "codex" || status.agent === "claude-code";
-
 type BusyRecoveryNeed =
   | { behavior: "snack"; targetFurnitureId: string }
   | { behavior: "play"; placedItemId: string }
@@ -1871,6 +1919,32 @@ type PendingWorldInteraction =
 const runtimeActionBehavior = (avatar: AvatarRuntime): BehaviorName =>
   avatar.actionIntent ?? avatar.behavior;
 
+const hasPlacedRecordPlayer = (content: AivatarContent) =>
+  Boolean(content.placedItems?.some((item) => item.itemId === RECORD_PLAYER_ITEM_ID));
+
+const avatarRuntimeHasFiniteNavigation = (avatar: AvatarRuntime) =>
+  [
+    avatar.x,
+    avatar.y,
+    avatar.targetX,
+    avatar.targetY,
+    avatar.behaviorTimer,
+  ].every(Number.isFinite);
+
+const resetRuntimeToIdle = (avatar: AvatarRuntime): AvatarRuntime => ({
+  ...avatar,
+  targetX: avatar.x,
+  targetY: avatar.y,
+  behavior: "idle",
+  behaviorTimer: 0,
+  expression: "calm",
+  activityLabel: undefined,
+  actionIntent: undefined,
+  actionActivityLabel: undefined,
+  interactionTargetAlternates: undefined,
+  navigationFailure: undefined,
+});
+
 type SceneContextMenuState = {
   x: number;
   y: number;
@@ -2202,6 +2276,7 @@ const saveFromContent = (
   avatarName: options.avatarName?.trim() || content.avatar.name,
   memory: defaultMemory(),
   navMemory: defaultNavMemory(),
+  paintingGallery: normalizePaintingGallery(),
   petStats: content.petStats,
   inventory: removeDeprecatedInventoryItems(content.inventory),
   furnitureStorage: defaultFurnitureStorage(),
@@ -2243,6 +2318,7 @@ const normalizeSavePayload = (
     furnitureStorage: normalizeFurnitureStorage(parsed.furnitureStorage),
     memory: normalizeMemory(parsed.memory),
     navMemory: normalizeNavMemory(parsed.navMemory),
+    paintingGallery: normalizePaintingGallery(parsed.paintingGallery),
     activeFurnitureSkinIds: normalizeFurnitureSkinIds(parsed.activeFurnitureSkinIds),
     inventory: removeDeprecatedInventoryItems(
       parsed.inventory ?? fallback.inventory,
@@ -2294,6 +2370,7 @@ const parseImportedSave = (content: AivatarContent, raw: string): AivatarSaveSta
     "placedItems",
     "wallet",
     "memory",
+    "paintingGallery",
   ];
   if (!recognizableKeys.some((key) => key in parsed)) return null;
 
@@ -2688,6 +2765,19 @@ const isTaskCabinetExitIdle = (session: CodexStatusMessage | undefined) => {
   );
 };
 
+const isClaudeLifecycleOnlyIdleSession = (session: CodexStatusMessage) => {
+  if (session.agent !== "claude-code" || session.status !== "idle") return false;
+  if (session.usage || session.learning) return false;
+  const phase = session.phase ?? "";
+  const message = session.message ?? session.summary ?? session.task ?? "";
+  return (
+    phase === "session-start" ||
+    phase === "session-end" ||
+    phase === "other" ||
+    /Claude Code session (connected|ended)/i.test(message)
+  );
+};
+
 const isTaskCabinetLiveWorkStatus = (status: CodexStatusMessage) =>
   status.status === "thinking" ||
   status.status === "executing" ||
@@ -2841,9 +2931,11 @@ export const App = () => {
   const [activeDecorSurfaceCategory, setActiveDecorSurfaceCategory] =
     useState<DecorSurfaceCategoryId>("wallpaper");
   const [decorPanelOpen, setDecorPanelOpen] = useState(false);
+  const [paintingGalleryPanelOpen, setPaintingGalleryPanelOpen] = useState(false);
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
   const [growthPanelOpen, setGrowthPanelOpen] = useState(false);
   const [sessionsPanelOpen, setSessionsPanelOpen] = useState(false);
+  const [integrationsPanelOpen, setIntegrationsPanelOpen] = useState(false);
   const [taskCabinetPanelOpen, setTaskCabinetPanelOpen] = useState(false);
   const [launcherPanelOpen, setLauncherPanelOpen] = useState(false);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
@@ -2960,6 +3052,9 @@ export const App = () => {
   const [launcherArgs, setLauncherArgs] = useState("");
   const [launcherAllowNewSession, setLauncherAllowNewSession] = useState(false);
   const [launcherMessage, setLauncherMessage] = useState("");
+  const [agentIntegrations, setAgentIntegrations] = useState<AgentIntegrationStatus[]>([]);
+  const [agentIntegrationsChecked, setAgentIntegrationsChecked] = useState(false);
+  const [agentIntegrationMessage, setAgentIntegrationMessage] = useState("");
   const effectiveStatus = debugStatus ?? status;
   const effectiveSource = debugStatus ? "debug" : source;
   const statusRef = useRef({ status: effectiveStatus, source: effectiveSource, endpoint });
@@ -2971,6 +3066,7 @@ export const App = () => {
   const taskCabinetVisualFlowRef = useRef<TaskCabinetVisualFlow | null>(null);
   const lastRewardedCompleteKeyRef = useRef<string | null>(null);
   const appliedLearningIdsRef = useRef(new Set<string>());
+  const paintingPlanRequestsRef = useRef(new Set<string>());
   const behaviorDemoTimerRef = useRef<number | null>(null);
   const previousSessionStatusRef = useRef(
     new Map<string, CodexStatusMessage["status"]>(),
@@ -3094,7 +3190,10 @@ export const App = () => {
       : effectiveSource === "debug"
         ? ui("source.debug")
         : ui("source.simulated");
-  const sessionRows = sessions.slice(0, 6).map((session) => ({
+  const visibleSessions = sessions.filter(
+    (session) => !isClaudeLifecycleOnlyIdleSession(session),
+  );
+  const sessionRows = visibleSessions.slice(0, 6).map((session) => ({
     ...session,
     sessionKey: explicitStatusSessionKey(session),
     stale: isPresenceStale(session, nowMs),
@@ -3106,6 +3205,18 @@ export const App = () => {
   const liveSessionCount = sessionRows.filter(
     (session) => !session.stale || session.sessionKey === connectedSessionKey,
   ).length;
+  const enabledIntegrationCount = agentIntegrations.filter(
+    (integration) => integration.enabled,
+  ).length;
+  const detectedIntegrationCount = agentIntegrations.filter(
+    (integration) => integration.detected,
+  ).length;
+  const integrationToggleStatus =
+    !agentIntegrationsChecked
+      ? ui("integrations.checking")
+      : agentIntegrations.length === 0
+        ? ui("integrations.desktopOnlyShort")
+        : `${enabledIntegrationCount}/${agentIntegrations.length} ${ui("integrations.enabledShort")}`;
   const currentSessionContextMeter =
     sessionRows.find((session) => session.sessionKey === currentSessionKey)
       ?.contextMeter ??
@@ -3114,7 +3225,7 @@ export const App = () => {
     sessionRows.find((session) => session.sessionKey === activeSessionKey)
       ?.contextMeter ??
     contextWindowMeterForUsage(effectiveStatus.usage);
-  const clearableStaleSessionCount = sessions.filter((session) => {
+  const clearableStaleSessionCount = visibleSessions.filter((session) => {
     const sessionKey = explicitStatusSessionKey(session);
     return sessionKey !== activeSessionKey && isPresenceStale(session, nowMs);
   }).length;
@@ -3154,11 +3265,30 @@ export const App = () => {
       const nextWidth = open
         ? Math.max(previousExpandedWindowWidthRef.current, DEFAULT_EXPANDED_WINDOW_WIDTH)
         : collapsedWidth;
+      let requestedWidth = nextWidth;
       await invoke("resize_main_window_for_side_panel", {
-        width: nextWidth,
+        width: requestedWidth,
         minWidth,
         height: DEFAULT_WINDOW_HEIGHT,
       });
+
+      if (!open) {
+        for (let attempt = 0; attempt < COLLAPSED_WINDOW_RESIZE_RETRY_LIMIT; attempt += 1) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, COLLAPSED_WINDOW_RESIZE_RETRY_DELAY_MS);
+          });
+
+          const widthDeficit = Math.ceil(collapsedWidth - window.innerWidth);
+          if (widthDeficit <= 0) break;
+
+          requestedWidth += widthDeficit + COLLAPSED_WINDOW_CLIENT_WIDTH_GUARD;
+          await invoke("resize_main_window_for_side_panel", {
+            width: requestedWidth,
+            minWidth: requestedWidth,
+            height: DEFAULT_WINDOW_HEIGHT,
+          });
+        }
+      }
     } catch {
       // Web preview has no native window to resize.
     }
@@ -3176,7 +3306,7 @@ export const App = () => {
     }
     const sceneWidth =
       scenePanelRef.current?.getBoundingClientRect().width ?? DEFAULT_SCENE_PANEL_WIDTH;
-    const lockedSceneWidth = Math.max(Math.round(sceneWidth), DEFAULT_SCENE_PANEL_WIDTH);
+    const lockedSceneWidth = Math.max(Math.ceil(sceneWidth), DEFAULT_SCENE_PANEL_WIDTH);
     const collapsedWidth = lockedSceneWidth + APP_HORIZONTAL_PADDING;
 
     if (sidePanelTimerRef.current) {
@@ -3230,6 +3360,51 @@ export const App = () => {
       setBridgeStartMessage(ui("message.bridgeDesktopOnly"));
     }
   };
+
+  const refreshAgentIntegrations = async () => {
+    setAgentIntegrationsChecked(false);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke<AgentIntegrationStatus[]>("get_agent_integrations");
+      setAgentIntegrations(result);
+      setAgentIntegrationMessage("");
+      return result;
+    } catch {
+      setAgentIntegrations([]);
+      setAgentIntegrationMessage(ui("message.integrationsDesktopOnly"));
+      return [];
+    } finally {
+      setAgentIntegrationsChecked(true);
+    }
+  };
+
+  const enableAgentIntegration = async (agent: LauncherAgentId) => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke<AgentIntegrationStatus>("enable_agent_integration", {
+        request: { agent },
+      });
+      setAgentIntegrations((current) => {
+        const rest = current.filter((item) => item.agent !== result.agent);
+        return [...rest, result].sort((left, right) =>
+          left.label.localeCompare(right.label),
+        );
+      });
+      setAgentIntegrationMessage(
+        result.enabled
+          ? ui("message.integrationEnabled", { agent: result.label })
+          : ui("message.integrationChecked", { agent: result.label }),
+      );
+      void refreshAgentIntegrations();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setAgentIntegrationMessage(detail || ui("message.integrationFailed"));
+    }
+  };
+
+  useEffect(() => {
+    void refreshAgentIntegrations();
+  }, []);
 
   const startAgentCliFromLauncher = async () => {
     const cwd = launcherDirectory.trim();
@@ -3569,6 +3744,36 @@ export const App = () => {
       startedAt: performance.now(),
       bubbleText: ui("thought.going"),
     });
+  };
+
+  const ensurePaintingDraftForEasel = (placedItem: PlacedItem) => {
+    let nextProgress = 0;
+
+    setSave((current) => {
+      const gallery = normalizePaintingGallery(current.paintingGallery);
+      const activeDraft = gallery.activeDraft
+        ? {
+            ...gallery.activeDraft,
+            easelItemId: placedItem.id,
+            updatedAt: new Date().toISOString(),
+          }
+        : createPaintingDraft(normalizeMemory(current.memory), {
+            avatarId: current.avatarId,
+            easelItemId: placedItem.id,
+          });
+
+      nextProgress = paintingProgressRatio(activeDraft);
+
+      return {
+        ...current,
+        paintingGallery: {
+          ...gallery,
+          activeDraft,
+        },
+      };
+    });
+
+    return nextProgress;
   };
 
   const placedItemContextAction = (
@@ -4009,6 +4214,7 @@ export const App = () => {
         taskCabinetEntries.filter((entry) => entry.status === "failed").length,
         uiThemeForScene(uiTheme),
         navDebugOverlay,
+        save.paintingGallery,
         activeRecordPlayerId,
         normalizeAvatarAppearanceId(save.avatarAppearanceId),
       );
@@ -4031,6 +4237,7 @@ export const App = () => {
     movingFurniture,
     save.avatarAppearanceId,
     save.memory,
+    save.paintingGallery,
     taskCabinetEntries,
     uiTheme,
     navDebugOverlay,
@@ -4060,6 +4267,129 @@ export const App = () => {
     persistSave(savedState, saveSlotStorageKey(activeSaveSlotId));
     updateSaveSlotSummary(activeSaveSlotId, savedState);
   }, [activeSaveSlotId, save]);
+
+  const compactPaintingPlanText = (value: unknown, maxLength: number) =>
+    Array.from(String(value ?? "").replace(/\s+/g, " ").trim())
+      .slice(0, maxLength)
+      .join("");
+
+  const paintingPlanPayloadForDraft = (draft: AivatarPaintingDraft) => {
+    const current = saveRef.current;
+    const currentMemory = normalizeMemory(current.memory);
+    const sortedTraits = (
+      Object.entries(currentMemory.growth.traits) as Array<[GrowthTrait, number]>
+    ).sort((left, right) => right[1] - left[1]);
+    const dominantTrait = sortedTraits[0]?.[0] ?? "focus";
+    const secondaryTrait = sortedTraits[1]?.[0] ?? dominantTrait;
+
+    return {
+      avatarId: compactPaintingPlanText(current.avatarId, 80),
+      avatarName: compactPaintingPlanText(
+        current.avatarName ?? contentBase.avatar.name,
+        40,
+      ),
+      growthLevel: currentMemory.growth.level,
+      traits: currentMemory.growth.traits,
+      dominantTrait,
+      secondaryTrait,
+      preferences: {
+        favoriteActivity: currentMemory.preferences.favoriteActivity,
+        favoriteRecovery: currentMemory.preferences.favoriteRecovery,
+        idleBubbleLanguage:
+          currentMemory.preferences.idleBubbleLanguage ?? "auto",
+      },
+      savedBubbles: (currentMemory.preferences.idleBubblePhrases ?? [])
+        .slice(0, 6)
+        .map((phrase) => compactPaintingPlanText(phrase, 80))
+        .filter(Boolean),
+      recentEvents: currentMemory.recentEvents.slice(0, 8).map((event) => ({
+        type: event.type,
+        summary: compactPaintingPlanText(event.summary, 180),
+        agent: compactPaintingPlanText(event.agent, 40) || undefined,
+        status: event.status,
+        behavior: event.behavior,
+        itemId: compactPaintingPlanText(event.itemId, 80) || undefined,
+        bits: event.bits,
+      })),
+      draft: {
+        id: draft.id,
+        easelItemId: draft.easelItemId,
+        createdAt: draft.artwork.createdAt,
+        progressSeconds: Math.round(draft.progressSeconds),
+        targetSeconds: Math.round(draft.targetSeconds),
+        sourceSummary: compactPaintingPlanText(draft.artwork.sourceSummary, 220),
+      },
+      seedHint: `${current.avatarId}:${draft.id}:${draft.artwork.seed}:${Date.now()}`,
+    };
+  };
+
+  const requestPaintingPlanForDraft = async (draft: AivatarPaintingDraft) => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(
+      () => controller.abort(),
+      PAINTING_PLAN_REQUEST_TIMEOUT_MS,
+    );
+
+    try {
+      const response = await fetch(PAINTING_PLAN_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(paintingPlanPayloadForDraft(draft)),
+        signal: controller.signal,
+      });
+      if (!response.ok) return;
+
+      const parsed = (await response.json()) as {
+        paintingPlan?: Partial<AivatarPaintingPlan>;
+        plan?: Partial<AivatarPaintingPlan>;
+      };
+      const paintingPlan = parsed.paintingPlan ?? parsed.plan;
+      if (!paintingPlan || typeof paintingPlan !== "object") return;
+
+      setSave((current) => {
+        const gallery = normalizePaintingGallery(current.paintingGallery);
+        const activeDraft = gallery.activeDraft;
+        if (!activeDraft || activeDraft.id !== draft.id) return current;
+        if (
+          draft.easelItemId &&
+          activeDraft.easelItemId &&
+          activeDraft.easelItemId !== draft.easelItemId
+        ) {
+          return current;
+        }
+        if (activeDraft.artwork.paintingPlan?.source === "llm") return current;
+
+        const replacementDraft = createPaintingDraft(normalizeMemory(current.memory), {
+          avatarId: current.avatarId,
+          easelItemId: activeDraft.easelItemId,
+          nowIso: activeDraft.artwork.createdAt,
+          paintingPlan,
+        });
+
+        return {
+          ...current,
+          paintingGallery: {
+            ...gallery,
+            activeDraft: {
+              ...activeDraft,
+              artwork: replacementDraft.artwork,
+              updatedAt: new Date().toISOString(),
+            },
+          },
+        };
+      });
+    } finally {
+      window.clearTimeout(timer);
+    }
+  };
+
+  useEffect(() => {
+    const activeDraft = normalizePaintingGallery(save.paintingGallery).activeDraft;
+    if (!activeDraft || activeDraft.artwork.paintingPlan?.source === "llm") return;
+    if (paintingPlanRequestsRef.current.has(activeDraft.id)) return;
+    paintingPlanRequestsRef.current.add(activeDraft.id);
+    void requestPaintingPlanForDraft(activeDraft).catch(() => undefined);
+  }, [save.paintingGallery]);
 
   useEffect(() => {
     const currentMemory = normalizeMemory(save.memory);
@@ -4463,6 +4793,7 @@ export const App = () => {
     let sleepAccumulator = 0;
     let playAccumulator = 0;
     let paintAccumulator = 0;
+    let paintingProgressAccumulator = 0;
     let coffeeAccumulator = 0;
     let bgmAutonomousStopAccumulator = 0;
     let uiAccumulator = 0;
@@ -4475,11 +4806,16 @@ export const App = () => {
     let lastNavLearningTargetKey = "";
     let lastNavLearningSuccessKey = "";
     let lastNavLearningFailureKey = "";
+    let autonomousActionWatchKey = "";
+    let autonomousActionWatchSeconds = 0;
     let stopped = false;
 
     const loop = (now: number) => {
       if (stopped) return;
-      const elapsedSeconds = Math.min((now - previous) / 1000, 0.08);
+      const rawElapsedSeconds = (now - previous) / 1000;
+      const elapsedSeconds = Number.isFinite(rawElapsedSeconds)
+        ? Math.min(Math.max(rawElapsedSeconds, 0), 0.08)
+        : 0;
       previous = now;
       frame += 1;
       statAccumulator += elapsedSeconds;
@@ -4628,6 +4964,44 @@ export const App = () => {
           avatarAppearanceId: normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
         },
       );
+
+      if (
+        runtimeActionBehavior(runtimeRef.current) === "music" &&
+        !hasPlacedRecordPlayer(currentContent)
+      ) {
+        runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
+        setAvatar(runtimeRef.current);
+      }
+
+      const autonomousActionWatchActive =
+        !isHighPriorityStatus(currentStatus) &&
+        !busyRecoveryActive &&
+        !taskCabinetVisualFlowActive &&
+        !pendingWorldInteractionRef.current &&
+        !isBlockingInteraction(activeInteractionRef.current) &&
+        Boolean(runtimeRef.current.actionIntent);
+
+      if (!autonomousActionWatchActive) {
+        autonomousActionWatchKey = "";
+        autonomousActionWatchSeconds = 0;
+      } else {
+        const watchKey = `${runtimeRef.current.behavior}:${runtimeRef.current.actionIntent}`;
+        if (watchKey !== autonomousActionWatchKey) {
+          autonomousActionWatchKey = watchKey;
+          autonomousActionWatchSeconds = 0;
+        }
+        autonomousActionWatchSeconds += elapsedSeconds;
+
+        if (
+          !avatarRuntimeHasFiniteNavigation(runtimeRef.current) ||
+          autonomousActionWatchSeconds >= AUTONOMOUS_ACTION_STUCK_SECONDS
+        ) {
+          autonomousActionWatchKey = "";
+          autonomousActionWatchSeconds = 0;
+          runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
+          setAvatar(runtimeRef.current);
+        }
+      }
 
       if (runtimeRef.current.navigationFailure) {
         const failedInteraction = pendingWorldInteractionRef.current;
@@ -4967,10 +5341,13 @@ export const App = () => {
             } else if (pendingWorldInteraction.kind === "brew") {
               startCoffeeMachineInteraction(pendingWorldInteraction.placedItem);
             } else if (pendingWorldInteraction.kind === "paint") {
+              const progress = ensurePaintingDraftForEasel(
+                pendingWorldInteraction.placedItem,
+              );
               runtimeRef.current = {
                 ...runtimeRef.current,
                 behavior: "paint",
-                behaviorTimer: 8,
+                behaviorTimer: PAINT_INTERACTION_SECONDS,
                 expression: "happy",
                 facing: "front",
                 activityLabel: "Painting",
@@ -4983,6 +5360,7 @@ export const App = () => {
                 message: ui("message.selected", { name: pendingWorldInteraction.item.name }),
                 startedAt: performance.now(),
                 bubbleText: ui("thought.paint"),
+                progress,
               });
             } else if (pendingWorldInteraction.kind === "play") {
               runtimeRef.current = {
@@ -5319,6 +5697,124 @@ export const App = () => {
           isNearPlacedItemInteractionTarget(runtimeRef.current, easel, currentContent)
         ) {
           paintAccumulator += elapsedSeconds;
+          paintingProgressAccumulator += elapsedSeconds;
+
+          if (paintingProgressAccumulator >= PAINTING_PROGRESS_SAVE_INTERVAL_SECONDS) {
+            const progressElapsed = paintingProgressAccumulator;
+            paintingProgressAccumulator = 0;
+            let nextProgress: number | null = null;
+            const completionFeedbackRef: {
+              current: AivatarPaintingArtwork | null;
+            } = { current: null };
+
+            setSave((current) => {
+              const nowIso = new Date().toISOString();
+              const gallery = normalizePaintingGallery(current.paintingGallery);
+              const draft = gallery.activeDraft
+                ? {
+                    ...gallery.activeDraft,
+                    easelItemId: easel.id,
+                  }
+                : createPaintingDraft(normalizeMemory(current.memory), {
+                    avatarId: current.avatarId,
+                    easelItemId: easel.id,
+                    nowIso,
+                  });
+              const advancedDraft = advancePaintingDraft(
+                draft,
+                progressElapsed,
+                nowIso,
+              );
+              nextProgress = paintingProgressRatio(advancedDraft);
+
+              if (nextProgress < 1) {
+                return {
+                  ...current,
+                  paintingGallery: {
+                    ...gallery,
+                    activeDraft: advancedDraft,
+                  },
+                };
+              }
+
+              const saleBits = rewardBitsForPaintingQuality(
+                advancedDraft.artwork.quality,
+              );
+              const completedArtwork = {
+                ...advancedDraft.artwork,
+                completedAt: nowIso,
+                saleBits,
+              };
+              completionFeedbackRef.current = completedArtwork;
+
+              return {
+                ...current,
+                paintingGallery: {
+                  artworks: [
+                    completedArtwork,
+                    ...gallery.artworks.filter(
+                      (artwork) => artwork.id !== completedArtwork.id,
+                    ),
+                  ].slice(0, PAINTING_GALLERY_LIMIT),
+                },
+                memory: recordLifeMemory(
+                  current.memory,
+                  {
+                    type: "painting_complete",
+                    summary: `Finished painting ${completedArtwork.title}`,
+                    behavior: "paint",
+                    itemId: EASEL_ITEM_ID,
+                  },
+                  {
+                    creativity: completedArtwork.quality,
+                    ...(completedArtwork.quality >= 4 ? { warmth: 1 } : {}),
+                  },
+                ),
+              };
+            });
+
+            const completionFeedback = completionFeedbackRef.current;
+            if (completionFeedback) {
+              runtimeRef.current = {
+                ...runtimeRef.current,
+                targetX: runtimeRef.current.x,
+                targetY: runtimeRef.current.y,
+                behavior: "idle",
+                behaviorTimer: 2,
+                expression: "happy",
+                activityLabel: "Idle",
+                actionIntent: undefined,
+                actionActivityLabel: undefined,
+                interactionTargetAlternates: undefined,
+              };
+              setAvatar(runtimeRef.current);
+              updateActiveInteraction({
+                kind: "none",
+                furnitureId: easel.id,
+                furnitureName:
+                  currentContent.itemDefinitions.find(
+                    (item) => item.id === EASEL_ITEM_ID,
+                  )?.name ?? "Oil Easel",
+                message: ui("message.paintingComplete", {
+                  name: completionFeedback.title,
+                }),
+                startedAt: now,
+                endsAt: now + REWARD_BUBBLE_SECONDS * 1000,
+                bubbleText: ui("bubble.painting"),
+                progress: 1,
+              });
+            } else if (
+              nextProgress !== null &&
+              activeInteractionRef.current?.furnitureId === easel.id
+            ) {
+              updateActiveInteraction({
+                ...activeInteractionRef.current,
+                startedAt: now,
+                bubbleText: ui("thought.paint"),
+                progress: nextProgress,
+              });
+            }
+          }
 
           if (paintAccumulator >= PAINT_RECOVERY_INTERVAL_SECONDS) {
             paintAccumulator = 0;
@@ -5342,9 +5838,11 @@ export const App = () => {
           }
         } else {
           paintAccumulator = 0;
+          paintingProgressAccumulator = 0;
         }
       } else {
         paintAccumulator = 0;
+        paintingProgressAccumulator = 0;
       }
 
       if (
@@ -5606,6 +6104,7 @@ export const App = () => {
             ).length,
             uiThemeForScene(uiThemeRef.current),
             navDebugOverlayRef.current,
+            saveRef.current.paintingGallery,
             activeRecordPlayerIdRef.current,
             normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
           );
@@ -6793,6 +7292,12 @@ export const App = () => {
     ? findItemDefinition(content, selectedPlacedItem.itemId)
     : null;
   const selectedPlacedItemLocked = isBuiltinTerminalPlacedItem(selectedPlacedItem);
+  const selectedPlacedItemCanShowPainting = Boolean(
+    selectedPlacedItem &&
+      selectedPlacedItemDefinition &&
+      PAINTING_REPLACEABLE_ITEM_IDS.has(selectedPlacedItemDefinition.id) &&
+      getItemPlacementKind(selectedPlacedItemDefinition) === "wall",
+  );
   const selectedWindowDefinition = selectedWindow
     ? findItemDefinition(content, selectedWindow.id)
     : null;
@@ -6800,6 +7305,126 @@ export const App = () => {
     selectedFurniture?.id === TASK_CABINET_FURNITURE_ID
       ? findItemDefinition(content, TASK_CABINET_FURNITURE_ID)
       : null;
+
+  const applyPaintingToSelectedHanging = (artwork: AivatarPaintingArtwork) => {
+    if (!selectedPlacedItem || !selectedPlacedItemCanShowPainting) return;
+
+    const updatedPlacedItem = {
+      ...selectedPlacedItem,
+      artworkId: artwork.id,
+    };
+
+    setSave((current) => ({
+      ...current,
+      placedItems: current.placedItems.map((item) =>
+        item.id === selectedPlacedItem.id ? updatedPlacedItem : item,
+      ),
+    }));
+    updateSelectedPlacedItem(updatedPlacedItem);
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: selectedPlacedItem.id,
+      furnitureName: selectedPlacedItemDefinition?.name ?? ui("roomEdit.title"),
+      message: ui("message.paintingApplied", { name: artwork.title }),
+      startedAt: performance.now(),
+      bubbleText: ui("bubble.painting"),
+    });
+  };
+
+  const clearPaintingFromSelectedHanging = () => {
+    if (
+      !selectedPlacedItem ||
+      !selectedPlacedItemCanShowPainting ||
+      !selectedPlacedItem.artworkId
+    ) {
+      return;
+    }
+
+    const updatedPlacedItem = {
+      ...selectedPlacedItem,
+      artworkId: undefined,
+    };
+
+    setSave((current) => ({
+      ...current,
+      placedItems: current.placedItems.map((item) =>
+        item.id === selectedPlacedItem.id ? updatedPlacedItem : item,
+      ),
+    }));
+    updateSelectedPlacedItem(updatedPlacedItem);
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: selectedPlacedItem.id,
+      furnitureName: selectedPlacedItemDefinition?.name ?? ui("roomEdit.title"),
+      message: ui("message.paintingCleared"),
+      startedAt: performance.now(),
+      bubbleText: ui("bubble.painting"),
+    });
+  };
+
+  const sellPaintingArtwork = (artwork: AivatarPaintingArtwork) => {
+    const savedArtwork = normalizePaintingGallery(
+      saveRef.current.paintingGallery,
+    ).artworks.find((entry) => entry.id === artwork.id);
+    const saleBits = Math.max(0, Math.round(savedArtwork?.saleBits ?? 0));
+    if (!savedArtwork || saleBits <= 0) return;
+
+    setSave((current) => {
+      const gallery = normalizePaintingGallery(current.paintingGallery);
+      const currentArtwork = gallery.artworks.find(
+        (entry) => entry.id === savedArtwork.id,
+      );
+      const currentSaleBits = Math.max(0, Math.round(currentArtwork?.saleBits ?? 0));
+      if (!currentArtwork || currentSaleBits <= 0) return current;
+
+      return {
+        ...current,
+        wallet: { bits: current.wallet.bits + currentSaleBits },
+        placedItems: current.placedItems.map((item) =>
+          item.artworkId === currentArtwork.id
+            ? { ...item, artworkId: undefined }
+            : item,
+        ),
+        paintingGallery: {
+          ...gallery,
+          artworks: gallery.artworks.filter((entry) => entry.id !== currentArtwork.id),
+        },
+        memory: recordLifeMemory(
+          current.memory,
+          {
+            type: "painting_sold",
+            summary: `Sold painting ${currentArtwork.title}`,
+            behavior: "paint",
+            itemId: EASEL_ITEM_ID,
+            bits: currentSaleBits,
+          },
+          { efficiency: 1 },
+        ),
+      };
+    });
+
+    if (selectedPlacedItem?.artworkId === savedArtwork.id) {
+      updateSelectedPlacedItem({
+        ...selectedPlacedItem,
+        artworkId: undefined,
+      });
+    }
+
+    const now = performance.now();
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: "painting-gallery",
+      furnitureName: ui("paintingGallery.title"),
+      message: ui("message.paintingSold", {
+        name: savedArtwork.title,
+        bits: saleBits,
+      }),
+      startedAt: now,
+      endsAt: now + REWARD_BUBBLE_SECONDS * 1000,
+      bubbleText: `+${saleBits} ${ui("currency.bits")}`,
+      rewardBits: saleBits,
+    });
+  };
 
   const placeInventoryItem = (item: ItemDefinition, x: number, y: number) => {
     if (!isPlacedItemPlacementValid(contentRef.current, item.id, x, y)) {
@@ -8253,6 +8878,7 @@ export const App = () => {
       (category) => category.id === activeDecorSurfaceCategory,
     )?.copyKey ?? "decor.wallpaper";
   const memory = normalizeMemory(save.memory);
+  const paintingGallery = normalizePaintingGallery(save.paintingGallery);
   const growth = memory.growth;
   const canDispatchTasks = isTaskCabinetPlaced(content);
   const taskCabinetReadyCount = taskCabinetEntries.filter(
@@ -8331,15 +8957,11 @@ export const App = () => {
   );
   const idleBubbleCandidateBadge = (candidate: IdleBubbleCandidateOption) => {
     if (candidate.source === "llm") return "LLM";
-    if (candidate.agent === "claude-code") return "CC";
-    if (candidate.agent === "codex") return "Codex";
-    return null;
+    return agentSourceBadge(candidate.agent);
   };
   const idleBubbleCandidateBadgeClass = (candidate: IdleBubbleCandidateOption) => {
     if (candidate.source === "llm") return "llm";
-    if (candidate.agent === "claude-code") return "agent-claude-code";
-    if (candidate.agent === "codex") return "agent-codex";
-    return "";
+    return agentSourceClassName(candidate.agent);
   };
   const sessionCandidateOptions = idleBubbleCandidateOptions([
     ...(effectiveStatus.learning?.idleBubbleCandidates ?? []).map((phrase) => ({
@@ -8495,6 +9117,31 @@ export const App = () => {
       : sceneContextMenu
         ? behaviorLabel(locale, sceneContextMenu.target.furniture.interaction)
         : "";
+  const PaintingThumbnail = ({
+    artwork,
+    progress = 1,
+  }: {
+    artwork: AivatarPaintingArtwork;
+    progress?: number;
+  }) => (
+    <svg
+      className="painting-thumbnail"
+      viewBox={`0 0 ${artwork.width} ${artwork.height}`}
+      preserveAspectRatio="none"
+      aria-label={artwork.title}
+      role="img"
+    >
+      <rect width={artwork.width} height={artwork.height} fill="#fff8df" />
+      {artwork.pixels.flatMap((row, y) =>
+        [...row].map((pixel, x) => {
+          if (!paintingPixelVisible(artwork, x, y, progress)) return null;
+          const colorIndex = Number.parseInt(pixel, 36);
+          const fill = artwork.palette[colorIndex] ?? artwork.palette[0] ?? "#111624";
+          return <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill={fill} />;
+        }),
+      )}
+    </svg>
+  );
   const ItemThumbnail = ({ itemId }: { itemId: string }) => {
     const arcadeThumbnailIndex = ITEM_ARCADE_A_THUMBNAIL_INDICES[itemId];
     const terminalSkinThumbnailIndex = TERMINAL_SKIN_THUMBNAIL_INDICES[itemId];
@@ -10155,6 +10802,98 @@ export const App = () => {
           ) : null}
         </section>
 
+        <section className="integrations-card" aria-label={ui("integrations.title")}>
+          <button
+            type="button"
+            className={`integrations-toggle${integrationsPanelOpen ? " active" : ""}`}
+            onClick={() => setIntegrationsPanelOpen((current) => !current)}
+            aria-expanded={integrationsPanelOpen}
+          >
+            <span className="integrations-toggle-main">
+              <span>{ui("integrations.title")}</span>
+              <b>
+                {detectedIntegrationCount}/
+                {agentIntegrations.length || (agentIntegrationsChecked ? 0 : 2)}
+              </b>
+            </span>
+            <span className="integrations-toggle-status">
+              {integrationToggleStatus}
+            </span>
+            <span className="integrations-toggle-chevron" aria-hidden="true">
+              {integrationsPanelOpen ? "-" : "+"}
+            </span>
+          </button>
+
+          {integrationsPanelOpen ? (
+            <div className="integrations-submenu">
+              <div className="integrations-actions">
+                <button
+                  type="button"
+                  className="pixel-button"
+                  onClick={() => void refreshAgentIntegrations()}
+                >
+                  {ui("integrations.refresh")}
+                </button>
+              </div>
+              {agentIntegrations.length > 0 ? (
+                <div className="integrations-list">
+                  {agentIntegrations.map((integration) => (
+                    <article
+                      key={integration.agent}
+                      className={`integration-card${
+                        integration.enabled ? " enabled" : ""
+                      }${integration.detected ? " detected" : ""}`}
+                    >
+                      <div className="integration-heading">
+                        <strong>{integration.label}</strong>
+                        <span>
+                          {integration.enabled
+                            ? ui("integrations.enabled")
+                            : integration.detected
+                              ? ui("integrations.detected")
+                              : ui("integrations.notFound")}
+                        </span>
+                      </div>
+                      <p>{integration.detail}</p>
+                      <div className="integration-chips">
+                        <span>
+                          {integration.cli_available
+                            ? ui("integrations.cliReady")
+                            : ui("integrations.cliMissing")}
+                        </span>
+                        {integration.needs_restart ? (
+                          <span>{ui("integrations.restart")}</span>
+                        ) : null}
+                      </div>
+                      {integration.connector_path ? (
+                        <small title={integration.connector_path}>
+                          {integration.connector_path}
+                        </small>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="pixel-button integration-enable"
+                        onClick={() => enableAgentIntegration(integration.agent)}
+                      >
+                        {integration.enabled
+                          ? ui("integrations.repair")
+                          : integration.needs_restart
+                            ? ui("integrations.repair")
+                            : ui("integrations.enable")}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="integrations-empty">{ui("integrations.empty")}</p>
+              )}
+              {agentIntegrationMessage ? (
+                <p className="integrations-message">{agentIntegrationMessage}</p>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+
         <section className="task-cabinet-card" aria-label={ui("taskCabinet.title")}>
           <button
             type="button"
@@ -10272,7 +11011,9 @@ export const App = () => {
                         <small className="task-cabinet-schedule-next">
                           {launcherAgent === "claude-code"
                             ? ui("profile.fastClaude")
-                            : ui("profile.fastCodex")}
+                            : launcherAgent === "codex"
+                              ? ui("profile.fastCodex")
+                              : ui("profile.fastOpencode")}
                         </small>
                       ) : null}
                       {entry.cwd || entry.sessionId || entry.error ? (
@@ -10434,7 +11175,7 @@ export const App = () => {
           >
             <span className="launcher-toggle-main">
               <span>{ui("launcher.title")}</span>
-              <b>{launcherAgent === "codex" ? "Codex" : "Claude"}</b>
+              <b>{agentDisplayName({ agent: launcherAgent })}</b>
             </span>
             <span className="launcher-toggle-status">
               {launcherDirectory.trim() || ui("launcher.directoryPlaceholder")}
@@ -10468,20 +11209,16 @@ export const App = () => {
                 </small>
               </label>
               <div className="launcher-agent-choice" aria-label={ui("launcher.agent")}>
-                <button
-                  type="button"
-                  className={launcherAgent === "codex" ? "active" : ""}
-                  onClick={() => setLauncherAgent("codex")}
-                >
-                  Codex
-                </button>
-                <button
-                  type="button"
-                  className={launcherAgent === "claude-code" ? "active" : ""}
-                  onClick={() => setLauncherAgent("claude-code")}
-                >
-                  Claude Code
-                </button>
+                {launcherAgentDefinitions().map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className={launcherAgent === agent.id ? "active" : ""}
+                    onClick={() => setLauncherAgent(agent.id)}
+                  >
+                    {agent.label}
+                  </button>
+                ))}
               </div>
               {launcherAgent === "codex" ? (
                 <label className="launcher-option">
@@ -10956,6 +11693,118 @@ export const App = () => {
                   })}
                 </div>
               </div>
+            </>
+          ) : null}
+        </section>
+
+        <section className="control-section painting-gallery-panel">
+          <button
+            type="button"
+            className="pixel-button decor-toggle-button painting-gallery-toggle-button"
+            aria-expanded={paintingGalleryPanelOpen}
+            onClick={() => setPaintingGalleryPanelOpen((open) => !open)}
+          >
+            <span>{ui("paintingGallery.title")}</span>
+            <span>
+              {ui("paintingGallery.count", {
+                value: paintingGallery.artworks.length,
+              })}
+            </span>
+            <span aria-hidden="true">{paintingGalleryPanelOpen ? "-" : "+"}</span>
+          </button>
+          {paintingGalleryPanelOpen ? (
+            <>
+              {paintingGallery.activeDraft ? (
+                <div className="painting-draft-card">
+                  <PaintingThumbnail
+                    artwork={paintingGallery.activeDraft.artwork}
+                    progress={paintingProgressRatio(paintingGallery.activeDraft)}
+                  />
+                  <div>
+                    <strong>{ui("paintingGallery.inProgress")}</strong>
+                    <span>
+                      {Math.round(paintingProgressRatio(paintingGallery.activeDraft) * 100)}%
+                    </span>
+                    <meter
+                      min={0}
+                      max={1}
+                      value={paintingProgressRatio(paintingGallery.activeDraft)}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <p className="painting-gallery-empty">
+                  {ui("paintingGallery.noDraft")}
+                </p>
+              )}
+              {paintingGallery.artworks.length > 0 ? (
+                <div className="painting-gallery-list">
+                  {paintingGallery.artworks.map((artwork) => {
+                    const saleBits = Math.max(0, Math.round(artwork.saleBits ?? 0));
+                    return (
+                      <article
+                        key={artwork.id}
+                        className="painting-gallery-artwork"
+                        title={artwork.title}
+                        aria-label={`${artwork.title} ${ui("paintingGallery.quality", {
+                          value: artwork.quality,
+                        })}`}
+                      >
+                        <PaintingThumbnail artwork={artwork} />
+                        <div className="painting-gallery-artwork-copy">
+                          <span>{artwork.title}</span>
+                          <small>
+                            {ui("paintingGallery.quality", { value: artwork.quality })}
+                          </small>
+                          <small>
+                            {saleBits > 0
+                              ? ui("paintingGallery.saleValue", { value: saleBits })
+                              : ui("paintingGallery.noSaleValue")}
+                          </small>
+                        </div>
+                        <div className="painting-gallery-actions">
+                          <button
+                            type="button"
+                            className="pixel-button painting-gallery-action"
+                            disabled={!selectedPlacedItemCanShowPainting}
+                            onClick={() => applyPaintingToSelectedHanging(artwork)}
+                          >
+                            {ui("action.apply")}
+                          </button>
+                          <button
+                            type="button"
+                            className="pixel-button painting-gallery-action"
+                            disabled={saleBits <= 0}
+                            onClick={() => sellPaintingArtwork(artwork)}
+                          >
+                            {saleBits > 0
+                              ? ui("action.sell", { value: saleBits })
+                              : ui("paintingGallery.noSaleValue")}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="painting-gallery-empty">
+                  {ui("paintingGallery.empty")}
+                </p>
+              )}
+              <span className="painting-gallery-state">
+                {selectedPlacedItemCanShowPainting
+                  ? ui("paintingGallery.targetReady")
+                  : ui("paintingGallery.targetMissing")}
+              </span>
+              {selectedPlacedItemCanShowPainting && selectedPlacedItem?.artworkId ? (
+                <button
+                  type="button"
+                  className="pixel-button painting-gallery-clear"
+                  onClick={clearPaintingFromSelectedHanging}
+                >
+                  {ui("action.clearApplied")}
+                </button>
+              ) : null}
             </>
           ) : null}
         </section>

@@ -113,9 +113,18 @@ Run Aivatar session-learning worker manually:
 npm.cmd run aivatar:learn -- --provider none --agent claude-code --session test --status complete --summary "Aivatar learned a tiny memory."
 npm.cmd run aivatar:learn:claude -- --agent claude-code --session test --status complete --summary "Aivatar learned from Claude Code."
 npm.cmd run aivatar:learn:codex -- --agent codex --session test --status complete --summary "Aivatar learned from Codex."
+npm.cmd run aivatar:learn:opencode -- --agent opencode --session test --status complete --summary "Aivatar learned from opencode."
 ```
 
-`--provider none` uses the local heuristic fallback and is useful for bridge/UI smoke tests. `aivatar:learn:claude` uses Claude Code `--print`/JSON output when Claude Code is logged in; if Claude Code is not logged in or returns invalid JSON, the worker falls back without breaking status flow. `aivatar:learn:codex` uses `codex.cmd exec` with read-only/no-approval structured output and has been smoke-tested for English and Chinese learning payloads.
+`--provider none` uses the local heuristic fallback and is useful for bridge/UI smoke tests. `aivatar:learn:claude` uses Claude Code `--print`/JSON output when Claude Code is logged in; if Claude Code is not logged in or returns invalid JSON, the worker falls back without breaking status flow. `aivatar:learn:codex` uses Codex `exec` with read-only/no-approval structured output and has been smoke-tested for English and Chinese learning payloads. `aivatar:learn:opencode` uses `opencode run --format json` and falls back heuristically if the provider is unavailable or returns invalid JSON. The provider command can be overridden with `AIVATAR_CODEX_COMMAND`, `CODEX_COMMAND`, `AIVATAR_CLAUDE_COMMAND`, `AIVATAR_OPENCODE_COMMAND`, or `OPENCODE_COMMAND`; on Windows the worker prefers the npm-installed `@openai/codex/bin/codex.js` path when available so it can avoid the `codex.cmd` shim.
+
+Run Aivatar painting-plan worker manually:
+
+```powershell
+npm.cmd run aivatar:paint -- --provider none --payload-file path\to\painting-payload.json
+```
+
+`--provider none` uses the local heuristic painting-plan fallback. The bridge normally writes derived painting payloads under `%TEMP%\aivatar-painting-context` and calls this worker through `POST /painting-plan`.
 
 Send a generic agent status manually:
 
@@ -178,12 +187,13 @@ npm.cmd run aivatar:run -- npm.cmd run build
 npm.cmd run aivatar:run -- node -e "console.log('hello')"
 ```
 
-Run Codex or Claude Code through the wrapper:
+Run Codex, Claude Code, or opencode through the wrapper:
 
 ```powershell
 npm.cmd run codex:run
 npm.cmd run codex:run -- --help
 npm.cmd run claude:run
+npm.cmd run opencode:run
 ```
 
 Run Claude Code through the connected wrapper:
@@ -192,6 +202,19 @@ Run Claude Code through the connected wrapper:
 npm.cmd run claude:connected
 npm.cmd run claude:connected -- --help
 ```
+
+Link Claude Desktop/Code sessions to Aivatar hooks/statusLine:
+
+```powershell
+npm.cmd run claude:desktop:link
+npm.cmd run claude:desktop:link -- --apply
+```
+
+The first command is a dry run that prints the settings merge target and
+generated hook/statusLine configuration. Passing `--apply` merges Aivatar's
+Claude Code hooks into the selected Claude settings file and writes the Windows
+statusLine wrapper when needed. Existing Claude sessions must be restarted to
+load the settings.
 
 `codex:run` is the older generic lifecycle wrapper. It can still be useful for
 simple command status tracking, but it is not the preferred Codex Desktop
@@ -219,6 +242,40 @@ that cwd, then switches Aivatar from the provisional session id to the real
 Codex session id and starts watcher/token reward tracking. Verification failures
 are reported in the terminal and written to a recovery log under `%TEMP%`.
 
+Run opencode through the connected wrapper:
+
+```powershell
+npm.cmd run opencode:connected
+npm.cmd run opencode:connected -- --help
+```
+
+Install or inspect the opencode Desktop/TUI plugin adapter:
+
+```powershell
+npm.cmd run opencode:plugin:install
+npm.cmd run opencode:plugin:install -- --apply
+```
+
+The first command is a dry run that prints the user plugin target under
+`~/.config/opencode/plugins` (`%USERPROFILE%\.config\opencode\plugins` on
+Windows), plus the learning worker and Node command that will be embedded.
+Passing `--apply` writes `aivatar-opencode-plugin.js` there with the local
+`scripts/aivatar-learning-worker.mjs` and Node command embedded, matching the
+in-app Enable/Repair behavior; restart opencode Desktop/TUI after installing so
+it can load the plugin. The plugin posts low-detail lifecycle events to the
+Aivatar bridge and does not upload full transcript content.
+
+For normal desktop users, prefer the in-app `Desktop Agents` side-panel card
+over manual commands. Aivatar Desktop can check and Enable/Repair Claude Code
+and opencode integrations from inside the app. Claude Code integration writes
+Aivatar hook/statusLine wrappers under `~/.claude` and merges those wrappers into
+`~/.claude/settings.json`; on Windows the generated statusLine command uses a
+PowerShell-safe quoted forward-slash script path so Claude can run it through a
+shell command. opencode integration writes the bundled plugin to
+`~/.config/opencode/plugins/aivatar-opencode-plugin.js`. Existing Claude Code
+or opencode Desktop/TUI sessions must be restarted after enabling so they load
+the new hook/plugin configuration.
+
 Current session safety expectation: Aivatar should not delete, rewrite, migrate,
 or hide Codex Desktop chats. The connected wrapper reads Codex rollout JSONL
 metadata, passes child-process environment variables, writes Aivatar recovery
@@ -228,7 +285,7 @@ suspect stale external plugin commands, PATH shadowing, Codex Desktop behavior,
 or a mismatched wrapper invocation rather than bridge in-memory cleanup.
 
 The desktop CLI Launcher now uses this connected wrapper through Tauri. In the
-app, choose a folder, choose Codex or Claude Code, optionally add args, and click
+app, choose a folder, choose Codex, Claude Code, or opencode, optionally add args, and click
 `Start CLI`; Aivatar starts the local bridge if needed, opens the CLI in that
 folder, connects the session, and cleans up on CLI exit. For Codex, the launcher
 checkbox is labeled `Create and follow new Codex session`; only that explicit
@@ -255,17 +312,28 @@ that terminal state instead of downgrading the session to `waiting_for_user` or
 `idle`. Claude `SessionEnd` also preserves the final terminal status while
 calling the bridge disconnect endpoint, so closing the Claude Code CLI window
 stops the session from remaining connected/current.
+For opencode, the connected wrapper starts with an `idle` placeholder and does
+not attach the Codex rollout watcher. Real desktop/TUI turn state is expected
+from `scripts/aivatar-opencode-plugin.mjs`, which maps opencode plugin events
+such as `session.status`, `permission.asked`, and `session.idle` into the same
+Aivatar statuses used by Codex and Claude Code.
 
 Connected launcher sessions now also enable Aivatar session learning by default:
 `scripts/aivatar-connected-run.mjs` injects `AIVATAR_LEARNING_ENABLED=1` unless
 the environment already sets a value, and defaults `AIVATAR_LEARNING_PROVIDER`
-to `codex` for Codex and `claude-code` for Claude Code. Claude Code terminal
+to `codex` for Codex, `claude-code` for Claude Code, and `opencode` for
+opencode, while still honoring explicit user overrides. Claude Code terminal
 `complete`/`error` hook events spawn `scripts/aivatar-learning-worker.mjs`
-non-blockingly after the ordinary status update. The worker reads only a
+non-blockingly after the ordinary status update. The opencode plugin keeps a
+bounded sanitized digest from plugin chat/text events and, when the app-installed
+plugin has a Node/worker path embedded, spawns the same learning worker with
+`AIVATAR_LEARNING_PROVIDER=opencode`; otherwise it posts a low-risk heuristic
+learning payload so Growth suggestions still update. The worker reads only a
 sanitized digest/context file under `%TEMP%\aivatar-learning-context\`, posts a
 `phase: "session-learning"` payload with `learning`, and falls back to heuristic
 learning if the configured provider is unavailable. Existing already-running
-Claude/Codex sessions must be relaunched to inherit these environment variables.
+Claude/Codex/opencode sessions must be relaunched to inherit these environment
+variables or plugin settings.
 
 Codex Desktop and Codex CLI learning are now also wired through the external
 `aivatar-watch.mjs` rollout watcher. The watcher keeps a bounded sanitized
@@ -276,6 +344,53 @@ writes `%TEMP%\aivatar-learning-context\codex-*.txt`, and spawns
 `AIVATAR_LEARNING_SCRIPT` so both connected CLI sessions and auto-discovered
 Desktop sessions can produce `learning` payloads, not just template
 `idleBubbleCandidates`.
+In packaged Tauri builds, native `src-tauri/src/codex_discovery.rs` can also
+spawn the same worker after Codex Desktop `final` / `final_answer` events. It
+resolves `node` and provider commands without modifying Codex session files,
+supports macOS Homebrew and user-bin PATH fallbacks, and hides Windows command
+lookup / worker processes so automatic learning does not flash terminal windows
+at turn completion.
+The native bridge also accepts Claude Code hook/statusLine JSON on
+`/agent-hooks/claude-code` and `/agent-hooks/claude-code/status-line`, mapping it
+to generic `claude-code` statuses and context-window usage without requiring the
+Node hook script. StatusLine updates are treated as context-only usage/presence
+updates when a Claude session row already exists, so they do not downgrade an
+in-progress or terminal turn state to `idle`. The JS `status:bridge` mirrors
+these endpoints for web-only development. Native Claude desktop hooks keep a
+bounded sanitized digest from `UserPromptSubmit.prompt`, `MessageDisplay.delta`,
+and low-detail tool/event summaries. On `Stop`, `TaskCompleted`, or
+`StopFailure`, the native bridge starts `scripts/aivatar-learning-worker.mjs`
+with provider `claude-code` when the bundled worker path is available, and falls
+back to a heuristic `phase: "session-learning"` payload if the worker cannot be
+started.
+Claude Desktop's Chat and Cowork sidebar recents are also discovered from local
+desktop inventory metadata. The JS discovery script and native packaged
+discovery scan Claude's user data roots, including Windows Store
+`%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude` and
+`%APPDATA%\Claude`: Code sessions come from
+`claude-code-sessions\**\local_*.json`, Cowork sessions from
+`local-agent-mode-sessions\**\local_*.json`, and Chat recents from Claude
+Chromium Local Storage LevelDB conversation-list objects. This inventory scan
+only reads session ids, titles, cwd, and timestamps; it does not read full chat
+transcripts. Inventory statuses use `phase: "desktop-chat-session"`,
+`"desktop-cowork-session"`, or `"desktop-code-session"` and are treated as idle
+metadata, so they can create visible session rows but cannot downgrade an active
+or terminal Claude hook session. Activity tracking is separate from inventory:
+the discovery paths also tail Claude `logs\main.log` for Cowork/Code lifecycle
+signals such as `initializing -> running`, `Turn succeeded`, and `Stop hook`
+completion, mapping those into non-idle `claude-code` statuses so the Terminal
+and avatar can react. For ordinary Claude Chat, discovery watches local
+conversation cache updates and posts only a short current/leaf message summary
+when available; it does not retain or upload full chat transcripts. Claude Chat
+assistant-message changes are first posted as `executing` /
+`desktop-chat-responding`, then only become `complete` /
+`desktop-chat-complete` after the current leaf message stays unchanged for
+`AIVATAR_CLAUDE_DESKTOP_CHAT_SETTLE_MS`, defaulting to 5 seconds. This avoids
+the avatar flashing complete/idle while Claude is still streaming a reply.
+Cowork/Code activity can arrive under both Claude Desktop `local_*` internal ids
+and CLI UUIDs; the JS and native bridges merge rows with the same
+`desktopSessionId`, so a `local_*` running row is replaced by the CLI UUID
+`complete`/`error` row instead of leaving duplicate or stuck executing sessions.
 
 The app also publishes a low-sensitivity avatar state snapshot to the bridge via
 `POST /avatar-state`. The bridge writes `%TEMP%\aivatar-avatar-state.json`,
@@ -292,6 +407,16 @@ Run old mock status cycler:
 ```powershell
 npm.cmd run status:mock
 ```
+
+Run desktop agent adapter smoke test:
+
+```powershell
+node scripts\aivatar-desktop-agent-adapters-smoke.mjs
+```
+
+This mocks bridge `fetch` calls and verifies the opencode plugin event mapping
+plus Claude Desktop settings generation/merge behavior without touching user
+settings or starting real desktop apps.
 
 Validate frontend:
 
@@ -350,8 +475,11 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 |   |-- aivatar-cli-connect.mjs
 |   |-- aivatar-cli-disconnect.mjs
 |   |-- aivatar-cli-watchdog.mjs
+|   |-- aivatar-claude-desktop-link.mjs
 |   |-- aivatar-connected-run.mjs
+|   |-- aivatar-desktop-agent-adapters-smoke.mjs
 |   |-- aivatar-learning-worker.mjs
+|   |-- aivatar-opencode-plugin.mjs
 |   |-- aivatar-run.mjs
 |   |-- aivatar-session-plugin.mjs
 |   |-- claude-code-aivatar-hook.mjs
@@ -366,6 +494,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 |   |-- main.tsx
 |   |-- styles.css
 |   |-- types.ts
+|   |-- agentRegistry.ts
 |   |-- data/
 |   |   |-- defaultContent.ts
 |   |   `-- loadContent.ts
@@ -393,7 +522,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 
 - `src/App.tsx`
   - Main React app.
-  - Owns loaded content, save state, Canvas events, categorized shop UI, inventory/shop interactions, the Decor panel for wall/floor surfaces, furniture/window interactions, placement mode, Room Edit mode, Debug controls, custom avatar name, agent status display, and the right-side Agent Sessions panel.
+  - Owns loaded content, save state, Canvas events, categorized shop UI, inventory/shop interactions, the Decor panel for wall/floor surfaces, furniture/window interactions, placement mode, Room Edit mode, Debug controls, custom avatar name, agent status display, the right-side Agent Sessions panel, and the Desktop Agents integration panel.
   - Shows a locked/disabled `Asset Studio` entry in the right side panel below the shop, with the Pixel Asset Editor kept in code but hidden from the runtime UI while the workflow is still in development.
   - Includes a saved UI skin switcher stored under `aivatar.uiTheme.v1`. Current choices are `Classic`, `Terminal`, `Amber`, and `Arcade Cabinet`; fresh installs/default first launch use `Terminal`, including the startup save-slot menu, and later launches reuse the saved setting. `Classic` is now a Windows 98-style shell with gray 3D controls, teal desktop backdrop, blue title bars, thin range sliders, native checkbox controls, and clearer small Chinese UI typography. The Terminal skins remain retro CRT-style themes for the app shell, side-panel UI, and canvas presentation pass. `Arcade Cabinet` is a black/charcoal arcade-cabinet shell with a CRT scene frame, scanline texture, cyan/magenta neon trim, amber coin/status accents, and raised arcade-button controls. The UI theme buttons now live inside the collapsible Settings side-panel card.
   - Includes a saved global SFX volume slider stored under `aivatar.audioVolume.v1`. The slider controls current app sound effects, with per-effect multipliers for louder/softer room sounds. The compact Settings card header shows the current global SFX volume with a theme-adaptive CSS speaker icon and intentionally does not show the current BGM track.
@@ -430,12 +559,13 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Consumes bridge snapshots with `currentStatus`, `sessions[]`, `activeSessionKey`, `connectedSessionKey`, and `currentSessionKey`; the main avatar follows `currentStatus`, while the side panel shows recent sessions, Follow/Clear controls, and Active/Connected/Current/Idle/Stale markers.
   - Agent Sessions is collapsed behind a compact side-panel button by default. The button shows live/total session count, Current/source context, and a `+`/`-` affordance; expanding it reveals Follow/Clear/Disconnect controls, CLI hints, session cards, context window meters, reward summaries, and Active/Connected/Current/Idle/Stale markers.
   - Agent Sessions includes a `Clear Stale` button that asks the bridge to prune expired/stale session rows. Session expiry is now driven by each bridge session's `expiresAt` timestamp.
+  - Desktop Agents is collapsed behind a compact side-panel button by default. It calls Tauri `get_agent_integrations` to show Claude Code and opencode detection/enabled status, CLI availability, connector paths, and restart-needed hints, and calls `enable_agent_integration` from the Enable/Repair buttons. In web-only previews the card shows a desktop-only message instead of trying to write user agent config.
   - The bridge separates long session retention from short activity freshness: sessions can remain listed for the configured `AIVATAR_SESSION_STALE_MS` window, while stale high-priority activity stops driving the avatar after `AIVATAR_ACTIVITY_STALE_MS` (default 5 minutes). This prevents a closed Claude Code CLI from leaving the avatar stuck in an old `executing` state.
   - Agent Sessions ordering now prioritizes actual status timestamps before presence heartbeat timestamps, reducing visual jumping when many connected sessions keep refreshing presence.
-  - Complete rewards are transition-gated for `agent: "codex"` and `agent: "claude-code"` sessions moving from `thinking`, `executing`, `waiting_for_user`, or `error` into `complete`, and also tolerate a fresh active/connected `complete` snapshot so rewards are not missed when the first UI-visible status is already complete. Repeated Live reads of the same complete event do not reward again.
+  - Complete rewards are transition-gated for reward-eligible agent sessions defined in `src/agentRegistry.ts` (`codex`, `claude-code`, and `opencode`) moving from `thinking`, `executing`, `waiting_for_user`, or `error` into `complete`, and also tolerate a fresh active/connected `complete` snapshot so rewards are not missed when the first UI-visible status is already complete. Repeated Live reads of the same complete event do not reward again.
   - Reward-eligible `complete` events now also play `agent-complete-success.ogg` once after the existing complete-event de-duplication, so repeated bridge reads do not replay the success sound.
-  - Complete rewards can use token usage from the status payload. When usage is present, bits are based on weighted tokens: uncached input, output, and reasoning tokens count fully, cached input counts at 10%, and the reward is capped at 40 bits before any work boost bonus. Without usage, rewards fall back to the fixed 4-bit base.
-  - Codex and Claude Code `complete`, `error`, and `waiting_for_user` statuses now update lightweight memory/growth state, including XP, recent memory events, and trait changes.
+  - Complete rewards can use token usage from the status payload. When usage is present, bits are based on weighted tokens: uncached input, output, and reasoning tokens count fully, cached input counts at 10%. The reward is capped at 40 bits by default, 100 bits when total token usage is greater than 100,000, and 1000 bits when total token usage is greater than 1,000,000, before any work boost bonus. Without usage, rewards fall back to the fixed 4-bit base.
+  - Reward-eligible agent `complete`, `error`, and `waiting_for_user` statuses now update lightweight memory/growth state, including XP, recent memory events, and trait changes.
   - Life events such as sleeping, playing, using Coffee/Cola/Bento/Cookie, brewing Coffee, and buying items also write compact recent memory entries and small trait/preference changes.
   - Agent Sessions cards display model context window usage when `usage.contextTokens` and `usage.modelContextWindow` are present, and display token reward context as `tokens -> bits (weighted)` when a session includes reward usage. Context-only usage with `scope: "context-window"` is not shown as a reward summary.
   - Agent Sessions preserves a session's latest known usage/context payload when a later status update omits `usage`, so terminal `complete`/`final_answer` events do not erase context-window meters.
@@ -463,7 +593,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Game Console sound follows the same active play target logic as the screen animation after real `play` behavior begins. Manual right-click `Play` and autonomous play recovery both trigger sound, while the walk-to-console `actionIntent` phase does not.
   - Record Player is a buyable placed object with `tags: ["item", "record-player"]`. Manual right-click `Play music` queues an arrive-then-start interaction against the exact clicked Record Player, while autonomous music uses the same placed-item targeting flow after `autoMusicEnabled` allows the behavior. Starting playback sets `activeRecordPlayerId`; the avatar then returns to `idle` so it can do other things while the record continues. Right-clicking a Record Player exposes BGM volume control and a `Stop music` action. Playback slows natural Mood decay to `35%` of the ordinary rate instead of granting periodic Mood recovery. Personality trait changes happen only when the avatar autonomously starts music: `creativity +1`, `warmth +1`, and an extra `resilience +1` when Mood is low. Manual playback does not add personality points.
   - When multiple placed copies of the same autonomous interactive item exist, automatic target selection uses a `70%` nearest / `30%` random rule. This currently covers Game Console play, Coffee Machine brewing, Oil Easel painting, Terminal/coding targets, and busy-recovery Game Console selection. Manual right-click interactions still use the exact clicked object.
-  - Oil Easel is a buyable Furniture-category placed object implemented as `kind: "decor"` with `tags: ["furniture", "easel"]`. Right-clicking it opens a context action that queues an arrive-then-`paint` interaction; painting restores mood over time and records compact memory with `creativity +1`. Its floor placement foot projection is now also used as a placed-item navigation collision box.
+  - Oil Easel is a buyable Furniture-category placed object implemented as `kind: "decor"` with `tags: ["furniture", "easel"]`. Right-clicking it opens a context action that queues an arrive-then-`paint` interaction; painting restores mood over time, records compact memory with `creativity +1`, and advances the current save-slot painting draft toward a 3-hour cumulative completion target. New drafts render immediately from a local heuristic plan, then asynchronously ask the local bridge `POST /painting-plan` for an LLM-style painting plan based on low-sensitivity personality traits, recent memory summaries, preferences, and saved idle bubbles. If the bridge/provider is unavailable, the heuristic draft remains valid. Completed paintings move into a collapsible save-slot gallery with a quality-based sale value; selling the finished work grants the bits, while applying it to selected wall poster hangings does not. A selected hanging with applied gallery art can clear its `artworkId` from the same gallery panel without deleting the artwork. Its floor placement foot projection is now also used as a placed-item navigation collision box.
   - Idle/autonomous life uses a layered weighted-choice model: recovery layers handle low energy, hunger, mood, and mildly low energy first, while healthy idle life chooses among play, paint, brew, explore, admire, interact, wander, phone, snack, relax, and appearance-gated specials by weights. The current appearance-gated special is `workout`, which only `cute-crayfish` can choose when stats are healthy and Energy is high enough. Trait boosts adjust weights rather than using absolute thresholds, so later behaviors such as explore/admire/interact are no longer hidden behind earlier play/paint/brew checks. `brew` is intentionally low-weight so the Coffee Machine does not dominate idle behavior. Autonomous behavior durations are now behavior-specific rather than a uniform short random window; longer activities such as Game Console play and Oil Easel painting linger substantially longer.
   - Idle/autonomous life can choose an `explore` behavior when stats are healthy. Exploration walks toward sampled room/object-near targets and helps maintain learned navigation grid values in `navMemory.walkableCells`.
   - Navigation learning now records a lightweight local occupancy grid in `navMemory.walkableCells`, where `0` means learned walkable and `1` means learned blocked/risky. Ordinary movement, arrival success, stuck/failure events, and explicit exploration update these values. `navMemory.layoutFingerprint` invalidates learned grid values when furniture/blocking layout changes. Older `exploredCells` and `trickySpots` remain normalized for compatibility, but route costs no longer depend on tricky/visited-cell penalties.
@@ -473,19 +603,19 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Idle bubble suggestions shown in Growth use an explicit source mix: target 3 memory-derived candidates and 3 session-derived candidates, with either source filling remaining slots when the other has fewer available candidates.
   - Consumes optional `status.learning` payloads from the bridge. New `learning.id` values write a `session_learning` recent memory event, apply small XP/trait changes, and add learning-derived suggested bubbles. `privacyRisk: "high"` learning payloads are ignored by the save layer.
   - `phase: "session-learning"` status updates apply learning only and do not trigger Codex/Claude complete rewards or error/waiting memory, preventing duplicate bits or duplicate task memories after the worker posts a learning result.
-  - Growth suggested bubbles preserve candidate source metadata in memory only. If the same phrase arrives from multiple sources, source priority is `llm > session > memory`; `learning.source === "llm"` candidates render with an `LLM` label and highlighted styling. Session candidates also render compact source badges: Claude Code suggestions show `CC`, Codex suggestions show `Codex`, and these badges stay visible even when phrase slots are full and buttons are disabled. Accepted bubbles are still saved as plain strings, preserving the existing `localStorage` schema.
+  - Growth suggested bubbles preserve candidate source metadata in memory only. If the same phrase arrives from multiple sources, source priority is `llm > session > memory`; `learning.source === "llm"` candidates render with an `LLM` label and highlighted styling. Session candidates also render compact source badges from `src/agentRegistry.ts`: Claude Code suggestions show `CC`, Codex suggestions show `Codex`, and opencode suggestions show `OC`; these badges stay visible even when phrase slots are full and buttons are disabled. Accepted bubbles are still saved as plain strings, preserving the existing `localStorage` schema.
   - Posts a low-sensitivity avatar state snapshot to the bridge at `http://127.0.0.1:38988/avatar-state` whenever saved memory/avatar identity changes. The payload includes avatar id/name, growth level, trait totals, and idle bubble language preference only. It uses `fetch` first and `sendBeacon` as fallback, allowing session-learning workers to tune bubble tone from current personality without reading full browser `localStorage`.
   - The whole right-side menu can collapse into the room window through a narrow right-edge triangle handle. Collapsing locks the current room scene width, resizes the Tauri desktop window down to the room width, and keeps lightweight room HUD overlays visible over the room.
   - Collapsed room HUD overlays show pet Energy/Mood/Hunger at the upper left, Growth level/XP/dominant trait at the upper right, and a full-width context window meter near the lower edge when context usage is available.
-  - Classic UI skin currently covers the app shell, side panel, status header/card, Settings, Growth, Agent Sessions, Task Cabinet, CLI Launcher, Debug, stats grid, Decor controls, Inventory/Shop text, Asset Studio locked entry, expanded submenu cards, scene right-click context menus, custom context meters, collapsed room HUD overlays, Decor surface thumbnails, and common button/input states with Windows 98-style raised/sunken borders.
-  - Terminal UI skin currently covers the side-panel shell, status header/card, Settings, Growth, Agent Sessions, Task Cabinet, CLI Launcher, Debug, stats grid, Decor controls, Inventory/Shop text, Asset Studio locked entry, expanded submenu cards, scene right-click context menus, custom context meters, collapsed room HUD overlays, and common button/input states. Settings has explicit compact and expanded theme coverage, including the speaker volume icon, nested name editor, language/theme buttons, sound sliders, checkboxes, and selects.
+  - Classic UI skin currently covers the app shell, side panel, status header/card, Settings, Growth, Agent Sessions, Desktop Agents, Task Cabinet, CLI Launcher, Debug, stats grid, Decor controls, Inventory/Shop text, Asset Studio locked entry, expanded submenu cards, scene right-click context menus, custom context meters, collapsed room HUD overlays, Decor surface thumbnails, and common button/input states with Windows 98-style raised/sunken borders.
+  - Terminal UI skin currently covers the side-panel shell, status header/card, Settings, Growth, Agent Sessions, Desktop Agents, Task Cabinet, CLI Launcher, Debug, stats grid, Decor controls, Inventory/Shop text, Asset Studio locked entry, expanded submenu cards, scene right-click context menus, custom context meters, collapsed room HUD overlays, and common button/input states. Settings has explicit compact and expanded theme coverage, including the speaker volume icon, nested name editor, language/theme buttons, sound sliders, checkboxes, and selects.
   - Arcade Cabinet UI skin currently covers the app shell, CRT-like scene panel, side panel, status header/card, Settings, Growth, Agent Sessions, Task Cabinet, CLI Launcher, Debug, Decor controls, startup save-slot dialog/cards, expanded submenu cards, scene right-click context menus, session/task status variants, custom context meters, collapsed room HUD overlays, common buttons, inputs, range sliders, meters, disabled states, and save/avatar-choice cards. Its visual language uses a matte black arcade body, cyan/magenta trim, scanline overlays, amber coin/status accents, and raised plastic arcade-button highlights while keeping the existing dense operational layout.
   - Chinese UI typography has a local CSS font-face alias, `Aivatar CJK Serif`, that uses local `Noto Serif TC`, `Noto Serif SC`, or `Noto Serif HK` only for CJK unicode ranges. Classic overrides the general serif CJK look with a readability-first Windows UI stack: `Tahoma`, `Microsoft YaHei UI`, `Microsoft JhengHei UI`, then legacy CJK fallbacks. Classic also raises small helper/status text to about `11px` and avoids overly heavy weights so Chinese labels do not blacken at small sizes.
   - The right-side card header UI has been visually tuned for Chinese readability: compact card titles are larger and bolder, helper/status text is slightly larger, `+`/`-` expand buttons are smaller and use centered monospace symbols, and title text is nudged down by 1px to align visually with the expand buttons.
   - The pet stats grid (`Energy`/`Mood`/`Hunger`, localized as `精力`/`心情`/`饱足`) now sits above the Growth card so core pet condition is visible before deeper growth/session controls.
   - Right-side expanded submenus use a slightly lighter nested background than their parent cards so Growth, Agent Sessions, Debug, and Decor hierarchy reads more clearly.
   - Side-panel collapse/expand uses a Rust-backed Tauri command so the main-window minimum size and size are updated together. The room stays left-aligned and scene width is temporarily locked during resize to avoid visible jumps.
-  - Includes a collapsible CLI Launcher panel where users enter a working folder, choose Codex or Claude Code, optionally provide args, and start an agent CLI through the Tauri `start_agent_cli` command.
+  - Includes a collapsible CLI Launcher panel where users enter a working folder, choose Codex, Claude Code, or opencode, optionally provide args, and start an agent CLI through the Tauri `start_agent_cli` command. Agent labels, source badges, reward eligibility, terminal-bubble eligibility, and launcher availability are centralized in `src/agentRegistry.ts`.
   - Makes the File Cabinet a buyable unique furniture item in the shop, unlocked at Growth level 25. The save layer records cabinet ownership/placement as a `placedItems` entry, while runtime content converts a placed cabinet into a `FurnitureDefinition` so it reuses base furniture rendering, hit testing, movement, collision, and avatar occlusion.
   - Includes a Task Cabinet side-panel MVP for local `.md` task paths. Task metadata is stored in `localStorage` key `aivatar.taskCabinet.v1`; source `.md` files remain read-only and the app stores paths/status/schedule metadata rather than file contents.
   - Task Cabinet supports `Ready`, `Running`, `Completed`, and `Failed` states; `Run Next`; per-task `Schedule`; per-task `Profile`; and `Rerun` for failed tasks. The older global `Auto Run` control was removed so automatic execution only comes from explicit per-task schedules.
@@ -502,6 +632,10 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Debug includes a temporary `Nav grid` overlay for navigation QA. It draws green walkable samples, red blocked samples/collision boxes, the avatar foot ellipse, the current target, candidate interaction points, and the current A* path so stuck spots around furniture can be diagnosed visually. The overlay avoids recalculating and drawing A* target paths while the avatar is truly idle with no action intent, preventing stale idle targets from causing expensive per-frame pathfinding. The overlay may still show planner-expanded blocking samples when clearance is enabled, so distinguish those from the actual furniture collision rectangle.
   - `Window preview` accelerates the room window's time input so dynamic windows such as City Night Window, Ocean Window, and Cyberpunk City Window can be visually checked across a full day/night cycle without changing the system clock. The fixed `Window time` slider and `06:00`/`12:00`/`18:00`/`22:00` presets override the dynamic window time until `Real time` is selected.
   - When a Debug status override is active, the status card shows `Debug override active - click Live` and the Live button is highlighted so test overrides are not mistaken for live agent state.
+
+- `src/agentRegistry.ts`
+  - Central registry for first-class agent integrations shown in the app. It currently defines Codex, Claude Code, and opencode labels, short source badges, launcher command names, complete-reward eligibility, Terminal bubble eligibility, and Launcher availability.
+  - `src/App.tsx` uses this registry for CLI Launcher buttons, Growth suggestion source badges, display names, and reward gating. `src/game/renderScene.ts` uses it to decide which agent statuses can show Terminal notification bubbles.
 
 - `src/types.ts`
   - Defines runtime status, content, save-state, placement, inventory, furniture, room surface/window, pixel asset types, and avatar behavior names including the local-only `phone` idle animation behavior, the idle-learning `explore` behavior, the Oil Easel `paint` behavior, and task-file visual behaviors (`fetch_task_file`, `carry_task_file`, `read_task_file`).
@@ -552,13 +686,13 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Animates Coffee Machine brewing when the active interaction is `brew`, including pulsing indicator lights, status strip flashes, coffee stream pixels, cup fill pixels, and small steam pixels.
   - Renders placed Coffee Cup as a small transparent glass tabletop cup-and-saucer item with a right handle, rounded elliptical rim/lower rim, stronger base shadow, and visible coffee volume/slow dynamic rising steam when that cup represents one stored table Coffee. Empty cups show a pale transparent glass interior.
   - Renders a larger Game Console screen and adds animated screen pixels only when the avatar is in `play` behavior near the active/targeted placed Game Console, so autonomous and manual play animate the intended console without lighting up distant consoles.
-  - Renders the Oil Easel as a more detailed programmatic pixel-art wooden easel with support legs, richer shadowing, brass/crossbar accents, a paint tray, and a canvas carrying a permanent half-finished landscape sketch. The avatar has a shared `paint` pose with a beret, paintbrush, palette, and small brush motion; appearance-specific renderers may adapt how the pose reads on top of their body shape. Active painting adds animated color strokes on top of the half-finished canvas. The shop/backpack thumbnail has matching extra canvas and paint details.
+  - Renders the Oil Easel as a more detailed programmatic pixel-art wooden easel with support legs, richer shadowing, brass/crossbar accents, a paint tray, and a canvas that shows the current `24 x 35` generated painting draft when one exists, revealing pixels by cumulative painting progress. The avatar has a `paint` pose based on the front-facing octopus proportions, with a beret, paintbrush, palette, and small brush motion; active painting adds animated color strokes on top of the canvas. The shop/backpack thumbnail has matching extra canvas and paint details.
   - Renders a dedicated `admire` pose: the avatar lifts its tentacles and shows small sparkle/observation pixels while admiring decor. `admire` activity bubbles now prefer the behavior-specific trait phrase over generic idle bubble text so the action reads more clearly.
   - Renders the Digital Wall Clock as a wall hanging that reads the local system time as `HH:MM` each frame.
   - Draws Codex-session notification bubbles over the Terminal and rounded thinking bubbles over the avatar. Session bubbles wrap by measured pixel width, can use two lines where needed, and use a small pixel-font renderer for ASCII text so English status/tool text stays sharp inside the scaled canvas. Bubble width measurement and pixel-text drawing now use the same width model to reduce text overflow.
   - Canvas avatar/interaction bubbles, rounded thinking bubbles, and built-in Terminal/Codex status bubbles accept the current UI theme from `App.tsx`. Classic now uses a Windows 98-like tooltip/status palette with pale yellow bubbles, black borders, navy text/progress, and a gray raised status-light panel; Terminal uses black-green bubble fills, neon green borders, green text, and green progress bars.
   - CJK fallback text in avatar and Terminal bubbles uses a clearer Chinese-oriented canvas font stack (`Noto Sans TC`, `Noto Sans SC`, `Noto Sans HK`, then Microsoft JhengHei/YaHei fallbacks), while ASCII text still uses the custom pixel font.
-  - Terminal bubbles only show `agent: "codex"` session notifications; `thinking` is shown over the avatar instead of over the Terminal.
+  - Terminal bubbles show notifications for agents marked `terminalBubble: true` in `src/agentRegistry.ts` (`codex`, `claude-code`, and `opencode`); `thinking` is shown over the avatar instead of over the Terminal.
   - Renders the placed Terminal monitor with a keyboard; during coding/thinking proximity, the screen, cursor, scanline, status lights, and keyboard animate on top of the static matrix using the skin-matched `terminalMonitorAnimationPalette`.
   - Renders dedicated consumable poses for Coffee, Cola, Bento, and Cookie through shared pose helpers. Appearance renderers can reuse those helpers or adapt them with their own body shape, as `mood-slime` does by growing temporary soft pseudopods rather than permanent hands/feet.
   - Coffee uses a cup/steam sip pose, Cola uses a red can with straw and fizz pixels, Bento uses a lunch box with food pixels, and Cookie uses a bitten cookie with chocolate-chip pixels, holding appendages, crumbs, and a small chewing motion.
@@ -699,6 +833,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Supports both `/agent-status` and legacy `/codex-status` HTTP/WebSocket paths.
   - Supports `/agent-active` for choosing the session the app should follow and `/agent-presence` for keeping the active session visibly connected even when no new status event has arrived.
   - Supports `POST /avatar-state` for receiving the frontend's low-sensitivity avatar personality snapshot and writing it to `%TEMP%\aivatar-avatar-state.json` by default. This file is consumed by session-learning workers for trait-aware bubble tone.
+  - Supports `POST /painting-plan` for receiving the frontend's low-sensitivity active painting context, spawning `scripts/aivatar-painting-worker.mjs`, and returning a bounded `paintingPlan` JSON object. The JS bridge and native Tauri bridge expose the same route. The worker writes only temporary derived context under `%TEMP%\aivatar-painting-context` and falls back to heuristic plans when the configured provider fails.
   - Supports `DELETE /agent-sessions/stale` for manually pruning expired/stale session history.
   - Maintains one latest status per `agent + sessionId` and broadcasts snapshots containing `currentStatus`, `sessions[]`, `activeSessionKey`, `connectedSessionKey`, `currentSessionKey`, and a snapshot timestamp.
   - Adds `expiresAt` to session status/presence records. Fresh status or presence updates extend expiry; expired active/followed sessions are cleared during pruning.
@@ -719,12 +854,23 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Only considers rollout files modified within `AIVATAR_DISCOVERY_ACTIVE_MS`, defaulting to `AIVATAR_SESSION_STALE_MS` (5 hours by default), so older chat history is not eagerly connected.
   - Posts `/agent-presence` for detected Codex sessions, starts the external plugin `aivatar-heartbeat.mjs` and `aivatar-watch.mjs` when helpers are missing or dead, records helper pids under `%TEMP%\aivatar-session-discovery\helpers`, and stops helper processes whose rollout files fall outside the active window.
   - When discovery stops an inactive helper, it also posts `/agent-sessions/disconnect` so the bridge immediately removes the stale session row and writes a disconnect tombstone. This prevents old auto-discovered Codex sessions from lingering in Agent Sessions until normal expiry.
+  - Also scans Claude Desktop local inventory metadata for recent Chat, Cowork, and Code sidebar sessions. It reads only ids, titles, cwd, and timestamps from Claude JSON/LevelDB metadata and posts idle `claude-code` inventory rows without setting `/agent-active`.
+  - Tails Claude Desktop `logs\main.log` for Cowork/Code lifecycle activity and scans recent Chat conversation cache updates for short current-message summaries, posting `source: "claude-desktop-activity"` statuses so inventory-discovered sessions can drive the main avatar instead of remaining idle-only rows. Chat assistant updates settle through `desktop-chat-responding` before `desktop-chat-complete`; tune the debounce with `AIVATAR_CLAUDE_DESKTOP_CHAT_SETTLE_MS`.
   - Passes `CODEX_ROLLOUT_PATH` to each watcher so it tails the exact discovered rollout JSONL instead of searching by session id.
   - Defaults token reward baselines to `%TEMP%\aivatar-usage-baselines.json` to avoid restricted `.codex\tmp` write contexts.
   - Passes `AIVATAR_LEARNING_ENABLED`, `AIVATAR_LEARNING_PROVIDER=codex`, and `AIVATAR_LEARNING_SCRIPT` into spawned Codex watcher helpers, so auto-discovered Desktop sessions can produce `phase: "session-learning"` payloads from sanitized rollout digests.
+  - Spawns detached watcher helpers with `windowsHide: true`, preventing helper startup from briefly flashing console windows on Windows.
   - Sends a one-time `thinking` / `discovered` status when it first starts helpers for a session, then leaves real turn state to the watcher. Discovery does not repeatedly overwrite active turn status.
   - Does not modify, rename, delete, migrate, or hide Codex Desktop session/chat files.
   - Does not set `/agent-active` by default; manual `aivatar-connect`, Agent Sessions Follow, and launcher flows remain the explicit ways to choose the followed session.
+
+- `src-tauri/src/codex_discovery.rs`
+  - Native packaged-app Codex Desktop discovery path used when Tauri starts the bridge/discovery flow.
+  - Watches local Codex rollout JSONL events read-only, emits ordinary turn status, writes sanitized learning context files, and starts `scripts/aivatar-learning-worker.mjs` after `final` / `final_answer` events when a provider command is available.
+  - Mirrors the JS discovery path for Claude Desktop local inventory, so packaged Windows builds can show recent Chat/Cowork/Code sidebar sessions even when those sessions only emitted lifecycle-only hook events.
+  - Mirrors the JS Claude Desktop activity tracking path by tailing `logs\main.log` for Cowork/Code lifecycle events and posting short Chat cache update summaries when available. It uses the same Chat settle window and `desktopSessionId` alias behavior as the JS bridge/discovery path, so packaged builds do not split Cowork `local_*` running rows from CLI UUID completion rows.
+  - Resolves `node`, `codex`, and `claude` through PATH, Windows command variants, and macOS Homebrew/user-bin fallback paths. It passes the resolved provider path to the worker via `AIVATAR_CODEX_COMMAND` or `AIVATAR_CLAUDE_COMMAND`.
+  - On Windows, wraps `where.exe` command lookup and worker spawning with `CREATE_NO_WINDOW`, fixing the two quick terminal flashes that could appear after each Codex Desktop turn.
 
 - `C:\Users\rniu\plugins\aivatar-session-bridge`
   - External local session plugin, currently outside this repo.
@@ -735,18 +881,21 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 
 - `src-tauri/src/lib.rs`
   - Owns the Tauri command that starts the Node status bridge from the desktop app.
-  - Starts the native bridge/discovery path and passes the bundled `scripts/aivatar-learning-worker.mjs` path into `src-tauri/src/codex_discovery.rs`, so installed Windows builds can request Codex LLM session-learning from sanitized rollout digests.
+  - Starts the native bridge/discovery path and passes the bundled `scripts/aivatar-learning-worker.mjs` path into both `src-tauri/src/codex_discovery.rs` and `src-tauri/src/local_bridge.rs`, so installed Windows builds can request Codex and Claude Code LLM session-learning from sanitized digests.
+  - On Windows, command resolution for launcher paths hides `where.exe` with `CREATE_NO_WINDOW`, matching the discovery-side no-flash behavior. opencode resolution also checks `%LOCALAPPDATA%\opencode\opencode-cli.exe`; macOS/Linux command lookup includes ordinary PATH plus Homebrew and user-bin fallbacks through the wrapper scripts.
   - Attempts to start the bridge automatically during Tauri app setup and also starts `status:discover` for Aivatar-side Codex Desktop session discovery.
   - Exposes the same bridge/discovery start flow to the React Debug panel through `start_status_bridge`.
   - If the bridge is already running, `start_status_bridge` still attempts to start discovery; the discovery script exits when another discovery instance is already alive.
-  - Exposes `start_agent_cli`, used by the CLI Launcher. It validates the selected working directory, starts the status bridge if needed, opens PowerShell in that folder, and runs `scripts/aivatar-connected-run.mjs --agent <agent> -- <codex|claude> <args>` so launcher-started CLIs auto-connect to Aivatar and disconnect on exit.
-  - Exposes `start_task_agent`, used by Task Cabinet automation. It validates the selected working directory, validates that the task path is an existing `.md` file, reads the source `.md` file without modifying it, rejects prompts over 24,000 characters, writes a derived prompt copy under `%TEMP%\aivatar-task-prompts\`, starts the bridge if needed, and launches Codex/Claude through `scripts/aivatar-connected-run.mjs --prompt-file <tempPrompt>`.
+  - Exposes `get_agent_integrations` and `enable_agent_integration`, used by the Desktop Agents panel. `get_agent_integrations` reports Claude Code and opencode detection/enabled/CLI/restart status; `enable_agent_integration` writes Claude Code hook/statusLine wrappers plus `~/.claude/settings.json` entries, or writes the bundled opencode plugin to `~/.config/opencode/plugins`.
+  - Exposes `start_agent_cli`, used by the CLI Launcher. It validates the selected working directory, starts the status bridge if needed, opens PowerShell in that folder, and runs `scripts/aivatar-connected-run.mjs --agent <agent> -- <codex|claude|opencode> <args>` so launcher-started CLIs auto-connect to Aivatar and disconnect on exit.
+  - Exposes `start_task_agent`, used by Task Cabinet automation. It validates the selected working directory, validates that the task path is an existing `.md` file, reads the source `.md` file without modifying it, rejects prompts over 24,000 characters, writes a derived prompt copy under `%TEMP%\aivatar-task-prompts\`, starts the bridge if needed, and launches Codex, Claude Code, or opencode through `scripts/aivatar-connected-run.mjs --prompt-file <tempPrompt>`.
   - Exposes `pick_markdown_task_file` and `pick_launcher_directory`, used by desktop Browse buttons for Task Cabinet and CLI Launcher path selection.
   - Exposes `resize_main_window_for_side_panel`, used by the React side-panel collapse flow to update the main window minimum size and size together, reducing WebView flicker during menu collapse/expand.
   - Intercepts main-window close requests, emits `aivatar://save-before-close` to the frontend, waits briefly, then closes the window so the latest avatar runtime, room surface choices, layout, inventory, wallet, and stats have a chance to flush to localStorage.
 
 - `src-tauri/tauri.conf.json`
   - Tauri bundle configuration now points at `icons/icon.ico`, so desktop builds use Aivatar's app icon instead of relying on an empty icon list.
+  - Current desktop preview package metadata is `0.1.1` across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`. The Windows NSIS installer `Aivatar_0.1.1_x64-setup.exe` has been uploaded to the GitHub release tag `v0.1.1-desktop-preview`.
 
 - `src-tauri/icons/`
   - Contains the desktop app icon: `icon.ico` for Tauri/Windows bundle usage and `icon.png` as the editable source/reference image. The current icon is a simplified high-contrast pixel octopus mark optimized for small Windows taskbar/title-bar sizes.
@@ -757,26 +906,52 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Generic lifecycle wrapper for commands and AI agent CLIs.
   - Sends `thinking`, `executing`, `waiting_for_user`, `complete`, and `error` updates to the bridge while the wrapped process runs.
   - Supports `--agent <name>` and `--session <id>`; if no session id is provided, it generates one automatically so concurrent agent runs do not overwrite each other.
+  - Treats Codex, Claude Code, and opencode as interactive TUI agents so their stdin/stdout/stderr stay inherited instead of being piped through wrapper output watchers.
+  - Resolves a bare `opencode` command through platform fallbacks before spawning, including `%LOCALAPPDATA%\opencode\opencode-cli.exe` on Windows and Homebrew/user-bin paths on macOS/Linux.
   - This remains useful for simple command lifecycle tracking, but the desktop CLI Launcher now uses `scripts/aivatar-connected-run.mjs` for seamless connect/watch/disconnect behavior.
 
 - `scripts/aivatar-connected-run.mjs`
-  - Connected CLI wrapper used by `codex:connected` and the desktop CLI Launcher.
+  - Connected CLI wrapper used by `codex:connected`, `claude:connected`, `opencode:connected`, and the desktop CLI Launcher.
   - Runs `aivatar-cli-connect -> target CLI -> aivatar-cli-disconnect`, forwarding the target CLI exit code.
   - Uses absolute paths to repo scripts so it works when launched from any selected project folder.
   - For Codex without an explicit session id, it avoids inheriting stale `CODEX_THREAD_ID`/`CODEX_SESSION_ID`, snapshots existing rollout JSONL files, launches Codex, detects the new rollout file, extracts the real Codex session id, disconnects the provisional session, and reconnects Aivatar to the real session.
   - For Claude Code, writes a temporary settings file under `%TEMP%\aivatar-claude-code-settings\`, passes it via `claude --settings <file>`, and registers Aivatar command hooks plus statusLine for the current launched session. Hook handlers use exec form (`command` plus `args`) so Windows Git Bash is bypassed for turn events. StatusLine uses a generated PowerShell wrapper `<session>.statusline.ps1` that forwards stdin to the Node hook script. If the user explicitly passes `--settings`, automatic injection is skipped so user settings are not overwritten.
+  - For opencode, connects with an initial `idle` placeholder, disables the Codex rollout watcher with the reason `opencode uses plugin events`, and expects real status to arrive from `scripts/aivatar-opencode-plugin.mjs`. Task Cabinet prompt files are passed to opencode as `--prompt <content>`.
+  - Resolves a bare `opencode` command through platform fallbacks before spawning, including `%LOCALAPPDATA%\opencode\opencode-cli.exe` on Windows and Homebrew/user-bin paths on macOS/Linux.
   - Passes `AIVATAR_HTTP_ENDPOINT`, `AIVATAR_ACTIVE_ENDPOINT`, and `AIVATAR_PRESENCE_ENDPOINT` into launched agent environments so hook/statusLine subprocesses post to the same bridge endpoints as the launcher.
-  - Automatically enables Aivatar session learning for connected CLI sessions by passing `AIVATAR_LEARNING_ENABLED=1` unless the environment already sets a value. It defaults `AIVATAR_LEARNING_PROVIDER` to `codex` for Codex sessions and `claude-code` for Claude Code sessions, while still honoring explicit user overrides such as `none`.
+  - Automatically enables Aivatar session learning for connected CLI sessions by passing `AIVATAR_LEARNING_ENABLED=1` unless the environment already sets a value. It defaults `AIVATAR_LEARNING_PROVIDER` to `codex` for Codex sessions, `claude-code` for Claude Code sessions, and `opencode` for opencode sessions, while still honoring explicit user overrides.
   - Passes a wrapper parent pid to the CLI connector so a watchdog can clean up heartbeat/watcher helpers if the user directly closes the terminal window.
-  - Supports `--prompt-file <path>` for Task Cabinet automation. The wrapper reads the prompt file with Node and appends the file contents as a single prompt argument. On Windows, Codex launches through the npm-installed `@openai/codex/bin/codex.js` with `node` and Claude Code launches by directly spawning `claude.exe`, so full `.md` prompts with spaces/newlines are passed as argv arguments without `cmd.exe` string re-parsing or the broken `codex -- <prompt>` form that made leading words look like subcommands.
+  - Supports `--prompt-file <path>` for Task Cabinet automation. The wrapper reads the prompt file with Node and passes the file contents in the form expected by each CLI: Claude Code gets `-- <prompt>`, opencode gets `--prompt <prompt>`, and Codex gets a single prompt argument. On Windows, Codex launches through the npm-installed `@openai/codex/bin/codex.js` with `node` and Claude Code launches by directly spawning `claude.exe`, so full `.md` prompts with spaces/newlines are passed as argv arguments without `cmd.exe` string re-parsing or the broken `codex -- <prompt>` form that made leading words look like subcommands.
+
+- `scripts/aivatar-claude-desktop-link.mjs`
+  - Dry-run/apply helper for linking Claude Desktop/Code sessions to Aivatar's existing Claude Code hook/statusLine bridge.
+  - By default, prints the target Claude settings path and merged hook/statusLine configuration without changing files. Passing `install --apply` merges Aivatar env/hooks/statusLine into the selected Claude settings file and writes a Windows PowerShell statusLine wrapper when needed.
+  - Exports settings-fragment and merge helpers so `scripts/aivatar-desktop-agent-adapters-smoke.mjs` can verify the generated config without touching user settings.
+
+- `scripts/aivatar-opencode-plugin.mjs`
+  - opencode Desktop/TUI plugin adapter plus dry-run/apply installer helper.
+  - The dry-run installer prints the user plugin target under `%USERPROFILE%\.config\opencode\plugins`; passing `install --apply` copies the plugin there. Restart opencode after installing so it can load the plugin.
+  - Maps low-detail opencode plugin events into generic Aivatar statuses without reading or uploading full transcript content: `session.status` / `message.updated` become work states, `permission.asked` becomes `waiting_for_user`, `session.idle` becomes `complete`, and `session.deleted` disconnects the session.
+  - Collects a bounded sanitized digest from opencode `chat.message`, `experimental.text.complete`, and event summaries. On `complete`/`error`, it spawns `scripts/aivatar-learning-worker.mjs` with provider `opencode` when an app-installed plugin has embedded worker/node paths; otherwise it posts a heuristic `phase: "session-learning"` payload so Growth bubble recommendations still update.
+
+- `scripts/aivatar-desktop-agent-adapters-smoke.mjs`
+  - Local smoke test for the desktop-agent adapter layer. It mocks `fetch`, exercises the opencode plugin event mapping, verifies Claude Desktop settings generation/merge behavior, and starts a temporary JS bridge to verify Claude native hook `UserPromptSubmit` / `MessageDisplay` / `Stop` events produce a `phase: "session-learning"` fallback payload when the worker path is unavailable. It also verifies Claude statusLine context updates do not downgrade an active `thinking` turn to `idle`, repeated `Stop` events preserve the existing learning id rather than creating duplicate learning, and Claude Desktop `local_*`/CLI UUID rows with the same `desktopSessionId` merge into one terminal session.
 
 - `scripts/aivatar-learning-worker.mjs`
   - Session-learning worker that can be run manually or spawned by Claude Code hooks and Codex rollout watchers. It accepts provider, agent, session, status, summary, optional `--context-file`, and optional `--avatar-state-file`, creates a sanitized digest prompt, calls a provider, normalizes the result, and posts a `phase: "session-learning"` status containing `learning`.
-  - Supports `--provider claude-code`, `--provider codex`, and `--provider none`. Claude Code uses `claude --bare --print --output-format json --json-schema --tools "" --no-session-persistence`; Codex uses `codex.cmd exec` in read-only/no-approval/ephemeral mode with a JSON schema and stdin prompt; `none` uses local heuristic fallback for smoke tests.
+  - Supports `--provider claude-code`, `--provider codex`, `--provider opencode`, and `--provider none`. Claude Code uses `claude --bare --print --output-format json --json-schema --tools "" --no-session-persistence`; Codex uses `codex exec` in read-only/no-approval/ephemeral mode with a JSON schema and stdin prompt; opencode uses `opencode run --format json <prompt>`; `none` uses local heuristic fallback for smoke tests.
+  - Honors `AIVATAR_CLAUDE_COMMAND`, `AIVATAR_CODEX_COMMAND`, `CODEX_COMMAND`, `AIVATAR_OPENCODE_COMMAND`, and `OPENCODE_COMMAND` provider command overrides. On Windows, if no explicit Codex JS path is provided, it searches PATH for `codex.cmd` and the adjacent npm global `node_modules/@openai/codex/bin/codex.js`; when found, it launches that JS entry through `process.execPath` instead of the `.cmd` shim to avoid visible console flashes. opencode provider resolution also checks `%LOCALAPPDATA%\opencode\opencode-cli.exe`, `opencode.cmd`, `opencode.exe`, and macOS/Homebrew user-bin paths before falling back to `opencode`.
   - Learning output is strict, bounded, and low sensitivity: short summary, 2-28 character idle bubble candidates, small trait changes, XP/confidence bounds, and privacy risk. Idle bubble candidates should be one complete short sentence rather than keywords, labels, slogans, or clipped fragments; they should sound like something a gentle human companion might say in one breath. The worker prompt allows natural emoji or tiny decorative symbols, while still avoiding markdown, file paths, commands, logs, and technical wording. Provider errors, invalid JSON, timeouts, missing Claude login, or unavailable Codex exec fall back to heuristic learning and must not break bridge status flow.
   - Reads `%TEMP%\aivatar-avatar-state.json` by default, or the path passed with `--avatar-state-file`, to tune bubble voice from the current avatar personality. The prompt includes trait totals, dominant trait, and secondary trait, but instructs providers not to mention trait names, levels, or point totals inside bubbles. The heuristic fallback also prepends a dominant-trait-specific phrase so tone changes remain visible when LLM providers are unavailable.
   - Sanitizes code blocks, inline code, URLs, Windows/Unix paths, email addresses, and common secret/token patterns before prompting providers. It does not modify source session/transcript files.
   - Detects Chinese text in the digest/summary. Chinese sessions instruct providers to generate natural Simplified Chinese idle bubble candidates. The heuristic fallback now repairs likely mojibake, parses sanitized `user:` / `assistant:` transcript snippets when available, and generates topic-aware pet phrases from the conversation instead of only returning generic fallback bubbles. For example, a Chinese discussion about a historically weighty date can produce candidates such as `今天有点重量`, `把这天记住`, `希望还在闪`, and `陪你想一会`.
+
+- `scripts/aivatar-painting-worker.mjs`
+  - Painting-plan worker used by the Oil Easel through bridge `POST /painting-plan`, and available manually through `npm.cmd run aivatar:paint -- --provider none --payload-file <path>`.
+  - Accepts `--provider claude-code`, `--provider codex`, `--provider opencode`, or `--provider none`, plus `--payload-file`. Provider resolution follows the session-learning worker environment conventions, including `AIVATAR_PAINTING_PROVIDER`, `AIVATAR_LEARNING_PROVIDER`, `AIVATAR_CLAUDE_COMMAND`, `AIVATAR_CODEX_COMMAND`, `CODEX_COMMAND`, `AIVATAR_OPENCODE_COMMAND`, and `OPENCODE_COMMAND`.
+  - Returns a strict, bounded JSON painting plan: short title, one archetype, mood, palette hint, composition slots, motifs, and source. The allowed archetypes are `signal_tower`, `window_city`, `terminal_star_map`, `desk_still_life`, `harbor_beacon`, `mountain_path`, `circuit_grid`, `mosaic_garden`, `color_bloom`, and `lantern_room`.
+  - Treats the provider as a tiny art director rather than the pixel renderer. The frontend still renders all final 24x35 pixel art locally in `src/game/paintings.ts`, so provider failures, invalid JSON, unavailable login, or timeout fall back to a local heuristic plan without blocking painting progress.
+  - The prompt uses only the sanitized low-sensitivity painting payload supplied by the app: avatar id/name, growth level, trait totals, dominant/secondary trait labels, recent memory summaries, saved idle bubbles, preferences, and draft progress metadata. It instructs providers not to include paths, code, URLs, logs, secrets, private identifiers, or trait point totals in the plan.
 
 - `scripts/claude-code-aivatar-hook.mjs`
   - Claude Code hook/statusLine bridge used by `claude:connected` and launcher-started Claude Code sessions.
@@ -877,6 +1052,9 @@ GET  http://127.0.0.1:38988/agent-status
 POST http://127.0.0.1:38988/agent-active
 DELETE http://127.0.0.1:38988/agent-active
 POST http://127.0.0.1:38988/agent-presence
+POST http://127.0.0.1:38988/painting-plan
+POST http://127.0.0.1:38988/agent-hooks/claude-code
+POST http://127.0.0.1:38988/agent-hooks/claude-code/status-line
 POST http://127.0.0.1:38988/codex-status  legacy compatibility
 GET  http://127.0.0.1:38988/codex-status   legacy compatibility
 GET  http://127.0.0.1:38988/health
@@ -886,7 +1064,7 @@ Status payload shape:
 
 ```json
 {
-  "agent": "codex | claude-code | aider | cursor | custom",
+  "agent": "codex | claude-code | opencode | aider | cursor | custom",
   "sessionId": "optional session id",
   "status": "idle | thinking | executing | waiting_for_user | error | complete",
   "phase": "optional short phase name",
@@ -905,6 +1083,23 @@ Status payload shape:
     "totalTokens": 0,
     "source": "codex-desktop-jsonl | custom",
     "scope": "since-baseline | last-turn | synthetic"
+  },
+  "learning": {
+    "id": "stable session-learning id",
+    "source": "llm | heuristic",
+    "summary": "bounded memory summary",
+    "idleBubbleCandidates": ["short complete phrase"],
+    "traitChanges": {
+      "focus": 1,
+      "resilience": 0,
+      "curiosity": 0,
+      "efficiency": 0,
+      "creativity": 0,
+      "warmth": 0
+    },
+    "xp": 2,
+    "confidence": 0.5,
+    "privacyRisk": "low | medium | high"
   },
   "timestamp": "ISO-8601"
 }
@@ -945,7 +1140,7 @@ Behavior mapping:
 - `error`: avatar shows worried/error behavior.
 - `complete`: avatar celebrates and earns bits.
   - If work boost is active, `complete` earns bonus bits.
-  - Rewards only apply to `agent: "codex"` sessions that transition from an active state into `complete`, or to a fresh active/connected Codex `complete` event when the UI did not observe the earlier active state.
+  - Rewards only apply to reward-eligible agents in `src/agentRegistry.ts` (`codex`, `claude-code`, and `opencode`) that transition from an active state into `complete`, or to a fresh active/connected complete event when the UI did not observe the earlier active state.
   - Active reward-eligible previous states are `thinking`, `executing`, `waiting_for_user`, and `error`.
   - If `usage.totalTokens` is present, token rewards use weighted tokens:
     - `weightedTokens = uncachedInputTokens + cachedInputTokens * 0.1 + outputTokens + reasoningOutputTokens`.
@@ -955,12 +1150,12 @@ Behavior mapping:
 Per-turn status protocol:
 
 - Active work should eventually be pushed to `complete`, `idle`, or `error` instead of being left in `thinking` or `executing`.
-- Use `complete` when the task finished and should be eligible for Codex reward logic.
+- Use `complete` when the task finished and should be eligible for agent reward logic.
 - Use `idle` when the agent is simply no longer doing work and should not trigger a reward.
 
 Terminal notification rules:
 
-- Terminal bubbles only show notifications from Codex sessions where `agent` is exactly `"codex"`.
+- Terminal bubbles only show notifications from agents marked `terminalBubble: true` in `src/agentRegistry.ts`; this currently includes Codex, Claude Code, and opencode.
 - `thinking` does not display a Terminal bubble; it displays as the avatar thinking bubble.
 - Debug and simulated statuses do not display Terminal bubbles.
 
@@ -1260,7 +1455,7 @@ High-priority agent states should not be interrupted by right-click context-menu
 - Bridge snapshots include `currentStatus`, `sessions[]`, `activeSessionKey`, `connectedSessionKey`, and `currentSessionKey`, preserve optional token `usage`, session `idleBubbleCandidates`, and optional `learning` payloads, and are also fetched over HTTP as a live-mode fallback.
 - The bridge also accepts low-sensitivity avatar personality snapshots through `/avatar-state` and writes `%TEMP%\aivatar-avatar-state.json`; this is the current handoff from frontend memory/growth state to background session-learning workers.
 - Manual generic agent status sender CLI with legacy Codex command compatibility.
-- Manual session-learning worker CLI with `npm.cmd run aivatar:learn`, `aivatar:learn:claude`, and `aivatar:learn:codex`. It can smoke-test UI learning with `--provider none`, test Claude Code provider output when Claude is logged in, or test Codex structured output with `codex.cmd exec`.
+- Manual session-learning worker CLI with `npm.cmd run aivatar:learn`, `aivatar:learn:claude`, `aivatar:learn:codex`, and `aivatar:learn:opencode`. It can smoke-test UI learning with `--provider none`, test Claude Code provider output when Claude is logged in, test Codex structured output with `codex.cmd exec`, or test opencode provider output with `opencode run --format json`.
 - Local development Codex plugin at `C:\Users\rniu\plugins\aivatar-session-bridge` can post active status and heartbeat presence for the current Codex Desktop session.
   - Project-level npm wrappers are available as `npm.cmd run aivatar:session:setup`, `npm.cmd run aivatar:connect`, and `npm.cmd run aivatar:disconnect`.
   - `aivatar-connect` now starts both heartbeat presence and the rollout watcher, so ordinary Codex Desktop turns can drive `thinking`, tool `executing`, and final `complete` transitions.
@@ -1287,7 +1482,7 @@ High-priority agent states should not be interrupted by right-click context-menu
   - Codex `complete` awards XP and trait changes based on weighted token usage, previous error/waiting state, and reward context.
   - Codex `error` and `waiting_for_user` are recorded once per status event and update resilience/focus.
   - Life events such as sleeping, playing games, painting at the Oil Easel, using Coffee/Cola/Bento/Cookie, brewing Coffee, and buying items add compact memory entries and small trait/preference changes.
-  - Painting at the Oil Easel records a compact recovery memory event, restores mood slowly, and adds `creativity +1` on the throttled memory tick. Autonomous Record Player startup records music preference/trait feedback once, while ongoing BGM now slows Mood decay instead of producing periodic recovery ticks.
+  - Painting at the Oil Easel records compact recovery memory, restores mood slowly, adds `creativity +1` on the throttled memory tick, and advances a per-save-slot painting draft generated from recent memory events plus saved idle bubbles. Each draft uses a 3-hour cumulative painting target; older active drafts are normalized to that target when loaded. Completing the draft records a `painting_complete` memory event and adds the finished work to the save-slot gallery with a quality-based sale value; selling it later records `painting_sold` and grants the bits. Autonomous Record Player startup records music preference/trait feedback once, while ongoing BGM now slows Mood decay instead of producing periodic recovery ticks.
   - Growth traits are `focus`, `resilience`, `curiosity`, `efficiency`, `creativity`, and `warmth`.
   - Traits lightly affect autonomous behavior choices, visual themes, bubbles, dominant-trait micro-expressions, and busy-recovery thresholds. Raw trait points are long-running counters; UI presentation uses normalized values rather than treating raw points as percentages.
   - Dominant-trait micro-expressions are visual-only Canvas overlays in `src/game/renderScene.ts`: Focus scan glints, Resilience fist pumps, Curiosity question pixels, Efficiency check marks, Creativity sparkles, and Warmth blush/heart pixels. They read the current dominant Growth trait and do not modify memory, rewards, pathing, or save state. `cute-crayfish` is the current exception for Efficiency: its generic body check marks are suppressed, and the effect appears as a small keyboard-side control device during `coding`/`thinking`.
@@ -1329,7 +1524,7 @@ High-priority agent states should not be interrupted by right-click context-menu
 - Recent furniture and placed item art is still programmatic canvas drawing, but the bed, desk, placed Terminal, dining table, fridge, and File Cabinet have been iterated toward a cozy retro/Stardew-like style.
 - The File Cabinet is now config/shop content and is buyable at Growth level 25. It is unique, sellable, and removable; while inventory/save ownership is represented through `placedItems`, the runtime room converts a placed cabinet into `room.furniture` so it uses the same rendering, click hit testing, movement, collision, and avatar occlusion logic as base furniture.
 - Task Cabinet is now a real local MVP rather than debug-only. It maintains a local task list of `.md` paths in `localStorage` key `aivatar.taskCabinet.v1`, reads source `.md` files only through the Tauri task-launch command, and never writes back to the original `.md` files.
-- Task Cabinet automation launches Codex/Claude through the same connected wrapper used by the CLI Launcher, with the task prompt passed through a derived `%TEMP%\aivatar-task-prompts\*.md` file and `--prompt-file`. Status still depends on external Codex/Claude CLI behavior and bridge/wrapper session updates, but the app now ignores startup/presence idle placeholders, remembers same-session terminal status, and preserves `complete`/`error` through late Claude `Notification`, `SessionEnd`, statusLine, or disconnect cleanup events.
+- Task Cabinet automation launches Codex, Claude Code, or opencode through the same connected wrapper used by the CLI Launcher, with the task prompt passed through a derived `%TEMP%\aivatar-task-prompts\*.md` file and `--prompt-file`. The wrapper passes prompts in each CLI's expected form: Codex receives a prompt argument, Claude Code receives `-- <prompt>`, and opencode receives `--prompt <prompt>`. Status still depends on each external CLI's event source and bridge/wrapper session updates, but the app now ignores startup/presence idle placeholders, remembers same-session terminal status, and preserves `complete`/`error` through late Claude `Notification`, `SessionEnd`, statusLine, or disconnect cleanup events.
 - Task Cabinet launch now has a visual file workflow: the avatar fetches a paper from the File Cabinet, carries it to the Terminal, and reads/executes there. The flow intentionally masks high-priority agent status during the brief fetch/carry/read handoff and lets very fast tasks finish visually before releasing back to ordinary status-driven behavior.
 - File Cabinet visible papers now reflect real Task Cabinet state: `Ready + Failed` tasks appear in the cabinet, failed papers show a red `X`, running tasks are visually treated as taken out, and completed tasks disappear. Removing a task from Aivatar removes it only from localStorage and never deletes the source `.md`.
 - Development saves remain browser-origin scoped. Save-slot registries and per-slot saves from `http://127.0.0.1:1420/` do not automatically migrate to `http://localhost:1420/`.
@@ -1367,8 +1562,8 @@ High-priority agent states should not be interrupted by right-click context-menu
 - Existing saves may preserve older furniture positions, purchased state, inventory, or placed File Cabinet state after config or art changes; clear the current origin's save-slot registry/per-slot keys for a fully fresh layout and Growth/shop test. Also clear legacy `aivatar.save.v1` when testing first-run migration from the old single-save key.
 - Existing saves may also preserve furniture skin purchase/application state. If a furniture skin does not appear, verify that the active preview port points to the intended worktree and that the save at that origin has purchased and applied the skin. If the default furniture should be restored, clear the applied skin from the Furniture Skins shop rather than editing save data manually.
 - Game Console mood recovery is intentionally slow, does not produce bits, and now ticks while the avatar is actively playing near the placed Game Console using a near-active-play-target check rather than relying only on recalculated exact standpoints. Game Console play-screen animation uses the same targeted/near-active logic so autonomous play visually activates the correct console.
-- Oil Easel painting mood recovery is also intentionally slow and runs as a longer autonomous activity rather than a quick mood refill.
-- Oil Easel painting is intentionally a mood/creativity recovery activity and does not produce bits. The easel is categorized in the Furniture shop tab through `tags: ["furniture", "easel"]`, but remains `kind: "decor"` so it uses placed-item rendering/placement rather than File Cabinet's runtime-furniture conversion path.
+- Oil Easel painting mood recovery is also intentionally slow and runs as a longer autonomous activity rather than a quick mood refill. Separate from recovery ticks, cumulative Oil Easel painting now completes generated gallery artworks; the finished painting only awards quality-based random bits after the user sells it from the gallery.
+- Oil Easel is categorized in the Furniture shop tab through `tags: ["furniture", "easel"]`, but remains `kind: "decor"` so it uses placed-item rendering/placement rather than File Cabinet's runtime-furniture conversion path.
 - Oil Easel currently has visual/click/placement bounds, participates in floor-item ground-projection placement overlap checks, and contributes its foot-level projection to navigation collision. Broader placed-item collision is still intentionally narrow; other placed objects such as rugs, tabletop items, and wall hangings remain non-blocking unless future behavior needs them.
   - Coffee Machine brewing is now a small economy sink: manual and autonomous brewing each cost `1 bit` and only complete after the avatar reaches the placed Coffee Machine; broader bits balancing is deferred until closer to 1.0. Autonomous brewing is intentionally cooldown-gated so repeated brew animations do not dominate idle life.
 - Bed collision was intentionally removed so the avatar can move naturally around the wall-aligned bed.
@@ -1376,7 +1571,7 @@ High-priority agent states should not be interrupted by right-click context-menu
 - `thinking` intentionally does not trigger busy recovery, so focused thought remains visually clear even when stats are low. Busy recovery still applies to other high-priority states when resources are available.
 - High-priority stale sessions stop blocking interactions after the configured bridge stale timeout.
 - A connected stale active session can remain visibly linked in the Agent Sessions panel, but stale statuses do not keep driving `currentStatus` merely because presence remains fresh.
-- Complete rewards apply to connected `agent: "codex"` and `agent: "claude-code"` sessions when they transition from an active state into `complete`, or when a fresh active/connected `complete` snapshot is first observed.
+- Complete rewards apply to connected reward-eligible agents in `src/agentRegistry.ts` (`codex`, `claude-code`, and `opencode`) when they transition from an active state into `complete`, or when a fresh active/connected `complete` snapshot is first observed.
 - Token usage rewards and context window meters work for Codex sessions that can be matched to local Codex rollout JSONL files, including the Codex Desktop session plugin path and the desktop CLI Launcher connected path after it discovers the real Codex rollout session id.
 - Claude Code launcher sessions now use temporary hook/statusLine settings for fine-grained status and context usage. Hook events use exec-form Node commands and statusLine uses a PowerShell wrapper to avoid Windows Git Bash hangs. Basic Task Cabinet hello-world prompt/status flow has been validated, including preserving `complete` through `SessionEnd`; this is still newer than the Codex rollout watcher and needs real-CLI regression testing across tool calls, permission prompts, Stop/StopFailure, `/clear`, `/resume`, app restart, and `--bare`/user-provided `--settings` paths.
 - Claude Code session-learning currently works end-to-end through hook-triggered learning payloads, with heuristic fallback verified when `claude --print` reports `Not logged in`. To use true Claude LLM learning and show `LLM` badges for Claude-derived bubbles, the Claude CLI must be logged in for the environment running the worker.
@@ -1394,8 +1589,8 @@ High-priority agent states should not be interrupted by right-click context-menu
 - The Agent Sessions panel displays recent sessions but the room still has one avatar driven by `currentStatus`.
 - `Demo actions` is a Debug-only visual QA helper. It cycles runtime avatar behaviors and displays demo bubbles, but it does not represent real agent status or grant rewards. If a Debug status override is active, use the highlighted `Live` button to return the avatar to real bridge status.
 - The `phone` behavior is intentionally not an agent status and should not trigger bridge sends, memory rewards, task summaries, or status replies. It is only an idle-life animation.
-- Interactive Codex/Claude TUI automatic waiting detection is still limited to available event sources. Codex Desktop uses rollout watching; launcher-started Claude Code uses hook/statusLine injection with exec-form hooks, a PowerShell statusLine wrapper, and transcript usage fallback. The generic bridge still supports external status posts for smoke tests and older clients.
-- Current Codex Desktop conversations can be discovered automatically by Aivatar when the desktop app or `status:discover` is running. The local Aivatar session plugin remains useful for explicitly following/activating a specific session, reconnecting a session, or manual recovery. Explicit status posts remain useful for smoke tests and older clients. For command lifecycle tracking, use `codex:run`, `claude:run`, or `agent:run`; for smoother launcher/CLI flow, use the desktop CLI Launcher, `codex:connected`, or `claude:connected`.
+- Interactive Codex/Claude/opencode TUI automatic waiting detection is still limited to available event sources. Codex Desktop uses rollout watching; launcher-started Claude Code uses hook/statusLine injection with exec-form hooks, a PowerShell statusLine wrapper, and transcript usage fallback; opencode uses the installable plugin event adapter. The generic bridge still supports external status posts for smoke tests and older clients.
+- Current Codex Desktop conversations can be discovered automatically by Aivatar when the desktop app or `status:discover` is running. The local Aivatar session plugin remains useful for explicitly following/activating a specific session, reconnecting a session, or manual recovery. Explicit status posts remain useful for smoke tests and older clients. For command lifecycle tracking, use `codex:run`, `claude:run`, `opencode:run`, or `agent:run`; for smoother launcher/CLI flow, use the desktop CLI Launcher, `codex:connected`, `claude:connected`, or `opencode:connected`.
 - Discovery can still reconnect any rollout touched within the active window, which defaults to `AIVATAR_SESSION_STALE_MS` (5 hours). If old sessions unexpectedly reappear, check whether `status:discover` is running, whether `AIVATAR_DISCOVERY_ACTIVE_MS` has been overridden, and whether helper records under `%TEMP%\aivatar-session-discovery\helpers` are restarting old heartbeat/watch processes.
 - Current discovery freshness still uses rollout file `mtime`. If an older rollout file is touched recently, discovery can treat it as active even when its last real event is older. Future hardening should parse the latest rollout event timestamp and prefer that over filesystem `mtime`.
 - Disconnect safety now covers three sources: manual plugin pid files under `%TEMP%\aivatar-session-bridge`, repo-local CLI pid files under `%TEMP%\aivatar-cli-session`, and auto-discovery helper pid files under `%TEMP%\aivatar-session-discovery\helpers`.
@@ -1515,6 +1710,7 @@ To reduce semantic regressions from parallel worktrees:
 
 - Keep changes to central lifecycle files small and isolated. In this project, `scripts/codex-status-bridge.mjs`, `scripts/codex-session-discovery.mjs`, `scripts/aivatar-connected-run.mjs`, `src/App.tsx`, and `AGENTS.md` are high-conflict files.
 - Before starting or finishing work in a worktree, update from `main` with `git fetch` plus either `git merge main` or `git rebase main`, depending on the branch workflow.
+- For this worktree, default GitHub pushes should go to `https://github.com/ruiwuniu/Aivatar-Demo.git` `main` (remote `origin`). When the current branch is not `main`, push the intended reviewed commit with an explicit refspec such as `git push origin HEAD:main` rather than pushing the current branch by default.
 - When a merge conflict touches bridge/discovery/session files, resolve text conflicts and then do a semantic checklist:
   - New or changed endpoints appear in `/health`.
   - Session keys are normalized consistently.

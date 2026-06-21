@@ -7,11 +7,13 @@
 **中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。它把 Codex、Claude Code 或其他 agent 的会话状态映射成像素房间里的小伙伴行为：思考、编码、等待、报错、完成任务，并通过 `bits`、成长、背包、商店和房间装修形成一个可互动的工作陪伴系统。
 
 <p align="center">
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.1.1-desktop-preview/Aivatar_0.1.0_universal.dmg"><strong>Download macOS DMG</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.1.2"><strong>macOS build pending</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.1.1-desktop-preview/Aivatar_0.1.0_x64-setup.exe"><strong>Download Windows EXE</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.1.2/Aivatar_0.1.2_x64-setup.exe"><strong>Download Windows EXE</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.1.1-desktop-preview">Preview Release</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.1.2/Aivatar_0.1.2_x64_en-US.msi"><strong>Download Windows MSI</strong></a>
+  ·
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.1.2">Release 0.1.2</a>
 </p>
 
 | Live AI session companion | Growth and session summaries |
@@ -28,7 +30,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video</strong></a>
 </p>
 
-> Current status / 当前状态: preview builds are available for macOS and Windows. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
+> Current status / 当前状态: Windows preview installers are available in the 0.1.2 GitHub release. The macOS installer is pending and will be uploaded after a macOS build is produced. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
 
 ## Contents / 目录
 
@@ -514,11 +516,11 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 Current release-prep limitations:
 
-- The Windows preview release path is still being hardened.
+- The Windows 0.1.2 preview release is available through GitHub Releases, with NSIS `.exe` and MSI installers.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
 - Native bridge support exists for local status, basic Codex Desktop session discovery, rollout watching, token-usage rewards, and local heuristic session learning.
 - A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
-- macOS and Linux packaging are planned after the Windows preview path is stable.
+- macOS packaging is pending a macOS build upload; Linux packaging remains planned after the desktop integration path is stable.
 
 **中文**
 

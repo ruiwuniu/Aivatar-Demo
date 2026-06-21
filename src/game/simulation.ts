@@ -2144,8 +2144,9 @@ const chooseAutonomousBehavior = (
   const resilienceBoost = traitInfluence(traits?.resilience, 0.12, 700);
   const creativityBoost = traitInfluence(traits?.creativity, 0.16, 500);
   const warmthBoost = traitInfluence(traits?.warmth, 0.14, 600);
+  const canPlayMusic = Boolean(options?.autoMusicEnabled) && hasRecordPlayer;
   const musicWeight =
-    options?.autoMusicEnabled && hasRecordPlayer
+    canPlayMusic
       ? 3 +
         creativityBoost * 18 +
         warmthBoost * 14 +
@@ -2195,7 +2196,7 @@ const chooseAutonomousBehavior = (
         },
         {
           behavior: "music",
-          weight: musicWeight + warmthBoost * 10 + resilienceBoost * 8,
+          weight: canPlayMusic ? musicWeight + warmthBoost * 10 + resilienceBoost * 8 : 0,
         },
         {
           behavior: "paint",

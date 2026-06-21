@@ -79,6 +79,23 @@ const quoteForCmd = (value) => {
   return `"${value.replace(/"/g, '""')}"`;
 };
 
+const opencodeFallbackCommand = () => {
+  if (process.env.AIVATAR_OPENCODE_COMMAND) return process.env.AIVATAR_OPENCODE_COMMAND;
+  const candidates =
+    process.platform === "win32"
+      ? [
+          process.env.LOCALAPPDATA
+            ? join(process.env.LOCALAPPDATA, "opencode", "opencode-cli.exe")
+            : "",
+        ]
+      : [
+          "/opt/homebrew/bin/opencode",
+          "/usr/local/bin/opencode",
+          join(process.env.HOME ?? "", ".local", "bin", "opencode"),
+        ];
+  return candidates.filter(Boolean).find((path) => existsSync(path));
+};
+
 const createSpawnSpec = (commandArgs) => {
   const [command, ...args] = commandArgs;
   const normalizedCommand = basename(command ?? "")
@@ -102,6 +119,11 @@ const createSpawnSpec = (commandArgs) => {
 
   if (process.platform === "win32" && normalizedCommand === "claude") {
     return { file: command, args };
+  }
+
+  if (normalizedCommand === "opencode") {
+    const fallback = opencodeFallbackCommand();
+    if (fallback) return { file: fallback, args };
   }
 
   if (
@@ -513,7 +535,7 @@ const commandEnv = (options) => {
     AIVATAR_LEARNING_ENABLED: process.env.AIVATAR_LEARNING_ENABLED ?? "1",
     AIVATAR_LEARNING_PROVIDER:
       process.env.AIVATAR_LEARNING_PROVIDER ??
-      (options.agent === "codex" ? "codex" : "claude-code"),
+      learningProviderForAgent(options.agent),
   };
 
   if (options.allowNewSession && !options.hasExplicitSessionId) {
@@ -523,6 +545,26 @@ const commandEnv = (options) => {
 
   return env;
 };
+
+const learningProviderForAgent = (agent) => {
+  if (agent === "codex") return "codex";
+  if (agent === "claude-code") return "claude-code";
+  return "none";
+};
+
+const watchDisabledReasonForAgent = (agent, discoverCodexSession) => {
+  if (agent === "codex") {
+    return discoverCodexSession
+      ? "Codex watcher attaches after session discovery"
+      : undefined;
+  }
+  if (agent === "claude-code") return "Claude Code uses hooks/statusLine";
+  if (agent === "opencode") return "opencode uses plugin events";
+  return `${agent} uses external status events`;
+};
+
+const initialStatusForAgent = (agent) =>
+  agent === "claude-code" || agent === "opencode" ? "idle" : undefined;
 
 const spawnCommand = (commandArgs, env = process.env) => {
   const spec = createSpawnSpec(commandArgs);
@@ -589,6 +631,8 @@ if (options.promptFile) {
     const prompt = await readFile(options.promptFile, "utf8");
     if (commandName(commandArgs) === "claude") {
       commandArgs.push("--", prompt);
+    } else if (commandName(commandArgs) === "opencode") {
+      commandArgs.push("--prompt", prompt);
     } else {
       commandArgs.push(prompt);
     }
@@ -662,13 +706,11 @@ const connectCode = await runNodeScript(
   `Running ${launchCommandArgs.join(" ")}`,
   {
     noWatch: discoverCodexSession || options.agent !== "codex",
-    watchDisabledReason:
-      options.agent !== "codex"
-        ? "Claude Code uses hooks/statusLine"
-        : discoverCodexSession
-          ? "Codex watcher attaches after session discovery"
-          : undefined,
-    initialStatus: options.agent === "claude-code" ? "idle" : undefined,
+    watchDisabledReason: watchDisabledReasonForAgent(
+      options.agent,
+      discoverCodexSession,
+    ),
+    initialStatus: initialStatusForAgent(options.agent),
     watchParentPid: process.pid,
   },
 );

@@ -20,6 +20,10 @@ const configuredCodexCommand =
   null;
 const defaultCodexCommand = process.platform === "win32" ? "codex.cmd" : "codex";
 const claudeCommand = process.env.AIVATAR_CLAUDE_COMMAND ?? "claude";
+const configuredOpencodeCommand =
+  process.env.AIVATAR_OPENCODE_COMMAND ??
+  process.env.OPENCODE_COMMAND ??
+  null;
 
 const traitNames = [
   "focus",
@@ -70,7 +74,7 @@ const usage = `Usage:
   node scripts/aivatar-learning-worker.mjs --provider codex --agent claude-code --session SESSION --context-file digest.txt
 
 Options:
-  --provider <claude-code|codex|none>
+  --provider <claude-code|codex|opencode|none>
   --agent <name>
   --session <id>
   --status <idle|thinking|executing|waiting_for_user|error|complete>
@@ -488,6 +492,37 @@ const codexCommand = async () => {
     : { command: configuredCodexCommand ?? defaultCodexCommand, prefixArgs: [] };
 };
 
+const opencodeCandidates = () => {
+  if (configuredOpencodeCommand) return [configuredOpencodeCommand];
+  if (process.platform === "win32") {
+    return [
+      process.env.LOCALAPPDATA
+        ? join(process.env.LOCALAPPDATA, "opencode", "opencode-cli.exe")
+        : "",
+      "opencode.cmd",
+      "opencode.exe",
+      "opencode",
+    ].filter(Boolean);
+  }
+  return [
+    "/opt/homebrew/bin/opencode",
+    "/usr/local/bin/opencode",
+    join(process.env.HOME ?? "", ".local", "bin", "opencode"),
+    "opencode",
+  ].filter(Boolean);
+};
+
+const opencodeCommand = async () => {
+  for (const command of opencodeCandidates()) {
+    if (command.includes("/") || command.includes("\\") || /^[a-zA-Z]:/.test(command)) {
+      if (await fileExists(command)) return command;
+      continue;
+    }
+    return command;
+  }
+  return "opencode";
+};
+
 const extractJsonObject = (text) => {
   const trimmed = text.trim();
   if (!trimmed) throw new Error("Provider returned empty output");
@@ -566,6 +601,54 @@ const callCodex = async (prompt) => {
     Math.max(defaultTimeoutMs, 45000),
   );
   return unwrapProviderJson(extractJsonObject(await readFile(outputPath, "utf8")));
+};
+
+const textFromOpencodeJsonEvents = (stdout) => {
+  const snippets = [];
+  for (const line of stdout.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try {
+      const event = JSON.parse(trimmed);
+      const candidates = [
+        event?.result,
+        event?.response,
+        event?.content,
+        event?.text,
+        event?.message,
+        event?.data?.text,
+        event?.data?.message,
+        event?.properties?.message,
+      ];
+      for (const candidate of candidates) {
+        if (typeof candidate === "string" && candidate.trim()) {
+          snippets.push(candidate);
+        }
+      }
+      const parts = event?.parts ?? event?.data?.parts ?? [];
+      if (Array.isArray(parts)) {
+        for (const part of parts) {
+          const text = part?.text ?? part?.content;
+          if (typeof text === "string" && text.trim()) snippets.push(text);
+        }
+      }
+    } catch {
+      // Ignore non-event lines from opencode --format json.
+    }
+  }
+  return snippets.join("\n");
+};
+
+const callOpencode = async (prompt) => {
+  const command = await opencodeCommand();
+  const { stdout } = await runCommand(
+    command,
+    ["run", "--format", "json", prompt],
+    "",
+    Math.max(defaultTimeoutMs, 45000),
+  );
+  const text = textFromOpencodeJsonEvents(stdout) || stdout;
+  return unwrapProviderJson(extractJsonObject(text));
 };
 
 const conversationEntriesFromDigest = (digest) => {
@@ -788,6 +871,8 @@ const main = async () => {
     raw = await callClaudeCode(prompt);
   } else if (options.provider === "codex") {
     raw = await callCodex(prompt);
+  } else if (options.provider === "opencode") {
+    raw = await callOpencode(prompt);
   } else if (options.provider === "none") {
     raw = heuristicLearning(options, digest);
   } else {
