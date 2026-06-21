@@ -640,6 +640,33 @@
       "effect": { "mood": 5, "energy": 2 }
     },
     {
+      "id": "terminal-green-amber-skin",
+      "name": "Green Amber Terminal Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "computer"],
+      "targetFurnitureId": "builtin-terminal",
+      "price": 220,
+      "effect": { "mood": 3, "energy": 2 }
+    },
+    {
+      "id": "terminal-white-cyan-skin",
+      "name": "White Cyan Terminal Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "computer"],
+      "targetFurnitureId": "builtin-terminal",
+      "price": 260,
+      "effect": { "mood": 4, "energy": 2 }
+    },
+    {
+      "id": "terminal-neon-dark-skin",
+      "name": "Neon Dark Terminal Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "computer"],
+      "targetFurnitureId": "builtin-terminal",
+      "price": 300,
+      "effect": { "mood": 5, "energy": 3 }
+    },
+    {
       "id": "rococo-ivory-table-skin",
       "name": "Rococo Ivory Table Skin",
       "kind": "decor",
@@ -1045,6 +1072,33 @@
         "targetFurnitureId": "desk",
         "price": 340,
         "effect": { "mood": 5, "energy": 2 }
+      },
+      {
+        "id": "terminal-green-amber-skin",
+        "name": "Green Amber Terminal Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "computer"],
+        "targetFurnitureId": "builtin-terminal",
+        "price": 220,
+        "effect": { "mood": 3, "energy": 2 }
+      },
+      {
+        "id": "terminal-white-cyan-skin",
+        "name": "White Cyan Terminal Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "computer"],
+        "targetFurnitureId": "builtin-terminal",
+        "price": 260,
+        "effect": { "mood": 4, "energy": 2 }
+      },
+      {
+        "id": "terminal-neon-dark-skin",
+        "name": "Neon Dark Terminal Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "computer"],
+        "targetFurnitureId": "builtin-terminal",
+        "price": 300,
+        "effect": { "mood": 5, "energy": 3 }
       },
       {
         "id": "rococo-ivory-table-skin",

@@ -236,6 +236,7 @@ export interface PlacedItem {
   x: number;
   y: number;
   rotation?: number;
+  skinId?: string;
   surfaceFurnitureId?: string;
   surfaceOffsetX?: number;
   surfaceOffsetY?: number;

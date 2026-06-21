@@ -35,10 +35,51 @@ import {
   type BedSpriteDefinition,
 } from "./bedSkinSprites";
 import {
+  ACRYLIC_DESK_SPRITE_PALETTE,
+  ACRYLIC_DESK_SPRITE_ROWS,
+  ACRYLIC_DESK_SPRITE_X_OFFSET,
+  ACRYLIC_DESK_SPRITE_Y_OFFSET,
+  CLASSIC_DESK_SPRITE_PALETTE,
+  CLASSIC_DESK_SPRITE_ROWS,
+  CLASSIC_DESK_SPRITE_X_OFFSET,
+  CLASSIC_DESK_SPRITE_Y_OFFSET,
+  INDUSTRIAL_DESK_SPRITE_PALETTE,
+  INDUSTRIAL_DESK_SPRITE_ROWS,
+  INDUSTRIAL_DESK_SPRITE_X_OFFSET,
+  INDUSTRIAL_DESK_SPRITE_Y_OFFSET,
+  ROCOCO_DESK_SPRITE_PALETTE,
+  ROCOCO_DESK_SPRITE_ROWS,
+} from "./deskSprites";
+import {
   FLOOR_SURFACE_SPRITE_DATA,
   FLOOR_SURFACE_SPRITE_HEIGHT,
   FLOOR_SURFACE_SPRITE_WIDTH,
 } from "./floorSurfaceSprites";
+import {
+  FRIDGE_DEFAULT_BODY_WIDTH,
+  FRIDGE_DEFAULT_BODY_X,
+  FRIDGE_DEFAULT_FRONT_HEIGHT,
+  FRIDGE_SKIN_SPRITE_DATA,
+  FRIDGE_DEFAULT_SPRITE_HEIGHT,
+  FRIDGE_DEFAULT_SPRITE_WIDTH,
+  FRIDGE_DEFAULT_SPRITE_X_OFFSET,
+  FRIDGE_DEFAULT_SPRITE_Y_OFFSET,
+  FRIDGE_DEFAULT_TOP_HEIGHT,
+} from "./fridgeSprites";
+import {
+  TERMINAL_MONITOR_DEFAULT_SPRITE,
+  TERMINAL_MONITOR_SKIN_IDS,
+  TERMINAL_MONITOR_SKIN_SPRITE_DATA,
+  TERMINAL_MONITOR_STATUS_BUBBLE_Y_OFFSET,
+  TERMINAL_MONITOR_SPRITE_X_OFFSET,
+  TERMINAL_MONITOR_SPRITE_Y_OFFSET,
+  type TerminalMonitorSkinId,
+} from "./terminalSprites";
+import {
+  WALL_SURFACE_SPRITE_DATA,
+  WALL_SURFACE_SPRITE_HEIGHT,
+  WALL_SURFACE_SPRITE_WIDTH,
+} from "./wallSurfaceSprites";
 
 const CJK_CANVAS_FONT =
   '"Noto Sans TC", "Noto Sans SC", "Noto Sans HK", "Microsoft JhengHei UI", "Microsoft YaHei UI", "Microsoft JhengHei", "Microsoft YaHei", sans-serif';
@@ -91,6 +132,7 @@ type FridgeSkinId =
   | "ivory-fridge-skin"
   | "red-retro-fridge-skin"
   | "white-tech-fridge-skin";
+type TerminalMonitorSkinKey = "classic" | TerminalMonitorSkinId;
 
 type DominantTrait = keyof AivatarMemory["growth"]["traits"];
 type MoodBand = "high" | "normal" | "low" | "depleted";
@@ -1281,6 +1323,76 @@ const fridgeSkinId = (item: FurnitureDefinition): FridgeSkinId =>
     ? item.skinId
     : "classic";
 
+const TERMINAL_MONITOR_SKIN_ID_SET = new Set<string>(TERMINAL_MONITOR_SKIN_IDS);
+
+const terminalMonitorSkinId = (skinId?: string): TerminalMonitorSkinKey =>
+  skinId && TERMINAL_MONITOR_SKIN_ID_SET.has(skinId)
+    ? (skinId as TerminalMonitorSkinId)
+    : "classic";
+
+const terminalMonitorSpriteForSkinId = (skinId: TerminalMonitorSkinKey) =>
+  skinId === "classic"
+    ? TERMINAL_MONITOR_DEFAULT_SPRITE
+    : TERMINAL_MONITOR_SKIN_SPRITE_DATA[skinId];
+
+const terminalMonitorAnimationPalette = (skinId: TerminalMonitorSkinKey) => {
+  switch (skinId) {
+    case "terminal-green-amber-skin":
+      return {
+        screenTop: "#c8ffbd",
+        line: "#95f58f",
+        lineSoft: "#5fcf6c",
+        alt: "#d6ff9f",
+        scanline: "rgba(90, 230, 94, 0.7)",
+        cursor: "#ffb338",
+        indicatorA: "#ffb338",
+        indicatorB: "#b36b16",
+        keyShadow: "#6f4d1a",
+        keyTop: "#ffd56d",
+      };
+    case "terminal-white-cyan-skin":
+      return {
+        screenTop: "#f1ffff",
+        line: "#9efcff",
+        lineSoft: "#52d7e7",
+        alt: "#e7ffff",
+        scanline: "rgba(105, 238, 255, 0.72)",
+        cursor: "#ffffff",
+        indicatorA: "#39e7ff",
+        indicatorB: "#1ba4bc",
+        keyShadow: "#4fbccb",
+        keyTop: "#f7ffff",
+      };
+    case "terminal-neon-dark-skin":
+      return {
+        screenTop: "#b8fff2",
+        line: "#7fe6ff",
+        lineSoft: "#3ca9ff",
+        alt: "#ff6fe1",
+        scanline: "rgba(120, 167, 255, 0.74)",
+        cursor: "#ff3bc8",
+        indicatorA: "#5cecff",
+        indicatorB: "#ff3bc8",
+        keyShadow: "#1fb5d0",
+        keyTop: "#ff47cc",
+      };
+    case "classic":
+    default:
+      return {
+        screenTop: "#b8fff2",
+        line: "#9ee6ff",
+        lineSoft: "#78a7ff",
+        alt: "#eaffd0",
+        scanline: "rgba(120, 167, 255, 0.72)",
+        cursor: "#ffe66d",
+        indicatorA: "#8dff9d",
+        indicatorB: "#3ac46d",
+        keyShadow: "#78a7ff",
+        keyTop: "#fff7c2",
+      };
+  }
+};
+
 const CLASSIC_BED_SPRITE_PALETTE: Record<string, string> = {
   "0": "#a5865d",
   "1": "#0a286e",
@@ -1609,10 +1721,93 @@ const isPlacedItemInFrontOfAvatar = (
   if (getItemPlacementKind(definition) !== "floor") return false;
 
   const avatarFeetY = avatar.y + 12;
-  const bounds = placedItemBounds(item);
-  const occlusionLine = bounds.y + bounds.height - Math.min(8, bounds.height * 0.2);
 
-  return avatarFeetY < occlusionLine;
+  return avatarFeetY < placedItemDepthY(item);
+};
+
+const rectsOverlap = (
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+) =>
+  left.x < right.x + right.width &&
+  left.x + left.width > right.x &&
+  left.y < right.y + right.height &&
+  left.y + left.height > right.y;
+
+const placedItemDepthY = (item: PlacedItem) => {
+  const bounds = placedItemBounds(item);
+  return bounds.y + bounds.height - Math.min(8, bounds.height * 0.2);
+};
+
+const shouldRestorePlacedItemOverFurniture = (furniture: FurnitureDefinition) =>
+  furniture.id === "table" || furniture.id === "file-cabinet";
+
+const rowsVisualBounds = (
+  item: FurnitureDefinition,
+  xOffset: number,
+  yOffset: number,
+  rows: readonly string[],
+) => ({
+  x: item.x + xOffset,
+  y: item.y + yOffset,
+  width: Math.max(0, ...rows.map((row) => row.length)),
+  height: rows.length,
+});
+
+const foregroundFurnitureOverlayBounds = (item: FurnitureDefinition) => {
+  if (item.id === "table") {
+    const skinId = tableSkinId(item);
+    const rows =
+      skinId === "rococo-ivory-table-skin"
+        ? ROCOCO_TABLE_SPRITE_ROWS
+        : skinId === "dark-oak-table-skin"
+          ? DARK_OAK_TABLE_SPRITE_ROWS
+          : skinId === "white-tech-table-skin"
+            ? WHITE_TECH_TABLE_SPRITE_ROWS
+            : CLASSIC_TABLE_SPRITE_ROWS;
+    return rowsVisualBounds(item, -4, -5, rows);
+  }
+
+  if (item.id === "file-cabinet") {
+    return {
+      x: item.x - 2,
+      y: item.y - 11,
+      width: item.width + 4,
+      height: item.height + 17,
+    };
+  }
+
+  return getFurnitureVisualBounds(item);
+};
+
+const placedItemFurnitureOverlayClipRects = (
+  item: PlacedItem,
+  definition: ItemDefinition | undefined,
+  content: AivatarContent,
+  foregroundFurniture: FurnitureDefinition[],
+) => {
+  if (
+    !definition ||
+    definition.kind !== "decor" ||
+    item.surfaceFurnitureId ||
+    isFloorUnderlayItem(item.itemId) ||
+    getItemPlacementKind(definition) !== "floor"
+  ) {
+    return [];
+  }
+
+  const itemBounds = placedItemBounds(item);
+  const itemDepth = placedItemDepthY(item);
+  return foregroundFurniture
+    .filter(shouldRestorePlacedItemOverFurniture)
+    .filter((furniture) => itemDepth >= furnitureDepthY(furniture))
+    .flatMap((furniture) => [
+      foregroundFurnitureOverlayBounds(furniture),
+      ...(content.placedItems ?? [])
+        .filter((candidate) => candidate.surfaceFurnitureId === furniture.id)
+        .map(placedItemBounds),
+    ])
+    .filter((bounds) => rectsOverlap(itemBounds, bounds));
 };
 
 const drawFurnitureCollisionRange = (
@@ -2253,7 +2448,18 @@ const WHITE_TECH_TABLE_SPRITE_ROWS = [
   ".......cccccccccc1..................................................................1ccccccccccf......",
 ] as const;
 
-const drawTableSprite = (
+interface CachedTableSprite {
+  canvas: HTMLCanvasElement;
+  width: number;
+  height: number;
+}
+
+const tableSpriteCache = new WeakMap<
+  readonly string[],
+  WeakMap<Record<string, string>, CachedTableSprite>
+>();
+
+const drawTableSpriteRows = (
   ctx: CanvasRenderingContext2D,
   spriteX: number,
   spriteY: number,
@@ -2279,6 +2485,86 @@ const drawTableSprite = (
       runStart = column;
     }
   }
+};
+
+const getCachedTableSprite = (
+  ctx: CanvasRenderingContext2D,
+  palette: Record<string, string>,
+  rows: readonly string[],
+) => {
+  let paletteCache = tableSpriteCache.get(rows);
+  if (!paletteCache) {
+    paletteCache = new WeakMap<Record<string, string>, CachedTableSprite>();
+    tableSpriteCache.set(rows, paletteCache);
+  }
+
+  const cachedSprite = paletteCache.get(palette);
+  if (cachedSprite) return cachedSprite;
+
+  const width = Math.max(0, ...rows.map((row) => row.length));
+  const height = rows.length;
+  if (width <= 0 || height <= 0) return null;
+
+  const cacheCanvas = ctx.canvas.ownerDocument.createElement("canvas");
+  cacheCanvas.width = width;
+  cacheCanvas.height = height;
+  const cacheCtx = cacheCanvas.getContext("2d");
+  if (!cacheCtx) return null;
+
+  cacheCtx.imageSmoothingEnabled = false;
+  drawTableSpriteRows(cacheCtx, 0, 0, palette, rows);
+
+  const nextSprite = { canvas: cacheCanvas, width, height };
+  paletteCache.set(palette, nextSprite);
+  return nextSprite;
+};
+
+const drawTableSprite = (
+  ctx: CanvasRenderingContext2D,
+  spriteX: number,
+  spriteY: number,
+  palette: Record<string, string>,
+  rows: readonly string[],
+) => {
+  const cachedSprite = getCachedTableSprite(ctx, palette, rows);
+  if (!cachedSprite) {
+    drawTableSpriteRows(ctx, spriteX, spriteY, palette, rows);
+    return;
+  }
+
+  ctx.drawImage(cachedSprite.canvas, Math.round(spriteX), Math.round(spriteY));
+};
+
+const drawSpriteSubRect = (
+  ctx: CanvasRenderingContext2D,
+  spriteX: number,
+  spriteY: number,
+  palette: Record<string, string>,
+  rows: readonly string[],
+  sourceX: number,
+  sourceY: number,
+  sourceWidth: number,
+  sourceHeight: number,
+  destinationWidth = sourceWidth,
+  destinationHeight = sourceHeight,
+) => {
+  const cachedSprite = getCachedTableSprite(ctx, palette, rows);
+  if (!cachedSprite) return;
+
+  const smoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    cachedSprite.canvas,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    Math.round(spriteX),
+    Math.round(spriteY),
+    Math.round(destinationWidth),
+    Math.round(destinationHeight),
+  );
+  ctx.imageSmoothingEnabled = smoothing;
 };
 
 const drawFurniture = (
@@ -2503,6 +2789,7 @@ const drawFurniture = (
     const acrylic = skinId === "transparent-acrylic-desk-skin";
     const industrialFrame = industrial || acrylic;
     const rococo = skinId === "rococo-ivory-desk-skin";
+    const classic = skinId === "classic";
 
     drawPixelRect(
       ctx,
@@ -2511,9 +2798,187 @@ const drawFurniture = (
       item.width,
       item.height + 19,
       industrialFrame
-        ? "rgba(16, 18, 23, 0.9)"
+        ? acrylic
+          ? "rgba(18, 28, 32, 0.07)"
+          : "rgba(16, 18, 23, 0.9)"
         : "rgba(21, 19, 33, 0.9)",
     );
+
+    const drawerTop = item.y + 32;
+    const leftX = item.x - 2;
+    const stackWidth = 30;
+    const rightX = item.x + item.width - stackWidth + 2;
+    const drawerHeight = 10;
+    const drawerGap = 11;
+
+    if (industrial || acrylic) {
+      const spriteX = item.x + (acrylic ? ACRYLIC_DESK_SPRITE_X_OFFSET : INDUSTRIAL_DESK_SPRITE_X_OFFSET);
+      const spriteY = item.y + (acrylic ? ACRYLIC_DESK_SPRITE_Y_OFFSET : INDUSTRIAL_DESK_SPRITE_Y_OFFSET);
+
+      if (acrylic) {
+        const backSupportY = spriteY + 5;
+        drawPixelRect(ctx, spriteX + 9, backSupportY, 94, 4, "rgba(89, 196, 218, 0.34)");
+        drawPixelRect(ctx, spriteX + 9, backSupportY, 94, 1, "rgba(238, 254, 255, 0.72)");
+        drawPixelRect(ctx, spriteX + 10, backSupportY + 1, 92, 1, "rgba(188, 238, 249, 0.48)");
+        drawPixelRect(ctx, spriteX + 10, backSupportY + 3, 92, 1, "rgba(35, 93, 108, 0.42)");
+
+        const drawTabletopSupportSide = (x: number, y: number, height: number) => {
+          drawPixelRect(ctx, x, y, 4, height, "rgba(83, 187, 208, 0.36)");
+          drawPixelRect(ctx, x, y, 1, height, "rgba(238, 254, 255, 0.72)");
+          drawPixelRect(ctx, x + 1, y + 1, 1, height - 2, "rgba(184, 236, 248, 0.46)");
+          drawPixelRect(ctx, x + 3, y + 1, 1, height - 2, "rgba(35, 91, 106, 0.4)");
+        };
+        drawTabletopSupportSide(spriteX + 3, spriteY + 5, 41);
+        drawTabletopSupportSide(spriteX + 102, spriteY + 9, 30);
+
+        const drawRearLeg = (x: number, y: number, height: number) => {
+          drawPixelRect(ctx, x, y, 8, height, "rgba(48, 66, 73, 0.72)");
+          drawPixelRect(ctx, x + 1, y, 2, height, "rgba(240, 252, 255, 0.7)");
+          drawPixelRect(ctx, x + 3, y + 1, 2, height - 2, "rgba(116, 176, 190, 0.52)");
+          drawPixelRect(ctx, x + 6, y + 2, 2, height - 4, "rgba(20, 31, 38, 0.44)");
+        };
+        drawRearLeg(spriteX + 6, spriteY + 9, 25);
+        drawRearLeg(spriteX + 94, spriteY + 7, 25);
+
+        drawPixelRect(ctx, spriteX + 5, spriteY + 37, 98, 2, "rgba(112, 194, 210, 0.32)");
+        drawPixelRect(ctx, spriteX + 6, spriteY + 39, 96, 2, "rgba(33, 68, 78, 0.28)");
+      }
+
+      drawTableSprite(
+        ctx,
+        spriteX,
+        spriteY,
+        acrylic ? ACRYLIC_DESK_SPRITE_PALETTE : INDUSTRIAL_DESK_SPRITE_PALETTE,
+        acrylic ? ACRYLIC_DESK_SPRITE_ROWS : INDUSTRIAL_DESK_SPRITE_ROWS,
+      );
+
+      const frontFootY = drawerTop - 2 + 38 - 3;
+      drawPixelRect(
+        ctx,
+        item.x + 6,
+        drawerTop + 5,
+        item.width - 12,
+        frontFootY - drawerTop - 2,
+        acrylic ? "rgba(20, 28, 32, 0.07)" : "rgba(8, 10, 13, 0.34)",
+      );
+      drawPixelRect(
+        ctx,
+        item.x + 10,
+        frontFootY - 2,
+        item.width - 20,
+        3,
+        acrylic ? "rgba(31, 43, 49, 0.08)" : "rgba(15, 18, 22, 0.38)",
+      );
+      drawPixelRect(
+        ctx,
+        leftX,
+        drawerTop + 6,
+        4,
+        frontFootY - drawerTop - 3,
+        acrylic ? "rgba(20, 30, 36, 0.1)" : "rgba(8, 10, 13, 0.46)",
+      );
+      drawPixelRect(
+        ctx,
+        rightX + stackWidth - 1,
+        drawerTop + 6,
+        4,
+        frontFootY - drawerTop - 3,
+        acrylic ? "rgba(20, 30, 36, 0.1)" : "rgba(8, 10, 13, 0.46)",
+      );
+
+      const eyeY = drawerTop + 15;
+      const eyeX = Math.round(item.x + item.width / 2 - 3);
+      const catX = eyeX - 7;
+      const catY = eyeY - 10;
+      drawPixelRect(ctx, catX + 3, catY + 2, 2, 3, "rgba(4, 5, 8, 0.9)");
+      drawPixelRect(ctx, catX + 4, catY + 4, 3, 3, "rgba(4, 5, 8, 0.9)");
+      drawPixelRect(ctx, catX + 15, catY + 2, 2, 3, "rgba(4, 5, 8, 0.9)");
+      drawPixelRect(ctx, catX + 13, catY + 4, 3, 3, "rgba(4, 5, 8, 0.9)");
+      drawPixelRect(ctx, catX + 3, catY + 7, 14, 10, "rgba(4, 5, 8, 0.9)");
+      drawPixelRect(ctx, catX + 1, catY + 10, 18, 7, "rgba(4, 5, 8, 0.88)");
+      drawPixelRect(ctx, catX + 4, catY + 16, 14, 4, "rgba(4, 5, 8, 0.88)");
+      drawPixelRect(ctx, catX + 2, catY + 18, 20, 10, "rgba(4, 5, 8, 0.86)");
+      drawPixelRect(ctx, catX, catY + 23, 22, 8, "rgba(4, 5, 8, 0.84)");
+      drawPixelRect(ctx, catX + 3, catY + 29, 18, 4, "rgba(4, 5, 8, 0.86)");
+      drawPixelRect(ctx, catX + 5, catY + 30, 5, 5, "rgba(4, 5, 8, 0.88)");
+      drawPixelRect(ctx, catX + 12, catY + 30, 5, 5, "rgba(4, 5, 8, 0.88)");
+
+      const eyeCycle = (frame + item.x * 3 + item.y * 5) % 1200;
+      const eyesOpen = eyeCycle > 98 && eyeCycle < 164;
+      const drawShadowEye = (x: number) => {
+        drawPixelRect(ctx, x - 1, eyeY - 1, 4, 4, "#080a0d");
+        drawPixelRect(ctx, x - 1, eyeY, 3, 1, "#8f611c");
+        drawPixelRect(ctx, x, eyeY, 1, 1, "#ffe66d");
+        drawPixelRect(ctx, x, eyeY + 1, 1, 1, "#ffe66d");
+      };
+      if (eyesOpen) {
+        drawShadowEye(eyeX);
+        drawShadowEye(eyeX + 7);
+      }
+
+      if (highlight !== "none") {
+        ctx.strokeStyle = highlight === "selected" ? "#ffe66d" : "#9ee6ff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          Math.round(item.x - 7),
+          Math.round(item.y - 9),
+          Math.round(item.width + 14),
+          Math.round(item.height + 42),
+        );
+      }
+      if (highlight === "selected") {
+        drawFurnitureCollisionRange(ctx, item);
+      }
+      return;
+    }
+
+    if (classic || rococo) {
+      drawTableSprite(
+        ctx,
+        item.x + CLASSIC_DESK_SPRITE_X_OFFSET,
+        item.y + CLASSIC_DESK_SPRITE_Y_OFFSET,
+        rococo ? ROCOCO_DESK_SPRITE_PALETTE : CLASSIC_DESK_SPRITE_PALETTE,
+        rococo ? ROCOCO_DESK_SPRITE_ROWS : CLASSIC_DESK_SPRITE_ROWS,
+      );
+
+      const shadowBlobX = Math.round(item.x + item.width / 2 - 12);
+      const shadowBlobY = drawerTop + 16;
+      drawPixelRect(ctx, shadowBlobX + 6, shadowBlobY, 12, 1, "rgba(5, 7, 10, 0.62)");
+      drawPixelRect(ctx, shadowBlobX + 3, shadowBlobY + 1, 18, 2, "rgba(5, 7, 10, 0.74)");
+      drawPixelRect(ctx, shadowBlobX + 1, shadowBlobY + 3, 22, 3, "rgba(5, 7, 10, 0.8)");
+      drawPixelRect(ctx, shadowBlobX, shadowBlobY + 6, 24, 3, "rgba(5, 7, 10, 0.82)");
+      drawPixelRect(ctx, shadowBlobX + 1, shadowBlobY + 9, 22, 2, "rgba(5, 7, 10, 0.78)");
+      drawPixelRect(ctx, shadowBlobX + 4, shadowBlobY + 11, 16, 2, "rgba(5, 7, 10, 0.72)");
+      drawPixelRect(ctx, shadowBlobX + 7, shadowBlobY + 13, 10, 1, "rgba(5, 7, 10, 0.56)");
+      const classicEyeCycle = (frame + item.x * 5 + item.y * 7) % 1200;
+      const classicEyesOpen = classicEyeCycle > 98 && classicEyeCycle < 164;
+      const classicEyeY = shadowBlobY + 6;
+      const drawClassicShadowEye = (x: number) => {
+        drawPixelRect(ctx, x - 1, classicEyeY - 1, 4, 4, "#080a0d");
+        drawPixelRect(ctx, x - 1, classicEyeY, 3, 1, "#8f611c");
+        drawPixelRect(ctx, x, classicEyeY, 1, 1, "#ffe66d");
+        drawPixelRect(ctx, x, classicEyeY + 1, 1, 1, "#ffe66d");
+      };
+      if (classicEyesOpen) {
+        drawClassicShadowEye(shadowBlobX + 8);
+        drawClassicShadowEye(shadowBlobX + 15);
+      }
+
+      if (highlight !== "none") {
+        ctx.strokeStyle = highlight === "selected" ? "#ffe66d" : "#9ee6ff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          Math.round(item.x - 7),
+          Math.round(item.y - 9),
+          Math.round(item.width + 14),
+          Math.round(item.height + 42),
+        );
+      }
+      if (highlight === "selected") {
+        drawFurnitureCollisionRange(ctx, item);
+      }
+      return;
+    }
 
     drawPixelRect(ctx, item.x - 5, item.y - 3, item.width + 10, 39, palette.topDark);
     drawPixelRect(ctx, item.x - 2, item.y - 7, item.width + 4, 34, palette.topMid);
@@ -2602,12 +3067,6 @@ const drawFurniture = (
       drawPixelRect(ctx, item.x + item.width - 20, item.y + 8, 4, 9, "#1b1e20");
     }
 
-    const drawerTop = item.y + 32;
-    const leftX = item.x - 2;
-    const stackWidth = 30;
-    const rightX = item.x + item.width - stackWidth + 2;
-    const drawerHeight = 10;
-    const drawerGap = 11;
     const drawDrawer = (x: number, y: number, width: number, height: number) => {
       drawPixelRect(ctx, x, y, width, height, palette.metal);
       drawPixelRect(ctx, x + 3, y + 3, width - 6, height - 5, industrial ? palette.metalMid : palette.top);
@@ -2981,6 +3440,112 @@ const drawFurniture = (
       width: item.width - 7,
       height: fridgeSplitY - item.y - 5,
     };
+
+    const fridgeSprite = FRIDGE_SKIN_SPRITE_DATA[skinId];
+    if (fridgeSprite) {
+      const spriteX = Math.round(item.x + FRIDGE_DEFAULT_SPRITE_X_OFFSET);
+      const spriteY = Math.round(item.y + FRIDGE_DEFAULT_SPRITE_Y_OFFSET);
+      drawPixelRect(
+        ctx,
+        spriteX + 9,
+        spriteY + FRIDGE_DEFAULT_TOP_HEIGHT + FRIDGE_DEFAULT_FRONT_HEIGHT,
+        FRIDGE_DEFAULT_SPRITE_WIDTH - 18,
+        8,
+        "rgba(21, 19, 33, 0.9)",
+      );
+      drawTableSprite(
+        ctx,
+        spriteX,
+        spriteY,
+        fridgeSprite.palette,
+        fridgeSprite.rows,
+      );
+
+      if (doorOpen > 0) {
+        const defaultUpperDoor = {
+          x: spriteX + FRIDGE_DEFAULT_BODY_X,
+          y: spriteY + FRIDGE_DEFAULT_TOP_HEIGHT,
+          width: FRIDGE_DEFAULT_BODY_WIDTH,
+          height: 28,
+        };
+        drawPixelRect(
+          ctx,
+          defaultUpperDoor.x,
+          defaultUpperDoor.y,
+          defaultUpperDoor.width,
+          defaultUpperDoor.height,
+          "#12231a",
+        );
+        drawPixelRect(
+          ctx,
+          defaultUpperDoor.x + 1,
+          defaultUpperDoor.y + 1,
+          defaultUpperDoor.width - 2,
+          defaultUpperDoor.height - 2,
+          "#c6f0ef",
+        );
+        drawPixelRect(
+          ctx,
+          defaultUpperDoor.x + 4,
+          defaultUpperDoor.y + 5,
+          defaultUpperDoor.width - 8,
+          4,
+          "#ecfbff",
+        );
+        drawPixelRect(
+          ctx,
+          defaultUpperDoor.x + 4,
+          defaultUpperDoor.y + defaultUpperDoor.height - 8,
+          defaultUpperDoor.width - 8,
+          3,
+          "#d6f4f7",
+        );
+        drawPixelRect(ctx, defaultUpperDoor.x + 9, defaultUpperDoor.y + 12, 6, 7, "#d7a65e");
+        drawPixelRect(ctx, defaultUpperDoor.x + 24, defaultUpperDoor.y + 10, 8, 7, "#f0d8a2");
+        drawPixelRect(
+          ctx,
+          defaultUpperDoor.x,
+          defaultUpperDoor.y + defaultUpperDoor.height - 1,
+          defaultUpperDoor.width,
+          2,
+          "#102015",
+        );
+
+        const doorWidth = Math.max(
+          10,
+          Math.round(defaultUpperDoor.width * (1 - doorOpen * 0.72)),
+        );
+        const doorX = defaultUpperDoor.x + defaultUpperDoor.width - doorWidth;
+        drawSpriteSubRect(
+          ctx,
+          doorX,
+          defaultUpperDoor.y,
+          fridgeSprite.palette,
+          fridgeSprite.rows,
+          FRIDGE_DEFAULT_BODY_X,
+          FRIDGE_DEFAULT_TOP_HEIGHT,
+          defaultUpperDoor.width,
+          defaultUpperDoor.height,
+          doorWidth,
+          defaultUpperDoor.height,
+        );
+      }
+
+      if (highlight !== "none") {
+        ctx.strokeStyle = highlight === "selected" ? "#ffe66d" : "#9ee6ff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          spriteX,
+          spriteY,
+          FRIDGE_DEFAULT_SPRITE_WIDTH,
+          FRIDGE_DEFAULT_SPRITE_HEIGHT,
+        );
+      }
+      if (highlight === "selected") {
+        drawFurnitureCollisionRange(ctx, item);
+      }
+      return;
+    }
 
     drawPixelRect(ctx, item.x + 4, item.y + item.height + 1, item.width - 8, 5, "#151321");
     drawPixelRect(ctx, item.x + 9, item.y + item.height + 4, item.width - 18, 3, "#0f1422");
@@ -7549,7 +8114,7 @@ const drawComputerStatusBubble = (
   drawPixelBubble(
     ctx,
     terminal.x,
-    terminal.y - 52,
+    terminal.y + TERMINAL_MONITOR_STATUS_BUBBLE_Y_OFFSET,
     compactStatusText(status, status.status),
     tone,
     "pixel",
@@ -8497,53 +9062,80 @@ const drawTerminalMonitor = (
   ghost: "none" | "valid" | "invalid" = "none",
   frame = 0,
   avatar?: AvatarRuntime,
+  skinId?: string,
 ) => {
   ctx.save();
   if (ghost !== "none") ctx.globalAlpha = 0.62;
   const baseX = Math.round(x);
   const baseY = Math.round(y);
-  const screen = ghost === "invalid" ? "#ff8fa3" : "#8df7c4";
   const active =
     ghost === "none" &&
     (avatar?.behavior === "coding" || avatar?.behavior === "thinking") &&
     Math.hypot(avatar.x - baseX, avatar.y - (baseY + 18)) < 92;
   const blink = Math.floor(frame / 7) % 4;
   const tap = Math.floor(frame / 4) % 2;
+  const resolvedSkinId = terminalMonitorSkinId(skinId);
+  const sprite = terminalMonitorSpriteForSkinId(resolvedSkinId);
+  const animationPalette = terminalMonitorAnimationPalette(resolvedSkinId);
+  const spriteX = baseX + TERMINAL_MONITOR_SPRITE_X_OFFSET;
+  const spriteY = baseY + TERMINAL_MONITOR_SPRITE_Y_OFFSET;
+  const screenX = spriteX + 9;
+  const screenY = spriteY + 7;
+  const screenWidth = 24;
+  const screenHeight = 16;
 
-  drawPixelRect(ctx, baseX - 18, baseY - 32, 36, 27, "#e4dfc4");
-  drawPixelRect(ctx, baseX - 15, baseY - 29, 30, 21, "#b8ad93");
-  drawPixelRect(ctx, baseX - 13, baseY - 27, 26, 17, "#756957");
-  drawPixelRect(ctx, baseX - 12, baseY - 26, 24, 15, ghost === "invalid" ? screen : "#3349ff");
-  drawPixelRect(ctx, baseX - 11, baseY - 25, 22, 2, active ? "#b8fff2" : "#9ee6ff");
-  drawPixelRect(ctx, baseX - 10, baseY - 20, 8 + (active ? blink : 0), 2, "#9ee6ff");
-  drawPixelRect(ctx, baseX + 2, baseY - 20, 8, 2, active ? "#eaffd0" : "#9ee6ff");
-  drawPixelRect(ctx, baseX - 10, baseY - 15, 7, 2, "#9ee6ff");
-  drawPixelRect(ctx, baseX + 3, baseY - 15, 7 - (active && blink === 3 ? 3 : 0), 2, "#9ee6ff");
-  if (active) {
-    drawPixelRect(ctx, baseX - 11, baseY - 23 + blink, 22, 1, "#78a7ff");
-    drawPixelRect(ctx, baseX + 7 + blink, baseY - 13, 2, 2, "#ffe66d");
+  drawTableSprite(
+    ctx,
+    spriteX,
+    spriteY,
+    sprite.palette,
+    sprite.rows,
+  );
+
+  if (ghost === "invalid") {
+    drawPixelRect(ctx, screenX, screenY, screenWidth, screenHeight, "rgba(255, 143, 163, 0.58)");
+    drawPixelRect(ctx, screenX + 1, screenY + 1, screenWidth - 2, 2, "rgba(255, 224, 232, 0.72)");
   }
-  drawPixelRect(ctx, baseX - 6, baseY - 7, 12, 3, "#8f8270");
-  drawPixelRect(ctx, baseX - 11, baseY - 4, 22, 4, "#e4dfc4");
-  drawPixelRect(ctx, baseX - 17, baseY, 34, 4, "#d2c8ad");
-  drawPixelRect(ctx, baseX - 14, baseY + 1, 10, 2, "#f2eed8");
-  drawPixelRect(ctx, baseX + 5, baseY + 1, 8, 1, "#24462d");
 
-  drawPixelRect(ctx, baseX - 20, baseY + 5, 40, 7, "#8f8270");
-  drawPixelRect(ctx, baseX - 18, baseY + 4, 36, 6, "#d2c8ad");
-  drawPixelRect(ctx, baseX - 16, baseY + 5, 32, 2, "#f2eed8");
-  drawPixelRect(ctx, baseX - 17, baseY + 10, 34, 2, "#756957");
-  for (let keyX = baseX - 15; keyX <= baseX + 12; keyX += 4) {
-    const keyActive = active && (keyX + tap * 8 + frame) % 12 === 0;
+  if (active) {
+    drawPixelRect(ctx, screenX + 1, screenY + 1, screenWidth - 2, 1, animationPalette.screenTop);
+    drawPixelRect(ctx, screenX + 2, screenY + 4, 9 + blink, 1, animationPalette.line);
+    drawPixelRect(ctx, screenX + 2, screenY + 8, 8, 1, animationPalette.line);
+    drawPixelRect(ctx, screenX + 13, screenY + 8, 7 - (blink === 3 ? 3 : 0), 1, animationPalette.alt);
+    drawPixelRect(ctx, screenX + 2, screenY + 12, 7, 1, animationPalette.lineSoft);
+    drawPixelRect(ctx, screenX + 12, screenY + 12, 8, 1, animationPalette.line);
+    drawPixelRect(ctx, screenX + 1, screenY + 2 + blink * 3, screenWidth - 2, 1, animationPalette.scanline);
+    drawPixelRect(ctx, screenX + 18 + blink, screenY + 12, 2, 2, animationPalette.cursor);
     drawPixelRect(
       ctx,
-      keyX,
-      baseY + 6 + (keyActive ? 1 : 0),
+      spriteX + 35,
+      spriteY + 27,
       2,
       2,
-      keyActive ? "#ffe66d" : "#f2eed8",
+      blink % 2 === 0 ? animationPalette.indicatorA : animationPalette.indicatorB,
     );
-    drawPixelRect(ctx, keyX + 1, baseY + 8, 2, 1, keyActive ? "#78a7ff" : "#8f8270");
+
+    const keyPoints = [
+      [7, 37],
+      [12, 37],
+      [17, 37],
+      [22, 37],
+      [27, 37],
+      [32, 37],
+      [8, 41],
+      [14, 41],
+      [20, 41],
+      [26, 41],
+      [32, 41],
+    ] as const;
+
+    for (let index = 0; index < keyPoints.length; index += 1) {
+      const [keyX, keyY] = keyPoints[index];
+      const keyActive = (index + tap + frame) % 5 === 0;
+      if (!keyActive) continue;
+      drawPixelRect(ctx, spriteX + keyX, spriteY + keyY + 1, 3, 1, animationPalette.keyShadow);
+      drawPixelRect(ctx, spriteX + keyX, spriteY + keyY, 3, 2, animationPalette.keyTop);
+    }
   }
 
   if (ghost !== "none") {
@@ -8867,6 +9459,7 @@ const drawPlaceableItem = (
   failedTaskFileCount = 0,
   gameConsolePlaying = false,
   recordPlayerPlaying = false,
+  skinId?: string,
 ) => {
   switch (itemId) {
     case "cozy-rug":
@@ -8900,7 +9493,7 @@ const drawPlaceableItem = (
       drawOilEasel(ctx, x, y, ghost, frame, avatar);
       return;
     case "terminal-monitor":
-      drawTerminalMonitor(ctx, x, y, ghost, frame, avatar);
+      drawTerminalMonitor(ctx, x, y, ghost, frame, avatar, skinId);
       return;
     case "coffee-machine":
       drawCoffeeMachine(ctx, x, y, ghost, frame, brewing);
@@ -9043,6 +9636,7 @@ const drawPlacedItem = (
         failedTaskFileCount,
         gameConsolePlaying,
         recordPlayerPlaying,
+        item.skinId,
       );
       ctx.restore();
       return;
@@ -9062,6 +9656,7 @@ const drawPlacedItem = (
       failedTaskFileCount,
       gameConsolePlaying,
       recordPlayerPlaying,
+      item.skinId,
     );
   }
 };
@@ -9145,6 +9740,112 @@ const drawPlacedItems = (
       avatar,
     );
   }
+};
+
+const clipToRects = (
+  ctx: CanvasRenderingContext2D,
+  rects: Array<{ x: number; y: number; width: number; height: number }>,
+) => {
+  ctx.beginPath();
+  rects.forEach((rect) => {
+    ctx.rect(
+      Math.round(rect.x),
+      Math.round(rect.y),
+      Math.round(rect.width),
+      Math.round(rect.height),
+    );
+  });
+  ctx.clip();
+};
+
+const drawPlacedItemsInFrontOfForegroundFurniture = (
+  ctx: CanvasRenderingContext2D,
+  content: AivatarContent,
+  foregroundFurniture: FurnitureDefinition[],
+  frame: number,
+  avatar: AvatarRuntime,
+  selectedPlacedItemId?: string | null,
+  placementPreview?: PlacementPreview | null,
+  activeInteraction?: FurnitureInteractionState | null,
+  tableCoffeeQuantity = 0,
+  activeRecordPlayerId?: string | null,
+) => {
+  const placedItems = content.placedItems ?? [];
+  const filledCoffeeCups = tableCoffeeCupFillSet(content, tableCoffeeQuantity);
+
+  placedItems
+    .filter(
+      (item) =>
+        !isFloorUnderlayItem(item.itemId) && !isWallPlacedItem(content, item),
+    )
+    .slice()
+    .sort((left, right) => left.y - right.y)
+    .forEach((item) => {
+      const definition = content.itemDefinitions.find(
+        (candidate) => candidate.id === item.itemId,
+      );
+      const clipRects = placedItemFurnitureOverlayClipRects(
+        item,
+        definition,
+        content,
+        foregroundFurniture,
+      );
+      if (clipRects.length === 0) return;
+
+      ctx.save();
+      clipToRects(ctx, clipRects);
+      drawPlacedItem(
+        ctx,
+        item,
+        content,
+        frame,
+        avatar,
+        activeInteraction,
+        activeRecordPlayerId,
+        filledCoffeeCups.has(item.id),
+      );
+      if (item.id === selectedPlacedItemId) {
+        drawPlacedItemHighlight(ctx, item);
+      }
+      ctx.restore();
+    });
+
+  if (
+    !placementPreview ||
+    getItemPlacementKind(placementPreview.item) === "wall" ||
+    foregroundFurniture.some((furniture) =>
+      isPreviewOnSurface(placementPreview, furniture),
+    )
+  ) {
+    return;
+  }
+
+  const previewItem: PlacedItem = {
+    id: "__placement-preview__",
+    itemId: placementPreview.item.id,
+    x: placementPreview.x,
+    y: placementPreview.y,
+  };
+  const clipRects = placedItemFurnitureOverlayClipRects(
+    previewItem,
+    placementPreview.item,
+    content,
+    foregroundFurniture,
+  );
+  if (clipRects.length === 0) return;
+
+  ctx.save();
+  clipToRects(ctx, clipRects);
+  drawPlaceableItem(
+    ctx,
+    placementPreview.item.id,
+    placementPreview.x,
+    placementPreview.y,
+    placementPreview.valid ? "valid" : "invalid",
+    frame,
+    avatar,
+  );
+  ctx.restore();
 };
 
 const drawWallPlacedItems = (
@@ -9714,7 +10415,7 @@ const drawFloorLightOverlay = (
   content: AivatarContent,
   avatar: AvatarRuntime,
 ) => {
-  if (surface.id === "gray-tech-floor") {
+  if (surface.id === "gray-tech-floor" && !FLOOR_SURFACE_SPRITE_DATA[surface.id]) {
     drawGrayTechFloorLedGlow(ctx, content, avatar);
   }
 };
@@ -10256,6 +10957,14 @@ const drawWall = (
   ctx: CanvasRenderingContext2D,
   surface: RoomSurfaceDefinition,
 ) => {
+  const sprite = WALL_SURFACE_SPRITE_DATA[surface.id];
+  if (sprite) {
+    drawPixelRect(ctx, 70, 14, 340, 120, surface.palette.border);
+    drawPixelRect(ctx, 76, 20, WALL_SURFACE_SPRITE_WIDTH, WALL_SURFACE_SPRITE_HEIGHT, surface.palette.base);
+    drawTableSprite(ctx, 76, 20, sprite.palette, sprite.rows);
+    return;
+  }
+
   if (surface.id === "exposed-red-brick-wallpaper") {
     drawExposedBrickWallpaper(ctx, surface);
     return;
@@ -11833,8 +12542,10 @@ export const renderScene = (
     "in-front-of-avatar",
     activeRecordPlayerId,
   );
-  furnitureByDepth(content.room.furniture).forEach((item) => {
-    if (!isFurnitureInFrontOfAvatar(item, avatar)) return;
+  const foregroundFurniture = furnitureByDepth(content.room.furniture).filter((item) =>
+    isFurnitureInFrontOfAvatar(item, avatar),
+  );
+  foregroundFurniture.forEach((item) => {
     const highlight =
       item.id === selectedFurnitureId
         ? "selected"
@@ -11885,6 +12596,18 @@ export const renderScene = (
       );
     }
   });
+  drawPlacedItemsInFrontOfForegroundFurniture(
+    ctx,
+    content,
+    foregroundFurniture,
+    frame,
+    avatar,
+    selectedPlacedItemId,
+    placementPreview,
+    activeInteraction,
+    tableCoffeeQuantity,
+    activeRecordPlayerId,
+  );
   drawFloorLightOverlay(ctx, floorSurface, content, avatar);
   drawSleepBlanketOverlay(ctx, content, avatar);
   if (status.status === "thinking") {

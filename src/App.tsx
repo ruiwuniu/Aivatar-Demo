@@ -165,6 +165,15 @@ const BED_SPACE_WHITE_DEEP_GRAY_SKIN_ID = "space-white-deep-gray-bed-skin";
 const DESK_INDUSTRIAL_SKIN_ID = "industrial-desk-skin";
 const DESK_ROCOCO_IVORY_SKIN_ID = "rococo-ivory-desk-skin";
 const DESK_TRANSPARENT_ACRYLIC_SKIN_ID = "transparent-acrylic-desk-skin";
+const TERMINAL_GREEN_AMBER_SKIN_ID = "terminal-green-amber-skin";
+const TERMINAL_WHITE_CYAN_SKIN_ID = "terminal-white-cyan-skin";
+const TERMINAL_NEON_DARK_SKIN_ID = "terminal-neon-dark-skin";
+const TERMINAL_SKIN_THUMBNAIL_CELL_SIZE = 16;
+const TERMINAL_SKIN_THUMBNAIL_INDICES: Record<string, number> = {
+  [TERMINAL_GREEN_AMBER_SKIN_ID]: 0,
+  [TERMINAL_WHITE_CYAN_SKIN_ID]: 1,
+  [TERMINAL_NEON_DARK_SKIN_ID]: 2,
+};
 const TABLE_ROCOCO_IVORY_SKIN_ID = "rococo-ivory-table-skin";
 const TABLE_DARK_OAK_SKIN_ID = "dark-oak-table-skin";
 const TABLE_WHITE_TECH_SKIN_ID = "white-tech-table-skin";
@@ -1927,6 +1936,27 @@ const createDebugStatus = (
 const isBuiltinTerminalPlacedItem = (item: PlacedItem | null | undefined) =>
   item?.id === BUILTIN_TERMINAL_PLACED_ITEM_ID;
 
+const skinTargetFromContent = (
+  content: AivatarContent,
+  targetId: string | undefined,
+) => {
+  if (!targetId) return null;
+
+  const furniture = content.room.furniture.find((candidate) => candidate.id === targetId);
+  if (furniture) {
+    return { id: furniture.id, name: furniture.name };
+  }
+
+  const placedItem = content.placedItems?.find((candidate) => candidate.id === targetId);
+  if (!placedItem) return null;
+
+  const definition = findItemDefinition(content, placedItem.itemId);
+  return {
+    id: placedItem.id,
+    name: definition?.name ?? placedItem.itemId,
+  };
+};
+
 const withoutLegacyTerminalFurniturePlacements = (
   placements: FurniturePlacement[] | undefined,
 ) =>
@@ -2999,8 +3029,10 @@ export const App = () => {
               (candidate) => candidate.id === item.surfaceFurnitureId,
             )
           : undefined;
+        const attachedItem = attachedPlacedItemPosition(item, surface);
+        const skinId = activeFurnitureSkinIds[attachedItem.id];
 
-        return attachedPlacedItemPosition(item, surface);
+        return skinId ? { ...attachedItem, skinId } : attachedItem;
       });
 
       const resolvedContent = {
@@ -8030,13 +8062,9 @@ export const App = () => {
 
   const buyOrApplyFurnitureSkin = (item: ItemDefinition) => {
     const targetFurnitureId = item.targetFurnitureId;
-    const targetFurniture = targetFurnitureId
-      ? contentRef.current.room.furniture.find(
-          (candidate) => candidate.id === targetFurnitureId,
-        )
-      : null;
+    const skinTarget = skinTargetFromContent(contentRef.current, targetFurnitureId);
 
-    if (!targetFurnitureId || !targetFurniture) {
+    if (!targetFurnitureId || !skinTarget) {
       updateActiveInteraction({
         kind: "blocked",
         furnitureId: "furniture-skin",
@@ -8081,10 +8109,10 @@ export const App = () => {
     updateActiveInteraction({
       kind: "none",
       furnitureId: targetFurnitureId,
-      furnitureName: targetFurniture.name,
+      furnitureName: skinTarget.name,
       message: ui("message.furnitureSkinApplied", {
         name: item.name,
-        furniture: targetFurniture.name,
+        furniture: skinTarget.name,
       }),
       startedAt: performance.now(),
       bubbleText: ui("bubble.skin"),
@@ -8093,13 +8121,9 @@ export const App = () => {
 
   const clearAppliedFurnitureSkin = (item: ItemDefinition) => {
     const targetFurnitureId = item.targetFurnitureId;
-    const targetFurniture = targetFurnitureId
-      ? contentRef.current.room.furniture.find(
-          (candidate) => candidate.id === targetFurnitureId,
-        )
-      : null;
+    const skinTarget = skinTargetFromContent(contentRef.current, targetFurnitureId);
 
-    if (!targetFurnitureId || !targetFurniture) {
+    if (!targetFurnitureId || !skinTarget) {
       updateActiveInteraction({
         kind: "blocked",
         furnitureId: "furniture-skin",
@@ -8124,9 +8148,9 @@ export const App = () => {
     updateActiveInteraction({
       kind: "none",
       furnitureId: targetFurnitureId,
-      furnitureName: targetFurniture.name,
+      furnitureName: skinTarget.name,
       message: ui("message.furnitureSkinCleared", {
-        furniture: targetFurniture.name,
+        furniture: skinTarget.name,
       }),
       startedAt: performance.now(),
       bubbleText: ui("bubble.skin"),
@@ -8473,6 +8497,7 @@ export const App = () => {
         : "";
   const ItemThumbnail = ({ itemId }: { itemId: string }) => {
     const arcadeThumbnailIndex = ITEM_ARCADE_A_THUMBNAIL_INDICES[itemId];
+    const terminalSkinThumbnailIndex = TERMINAL_SKIN_THUMBNAIL_INDICES[itemId];
 
     if (arcadeThumbnailIndex !== undefined) {
       return (
@@ -8481,6 +8506,20 @@ export const App = () => {
           style={
             {
               "--item-thumbnail-x": `-${arcadeThumbnailIndex * ITEM_ARCADE_A_THUMBNAIL_CELL_SIZE}px`,
+            } as React.CSSProperties
+          }
+          aria-hidden="true"
+        />
+      );
+    }
+
+    if (terminalSkinThumbnailIndex !== undefined) {
+      return (
+        <span
+          className="item-button-thumbnail item-thumbnail-terminal-skin"
+          style={
+            {
+              "--terminal-thumbnail-x": `-${terminalSkinThumbnailIndex * TERMINAL_SKIN_THUMBNAIL_CELL_SIZE}px`,
             } as React.CSSProperties
           }
           aria-hidden="true"

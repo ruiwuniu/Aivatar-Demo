@@ -5229,6 +5229,20 @@ input[type="range"]::-moz-range-thumb {
   image-rendering: pixelated;
 }
 
+.item-thumbnail-terminal-skin::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  background-image: url("/icons/terminal-skin-icons.png?v=1");
+  background-repeat: no-repeat;
+  background-position: var(--terminal-thumbnail-x, 0) 0;
+  background-size: 48px 16px;
+  image-rendering: pixelated;
+}
+
 .item-thumb-shape,
 .item-thumb-accent,
 .item-thumb-detail,
