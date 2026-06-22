@@ -575,7 +575,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "bed"],
       targetFurnitureId: "bed",
-      price: 240,
+      price: 2400,
       effect: { mood: 3, energy: 1 },
     },
     {
@@ -584,7 +584,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "bed"],
       targetFurnitureId: "bed",
-      price: 260,
+      price: 2600,
       effect: { mood: 4, energy: 1 },
     },
     {
@@ -593,7 +593,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "bed"],
       targetFurnitureId: "bed",
-      price: 280,
+      price: 2800,
       effect: { mood: 5, energy: 1 },
     },
     {
@@ -602,7 +602,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "bed"],
       targetFurnitureId: "bed",
-      price: 300,
+      price: 3000,
       effect: { mood: 5, energy: 2 },
     },
     {
@@ -611,7 +611,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "bed"],
       targetFurnitureId: "bed",
-      price: 300,
+      price: 3000,
       effect: { mood: 5, energy: 2 },
     },
     {
@@ -620,7 +620,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "desk"],
       targetFurnitureId: "desk",
-      price: 280,
+      price: 2800,
       effect: { mood: 3, energy: 2 },
     },
     {
@@ -629,7 +629,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "desk"],
       targetFurnitureId: "desk",
-      price: 340,
+      price: 3400,
       effect: { mood: 5, energy: 2 },
     },
     {
@@ -638,7 +638,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "desk"],
       targetFurnitureId: "desk",
-      price: 340,
+      price: 3400,
       effect: { mood: 5, energy: 2 },
     },
     {
@@ -647,7 +647,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "computer"],
       targetFurnitureId: "builtin-terminal",
-      price: 220,
+      price: 2200,
       effect: { mood: 3, energy: 2 },
     },
     {
@@ -656,7 +656,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "computer"],
       targetFurnitureId: "builtin-terminal",
-      price: 260,
+      price: 2600,
       effect: { mood: 4, energy: 2 },
     },
     {
@@ -665,7 +665,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "computer"],
       targetFurnitureId: "builtin-terminal",
-      price: 300,
+      price: 3000,
       effect: { mood: 5, energy: 3 },
     },
     {
@@ -674,7 +674,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "table"],
       targetFurnitureId: "table",
-      price: 320,
+      price: 3200,
       effect: { mood: 5, energy: 1 },
     },
     {
@@ -683,7 +683,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "table"],
       targetFurnitureId: "table",
-      price: 260,
+      price: 2600,
       effect: { mood: 4, energy: 1 },
     },
     {
@@ -692,7 +692,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "table"],
       targetFurnitureId: "table",
-      price: 340,
+      price: 3400,
       effect: { mood: 5, energy: 2 },
     },
     {
@@ -701,7 +701,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "fridge"],
       targetFurnitureId: "fridge",
-      price: 300,
+      price: 3000,
       effect: { mood: 4, energy: 2 },
     },
     {
@@ -710,7 +710,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "fridge"],
       targetFurnitureId: "fridge",
-      price: 340,
+      price: 3400,
       effect: { mood: 5, energy: 2 },
     },
     {
@@ -719,7 +719,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "fridge"],
       targetFurnitureId: "fridge",
-      price: 340,
+      price: 3400,
       effect: { mood: 5, energy: 2 },
     },
     {
@@ -1009,7 +1009,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "bed"],
         targetFurnitureId: "bed",
-        price: 240,
+        price: 2400,
         effect: { mood: 3, energy: 1 },
       },
       {
@@ -1018,7 +1018,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "bed"],
         targetFurnitureId: "bed",
-        price: 260,
+        price: 2600,
         effect: { mood: 4, energy: 1 },
       },
       {
@@ -1027,7 +1027,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "bed"],
         targetFurnitureId: "bed",
-        price: 280,
+        price: 2800,
         effect: { mood: 5, energy: 1 },
       },
       {
@@ -1036,7 +1036,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "bed"],
         targetFurnitureId: "bed",
-        price: 300,
+        price: 3000,
         effect: { mood: 5, energy: 2 },
       },
       {
@@ -1045,7 +1045,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "bed"],
         targetFurnitureId: "bed",
-        price: 300,
+        price: 3000,
         effect: { mood: 5, energy: 2 },
       },
       {
@@ -1054,7 +1054,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "desk"],
         targetFurnitureId: "desk",
-        price: 280,
+        price: 2800,
         effect: { mood: 3, energy: 2 },
       },
       {
@@ -1063,7 +1063,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "desk"],
         targetFurnitureId: "desk",
-        price: 340,
+        price: 3400,
         effect: { mood: 5, energy: 2 },
       },
       {
@@ -1072,7 +1072,7 @@ export const defaultContent: AivatarContent = {
       kind: "decor",
       tags: ["furniture-skin", "desk"],
       targetFurnitureId: "desk",
-      price: 340,
+      price: 3400,
       effect: { mood: 5, energy: 2 },
     },
       {
@@ -1081,7 +1081,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "computer"],
         targetFurnitureId: "builtin-terminal",
-        price: 220,
+        price: 2200,
         effect: { mood: 3, energy: 2 },
       },
       {
@@ -1090,7 +1090,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "computer"],
         targetFurnitureId: "builtin-terminal",
-        price: 260,
+        price: 2600,
         effect: { mood: 4, energy: 2 },
       },
       {
@@ -1099,7 +1099,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "computer"],
         targetFurnitureId: "builtin-terminal",
-        price: 300,
+        price: 3000,
         effect: { mood: 5, energy: 3 },
       },
       {
@@ -1108,7 +1108,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "table"],
         targetFurnitureId: "table",
-        price: 320,
+        price: 3200,
         effect: { mood: 5, energy: 1 },
       },
       {
@@ -1117,7 +1117,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "table"],
         targetFurnitureId: "table",
-        price: 260,
+        price: 2600,
         effect: { mood: 4, energy: 1 },
       },
       {
@@ -1126,7 +1126,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "table"],
         targetFurnitureId: "table",
-        price: 340,
+        price: 3400,
         effect: { mood: 5, energy: 2 },
       },
       {
@@ -1135,7 +1135,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "fridge"],
         targetFurnitureId: "fridge",
-        price: 300,
+        price: 3000,
         effect: { mood: 4, energy: 2 },
       },
       {
@@ -1144,7 +1144,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "fridge"],
         targetFurnitureId: "fridge",
-        price: 340,
+        price: 3400,
         effect: { mood: 5, energy: 2 },
       },
       {
@@ -1153,7 +1153,7 @@ export const defaultContent: AivatarContent = {
         kind: "decor",
         tags: ["furniture-skin", "fridge"],
         targetFurnitureId: "fridge",
-        price: 340,
+        price: 3400,
         effect: { mood: 5, energy: 2 },
       },
       {

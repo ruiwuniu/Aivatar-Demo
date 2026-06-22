@@ -231,10 +231,8 @@ const COFFEE_AUTONOMOUS_COOLDOWN_SECONDS = 90;
 const WORK_BOOST_SECONDS = 120;
 const WORK_BOOST_COMPLETE_BONUS = 3;
 const TOKEN_REWARD_TOKEN_STEP = 1000;
-const TOKEN_REWARD_DEFAULT_MAX_BITS = 40;
-const TOKEN_REWARD_HIGH_USAGE_TOKEN_THRESHOLD = 100_000;
+const TOKEN_REWARD_DEFAULT_MAX_BITS = 100;
 const TOKEN_REWARD_EXTREME_USAGE_TOKEN_THRESHOLD = 1_000_000;
-const TOKEN_REWARD_HIGH_USAGE_MAX_BITS = 100;
 const TOKEN_REWARD_EXTREME_USAGE_MAX_BITS = 1000;
 const TOKEN_REWARD_CACHED_INPUT_WEIGHT = 0.1;
 const INTERACTION_ARRIVAL_DISTANCE = 8;
@@ -268,7 +266,7 @@ const DEFAULT_SCENE_PANEL_WIDTH =
   DEFAULT_EXPANDED_WINDOW_WIDTH - APP_HORIZONTAL_PADDING - APP_GRID_GAP - SIDE_PANEL_WIDTH;
 const COLLAPSED_WINDOW_MIN_WIDTH = DEFAULT_SCENE_PANEL_WIDTH + APP_HORIZONTAL_PADDING;
 const DEFAULT_WINDOW_HEIGHT = 520;
-const SHOW_DEBUG_CARD = true;
+const SHOW_DEBUG_CARD = false;
 const EXPANDED_WINDOW_MIN_WIDTH = 720;
 const COLLAPSED_WINDOW_CLIENT_WIDTH_GUARD = 2;
 const COLLAPSED_WINDOW_RESIZE_RETRY_DELAY_MS = 50;
@@ -671,9 +669,6 @@ const maxRewardBitsForUsage = (usage?: TokenUsage) => {
   const totalTokens = usage?.totalTokens ?? 0;
   if (totalTokens > TOKEN_REWARD_EXTREME_USAGE_TOKEN_THRESHOLD) {
     return TOKEN_REWARD_EXTREME_USAGE_MAX_BITS;
-  }
-  if (totalTokens > TOKEN_REWARD_HIGH_USAGE_TOKEN_THRESHOLD) {
-    return TOKEN_REWARD_HIGH_USAGE_MAX_BITS;
   }
   return TOKEN_REWARD_DEFAULT_MAX_BITS;
 };
@@ -6296,11 +6291,14 @@ export const App = () => {
     if (lastRewardedCompleteKeyRef.current === completeKey) return;
     lastRewardedCompleteKeyRef.current = completeKey;
 
-    const rewardBits =
-      rewardBitsForUsage(effectiveStatus.usage) +
-      (getWorkBoostRemainingSeconds(save.workBoostUntil, Date.now()) > 0
+    const workBoostBits =
+      getWorkBoostRemainingSeconds(save.workBoostUntil, Date.now()) > 0
         ? WORK_BOOST_COMPLETE_BONUS
-        : 0);
+        : 0;
+    const rewardBits = Math.min(
+      maxRewardBitsForUsage(effectiveStatus.usage),
+      rewardBitsForUsage(effectiveStatus.usage) + workBoostBits,
+    );
 
     setSave((current) => ({
       ...current,
@@ -6323,7 +6321,7 @@ export const App = () => {
       furnitureId: effectiveStatus.agent ?? "agent",
       furnitureName: rewardAgentName,
       message: `${rewardAgentName} complete: +${rewardBits} ${ui("currency.bits")}${
-        rewardBits > 4 ? ui("message.withBoost") : ""
+        workBoostBits > 0 ? ui("message.withBoost") : ""
       }.`,
       startedAt: now,
       endsAt: now + REWARD_BUBBLE_SECONDS * 1000,
