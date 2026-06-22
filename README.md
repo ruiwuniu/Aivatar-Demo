@@ -1,6 +1,6 @@
 # Aivatar
 
-![Aivatar promotional pixel room banner](docs/assets/aivatar-readme-hero.png)
+![Aivatar 0.2 pixel room banner with selectable companions and AI agent panels](docs/assets/aivatar-readme-hero-0.2.png)
 
 **EN** | Aivatar is a local-first desktop companion for AI coding agents. It turns Codex, Claude Code, opencode, or a custom local agent bridge into a lively pixel-room companion with selectable characters, upgraded room materials, live status, growth, `bits`, and room customization.
 
