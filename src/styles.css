@@ -176,8 +176,18 @@ meter {
 
 .save-slot-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-columns: calc((100% - 40px) / 4.5);
+  grid-auto-flow: column;
+  grid-template-columns: none;
   gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  padding: 2px 2px 8px;
+  scroll-padding-inline: 2px;
+  scroll-snap-type: x mandatory;
+  scrollbar-color: #52607d #111624;
 }
 
 .save-slot-card,
@@ -194,6 +204,11 @@ meter {
   background: #202638;
   box-shadow: inset -2px -2px 0 #111624;
   cursor: default;
+}
+
+.save-slot-card,
+.avatar-choice-card {
+  scroll-snap-align: start;
 }
 
 .save-slot-card.empty,
@@ -293,8 +308,18 @@ meter {
 
 .avatar-choice-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-auto-columns: calc((100% - 40px) / 4.5);
+  grid-auto-flow: column;
+  grid-template-columns: none;
   gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  padding: 2px 2px 8px;
+  scroll-padding-inline: 2px;
+  scroll-snap-type: x mandatory;
+  scrollbar-color: #52607d #111624;
 }
 
 .save-create-name-editor {
@@ -751,7 +776,11 @@ meter {
   }
 
   .save-slot-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-columns: calc((100% - 10px) / 2);
+  }
+
+  .avatar-choice-grid {
+    grid-auto-columns: calc((100% - 10px) / 2);
   }
 
   .save-create-heading {
