@@ -2,23 +2,37 @@
 
 ![Aivatar promotional pixel room banner](docs/assets/aivatar-readme-hero.png)
 
-**EN** | Aivatar is a local-first desktop companion for AI coding agents. It turns Codex, Claude Code, or another agent session into a small pixel-room avatar that reacts to live status, earns `bits`, grows from completed work, and lets you decorate a personal workspace.
+**EN** | Aivatar is a local-first desktop companion for AI coding agents. It turns Codex, Claude Code, opencode, or a custom local agent bridge into a lively pixel-room companion with selectable characters, upgraded room materials, live status, growth, `bits`, and room customization.
 
-**中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。它把 Codex、Claude Code 或其他 agent 的会话状态映射成像素房间里的小伙伴行为：思考、编码、等待、报错、完成任务，并通过 `bits`、成长、背包、商店和房间装修形成一个可互动的工作陪伴系统。
+**中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。它把 Codex、Claude Code、opencode 或自定义本地 agent 桥接映射成像素房间里的小伙伴行为：思考、编码、等待、报错、完成任务，并通过多角色形象、升级后的房间材质、`bits`、成长、背包、商店和房间装修形成一个可互动的工作陪伴系统。
 
 <p align="center">
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.1.2"><strong>macOS build pending</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.0/Aivatar_0.2.0_universal.dmg"><strong>Download macOS DMG</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.1.2/Aivatar_0.1.2_x64-setup.exe"><strong>Download Windows EXE</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.0/Aivatar_0.2.0_x64-setup.exe"><strong>Download Windows EXE</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.1.2/Aivatar_0.1.2_x64_en-US.msi"><strong>Download Windows MSI</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.0/Aivatar_0.2.0_x64_en-US.msi"><strong>Download Windows MSI</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.1.2">Release 0.1.2</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.2.0">Release 0.2.0</a>
 </p>
 
-| Live AI session companion | Growth and session summaries |
-| --- | --- |
-| ![Aivatar reacts to a live AI coding session](docs/assets/aivatar-readme-live-session.gif) | ![Aivatar summarizes sessions into growth bubbles](docs/assets/aivatar-readme-agent-summary.gif) |
+<p align="center">
+  <img src="docs/assets/aivatar-readme-0.2-agent-room.gif" width="760" alt="Aivatar 0.2 room with a new character, upgraded materials, agent sessions, desktop agents, task cabinet, and CLI launcher" />
+</p>
+
+## 0.2.0 Highlights / 0.2.0 更新亮点
+
+**EN**
+
+- New companion appearances: Little Octopus, Rush Spark, Mood Slime, Red Crayfish, Cute Ghost, Cute Penguin, and Green Lizard.
+- Upgraded room visuals with richer floors, wall materials, windows, furniture skins, and animated room objects such as the record player, easel, phone, and tabletop items.
+- Broader AI agent support for Codex Desktop, Codex CLI, Claude Code, opencode, scheduled CLI tasks, and custom local status sources.
+
+**中文**
+
+- 新增多个角色形象：小章鱼、急急 Spark、心情史莱姆、红色小龙虾、半透明小幽灵、可爱小企鹅、绿色小蜥蜴。
+- 升级房间视觉材质，包括更丰富的地板、墙面、窗景、家具皮肤，以及唱片机、画架、手机、桌面物件等动态房间物品。
+- 支持更多 AI agent 应用与工作流，包括 Codex Desktop、Codex CLI、Claude Code、opencode、定时 CLI 任务，以及可通过本地状态桥接接入的自定义 agent。
 
 <p align="center">
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4">
@@ -27,10 +41,10 @@
 </p>
 
 <p align="center">
-  <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video</strong></a>
+  <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: Windows preview installers are available in the 0.1.2 GitHub release. The macOS installer is pending and will be uploaded after a macOS build is produced. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
+> Current status / 当前状态: 0.2.0 preview installers are available for Windows and macOS through GitHub Releases. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
 
 ## Contents / 目录
 
@@ -49,8 +63,9 @@
 **EN**
 
 - Shows a cozy pixel room with bedroom, office, kitchen, furniture, windows, wallpaper, floor styles, and placed items.
+- Lets you choose from multiple companion appearances when creating a new character room.
 - Animates an avatar across behavior states such as idle, exploring, sleeping, interacting, thinking, coding, waiting, error, and success.
-- Follows live local agent sessions through a WebSocket bridge.
+- Follows live local agent sessions through a WebSocket bridge, native desktop bridge, and CLI wrappers.
 - Tracks multiple sessions by `agent + sessionId`, including current, followed, connected, stale, and idle sessions.
 - Rewards eligible completed Codex or Claude Code sessions with `bits` based on reported token usage.
 - Lets you spend `bits` on consumables, decor, furniture skins, windows, wall surfaces, floor surfaces, and room items.
@@ -62,8 +77,9 @@
 **中文**
 
 - 展示一个像素风房间，包含卧室、办公区、厨房、家具、窗户、墙纸、地板和可摆放物品。
+- 创建新角色房间时，可从多个小伙伴外观中选择。
 - 让小伙伴根据状态执行不同动作，例如闲置、探索、睡觉、互动、思考、编码、等待用户、报错和成功。
-- 通过本地 WebSocket 桥接实时跟随 agent 会话。
+- 通过本地 WebSocket 桥接、桌面原生桥接和 CLI 包装脚本实时跟随 agent 会话。
 - 按 `agent + sessionId` 跟踪多会话，区分当前、跟随中、已连接、过期和闲置状态。
 - 对符合条件的 Codex 或 Claude Code 完成会话，根据上报 token 用量奖励 `bits`。
 - 用 `bits` 购买消耗品、装饰、家具皮肤、窗户、墙面、地板和房间物品。
@@ -96,17 +112,17 @@
 
 ### UI Showcase / UI 展示
 
-**EN** | These screenshots show the actual app UI: the pixel room, live agent state, local settings, avatar stats, growth, Agent Sessions, and Task Cabinet panels.
+**EN** | These screenshots and GIFs show the actual app UI: selectable companions, upgraded pixel-room materials, live agent state, local settings, avatar stats, growth, Agent Sessions, Desktop Agents, Task Cabinet, and CLI Launcher panels.
 
-**中文** | 以下截图展示真实应用界面：像素房间、实时 agent 状态、本地设置、角色状态、成长、Agent 会话和任务柜面板。
+**中文** | 以下截图和 GIF 展示真实应用界面：可选择的小伙伴角色、升级后的像素房间材质、实时 agent 状态、本地设置、角色状态、成长、Agent 会话、桌面 Agent、任务柜和 CLI 启动器面板。
 
-| Main room and settings / 主房间与设置 | Live status panels / 实时状态面板 |
+| New character creation / 新角色创建 | Upgraded room materials / 房间材质升级 |
 | --- | --- |
-| ![Aivatar main room with settings panel](screenshots/09c2a163-93aa-49ef-b64a-cdb61c1ac7cc.png) | ![Aivatar live status, growth, sessions, and task cabinet panels](screenshots/98f9f230-559c-44fd-b078-7a9d0cd6597a.png) |
+| ![Aivatar character picker with Rush Spark, Mood Slime, Red Crayfish, Cute Ghost, Cute Penguin, and Green Lizard](docs/assets/aivatar-readme-0.2-character-picker.png) | ![Aivatar room with upgraded wood floor, city window, furniture skins, and shop panels](docs/assets/aivatar-readme-0.2-material-room.png) |
 
-| Compact HUD view / 精简 HUD 展示 | Chinese localized bridge view / 中文本地化桥接展示 |
+| Live multi-agent workspace / 实时多 Agent 工作区 | Growth and session summaries / 成长与会话总结 |
 | --- | --- |
-| ![Aivatar compact HUD with octopus avatar and context meter](screenshots/990527e4-8118-4fca-9de7-cde22a707aa5.png) | ![Aivatar Chinese localized agent status view](screenshots/d6d714bb-cb6c-469b-9e44-587380a6b53f.png) |
+| ![Aivatar room showing Agent Sessions, Desktop Agents, Task Cabinet, and CLI Launcher](docs/assets/aivatar-readme-0.2-agent-room.gif) | ![Aivatar summarizes sessions into growth bubbles](docs/assets/aivatar-readme-agent-summary.gif) |
 
 ### Agent Integration / Agent 集成使用
 
@@ -117,7 +133,8 @@ Aivatar works without an agent, but live companion behavior needs a local status
 - For a desktop build, the Tauri app can start the local bridge.
 - For web preview or development, run `npm.cmd run status:bridge`.
 - Codex Desktop can connect through the bundled Aivatar session connector.
-- Codex CLI and Claude Code CLI can be launched through wrapper scripts when Node.js and the selected CLI are available on `PATH`.
+- Codex CLI, Claude Code, and opencode can be launched through connected wrapper scripts when Node.js and the selected CLI are available on `PATH`.
+- Custom tools and agents can post status events through the generic local HTTP/WebSocket bridge.
 
 Connect the current Codex Desktop session:
 
@@ -139,7 +156,8 @@ Aivatar 不依赖 agent 也能运行，但实时陪伴行为需要一个本地�
 - 桌面版可以由 Tauri 应用启动本地桥接。
 - Web 预览或开发时，可以运行 `npm.cmd run status:bridge`。
 - Codex Desktop 可通过仓库内置的 Aivatar session connector 连接。
-- 当 Node.js 和对应 CLI 已在 `PATH` 中时，Codex CLI 与 Claude Code CLI 可通过包装脚本启动并被 Aivatar 跟随。
+- 当 Node.js 和对应 CLI 已在 `PATH` 中时，Codex CLI、Claude Code 与 opencode 可通过 connected 包装脚本启动并被 Aivatar 跟随。
+- 自定义工具或 agent 也可以通过通用本地 HTTP/WebSocket 桥接发送状态事件。
 
 连接当前 Codex Desktop 会话：
 
@@ -514,23 +532,25 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 **EN**
 
-Current release-prep limitations:
+Current release-prep notes:
 
-- The Windows 0.1.2 preview release is available through GitHub Releases, with NSIS `.exe` and MSI installers.
+- The 0.2.0 preview release is available through GitHub Releases, with Windows NSIS `.exe`, Windows MSI, and macOS DMG installers.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
+- Character choices, upgraded room materials, furniture skins, and expanded desktop/CLI agent workflows are now part of the 0.2.0 preview surface.
 - Native bridge support exists for local status, basic Codex Desktop session discovery, rollout watching, token-usage rewards, and local heuristic session learning.
 - A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
-- macOS packaging is pending a macOS build upload; Linux packaging remains planned after the desktop integration path is stable.
+- Linux packaging remains planned after the desktop integration path is stable.
 
 **中文**
 
-当前发布准备阶段的限制：
+当前发布准备阶段说明：
 
-- Windows 预览版发布路径仍在加固。
+- 0.2.0 预览版已通过 GitHub Releases 提供 Windows NSIS `.exe`、Windows MSI 和 macOS DMG 安装包。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
+- 多角色选择、升级后的房间材质、家具皮肤，以及扩展后的桌面/CLI agent 工作流，已经纳入 0.2.0 预览体验。
 - 本地状态、基础 Codex Desktop 会话发现、rollout watching、token 用量奖励、本地启发式 session learning 已有原生桥接预览实现。
 - 完全 Rust-native 的 connected runner 和面向发布模式的 provider-backed learning 仍是后续加固工作。
-- macOS 和 Linux 打包计划在 Windows 预览路径稳定后推进。
+- Linux 打包计划会在桌面集成路径继续稳定后推进。
 
 ## License / 许可证
 
