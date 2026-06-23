@@ -11219,15 +11219,17 @@ export const App = () => {
                             <span>{ui("schedule.runAt")}</span>
                             <span className="task-cabinet-run-at-control">
                               <input
-                                type="text"
-                                inputMode="numeric"
-                                maxLength={10}
-                                placeholder="YYYY-MM-DD"
+                                type="date"
                                 aria-label={ui("schedule.date")}
                                 className="task-cabinet-date-input"
                                 value={
-                                  taskScheduleRunAtParts(entry.schedule?.runAt)
-                                    .date
+                                  /^\d{4}-\d{2}-\d{2}$/.test(
+                                    taskScheduleRunAtParts(entry.schedule?.runAt)
+                                      .date,
+                                  )
+                                    ? taskScheduleRunAtParts(entry.schedule?.runAt)
+                                        .date
+                                    : ""
                                 }
                                 onChange={(event) =>
                                   setTaskCabinetScheduleRunAtPart(
@@ -11237,17 +11239,7 @@ export const App = () => {
                                   )
                                 }
                               />
-                              <span
-                                className="task-cabinet-run-at-separator"
-                                aria-hidden="true"
-                              >
-                                @
-                              </span>
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                maxLength={2}
-                                placeholder="HH"
+                              <select
                                 aria-label={ui("schedule.hour")}
                                 className="task-cabinet-time-input"
                                 value={
@@ -11261,26 +11253,18 @@ export const App = () => {
                                     event.currentTarget.value,
                                   )
                                 }
-                                onBlur={(event) =>
-                                  setTaskCabinetScheduleRunAtPart(
-                                    entry.id,
-                                    "hour",
-                                    event.currentTarget.value,
-                                    { normalize: true },
-                                  )
-                                }
-                              />
-                              <span
-                                className="task-cabinet-run-at-separator"
-                                aria-hidden="true"
                               >
-                                :
-                              </span>
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                maxLength={2}
-                                placeholder="MM"
+                                <option value="">HH</option>
+                                {Array.from({ length: 24 }, (_, hour) => {
+                                  const value = String(hour).padStart(2, "0");
+                                  return (
+                                    <option key={value} value={value}>
+                                      {value}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                              <select
                                 aria-label={ui("schedule.minute")}
                                 className="task-cabinet-time-input"
                                 value={
@@ -11294,15 +11278,17 @@ export const App = () => {
                                     event.currentTarget.value,
                                   )
                                 }
-                                onBlur={(event) =>
-                                  setTaskCabinetScheduleRunAtPart(
-                                    entry.id,
-                                    "minute",
-                                    event.currentTarget.value,
-                                    { normalize: true },
-                                  )
-                                }
-                              />
+                              >
+                                <option value="">MM</option>
+                                {Array.from({ length: 60 }, (_, minute) => {
+                                  const value = String(minute).padStart(2, "0");
+                                  return (
+                                    <option key={value} value={value}>
+                                      {value}
+                                    </option>
+                                  );
+                                })}
+                              </select>
                             </span>
                           </label>
                           <label className="task-cabinet-field">
