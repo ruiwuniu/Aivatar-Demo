@@ -1188,6 +1188,74 @@ fn resize_main_window_for_side_panel(
     Ok(())
 }
 
+fn safe_social_room_memory_key(key: &str) -> String {
+    let sanitized: String = key
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric()
+                || character == '.'
+                || character == '_'
+                || character == '-'
+            {
+                character
+            } else {
+                '_'
+            }
+        })
+        .take(180)
+        .collect();
+
+    if sanitized.trim_matches('_').is_empty() {
+        "social-room-memory".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn social_room_memory_path(app: &tauri::AppHandle, key: &str) -> Result<std::path::PathBuf, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not resolve app data directory: {error}"))?
+        .join("social-room-memory");
+    Ok(directory.join(format!("{}.json", safe_social_room_memory_key(key))))
+}
+
+#[tauri::command]
+fn read_social_room_memory(
+    app: tauri::AppHandle,
+    key: String,
+) -> Result<Option<String>, String> {
+    let path = social_room_memory_path(&app, &key)?;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    std::fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|error| format!("Could not read social room memory: {error}"))
+}
+
+#[tauri::command]
+fn write_social_room_memory(
+    app: tauri::AppHandle,
+    key: String,
+    payload: String,
+) -> Result<(), String> {
+    if payload.len() > 200_000 {
+        return Err("Social room memory payload is too large.".to_string());
+    }
+    let _: serde_json::Value = serde_json::from_str(&payload)
+        .map_err(|error| format!("Invalid social room memory JSON: {error}"))?;
+    let path = social_room_memory_path(&app, &key)?;
+    let Some(directory) = path.parent() else {
+        return Err("Could not resolve social room memory directory.".to_string());
+    };
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("Could not create social room memory directory: {error}"))?;
+    std::fs::write(&path, payload)
+        .map_err(|error| format!("Could not write social room memory: {error}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1199,7 +1267,9 @@ pub fn run() {
             start_task_agent,
             resize_main_window_for_side_panel,
             get_agent_integrations,
-            enable_agent_integration
+            enable_agent_integration,
+            read_social_room_memory,
+            write_social_room_memory
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {

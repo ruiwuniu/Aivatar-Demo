@@ -23,11 +23,16 @@ const DISCONNECT_SESSION_PATH: &str = "/agent-sessions/disconnect";
 const PRESENCE_PATH: &str = "/agent-presence";
 const AVATAR_STATE_PATH: &str = "/avatar-state";
 const PAINTING_PLAN_PATH: &str = "/painting-plan";
+const ROOMS_PATH: &str = "/rooms";
+const VISIT_INVITE_PATH: &str = "/visits/invite";
+const VISIT_STATE_PATH: &str = "/visits/state";
+const VISIT_END_PATH: &str = "/visits/end";
 const CLAUDE_HOOK_PATH: &str = "/agent-hooks/claude-code";
 const CLAUDE_STATUS_LINE_HOOK_PATH: &str = "/agent-hooks/claude-code/status-line";
 const HEALTH_PATH: &str = "/health";
 const SESSION_STALE_MS: u64 = 5 * 60 * 60 * 1000;
 const ACTIVITY_STALE_MS: u64 = 5 * 60 * 1000;
+const ROOM_FINISHED_VISIT_TTL_MS: i64 = 30_000;
 const MAX_SESSIONS: usize = 80;
 const MAX_CLAUDE_DIGEST_ENTRIES: usize = 12;
 const PAINTING_ARCHETYPES: [&str; 10] = [
@@ -61,6 +66,8 @@ struct BridgeState {
     tombstones: HashMap<String, u128>,
     claude_digests: HashMap<String, Vec<String>>,
     claude_last_learning_keys: HashMap<String, String>,
+    rooms: HashMap<String, Value>,
+    visits: HashMap<String, Value>,
     learning_script: Option<PathBuf>,
 }
 
@@ -436,6 +443,95 @@ fn snapshot(state: &BridgeState) -> Value {
         "currentSessionKey": current_session_key(state),
         "timestamp": iso_now()
     })
+}
+
+fn room_finished_expires_at() -> String {
+    (chrono::Utc::now() + chrono::TimeDelta::milliseconds(ROOM_FINISHED_VISIT_TTL_MS))
+        .to_rfc3339()
+}
+
+fn room_snapshot_value(state: &BridgeState) -> Value {
+    let mut rooms: Vec<Value> = state.rooms.values().cloned().collect();
+    rooms.sort_by(|left, right| {
+        let left_index = left.get("slotIndex").and_then(Value::as_i64).unwrap_or(0);
+        let right_index = right.get("slotIndex").and_then(Value::as_i64).unwrap_or(0);
+        left_index.cmp(&right_index).then_with(|| {
+            string_field(left, "avatarName")
+                .unwrap_or_default()
+                .cmp(&string_field(right, "avatarName").unwrap_or_default())
+        })
+    });
+
+    json!({
+        "type": "aivatar.rooms.snapshot",
+        "rooms": rooms,
+        "visits": state.visits.values().cloned().collect::<Vec<_>>(),
+        "timestamp": iso_now()
+    })
+}
+
+fn prune_rooms_and_visits(state: &mut BridgeState) {
+    let now = now_ms();
+    let mut missing_rooms = HashSet::new();
+    let expired_rooms: Vec<String> = state
+        .rooms
+        .iter()
+        .filter_map(|(key, room)| {
+            let expires_at = parsed_ms(room.get("expiresAt"));
+            (expires_at > 0 && expires_at <= now).then(|| key.clone())
+        })
+        .collect();
+
+    for key in expired_rooms {
+        state.rooms.remove(&key);
+        missing_rooms.insert(key);
+    }
+
+    let visit_keys: Vec<String> = state.visits.keys().cloned().collect();
+    let mut finished_visit_keys = Vec::new();
+    for key in visit_keys {
+        let Some(visit) = state.visits.get_mut(&key) else {
+            continue;
+        };
+        let phase = string_field(visit, "phase").unwrap_or_default();
+        let expires_at = parsed_ms(visit.get("expiresAt"));
+        let host_room_id = visit
+            .get("host")
+            .and_then(|host| string_field(host, "roomInstanceId"));
+        let guest_room_id = visit
+            .get("guest")
+            .and_then(|guest| string_field(guest, "roomInstanceId"));
+        let related_room_expired =
+            host_room_id.as_ref().is_some_and(|id| missing_rooms.contains(id))
+                || guest_room_id.as_ref().is_some_and(|id| missing_rooms.contains(id));
+
+        if phase != "ended"
+            && phase != "cancelled"
+            && (related_room_expired || (expires_at > 0 && expires_at <= now))
+        {
+            if let Some(object) = visit.as_object_mut() {
+                object.insert("phase".to_string(), json!("cancelled"));
+                object.insert("cancelReason".to_string(), json!("room expired"));
+                object.insert("updatedAt".to_string(), json!(iso_now()));
+                object.insert("expiresAt".to_string(), json!(room_finished_expires_at()));
+                if related_room_expired {
+                    let missing_room_id = host_room_id
+                        .filter(|id| missing_rooms.contains(id))
+                        .or_else(|| guest_room_id.filter(|id| missing_rooms.contains(id)));
+                    object.insert("missingRoomInstanceId".to_string(), json!(missing_room_id));
+                }
+            }
+            continue;
+        }
+
+        if (phase == "ended" || phase == "cancelled") && expires_at > 0 && expires_at <= now {
+            finished_visit_keys.push(key);
+        }
+    }
+
+    for key in finished_visit_keys {
+        state.visits.remove(&key);
+    }
 }
 
 fn broadcast(state: &Arc<Mutex<BridgeState>>) {
@@ -1820,7 +1916,8 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
 
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", HEALTH_PATH) => {
-            let guard = state.lock().expect("bridge state poisoned");
+            let mut guard = state.lock().expect("bridge state poisoned");
+            prune_rooms_and_visits(&mut guard);
             send_json(
                 &mut stream,
                 200,
@@ -1837,6 +1934,10 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                     "presenceHttp": format!("http://127.0.0.1:{HTTP_PORT}{PRESENCE_PATH}"),
                     "avatarStateHttp": format!("http://127.0.0.1:{HTTP_PORT}{AVATAR_STATE_PATH}"),
                     "paintingPlanHttp": format!("http://127.0.0.1:{HTTP_PORT}{PAINTING_PLAN_PATH}"),
+                    "roomsHttp": format!("http://127.0.0.1:{HTTP_PORT}{ROOMS_PATH}"),
+                    "visitInviteHttp": format!("http://127.0.0.1:{HTTP_PORT}{VISIT_INVITE_PATH}"),
+                    "visitStateHttp": format!("http://127.0.0.1:{HTTP_PORT}{VISIT_STATE_PATH}"),
+                    "visitEndHttp": format!("http://127.0.0.1:{HTTP_PORT}{VISIT_END_PATH}"),
                     "clients": guard.clients.len(),
                     "sessionStaleMs": SESSION_STALE_MS,
                     "activityStaleMs": ACTIVITY_STALE_MS,
@@ -1850,6 +1951,133 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                 }),
             );
         }
+        ("GET", ROOMS_PATH) => {
+            let mut guard = state.lock().expect("bridge state poisoned");
+            prune_rooms_and_visits(&mut guard);
+            send_json(&mut stream, 200, room_snapshot_value(&guard));
+        }
+        ("POST", ROOMS_PATH) => match parse_body(&request.body) {
+            Ok(mut payload) => {
+                let room_instance_id = string_field(&payload, "roomInstanceId").unwrap_or_default();
+                if room_instance_id.is_empty() {
+                    send_json(
+                        &mut stream,
+                        400,
+                        json!({ "error": "Room payload requires roomInstanceId" }),
+                    );
+                    return;
+                }
+                if let Some(object) = payload.as_object_mut() {
+                    object.insert("type".to_string(), json!("aivatar.room.presence"));
+                    if !object.contains_key("updatedAt") {
+                        object.insert("updatedAt".to_string(), json!(iso_now()));
+                    }
+                }
+                let mut guard = state.lock().expect("bridge state poisoned");
+                guard.rooms.insert(room_instance_id, payload);
+                prune_rooms_and_visits(&mut guard);
+                send_json(&mut stream, 202, room_snapshot_value(&guard));
+            }
+            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+        },
+        ("POST", VISIT_INVITE_PATH) => match parse_body(&request.body) {
+            Ok(mut payload) => {
+                let visit_id = string_field(&payload, "visitId").unwrap_or_default();
+                if visit_id.is_empty() {
+                    send_json(
+                        &mut stream,
+                        400,
+                        json!({ "error": "Visit payload requires visitId" }),
+                    );
+                    return;
+                }
+                if let Some(object) = payload.as_object_mut() {
+                    object.insert("type".to_string(), json!("aivatar.room.visit"));
+                    object.insert("phase".to_string(), json!("invited"));
+                    if !object.contains_key("updatedAt") {
+                        object.insert("updatedAt".to_string(), json!(iso_now()));
+                    }
+                }
+                let mut guard = state.lock().expect("bridge state poisoned");
+                guard.visits.insert(visit_id, payload);
+                prune_rooms_and_visits(&mut guard);
+                send_json(&mut stream, 202, room_snapshot_value(&guard));
+            }
+            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+        },
+        ("POST", VISIT_STATE_PATH) => match parse_body(&request.body) {
+            Ok(payload) => {
+                let visit_id = string_field(&payload, "visitId").unwrap_or_default();
+                if visit_id.is_empty() {
+                    send_json(
+                        &mut stream,
+                        400,
+                        json!({ "error": "Visit payload requires visitId" }),
+                    );
+                    return;
+                }
+                let mut guard = state.lock().expect("bridge state poisoned");
+                let mut merged = guard.visits.get(&visit_id).cloned().unwrap_or_else(|| json!({}));
+                if let (Some(target), Some(source)) =
+                    (merged.as_object_mut(), payload.as_object())
+                {
+                    for (key, value) in source {
+                        target.insert(key.clone(), value.clone());
+                    }
+                    target.insert("type".to_string(), json!("aivatar.room.visit"));
+                    if !target.contains_key("updatedAt") {
+                        target.insert("updatedAt".to_string(), json!(iso_now()));
+                    }
+                } else {
+                    merged = payload;
+                }
+                guard.visits.insert(visit_id, merged);
+                prune_rooms_and_visits(&mut guard);
+                send_json(&mut stream, 202, room_snapshot_value(&guard));
+            }
+            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+        },
+        ("POST", VISIT_END_PATH) => match parse_body(&request.body) {
+            Ok(payload) => {
+                let visit_id = string_field(&payload, "visitId").unwrap_or_default();
+                if visit_id.is_empty() {
+                    send_json(
+                        &mut stream,
+                        400,
+                        json!({ "error": "Visit payload requires visitId" }),
+                    );
+                    return;
+                }
+                let mut guard = state.lock().expect("bridge state poisoned");
+                let mut merged = guard.visits.get(&visit_id).cloned().unwrap_or_else(|| json!({}));
+                if let (Some(target), Some(source)) =
+                    (merged.as_object_mut(), payload.as_object())
+                {
+                    for (key, value) in source {
+                        target.insert(key.clone(), value.clone());
+                    }
+                    let phase_is_cancelled = target
+                        .get("phase")
+                        .and_then(Value::as_str)
+                        .is_some_and(|phase| phase == "cancelled");
+                    target.insert("type".to_string(), json!("aivatar.room.visit"));
+                    target.insert(
+                        "phase".to_string(),
+                        json!(if phase_is_cancelled { "cancelled" } else { "ended" }),
+                    );
+                    target.insert("updatedAt".to_string(), json!(iso_now()));
+                    if !target.contains_key("expiresAt") {
+                        target.insert("expiresAt".to_string(), json!(room_finished_expires_at()));
+                    }
+                } else {
+                    merged = payload;
+                }
+                guard.visits.insert(visit_id, merged);
+                prune_rooms_and_visits(&mut guard);
+                send_json(&mut stream, 202, room_snapshot_value(&guard));
+            }
+            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+        },
         ("GET", AGENT_STATUS_PATH) | ("GET", LEGACY_STATUS_PATH) => {
             let guard = state.lock().expect("bridge state poisoned");
             send_json(&mut stream, 200, snapshot(&guard));

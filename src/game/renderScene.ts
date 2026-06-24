@@ -4,6 +4,7 @@ import type {
   AivatarMemory,
   AivatarPaintingArtwork,
   AivatarPaintingGallery,
+  AivatarRoomVisitor,
   AvatarAppearanceId,
   AvatarRuntime,
   CodexStatusMessage,
@@ -30,6 +31,7 @@ import {
   getNavigationDebugPath,
   getPlacedItemInteractionStandpoints,
 } from "./simulation";
+import { ROOM_DOOR_RECT } from "./roomVisits";
 import {
   BED_SKIN_SPRITE_DATA,
   BED_SPRITE_WIDTH,
@@ -131,6 +133,9 @@ interface FurniturePlacementPreview {
 
 type FurnitureRenderLayer = "all" | "behind-avatar" | "in-front-of-avatar";
 type PlacedItemRenderLayer = "all" | "behind-avatar" | "in-front-of-avatar";
+type AvatarRenderLayer =
+  | { kind: "primary"; y: number; runtime: AvatarRuntime }
+  | { kind: "visitor"; y: number; runtime: AvatarRuntime; visitor: AivatarRoomVisitor };
 type BedSkinId =
   | "classic"
   | "industrial-bed-skin"
@@ -1020,26 +1025,29 @@ const drawPlaceableFileCabinet = (
   ctx.restore();
 };
 
+const furnitureOcclusionY = (item: FurnitureDefinition) => {
+  const bounds = getFurnitureVisualBounds(item);
+
+  return item.id === "bed"
+    ? item.y + item.height - 14
+    : item.id === "desk"
+      ? item.y + 46
+      : item.id === "table"
+        ? item.y + 32
+        : item.id === "fridge"
+          ? item.y + item.height - 10
+          : item.id === "file-cabinet"
+            ? item.y + item.height - 8
+            : bounds.y + bounds.height;
+};
+
 const isFurnitureInFrontOfAvatar = (
   item: FurnitureDefinition,
   avatar: AvatarRuntime,
 ) => {
   const avatarFeetY = avatar.y + 12;
-  const bounds = getFurnitureVisualBounds(item);
-  const occlusionLine =
-    item.id === "bed"
-      ? item.y + item.height - 14
-      : item.id === "desk"
-        ? item.y + 46
-        : item.id === "table"
-          ? item.y + 32
-          : item.id === "fridge"
-            ? item.y + item.height - 10
-            : item.id === "file-cabinet"
-              ? item.y + item.height - 8
-              : bounds.y + bounds.height;
 
-  return avatarFeetY < occlusionLine;
+  return avatarFeetY < furnitureOcclusionY(item);
 };
 
 const furnitureDepthY = (item: FurnitureDefinition) => {
@@ -9999,6 +10007,18 @@ const grayTechFloorLedPalette = {
   ledBlueBed: "#1f4f74",
 };
 
+const drawRoomDoor = (ctx: CanvasRenderingContext2D, frame: number) => {
+  const pulse = Math.floor(frame / 18) % 2;
+  drawPixelRect(ctx, ROOM_DOOR_RECT.x, 306, ROOM_DOOR_RECT.width, 5, "#4d1a2a");
+  drawPixelRect(ctx, ROOM_DOOR_RECT.x + 5, 304, ROOM_DOOR_RECT.width - 10, 9, "#ff5c7a");
+  drawPixelRect(ctx, ROOM_DOOR_RECT.x + 8, 306, ROOM_DOOR_RECT.width - 16, 4, "#ff9ab0");
+  drawPixelRect(ctx, ROOM_DOOR_RECT.x + 12, 310, ROOM_DOOR_RECT.width - 24, 2, "#b62c55");
+  if (pulse === 0) {
+    drawPixelRect(ctx, ROOM_DOOR_RECT.x + 15, 305, 12, 1, "#ffd1dc");
+    drawPixelRect(ctx, ROOM_DOOR_RECT.x + ROOM_DOOR_RECT.width - 27, 305, 12, 1, "#ffd1dc");
+  }
+};
+
 interface GlowBlockerRect {
   x: number;
   y: number;
@@ -12179,6 +12199,7 @@ const drawRoom = (
   drawPixelRect(ctx, 68, 306, 344, 8, "#f1a451");
   drawPixelRect(ctx, 76, 20, 328, 5, "#ffe2a0");
   drawPixelRect(ctx, 76, 301, 328, 5, "#5a2d16");
+  drawRoomDoor(ctx, frame);
 
   if (furnitureLayer === "behind-avatar") {
     floorUnderlay?.();
@@ -12275,6 +12296,219 @@ const visibleRoomStatus = (status: CodexStatusMessage): CodexStatusMessage => {
     : { ...status, status: "idle" };
 };
 
+const visitorIdleStatus = (visitor: AivatarRoomVisitor): CodexStatusMessage => ({
+  agent: "aivatar",
+  sessionId: visitor.visitId,
+  status: "idle",
+  phase: "visit",
+  task: `${visitor.avatarName} is visiting`,
+  timestamp: new Date().toISOString(),
+});
+
+const drawVisitorBubble = (
+  ctx: CanvasRenderingContext2D,
+  visitor: AivatarRoomVisitor,
+  uiTheme: UiThemeId,
+) => {
+  if (!visitor.bubbleText) return;
+  drawAvatarBubble(
+    ctx,
+    visitor.runtime,
+    {
+      kind: "none",
+      furnitureId: `visitor-${visitor.avatarId}`,
+      furnitureName: visitor.avatarName,
+      message: visitor.bubbleText,
+      startedAt: performance.now(),
+      bubbleText: visitor.bubbleText,
+    },
+    uiTheme,
+  );
+};
+
+const avatarDepthY = (runtime: AvatarRuntime) => runtime.y + 12;
+
+const createAvatarRenderLayers = (
+  avatar: AvatarRuntime,
+  visitors: AivatarRoomVisitor[],
+  primaryAvatarVisible: boolean,
+) => {
+  const layers: AvatarRenderLayer[] = [];
+
+  if (primaryAvatarVisible) {
+    layers.push({ kind: "primary", y: avatarDepthY(avatar), runtime: avatar });
+  }
+
+  visitors.forEach((visitor) => {
+    layers.push({
+      kind: "visitor",
+      y: avatarDepthY(visitor.runtime),
+      runtime: visitor.runtime,
+      visitor,
+    });
+  });
+
+  return layers.sort(
+    (left, right) =>
+      left.y - right.y ||
+      left.runtime.x - right.runtime.x ||
+      left.kind.localeCompare(right.kind),
+  );
+};
+
+const drawAvatarRenderLayer = (
+  ctx: CanvasRenderingContext2D,
+  layer: AvatarRenderLayer,
+  content: AivatarContent,
+  frame: number,
+  status: CodexStatusMessage,
+  memory: AivatarMemory | undefined,
+  avatarAppearanceId: AvatarAppearanceId,
+) => {
+  if (layer.kind === "primary") {
+    drawAvatar(
+      ctx,
+      layer.runtime,
+      frame,
+      content.petStats,
+      status,
+      memory,
+      avatarAppearanceId,
+    );
+    return;
+  }
+
+  drawAvatar(
+    ctx,
+    layer.visitor.runtime,
+    frame,
+    layer.visitor.petStats,
+    visitorIdleStatus(layer.visitor),
+    layer.visitor.memory,
+    layer.visitor.avatarAppearanceId,
+  );
+};
+
+const avatarOcclusionClipBounds = (runtime: AvatarRuntime) => ({
+  x: Math.round(runtime.x - 44),
+  y: Math.round(runtime.y - 68),
+  width: 88,
+  height: 96,
+});
+
+const drawAvatarForegroundOcclusion = (
+  ctx: CanvasRenderingContext2D,
+  content: AivatarContent,
+  layer: AvatarRenderLayer,
+  frame: number,
+  hoveredFurnitureId?: string | null,
+  selectedFurnitureId?: string | null,
+  activeInteraction?: FurnitureInteractionState | null,
+  placementPreview?: PlacementPreview | null,
+  selectedPlacedItemId?: string | null,
+  tableCoffeeQuantity = 0,
+  taskCabinetFileCount = 0,
+  failedTaskCabinetFileCount = 0,
+  paintingGallery?: AivatarPaintingGallery,
+  activeRecordPlayerId?: string | null,
+) => {
+  const runtime = layer.runtime;
+  const clipBounds = avatarOcclusionClipBounds(runtime);
+  const foregroundFurniture = furnitureByDepth(content.room.furniture).filter((item) =>
+    isFurnitureInFrontOfAvatar(item, runtime),
+  );
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(clipBounds.x, clipBounds.y, clipBounds.width, clipBounds.height);
+  ctx.clip();
+
+  drawPlacedItems(
+    ctx,
+    content,
+    frame,
+    runtime,
+    selectedPlacedItemId,
+    null,
+    activeInteraction,
+    tableCoffeeQuantity,
+    taskCabinetFileCount,
+    failedTaskCabinetFileCount,
+    "in-front-of-avatar",
+    paintingGallery,
+    activeRecordPlayerId,
+  );
+
+  foregroundFurniture.forEach((item) => {
+    const highlight =
+      item.id === selectedFurnitureId
+        ? "selected"
+        : item.id === hoveredFurnitureId
+          ? "hover"
+          : "none";
+
+    if (item.id === "bed") {
+      if (
+        bedSkinId(item) === "modern-minimal-bed-skin" ||
+        bedSkinId(item) === "space-white-deep-gray-bed-skin"
+      ) {
+        return;
+      }
+      drawBedFootboardAvatarOcclusion(ctx, item, runtime);
+      return;
+    }
+
+    drawFurniture(
+      ctx,
+      item,
+      highlight,
+      frame,
+      runtime,
+      activeInteraction,
+      taskCabinetFileCount,
+      failedTaskCabinetFileCount,
+    );
+    drawPlacedItemsForSurface(
+      ctx,
+      content,
+      item.id,
+      frame,
+      runtime,
+      selectedPlacedItemId,
+      activeInteraction,
+      tableCoffeeQuantity,
+      activeRecordPlayerId,
+      paintingGallery,
+    );
+    if (placementPreview && isPreviewOnSurface(placementPreview, item)) {
+      drawPlaceableItem(
+        ctx,
+        placementPreview.item.id,
+        placementPreview.x,
+        placementPreview.y,
+        placementPreview.valid ? "valid" : "invalid",
+        frame,
+        runtime,
+      );
+    }
+  });
+
+  drawPlacedItemsInFrontOfForegroundFurniture(
+    ctx,
+    content,
+    foregroundFurniture,
+    frame,
+    runtime,
+    selectedPlacedItemId,
+    placementPreview,
+    activeInteraction,
+    tableCoffeeQuantity,
+    activeRecordPlayerId,
+  );
+
+  ctx.restore();
+};
+
 export const renderScene = (
   canvas: HTMLCanvasElement,
   content: AivatarContent,
@@ -12299,6 +12533,8 @@ export const renderScene = (
   paintingGallery?: AivatarPaintingGallery,
   activeRecordPlayerId?: string | null,
   avatarAppearanceId: AvatarAppearanceId = "octopus",
+  visitors: AivatarRoomVisitor[] = [],
+  primaryAvatarVisible = true,
 ) => {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -12356,7 +12592,19 @@ export const renderScene = (
     paintingGallery,
     activeRecordPlayerId,
   );
-  drawAvatar(ctx, avatar, frame, content.petStats, status, memory, avatarAppearanceId);
+  const avatarLayers = createAvatarRenderLayers(avatar, visitors, primaryAvatarVisible);
+
+  avatarLayers.forEach((layer) => {
+    drawAvatarRenderLayer(
+      ctx,
+      layer,
+      content,
+      frame,
+      status,
+      memory,
+      avatarAppearanceId,
+    );
+  });
   drawPlacedItems(
     ctx,
     content,
@@ -12439,15 +12687,47 @@ export const renderScene = (
     tableCoffeeQuantity,
     activeRecordPlayerId,
   );
-  drawFloorLightOverlay(ctx, floorSurface, content, avatar);
-  drawSleepBlanketOverlay(ctx, content, avatar);
-  if (status.status === "thinking") {
-    drawCodexThinkingBubble(ctx, avatar, status, memory, uiTheme);
-  } else if (activeInteraction?.bubbleText) {
-    drawAvatarBubble(ctx, avatar, activeInteraction, uiTheme);
-  } else {
-    drawActivityBubble(ctx, avatar, memory, uiTheme);
+  if (visitors.length > 0) {
+    avatarLayers.forEach((layer) => {
+      drawAvatarRenderLayer(
+        ctx,
+        layer,
+        content,
+        frame,
+        status,
+        memory,
+        avatarAppearanceId,
+      );
+      drawAvatarForegroundOcclusion(
+        ctx,
+        content,
+        layer,
+        frame,
+        hoveredFurnitureId,
+        selectedFurnitureId,
+        activeInteraction,
+        placementPreview,
+        selectedPlacedItemId,
+        tableCoffeeQuantity,
+        taskCabinetFileCount,
+        failedTaskCabinetFileCount,
+        paintingGallery,
+        activeRecordPlayerId,
+      );
+    });
   }
+  drawFloorLightOverlay(ctx, floorSurface, content, avatar);
+  if (primaryAvatarVisible) {
+    drawSleepBlanketOverlay(ctx, content, avatar);
+    if (status.status === "thinking") {
+      drawCodexThinkingBubble(ctx, avatar, status, memory, uiTheme);
+    } else if (activeInteraction?.bubbleText) {
+      drawAvatarBubble(ctx, avatar, activeInteraction, uiTheme);
+    } else {
+      drawActivityBubble(ctx, avatar, memory, uiTheme);
+    }
+  }
+  visitors.forEach((visitor) => drawVisitorBubble(ctx, visitor, uiTheme));
   drawSelectedInteractionPoints(
     ctx,
     content,

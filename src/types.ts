@@ -486,6 +486,86 @@ export interface AivatarSaveState {
   furniturePlacements?: FurniturePlacement[];
 }
 
+export type AivatarRoomPresenceStatus = "home" | "away" | "hosting" | "busy";
+
+export interface AivatarRoomPresence {
+  type?: "aivatar.room.presence";
+  roomInstanceId: string;
+  slotId: string;
+  slotIndex: number;
+  avatarId: string;
+  avatarName: string;
+  avatarAppearanceId: AvatarAppearanceId;
+  roomId: string;
+  status: AivatarRoomPresenceStatus;
+  currentVisitId?: string | null;
+  updatedAt: string;
+  expiresAt: string;
+  growthLevel: number;
+  traits: AivatarGrowthTraits;
+  idleBubblePhrases?: string[];
+  petStats: PetStats;
+}
+
+export type AivatarVisitPhase =
+  | "invited"
+  | "accepted"
+  | "active"
+  | "returning"
+  | "ended"
+  | "cancelled";
+
+export interface AivatarVisitSession {
+  type?: "aivatar.room.visit";
+  visitId: string;
+  phase: AivatarVisitPhase;
+  host: AivatarRoomPresence;
+  guest: AivatarRoomPresence;
+  hostLayoutFingerprint: string;
+  hostRoomId: string;
+  guestRuntime?: AvatarRuntime;
+  guestRuntimeRoomInstanceId?: string;
+  activity?: BehaviorName;
+  bubbleText?: string;
+  cancelReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+}
+
+export interface AivatarRoomsSnapshot {
+  type: "aivatar.rooms.snapshot";
+  rooms: AivatarRoomPresence[];
+  visits: AivatarVisitSession[];
+  timestamp: string;
+}
+
+export interface AivatarSocialRoomMemory {
+  version: 1;
+  ownerAvatarId: string;
+  hostAvatarId: string;
+  hostRoomId: string;
+  hostLayoutFingerprint: string;
+  navMemory: AivatarNavMemory;
+  visits: number;
+  affinity: number;
+  lastVisitAt?: string;
+  favoriteActivities?: Partial<Record<BehaviorName, number>>;
+  learnedBubblePhrases?: string[];
+}
+
+export interface AivatarRoomVisitor {
+  visitId: string;
+  avatarId: string;
+  avatarName: string;
+  avatarAppearanceId: AvatarAppearanceId;
+  runtime: AvatarRuntime;
+  petStats: PetStats;
+  memory?: AivatarMemory;
+  bubbleText?: string;
+  phase?: "entering" | "socializing" | "leaving";
+}
+
 export type TaskCabinetStatus = "ready" | "running" | "completed" | "failed";
 export type TaskCabinetRunProfile = "default" | "fast";
 export type TaskCabinetScheduleMode = "once" | "repeat";

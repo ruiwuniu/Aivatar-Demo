@@ -21,6 +21,10 @@ const disconnectSessionPath = "/agent-sessions/disconnect";
 const presencePath = "/agent-presence";
 const avatarStatePath = "/avatar-state";
 const paintingPlanPath = "/painting-plan";
+const roomsPath = "/rooms";
+const visitInvitePath = "/visits/invite";
+const visitStatePath = "/visits/state";
+const visitEndPath = "/visits/end";
 const claudeHookPath = "/agent-hooks/claude-code";
 const claudeStatusLineHookPath = "/agent-hooks/claude-code/status-line";
 const healthPath = "/health";
@@ -53,6 +57,7 @@ const paintingPlanTimeoutMs = Math.max(
   5000,
   Number(process.env.AIVATAR_PAINTING_TIMEOUT_MS ?? 55000),
 );
+const roomFinishedVisitTtlMs = 30000;
 const learningEnabled = !/^(0|false|no|off)$/i.test(
   process.env.AIVATAR_LEARNING_ENABLED ?? "1",
 );
@@ -102,6 +107,8 @@ const sessions = new Map();
 const disconnectedSessionKeys = new Map();
 const claudeDigests = new Map();
 const claudeLastLearningKeys = new Map();
+const rooms = new Map();
+const visits = new Map();
 
 const sessionKey = (status) =>
   `${status.agent ?? "codex"}:${status.sessionId ?? "default"}`;
@@ -1422,6 +1429,101 @@ const sendJson = (response, statusCode, payload) => {
   response.end(JSON.stringify(payload));
 };
 
+const roomTimestampMs = (value) => {
+  const timestamp = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const roomVisitNowIso = () => new Date().toISOString();
+
+const roomVisitSnapshot = () => {
+  pruneRoomsAndVisits();
+  return {
+    type: "aivatar.rooms.snapshot",
+    rooms: [...rooms.values()].sort((left, right) => {
+      const leftIndex = Number(left.slotIndex ?? 0);
+      const rightIndex = Number(right.slotIndex ?? 0);
+      return leftIndex - rightIndex || String(left.avatarName ?? "").localeCompare(String(right.avatarName ?? ""));
+    }),
+    visits: [...visits.values()],
+    timestamp: roomVisitNowIso(),
+  };
+};
+
+const normalizeRoomBody = async (request, requiredKey) => {
+  const body = await readBody(request);
+  if (!body.trim()) {
+    throw new Error("Room payload must be a JSON object");
+  }
+
+  const parsed = JSON.parse(body);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Room payload must be a JSON object");
+  }
+  if (requiredKey && typeof parsed[requiredKey] !== "string") {
+    throw new Error(`Room payload requires ${requiredKey}`);
+  }
+  return parsed;
+};
+
+const finishVisitForMissingRoom = (visit, missingRoomInstanceId) => ({
+  ...visit,
+  phase: "cancelled",
+  cancelReason: "room expired",
+  updatedAt: roomVisitNowIso(),
+  expiresAt: new Date(Date.now() + roomFinishedVisitTtlMs).toISOString(),
+  missingRoomInstanceId,
+});
+
+function pruneRoomsAndVisits() {
+  const now = Date.now();
+  const missingRooms = new Set();
+
+  for (const [key, room] of rooms) {
+    const expiresAt = roomTimestampMs(room.expiresAt);
+    if (expiresAt > 0 && expiresAt <= now) {
+      rooms.delete(key);
+      missingRooms.add(key);
+    }
+  }
+
+  for (const [key, visit] of visits) {
+    const phase = String(visit.phase ?? "");
+    const expiresAt = roomTimestampMs(visit.expiresAt);
+    const hostRoomId = visit.host?.roomInstanceId;
+    const guestRoomId = visit.guest?.roomInstanceId;
+    const relatedRoomExpired =
+      missingRooms.has(hostRoomId) || missingRooms.has(guestRoomId);
+
+    if (
+      phase !== "ended" &&
+      phase !== "cancelled" &&
+      (relatedRoomExpired || (expiresAt > 0 && expiresAt <= now))
+    ) {
+      visits.set(
+        key,
+        finishVisitForMissingRoom(
+          visit,
+          relatedRoomExpired
+            ? missingRooms.has(hostRoomId)
+              ? hostRoomId
+              : guestRoomId
+            : undefined,
+        ),
+      );
+      continue;
+    }
+
+    if (
+      (phase === "ended" || phase === "cancelled") &&
+      expiresAt > 0 &&
+      expiresAt + roomFinishedVisitTtlMs <= now
+    ) {
+      visits.delete(key);
+    }
+  }
+}
+
 const readActiveSessionBody = async (request) => {
   const body = await readBody(request);
   if (!body.trim()) {
@@ -1559,6 +1661,10 @@ const httpServer = http.createServer(async (request, response) => {
       presenceHttp: `http://127.0.0.1:${httpPort}${presencePath}`,
       avatarStateHttp: `http://127.0.0.1:${httpPort}${avatarStatePath}`,
       paintingPlanHttp: `http://127.0.0.1:${httpPort}${paintingPlanPath}`,
+      roomsHttp: `http://127.0.0.1:${httpPort}${roomsPath}`,
+      visitInviteHttp: `http://127.0.0.1:${httpPort}${visitInvitePath}`,
+      visitStateHttp: `http://127.0.0.1:${httpPort}${visitStatePath}`,
+      visitEndHttp: `http://127.0.0.1:${httpPort}${visitEndPath}`,
       claudeHookHttp: `http://127.0.0.1:${httpPort}${claudeHookPath}`,
       claudeStatusLineHookHttp: `http://127.0.0.1:${httpPort}${claudeStatusLineHookPath}`,
       clients: wsServer.clients.size,
@@ -1575,6 +1681,96 @@ const httpServer = http.createServer(async (request, response) => {
       disconnectedSessionTombstoneFile,
       disconnectedSessionTombstoneCount: disconnectedSessionKeys.size,
     });
+    return;
+  }
+
+  if (request.url === roomsPath && request.method === "GET") {
+    sendJson(response, 200, roomVisitSnapshot());
+    return;
+  }
+
+  if (request.url === roomsPath && request.method === "POST") {
+    try {
+      const room = await normalizeRoomBody(request, "roomInstanceId");
+      rooms.set(room.roomInstanceId, {
+        ...room,
+        type: "aivatar.room.presence",
+        updatedAt:
+          typeof room.updatedAt === "string" ? room.updatedAt : roomVisitNowIso(),
+      });
+      sendJson(response, 202, roomVisitSnapshot());
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : "Invalid room payload",
+      });
+    }
+    return;
+  }
+
+  if (request.url === visitInvitePath && request.method === "POST") {
+    try {
+      const visit = await normalizeRoomBody(request, "visitId");
+      visits.set(visit.visitId, {
+        ...visit,
+        type: "aivatar.room.visit",
+        phase: "invited",
+        updatedAt:
+          typeof visit.updatedAt === "string" ? visit.updatedAt : roomVisitNowIso(),
+      });
+      sendJson(response, 202, roomVisitSnapshot());
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : "Invalid visit invite payload",
+      });
+    }
+    return;
+  }
+
+  if (request.url === visitStatePath && request.method === "POST") {
+    try {
+      const visit = await normalizeRoomBody(request, "visitId");
+      const existing = visits.get(visit.visitId) ?? {};
+      visits.set(visit.visitId, {
+        ...existing,
+        ...visit,
+        type: "aivatar.room.visit",
+        updatedAt:
+          typeof visit.updatedAt === "string" ? visit.updatedAt : roomVisitNowIso(),
+      });
+      sendJson(response, 202, roomVisitSnapshot());
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : "Invalid visit state payload",
+      });
+    }
+    return;
+  }
+
+  if (request.url === visitEndPath && request.method === "POST") {
+    try {
+      const visit = await normalizeRoomBody(request, "visitId");
+      const existing = visits.get(visit.visitId) ?? {};
+      visits.set(visit.visitId, {
+        ...existing,
+        ...visit,
+        type: "aivatar.room.visit",
+        phase:
+          visit.phase === "cancelled" || visit.phase === "ended"
+            ? visit.phase
+            : "ended",
+        updatedAt:
+          typeof visit.updatedAt === "string" ? visit.updatedAt : roomVisitNowIso(),
+        expiresAt:
+          typeof visit.expiresAt === "string"
+            ? visit.expiresAt
+            : new Date(Date.now() + roomFinishedVisitTtlMs).toISOString(),
+      });
+      sendJson(response, 202, roomVisitSnapshot());
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : "Invalid visit end payload",
+      });
+    }
     return;
   }
 
@@ -1916,6 +2112,10 @@ httpServer.listen(httpPort, "127.0.0.1", () => {
   console.log(`Aivatar presence: http://127.0.0.1:${httpPort}${presencePath}`);
   console.log(`Aivatar avatar state: http://127.0.0.1:${httpPort}${avatarStatePath}`);
   console.log(`Aivatar painting plan: http://127.0.0.1:${httpPort}${paintingPlanPath}`);
+  console.log(`Aivatar rooms: http://127.0.0.1:${httpPort}${roomsPath}`);
+  console.log(`Aivatar visits invite: http://127.0.0.1:${httpPort}${visitInvitePath}`);
+  console.log(`Aivatar visits state: http://127.0.0.1:${httpPort}${visitStatePath}`);
+  console.log(`Aivatar visits end: http://127.0.0.1:${httpPort}${visitEndPath}`);
   console.log(`Aivatar Claude hook: http://127.0.0.1:${httpPort}${claudeHookPath}`);
   console.log(
     `Aivatar Claude statusLine hook: http://127.0.0.1:${httpPort}${claudeStatusLineHookPath}`,

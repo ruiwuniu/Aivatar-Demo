@@ -32,6 +32,26 @@ import {
   tickAvatar,
 } from "./game/simulation";
 import {
+  ROOM_DOOR_INSIDE_POINT,
+  ROOM_DOOR_OUTSIDE_POINT,
+  advanceRoomVisitor,
+  completeSocialRoomVisit,
+  createRoomDoorEntryRuntime,
+  createRoomInstanceId,
+  createVisitId,
+  createVisitorFromVisit,
+  hostLayoutFingerprint,
+  isPointInRoomDoor,
+  normalizeRoomPresence,
+  normalizeSocialRoomMemory,
+  normalizeVisitSession,
+  recordSocialRoomNavSample,
+  roomPresenceFromSave,
+  roomVisitExpiresAt,
+  roomVisitNowIso,
+  socialRoomMemoryStorageKey,
+} from "./game/roomVisits";
+import {
   PAINTING_GALLERY_LIMIT,
   advancePaintingDraft,
   createPaintingDraft,
@@ -70,7 +90,12 @@ import type {
   AivatarPaintingArtwork,
   AivatarPaintingDraft,
   AivatarPaintingPlan,
+  AivatarRoomPresence,
+  AivatarRoomsSnapshot,
+  AivatarRoomVisitor,
   AivatarSaveState,
+  AivatarSocialRoomMemory,
+  AivatarVisitSession,
   AvatarAppearanceId,
   AvatarRuntime,
   BehaviorName,
@@ -126,6 +151,10 @@ const AUTO_MUSIC_KEY = "aivatar.autoMusic.v1";
 const ALWAYS_ON_TOP_KEY = "aivatar.alwaysOnTop.v1";
 const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
 const PAINTING_PLAN_URL = "http://127.0.0.1:38988/painting-plan";
+const ROOMS_URL = "http://127.0.0.1:38988/rooms";
+const VISIT_INVITE_URL = "http://127.0.0.1:38988/visits/invite";
+const VISIT_STATE_URL = "http://127.0.0.1:38988/visits/state";
+const VISIT_END_URL = "http://127.0.0.1:38988/visits/end";
 const SAVE_LAYOUT_VERSION = 2;
 const MAX_SAVE_SLOTS = 8;
 const DEFAULT_AVATAR_APPEARANCE_ID = "octopus";
@@ -257,6 +286,12 @@ const IDLE_BUBBLE_LANGUAGE_OPTIONS: IdleBubbleLanguagePreference[] = [
 const BUSY_RECOVERY_LOW_STAT = 24;
 const BUSY_RECOVERY_LOW_MOOD = 18;
 const BRIDGE_START_MESSAGE_SECONDS = 8;
+const ROOM_PRESENCE_SYNC_MS = 1200;
+const ROOM_VISIT_STATE_POST_MS = 650;
+const ROOM_VISIT_NAV_SAMPLE_SECONDS = 2.5;
+const ROOM_VISIT_SOCIAL_SECONDS = 34;
+const ROOM_VISIT_CONNECTION_FAILURE_LIMIT = 3;
+const ROOM_VISIT_BUSY_CANCEL_REASON = "session-busy";
 const COMPLETE_REWARD_FRESH_MS = 10000;
 const APP_HORIZONTAL_PADDING = 24;
 const APP_GRID_GAP = 12;
@@ -3180,6 +3215,24 @@ export const App = () => {
   const previousSessionStatusRef = useRef(
     new Map<string, CodexStatusMessage["status"]>(),
   );
+  const roomInstanceIdRef = useRef(createRoomInstanceId());
+  const [roomSnapshot, setRoomSnapshot] = useState<AivatarRoomsSnapshot | null>(null);
+  const roomSnapshotRef = useRef<AivatarRoomsSnapshot | null>(null);
+  const [roomVisitMenuOpen, setRoomVisitMenuOpen] = useState(false);
+  const [roomVisitMessage, setRoomVisitMessage] = useState("");
+  const [activeVisit, setActiveVisit] = useState<AivatarVisitSession | null>(null);
+  const activeVisitRef = useRef<AivatarVisitSession | null>(null);
+  const [roomVisitor, setRoomVisitor] = useState<AivatarRoomVisitor | null>(null);
+  const roomVisitorRef = useRef<AivatarRoomVisitor | null>(null);
+  const [avatarAway, setAvatarAway] = useState(false);
+  const avatarAwayRef = useRef(false);
+  const handledVisitIdsRef = useRef(new Set<string>());
+  const completedVisitIdsRef = useRef(new Set<string>());
+  const socialRoomMemoryRef = useRef<AivatarSocialRoomMemory | null>(null);
+  const socialRoomMemoryWriteAtRef = useRef(0);
+  const visitStatePostedAtRef = useRef(0);
+  const visitHostStartedAtRef = useRef(0);
+  const roomSnapshotFailuresRef = useRef(0);
 
   const content = useMemo(
     () => {
@@ -3362,6 +3415,555 @@ export const App = () => {
     void disconnectSession(session.agent, session.sessionId).catch(() => {
       console.warn("Could not disconnect session.");
     });
+  };
+
+  const postRoomJson = async (url: string, payload: unknown) => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`Room bridge request failed: ${response.status}`);
+    }
+    return response.json() as Promise<unknown>;
+  };
+
+  const normalizeRoomsSnapshotValue = (value: unknown): AivatarRoomsSnapshot => {
+    const raw = value && typeof value === "object" ? value as {
+      rooms?: unknown;
+      visits?: unknown;
+      timestamp?: unknown;
+    } : {};
+    const rooms = Array.isArray(raw.rooms)
+      ? raw.rooms
+          .map((room) => normalizeRoomPresence(room as Partial<AivatarRoomPresence>))
+          .filter((room): room is AivatarRoomPresence => Boolean(room))
+      : [];
+    const visits = Array.isArray(raw.visits)
+      ? raw.visits
+          .map((visit) => normalizeVisitSession(visit as Partial<AivatarVisitSession>))
+          .filter((visit): visit is AivatarVisitSession => Boolean(visit))
+      : [];
+
+    return {
+      type: "aivatar.rooms.snapshot",
+      rooms,
+      visits,
+      timestamp:
+        typeof raw.timestamp === "string" ? raw.timestamp : roomVisitNowIso(),
+    };
+  };
+
+  const currentRoomPresence = (
+    status: AivatarRoomPresence["status"] = "home",
+    visitId = activeVisitRef.current?.visitId ?? null,
+  ) => {
+    const slotId = activeSaveSlotIdRef.current;
+    if (!slotId) return null;
+    const slotIndex = saveSlotsRef.current.find((slot) => slot.id === slotId)?.slotIndex ?? 0;
+
+    return roomPresenceFromSave(
+      roomInstanceIdRef.current,
+      slotId,
+      slotIndex,
+      saveRef.current,
+      normalizeMemory(saveRef.current.memory),
+      status,
+      visitId,
+    );
+  };
+
+  const socialMemoryStorageForVisit = (visit: AivatarVisitSession) =>
+    socialRoomMemoryStorageKey(
+      visit.guest.avatarId,
+      visit.hostRoomId,
+      visit.hostLayoutFingerprint,
+    );
+
+  const readSocialRoomMemory = async (visit: AivatarVisitSession) => {
+    const key = socialMemoryStorageForVisit(visit);
+    let parsed: unknown = null;
+
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const payload = await invoke<string | null>("read_social_room_memory", { key });
+      parsed = payload ? JSON.parse(payload) : null;
+    } catch {
+      try {
+        const payload = localStorage.getItem(key);
+        parsed = payload ? JSON.parse(payload) : null;
+      } catch {
+        parsed = null;
+      }
+    }
+
+    return normalizeSocialRoomMemory(
+      parsed && typeof parsed === "object"
+        ? parsed as Partial<AivatarSocialRoomMemory>
+        : undefined,
+      visit.guest.avatarId,
+      visit.host.avatarId,
+      visit.hostRoomId,
+      visit.hostLayoutFingerprint,
+    );
+  };
+
+  const writeSocialRoomMemory = async (memory: AivatarSocialRoomMemory) => {
+    const key = socialRoomMemoryStorageKey(
+      memory.ownerAvatarId,
+      memory.hostRoomId,
+      memory.hostLayoutFingerprint,
+    );
+    const payload = JSON.stringify(memory);
+
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("write_social_room_memory", { key, payload });
+      return;
+    } catch {
+      try {
+        localStorage.setItem(key, payload);
+      } catch {
+        console.warn("Could not persist social room memory.");
+      }
+    }
+  };
+
+  const clearLocalVisitState = (returnHome: boolean) => {
+    setActiveVisit(null);
+    activeVisitRef.current = null;
+    setRoomVisitor(null);
+    roomVisitorRef.current = null;
+    setAvatarAway(false);
+    avatarAwayRef.current = false;
+    socialRoomMemoryRef.current = null;
+    visitHostStartedAtRef.current = 0;
+    visitStatePostedAtRef.current = 0;
+
+    if (returnHome) {
+      runtimeRef.current = {
+        ...runtimeRef.current,
+        x: ROOM_DOOR_INSIDE_POINT.x,
+        y: ROOM_DOOR_INSIDE_POINT.y,
+        targetX: ROOM_DOOR_INSIDE_POINT.x,
+        targetY: ROOM_DOOR_INSIDE_POINT.y,
+        behavior: "idle",
+        behaviorTimer: 2,
+        expression: "calm",
+        activityLabel: undefined,
+        actionIntent: undefined,
+        actionActivityLabel: undefined,
+        interactionTargetAlternates: undefined,
+        navigationFailure: undefined,
+      };
+      setAvatar(runtimeRef.current);
+    }
+  };
+
+  const settleVisitRewards = (
+    visit: AivatarVisitSession,
+    role: "host" | "guest",
+  ) => {
+    const rewardKey = `${role}:${visit.visitId}`;
+    if (completedVisitIdsRef.current.has(rewardKey)) return;
+    completedVisitIdsRef.current.add(rewardKey);
+
+    const learnedPhrase =
+      role === "host"
+        ? visit.guest.idleBubblePhrases?.[0]
+        : visit.host.idleBubblePhrases?.[0];
+    const partnerName = role === "host" ? visit.guest.avatarName : visit.host.avatarName;
+    const behavior = visit.activity ?? "interact";
+
+    if (role === "guest") {
+      const completedMemory = completeSocialRoomVisit(
+        normalizeSocialRoomMemory(
+          socialRoomMemoryRef.current ?? undefined,
+          visit.guest.avatarId,
+          visit.host.avatarId,
+          visit.hostRoomId,
+          visit.hostLayoutFingerprint,
+        ),
+        behavior,
+        learnedPhrase,
+      );
+      socialRoomMemoryRef.current = completedMemory;
+      void writeSocialRoomMemory(completedMemory);
+    }
+
+    setSave((current) => {
+      const recordedMemory = recordLifeMemory(
+        current.memory,
+        {
+          type: "recovery_used",
+          summary:
+            role === "host"
+              ? `Hosted ${partnerName} for a room visit`
+              : `Visited ${partnerName}'s room`,
+          behavior,
+        },
+        {
+          warmth: role === "host" ? 2 : 1,
+          curiosity: role === "guest" ? 2 : 1,
+        },
+        { throttleMs: 1000, throttleKey: rewardKey },
+      );
+      const normalizedMemory = normalizeMemory(recordedMemory);
+      const trimmedPhrase = learnedPhrase?.trim();
+      const idleBubblePhrases =
+        trimmedPhrase &&
+        !normalizedMemory.preferences.idleBubblePhrases?.some(
+          (phrase) => phrase.toLowerCase() === trimmedPhrase.toLowerCase(),
+        )
+          ? [
+              ...(normalizedMemory.preferences.idleBubblePhrases ?? []),
+              trimmedPhrase,
+            ].slice(-12)
+          : normalizedMemory.preferences.idleBubblePhrases ?? [];
+
+      return {
+        ...current,
+        petStats: applyPetStatEffect(current.petStats, {
+          mood: role === "host" ? 5 : 4,
+        }),
+        memory: {
+          ...normalizedMemory,
+          preferences: {
+            ...normalizedMemory.preferences,
+            idleBubblePhrases,
+          },
+        },
+      };
+    });
+  };
+
+  const publishVisitState = (
+    visit: AivatarVisitSession,
+    patch: Partial<AivatarVisitSession>,
+  ) => {
+    const nextVisit = normalizeVisitSession({
+      ...visit,
+      ...patch,
+      updatedAt: roomVisitNowIso(),
+      expiresAt: roomVisitExpiresAt(),
+    });
+    if (!nextVisit) return visit;
+
+    activeVisitRef.current = nextVisit;
+    setActiveVisit(nextVisit);
+    void postRoomJson(VISIT_STATE_URL, nextVisit).catch(() => {
+      console.warn("Could not publish room visit state.");
+    });
+    return nextVisit;
+  };
+
+  const publishVisitEnd = (
+    visit: AivatarVisitSession,
+    phase: "ended" | "cancelled",
+    cancelReason?: string,
+  ) => {
+    const nextVisit = normalizeVisitSession({
+      ...visit,
+      phase,
+      cancelReason,
+      updatedAt: roomVisitNowIso(),
+      expiresAt: roomVisitExpiresAt(30000),
+    });
+    if (!nextVisit) return;
+    void postRoomJson(VISIT_END_URL, nextVisit).catch(() => {
+      console.warn("Could not publish room visit end.");
+    });
+  };
+
+  const finishVisitLocally = (
+    visit: AivatarVisitSession,
+    options: {
+      returnHome?: boolean;
+      reward?: boolean;
+      cancelled?: boolean;
+      message?: string;
+      publishCancel?: boolean;
+    } = {},
+  ) => {
+    const role =
+      visit.host.roomInstanceId === roomInstanceIdRef.current
+        ? "host"
+        : visit.guest.roomInstanceId === roomInstanceIdRef.current
+          ? "guest"
+          : null;
+    if (role && options.reward && !options.cancelled) {
+      settleVisitRewards(visit, role);
+    }
+    if (options.publishCancel) {
+      publishVisitEnd(visit, "cancelled", options.message ?? "local return");
+    }
+
+    clearLocalVisitState(Boolean(options.returnHome));
+    setRoomVisitMenuOpen(false);
+    if (options.message) {
+      setRoomVisitMessage(options.message);
+    }
+  };
+
+  const isRoomVisitSessionBusy = () => isHighPriorityStatus(statusRef.current.status);
+
+  const sampleGuestVisitMemory = (visit: AivatarVisitSession) => {
+    if (
+      visit.guest.roomInstanceId !== roomInstanceIdRef.current ||
+      !visit.guestRuntime ||
+      visit.guestRuntimeRoomInstanceId !== visit.host.roomInstanceId
+    ) {
+      return;
+    }
+    const nextMemory = recordSocialRoomNavSample(
+      normalizeSocialRoomMemory(
+        socialRoomMemoryRef.current ?? undefined,
+        visit.guest.avatarId,
+        visit.host.avatarId,
+        visit.hostRoomId,
+        visit.hostLayoutFingerprint,
+      ),
+      visit.guestRuntime,
+      "success",
+    );
+    socialRoomMemoryRef.current = nextMemory;
+
+    const now = performance.now();
+    if (
+      now - socialRoomMemoryWriteAtRef.current >=
+      ROOM_VISIT_NAV_SAMPLE_SECONDS * 1000
+    ) {
+      socialRoomMemoryWriteAtRef.current = now;
+      void writeSocialRoomMemory(nextMemory);
+    }
+  };
+
+  const acceptIncomingVisit = (visit: AivatarVisitSession) => {
+    if (handledVisitIdsRef.current.has(visit.visitId)) return;
+    handledVisitIdsRef.current.add(visit.visitId);
+
+    if (isRoomVisitSessionBusy()) {
+      publishVisitEnd(visit, "cancelled", ROOM_VISIT_BUSY_CANCEL_REASON);
+      setRoomVisitMessage(ui("roomVisit.busySelf"));
+      return;
+    }
+
+    void readSocialRoomMemory(visit).then((memory) => {
+      if (activeVisitRef.current?.visitId === visit.visitId) {
+        socialRoomMemoryRef.current = memory;
+      }
+    });
+
+    const accepted = normalizeVisitSession({
+      ...visit,
+      phase: "accepted",
+      guestRuntime: {
+        ...runtimeRef.current,
+        targetX: ROOM_DOOR_OUTSIDE_POINT.x,
+        targetY: ROOM_DOOR_OUTSIDE_POINT.y,
+        behavior: "wander",
+        behaviorTimer: 2,
+        expression: "happy",
+        activityLabel: "Visiting",
+      },
+      guestRuntimeRoomInstanceId: roomInstanceIdRef.current,
+      updatedAt: roomVisitNowIso(),
+      expiresAt: roomVisitExpiresAt(),
+    });
+    if (!accepted) return;
+
+    activeVisitRef.current = accepted;
+    setActiveVisit(accepted);
+    runtimeRef.current = {
+      ...runtimeRef.current,
+      targetX: ROOM_DOOR_OUTSIDE_POINT.x,
+      targetY: ROOM_DOOR_OUTSIDE_POINT.y,
+      behavior: "wander",
+      behaviorTimer: 2,
+      expression: "happy",
+      activityLabel: "Visiting",
+      actionIntent: undefined,
+      actionActivityLabel: undefined,
+      interactionTargetAlternates: undefined,
+    };
+    setAvatar(runtimeRef.current);
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: "room-door",
+      furnitureName: ui("roomVisit.title"),
+      message: ui("roomVisit.accepted", { name: visit.host.avatarName }),
+      startedAt: performance.now(),
+      endsAt: performance.now() + INTERACTION_FEEDBACK_SECONDS * 1000,
+      bubbleText: "!",
+    });
+    void postRoomJson(VISIT_STATE_URL, accepted).catch(() => {
+      console.warn("Could not accept room visit.");
+    });
+  };
+
+  const handleRoomSnapshot = (snapshot: AivatarRoomsSnapshot) => {
+    const ownRoomInstanceId = roomInstanceIdRef.current;
+    const currentVisit = activeVisitRef.current;
+
+    if (!currentVisit) {
+      const incomingVisit = snapshot.visits.find(
+        (visit) =>
+          visit.phase === "invited" &&
+          visit.guest.roomInstanceId === ownRoomInstanceId &&
+          !handledVisitIdsRef.current.has(visit.visitId),
+      );
+      if (incomingVisit && !saveMenuOpen) {
+        acceptIncomingVisit(incomingVisit);
+      }
+      return;
+    }
+
+    const latestVisit = snapshot.visits.find(
+      (visit) => visit.visitId === currentVisit.visitId,
+    );
+    if (!latestVisit) {
+      finishVisitLocally(currentVisit, {
+        returnHome: avatarAwayRef.current,
+        cancelled: true,
+        message: ui("roomVisit.connectionLost"),
+      });
+      return;
+    }
+
+    if (latestVisit.phase === "cancelled") {
+      finishVisitLocally(latestVisit, {
+        returnHome: latestVisit.guest.roomInstanceId === ownRoomInstanceId,
+        cancelled: true,
+        message:
+          latestVisit.cancelReason === ROOM_VISIT_BUSY_CANCEL_REASON
+            ? ui("roomVisit.busyOther", { name: latestVisit.guest.avatarName })
+            : ui("roomVisit.cancelled"),
+      });
+      return;
+    }
+
+    if (latestVisit.phase === "ended") {
+      finishVisitLocally(latestVisit, {
+        returnHome: latestVisit.guest.roomInstanceId === ownRoomInstanceId,
+        reward: true,
+        message: ui("roomVisit.ended"),
+      });
+      return;
+    }
+
+    activeVisitRef.current = latestVisit;
+    setActiveVisit(latestVisit);
+
+    if (latestVisit.guest.roomInstanceId === ownRoomInstanceId) {
+      sampleGuestVisitMemory(latestVisit);
+      return;
+    }
+
+    if (
+      latestVisit.host.roomInstanceId === ownRoomInstanceId &&
+      latestVisit.phase !== "invited" &&
+      (latestVisit.guestRuntimeRoomInstanceId === ownRoomInstanceId ||
+        (!latestVisit.guestRuntimeRoomInstanceId && latestVisit.phase !== "accepted"))
+    ) {
+      const existingVisitor = roomVisitorRef.current;
+      if (!existingVisitor || existingVisitor.visitId !== latestVisit.visitId) {
+        const visitor = createVisitorFromVisit(latestVisit);
+        roomVisitorRef.current = visitor;
+        setRoomVisitor(visitor);
+        visitHostStartedAtRef.current = performance.now();
+      }
+    }
+  };
+
+  const inviteRoom = (room: AivatarRoomPresence) => {
+    if (isRoomVisitSessionBusy()) {
+      setRoomVisitMenuOpen(false);
+      setRoomVisitMessage(ui("roomVisit.busySelf"));
+      return;
+    }
+    if (room.status === "busy") {
+      setRoomVisitMessage(ui("roomVisit.busyOther", { name: room.avatarName }));
+      return;
+    }
+
+    const visitId = createVisitId();
+    const host = currentRoomPresence("hosting", visitId);
+    if (!host) {
+      setRoomVisitMessage(ui("roomVisit.noActiveSlot"));
+      return;
+    }
+
+    const visit = normalizeVisitSession({
+      type: "aivatar.room.visit",
+      visitId,
+      phase: "invited",
+      host,
+      guest: room,
+      hostLayoutFingerprint: hostLayoutFingerprint(contentRef.current),
+      hostRoomId: saveRef.current.roomId ?? "room",
+      createdAt: roomVisitNowIso(),
+      updatedAt: roomVisitNowIso(),
+      expiresAt: roomVisitExpiresAt(),
+    });
+    if (!visit) return;
+
+    activeVisitRef.current = visit;
+    setActiveVisit(visit);
+    setRoomVisitor(null);
+    roomVisitorRef.current = null;
+    setRoomVisitMenuOpen(false);
+    setRoomVisitMessage(ui("roomVisit.invited", { name: room.avatarName }));
+    visitHostStartedAtRef.current = 0;
+    runtimeRef.current = {
+      ...runtimeRef.current,
+      targetX: ROOM_DOOR_INSIDE_POINT.x,
+      targetY: ROOM_DOOR_INSIDE_POINT.y,
+      behavior: "wander",
+      behaviorTimer: 4,
+      expression: "happy",
+      activityLabel: "Waiting",
+      actionIntent: undefined,
+      actionActivityLabel: undefined,
+      interactionTargetAlternates: undefined,
+    };
+    setAvatar(runtimeRef.current);
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: "room-door",
+      furnitureName: ui("roomVisit.title"),
+      message: ui("roomVisit.invited", { name: room.avatarName }),
+      startedAt: performance.now(),
+      endsAt: performance.now() + INTERACTION_FEEDBACK_SECONDS * 1000,
+      bubbleText: "...",
+    });
+
+    void postRoomJson(VISIT_INVITE_URL, visit).catch(() => {
+      finishVisitLocally(visit, {
+        cancelled: true,
+        message: ui("roomVisit.connectionLost"),
+      });
+    });
+  };
+
+  const openRoomVisitMenu = () => {
+    clearPendingFurnitureInteraction();
+    updateSelectedPlacedItem(null);
+    updateSelectedWindow(null);
+    updateMovingFurniture(null);
+    selectedFurnitureRef.current = null;
+    setSelectedFurniture(null);
+    setSceneContextMenu(null);
+
+    if (!activeSaveSlotIdRef.current) {
+      setRoomVisitMessage(ui("roomVisit.noActiveSlot"));
+      return;
+    }
+    if (isRoomVisitSessionBusy()) {
+      setRoomVisitMessage(ui("roomVisit.busySelf"));
+      return;
+    }
+    setRoomVisitMenuOpen(true);
   };
 
   const resizeDesktopWindowForSidePanel = async (
@@ -4326,6 +4928,8 @@ export const App = () => {
         save.paintingGallery,
         activeRecordPlayerId,
         normalizeAvatarAppearanceId(save.avatarAppearanceId),
+        roomVisitor ? [roomVisitor] : [],
+        !avatarAway,
       );
     }
   }, [
@@ -4350,6 +4954,8 @@ export const App = () => {
     taskCabinetEntries,
     uiTheme,
     navDebugOverlay,
+    roomVisitor,
+    avatarAway,
   ]);
 
   useEffect(() => {
@@ -4376,6 +4982,95 @@ export const App = () => {
     persistSave(savedState, saveSlotStorageKey(activeSaveSlotId));
     updateSaveSlotSummary(activeSaveSlotId, savedState);
   }, [activeSaveSlotId, save]);
+
+  useEffect(() => {
+    roomSnapshotRef.current = roomSnapshot;
+  }, [roomSnapshot]);
+
+  useEffect(() => {
+    activeVisitRef.current = activeVisit;
+  }, [activeVisit]);
+
+  useEffect(() => {
+    roomVisitorRef.current = roomVisitor;
+  }, [roomVisitor]);
+
+  useEffect(() => {
+    avatarAwayRef.current = avatarAway;
+  }, [avatarAway]);
+
+  useEffect(() => {
+    if (!roomVisitMessage) return;
+    const timer = window.setTimeout(() => setRoomVisitMessage(""), 4500);
+    return () => window.clearTimeout(timer);
+  }, [roomVisitMessage]);
+
+  useEffect(() => {
+    if (!activeSaveSlotId || saveMenuOpen) return;
+
+    let stopped = false;
+
+    const syncRooms = async () => {
+      const currentVisit = activeVisitRef.current;
+      const isHosting =
+        currentVisit?.host.roomInstanceId === roomInstanceIdRef.current &&
+        currentVisit.phase !== "cancelled" &&
+        currentVisit.phase !== "ended";
+      const isBusyForRoomVisit = !currentVisit && isHighPriorityStatus(statusRef.current.status);
+      const presence = currentRoomPresence(
+        avatarAwayRef.current
+          ? "away"
+          : isHosting
+            ? "hosting"
+            : isBusyForRoomVisit
+              ? "busy"
+              : "home",
+        currentVisit?.visitId ?? null,
+      );
+
+      try {
+        if (presence) {
+          await postRoomJson(ROOMS_URL, presence);
+        }
+        const response = await fetch(ROOMS_URL);
+        if (!response.ok) {
+          throw new Error(`Room snapshot failed: ${response.status}`);
+        }
+        const snapshot = normalizeRoomsSnapshotValue(await response.json());
+        roomSnapshotFailuresRef.current = 0;
+        if (stopped) return;
+        roomSnapshotRef.current = snapshot;
+        setRoomSnapshot(snapshot);
+        handleRoomSnapshot(snapshot);
+      } catch {
+        roomSnapshotFailuresRef.current += 1;
+        const activeRoomVisit = activeVisitRef.current;
+        if (
+          activeRoomVisit &&
+          roomSnapshotFailuresRef.current >= ROOM_VISIT_CONNECTION_FAILURE_LIMIT
+        ) {
+          finishVisitLocally(activeRoomVisit, {
+            returnHome: avatarAwayRef.current,
+            cancelled: true,
+            message: ui("roomVisit.connectionLost"),
+            publishCancel: true,
+          });
+        }
+      }
+    };
+
+    void syncRooms();
+    const timer = window.setInterval(syncRooms, ROOM_PRESENCE_SYNC_MS);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      const activeRoomVisit = activeVisitRef.current;
+      if (activeRoomVisit) {
+        publishVisitEnd(activeRoomVisit, "cancelled", "room closed");
+      }
+    };
+  }, [activeSaveSlotId, saveMenuOpen]);
 
   const compactPaintingPlanText = (value: unknown, maxLength: number) =>
     Array.from(String(value ?? "").replace(/\s+/g, " ").trim())
@@ -4970,6 +5665,52 @@ export const App = () => {
               status: "idle" as const,
             }
           : currentStatus;
+
+      if (avatarAwayRef.current) {
+        if (uiAccumulator >= 0.2) {
+          uiAccumulator = 0;
+          setNowMs(Date.now());
+          setAvatar(runtimeRef.current);
+        }
+
+        if (canvasRef.current) {
+          renderScene(
+            canvasRef.current,
+            currentContent,
+            runtimeRef.current,
+            currentStatus,
+            frame,
+            hoveredFurnitureRef.current?.id,
+            selectedFurnitureRef.current?.id,
+            activeInteractionRef.current,
+            null,
+            selectedPlacedItemRef.current?.id,
+            selectedWindowRef.current?.id,
+            null,
+            null,
+            tableCoffeeStorage.quantity,
+            saveRef.current.memory,
+            getWindowTimeMs(frame),
+            taskCabinetEntriesRef.current.filter(
+              (entry) => entry.status === "ready" || entry.status === "failed",
+            ).length,
+            taskCabinetEntriesRef.current.filter(
+              (entry) => entry.status === "failed",
+            ).length,
+            uiThemeForScene(uiThemeRef.current),
+            navDebugOverlayRef.current,
+            saveRef.current.paintingGallery,
+            activeRecordPlayerIdRef.current,
+            normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
+            roomVisitorRef.current ? [roomVisitorRef.current] : [],
+            false,
+          );
+        }
+
+        requestAnimationFrame(loop);
+        return;
+      }
+
       const recordPlayerPlayingForSeconds = activeRecordPlayerStartedAtRef.current
         ? (now - activeRecordPlayerStartedAtRef.current) / 1000
         : 0;
@@ -5091,6 +5832,140 @@ export const App = () => {
       ) {
         runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
         setAvatar(runtimeRef.current);
+      }
+
+      const activeRoomVisit = activeVisitRef.current;
+      if (
+        activeRoomVisit &&
+        activeRoomVisit.guest.roomInstanceId === roomInstanceIdRef.current &&
+        !avatarAwayRef.current
+      ) {
+        const guestDistanceToDoor = Math.hypot(
+          runtimeRef.current.x - ROOM_DOOR_OUTSIDE_POINT.x,
+          runtimeRef.current.y - ROOM_DOOR_OUTSIDE_POINT.y,
+        );
+
+        if (guestDistanceToDoor <= 4) {
+          const entryRuntime = createRoomDoorEntryRuntime();
+          avatarAwayRef.current = true;
+          setAvatarAway(true);
+          runtimeRef.current = {
+            ...runtimeRef.current,
+            x: ROOM_DOOR_OUTSIDE_POINT.x,
+            y: ROOM_DOOR_OUTSIDE_POINT.y,
+            targetX: ROOM_DOOR_OUTSIDE_POINT.x,
+            targetY: ROOM_DOOR_OUTSIDE_POINT.y,
+            behavior: "idle",
+            behaviorTimer: 2,
+            expression: "happy",
+            activityLabel: "Visiting",
+            actionIntent: undefined,
+            actionActivityLabel: undefined,
+            interactionTargetAlternates: undefined,
+            navigationFailure: undefined,
+          };
+          setAvatar(runtimeRef.current);
+          visitStatePostedAtRef.current = now;
+          publishVisitState(activeRoomVisit, {
+            phase: "accepted",
+            guestRuntime: entryRuntime,
+            guestRuntimeRoomInstanceId: activeRoomVisit.host.roomInstanceId,
+            activity: entryRuntime.behavior,
+            bubbleText: "!",
+          });
+        } else if (now - visitStatePostedAtRef.current >= ROOM_VISIT_STATE_POST_MS) {
+          visitStatePostedAtRef.current = now;
+          publishVisitState(activeRoomVisit, {
+            phase: "accepted",
+            guestRuntime: runtimeRef.current,
+            guestRuntimeRoomInstanceId: roomInstanceIdRef.current,
+            activity: runtimeRef.current.behavior,
+            bubbleText: "!",
+          });
+        }
+      }
+
+      const visitor = roomVisitorRef.current;
+      if (
+        activeRoomVisit &&
+        visitor &&
+        activeRoomVisit.host.roomInstanceId === roomInstanceIdRef.current
+      ) {
+        if (!visitHostStartedAtRef.current) {
+          visitHostStartedAtRef.current = now;
+        }
+
+        let nextVisitor = advanceRoomVisitor(
+          visitor,
+          currentContent,
+          runtimeRef.current,
+          activeRoomVisit.guest.traits,
+          elapsedSeconds,
+        );
+        const socialSeconds = (now - visitHostStartedAtRef.current) / 1000;
+        let nextVisitPhase: AivatarVisitSession["phase"] =
+          nextVisitor.phase === "socializing" ? "active" : activeRoomVisit.phase;
+
+        if (
+          socialSeconds >= ROOM_VISIT_SOCIAL_SECONDS &&
+          nextVisitor.phase !== "leaving"
+        ) {
+          nextVisitor = {
+            ...nextVisitor,
+            phase: "leaving",
+            runtime: {
+              ...nextVisitor.runtime,
+              targetX: ROOM_DOOR_OUTSIDE_POINT.x,
+              targetY: ROOM_DOOR_OUTSIDE_POINT.y,
+              behavior: "wander",
+              behaviorTimer: 3,
+              activityLabel: "Heading home",
+            },
+            bubbleText: "bye",
+          };
+          nextVisitPhase = "returning";
+        }
+
+        if (nextVisitor.phase === "leaving") {
+          nextVisitPhase = "returning";
+        }
+
+        roomVisitorRef.current = nextVisitor;
+
+        const visitorDistanceToDoor = Math.hypot(
+          nextVisitor.runtime.x - ROOM_DOOR_OUTSIDE_POINT.x,
+          nextVisitor.runtime.y - ROOM_DOOR_OUTSIDE_POINT.y,
+        );
+
+        if (nextVisitor.phase === "leaving" && visitorDistanceToDoor <= 3) {
+          const endedVisit = normalizeVisitSession({
+            ...activeRoomVisit,
+            phase: "ended",
+            guestRuntime: nextVisitor.runtime,
+            guestRuntimeRoomInstanceId: roomInstanceIdRef.current,
+            activity: nextVisitor.runtime.behavior,
+            bubbleText: nextVisitor.bubbleText,
+            updatedAt: roomVisitNowIso(),
+            expiresAt: roomVisitExpiresAt(30000),
+          });
+          if (endedVisit) {
+            publishVisitEnd(endedVisit, "ended");
+            finishVisitLocally(endedVisit, {
+              reward: true,
+              message: ui("roomVisit.ended"),
+            });
+          }
+        } else if (now - visitStatePostedAtRef.current >= ROOM_VISIT_STATE_POST_MS) {
+          visitStatePostedAtRef.current = now;
+          setRoomVisitor(nextVisitor);
+          publishVisitState(activeRoomVisit, {
+            phase: nextVisitPhase,
+            guestRuntime: nextVisitor.runtime,
+            guestRuntimeRoomInstanceId: roomInstanceIdRef.current,
+            activity: nextVisitor.runtime.behavior,
+            bubbleText: nextVisitor.bubbleText,
+          });
+        }
       }
 
       const autonomousActionWatchActive =
@@ -6227,6 +7102,8 @@ export const App = () => {
             saveRef.current.paintingGallery,
             activeRecordPlayerIdRef.current,
             normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
+            roomVisitorRef.current ? [roomVisitorRef.current] : [],
+            !avatarAwayRef.current,
           );
       }
 
@@ -8535,6 +9412,11 @@ export const App = () => {
       return;
     }
 
+    if (isPointInRoomDoor(scenePoint)) {
+      openRoomVisitMenu();
+      return;
+    }
+
     const placedItem = findPlacedItemAt(contentRef.current, scenePoint.x, scenePoint.y);
     if (placedItem) {
       const placedItemDefinition = contentRef.current.itemDefinitions.find(
@@ -9040,6 +9922,13 @@ export const App = () => {
   const idleBubbleLanguage = normalizeIdleBubbleLanguage(
     memory.preferences.idleBubbleLanguage,
   );
+  const onlineVisitRooms = (roomSnapshot?.rooms ?? []).filter((room) => {
+    if (room.roomInstanceId === roomInstanceIdRef.current) return false;
+    if (room.slotId === activeSaveSlotId) return false;
+    if (room.status !== "home" && room.status !== "busy") return false;
+    const expiresAt = Date.parse(room.expiresAt);
+    return Number.isNaN(expiresAt) || expiresAt > nowMs;
+  });
   const idleBubbleSlotCount = Math.max(1, growth.level);
   const idleBubbleSlotsAvailable = idleBubblePhrases.length < idleBubbleSlotCount;
   const filterIdleBubbleCandidates = (phrases: string[]) =>
@@ -10280,6 +11169,71 @@ export const App = () => {
           onMouseLeave={clearHoveredFurniture}
           onMouseMove={updateHoveredFurniture}
         />
+        {avatarAway ? (
+          <div className="room-away-overlay" aria-live="polite">
+            <span>{ui("roomVisit.away")}</span>
+          </div>
+        ) : null}
+        {roomVisitMessage && !roomVisitMenuOpen ? (
+          <div className="room-visit-toast" aria-live="polite">
+            {roomVisitMessage}
+          </div>
+        ) : null}
+        {roomVisitMenuOpen ? (
+          <div
+            className="room-visit-dialog"
+            role="dialog"
+            aria-modal="false"
+            aria-label={ui("roomVisit.title")}
+          >
+            <header>
+              <h2>{ui("roomVisit.title")}</h2>
+              <button
+                type="button"
+                className="room-visit-close"
+                onClick={() => setRoomVisitMenuOpen(false)}
+                aria-label={ui("action.cancel")}
+              >
+                x
+              </button>
+            </header>
+            {onlineVisitRooms.length ? (
+              <div className="room-visit-list">
+                {onlineVisitRooms.map((room) => (
+                  <button
+                    key={room.roomInstanceId}
+                    type="button"
+                    className="room-visit-row"
+                    onClick={() => inviteRoom(room)}
+                    disabled={Boolean(activeVisit) || room.status !== "home"}
+                  >
+                    <span>
+                      <strong>{room.avatarName}</strong>
+                      <small>
+                        {ui("saveSlots.slot", { value: room.slotIndex + 1 })} /
+                        {ui("growth.level", { value: room.growthLevel })}
+                      </small>
+                    </span>
+                    <b>
+                      {room.status === "busy"
+                        ? ui("roomVisit.busy")
+                        : ui("roomVisit.invite")}
+                    </b>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p>{ui("roomVisit.empty")}</p>
+            )}
+            {activeVisit ? (
+              <p className="room-visit-active">
+                {activeVisit.host.roomInstanceId === roomInstanceIdRef.current
+                  ? ui("roomVisit.hosting", { name: activeVisit.guest.avatarName })
+                  : ui("roomVisit.away")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {sceneContextMenu ? (
           <div
             className="scene-context-menu"
