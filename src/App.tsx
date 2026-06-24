@@ -3755,6 +3755,8 @@ export const App = () => {
       }
     });
 
+    clearPendingFurnitureInteraction();
+
     const accepted = normalizeVisitSession({
       ...visit,
       phase: "accepted",
@@ -5640,13 +5642,21 @@ export const App = () => {
       const currentStatus = statusRef.current.status;
       const currentInteraction = activeInteractionRef.current;
       const pendingWorldInteraction = pendingWorldInteractionRef.current;
+      const activeRoomVisit = activeVisitRef.current;
+      const guestLeavingForVisit = Boolean(
+        activeRoomVisit &&
+          activeRoomVisit.guest.roomInstanceId === roomInstanceIdRef.current &&
+          !avatarAwayRef.current,
+      );
       const taskCabinetVisualFlow = taskCabinetVisualFlowRef.current;
       const taskCabinetVisualFlowActive = Boolean(taskCabinetVisualFlow);
       const blockingInteraction = isBlockingInteraction(currentInteraction);
       const furnitureInteractionActive =
         pendingWorldInteraction ||
         blockingInteraction;
-      const busyRecoveryNeed = !furnitureInteractionActive && !taskCabinetVisualFlowActive
+      const busyRecoveryNeed = !guestLeavingForVisit &&
+        !furnitureInteractionActive &&
+        !taskCabinetVisualFlowActive
         ? getBusyRecoveryNeed(
             currentStatus,
             currentContent,
@@ -5657,6 +5667,7 @@ export const App = () => {
       const busyRecoveryActive = Boolean(busyRecoveryNeed);
       const currentRuntimeAction = runtimeActionBehavior(runtimeRef.current);
       const avatarStatus =
+        guestLeavingForVisit ||
         busyRecoveryActive ||
         taskCabinetVisualFlowActive ||
         (furnitureInteractionActive && !isHighPriorityStatus(currentStatus))
@@ -5718,6 +5729,7 @@ export const App = () => {
         Boolean(activeRecordPlayerIdRef.current) &&
         recordPlayerPlayingForSeconds >= BGM_AUTONOMOUS_STOP_MIN_SECONDS &&
         !isHighPriorityStatus(currentStatus) &&
+        !guestLeavingForVisit &&
         !pendingWorldInteractionRef.current &&
         !blockingInteraction &&
         !taskCabinetVisualFlowActive;
@@ -5807,6 +5819,22 @@ export const App = () => {
         }
       }
 
+      if (guestLeavingForVisit) {
+        runtimeRef.current = {
+          ...runtimeRef.current,
+          targetX: ROOM_DOOR_OUTSIDE_POINT.x,
+          targetY: ROOM_DOOR_OUTSIDE_POINT.y,
+          behavior: "wander",
+          behaviorTimer: Math.max(runtimeRef.current.behaviorTimer, 2),
+          expression: "happy",
+          activityLabel: "Visiting",
+          actionIntent: undefined,
+          actionActivityLabel: undefined,
+          interactionTargetAlternates: undefined,
+          navigationFailure: undefined,
+        };
+      }
+
       runtimeRef.current = tickAvatar(
         runtimeRef.current,
         currentContent,
@@ -5834,7 +5862,6 @@ export const App = () => {
         setAvatar(runtimeRef.current);
       }
 
-      const activeRoomVisit = activeVisitRef.current;
       if (
         activeRoomVisit &&
         activeRoomVisit.guest.roomInstanceId === roomInstanceIdRef.current &&
@@ -11228,7 +11255,13 @@ export const App = () => {
             {activeVisit ? (
               <p className="room-visit-active">
                 {activeVisit.host.roomInstanceId === roomInstanceIdRef.current
-                  ? ui("roomVisit.hosting", { name: activeVisit.guest.avatarName })
+                  ? ui(
+                      activeVisit.guestRuntimeRoomInstanceId ===
+                        activeVisit.host.roomInstanceId
+                        ? "roomVisit.hosting"
+                        : "roomVisit.waiting",
+                      { name: activeVisit.guest.avatarName },
+                    )
                   : ui("roomVisit.away")}
               </p>
             ) : null}
