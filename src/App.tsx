@@ -652,21 +652,25 @@ const explicitStatusSessionKey = (
 ) =>
   status.agent && status.sessionId ? `${status.agent}:${status.sessionId}` : null;
 
+const rewardUsageForBits = (usage?: TokenUsage) =>
+  usage?.scope === "context-window" ? undefined : usage;
+
 const weightedTokensForUsage = (usage?: TokenUsage) => {
-  if (!usage?.totalTokens || usage.totalTokens <= 0) return 0;
-  const inputTokens = usage.inputTokens ?? 0;
-  const cachedInputTokens = Math.min(usage.cachedInputTokens ?? 0, inputTokens);
+  const rewardUsage = rewardUsageForBits(usage);
+  if (!rewardUsage?.totalTokens || rewardUsage.totalTokens <= 0) return 0;
+  const inputTokens = rewardUsage.inputTokens ?? 0;
+  const cachedInputTokens = Math.min(rewardUsage.cachedInputTokens ?? 0, inputTokens);
   const uncachedInputTokens = Math.max(0, inputTokens - cachedInputTokens);
   return (
     uncachedInputTokens +
     cachedInputTokens * TOKEN_REWARD_CACHED_INPUT_WEIGHT +
-    (usage.outputTokens ?? 0) +
-    (usage.reasoningOutputTokens ?? 0)
+    (rewardUsage.outputTokens ?? 0) +
+    (rewardUsage.reasoningOutputTokens ?? 0)
   );
 };
 
 const maxRewardBitsForUsage = (usage?: TokenUsage) => {
-  const totalTokens = usage?.totalTokens ?? 0;
+  const totalTokens = rewardUsageForBits(usage)?.totalTokens ?? 0;
   if (totalTokens > TOKEN_REWARD_EXTREME_USAGE_TOKEN_THRESHOLD) {
     return TOKEN_REWARD_EXTREME_USAGE_MAX_BITS;
   }
@@ -674,11 +678,12 @@ const maxRewardBitsForUsage = (usage?: TokenUsage) => {
 };
 
 const rewardBitsForUsage = (usage?: TokenUsage) => {
-  if (!usage?.totalTokens || usage.totalTokens <= 0) return 4;
-  const weightedTokens = weightedTokensForUsage(usage);
+  const rewardUsage = rewardUsageForBits(usage);
+  if (!rewardUsage?.totalTokens || rewardUsage.totalTokens <= 0) return 4;
+  const weightedTokens = weightedTokensForUsage(rewardUsage);
 
   return Math.min(
-    maxRewardBitsForUsage(usage),
+    maxRewardBitsForUsage(rewardUsage),
     4 + Math.floor(weightedTokens / TOKEN_REWARD_TOKEN_STEP),
   );
 };

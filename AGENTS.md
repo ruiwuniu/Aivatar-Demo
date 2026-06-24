@@ -564,7 +564,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Agent Sessions ordering now prioritizes actual status timestamps before presence heartbeat timestamps, reducing visual jumping when many connected sessions keep refreshing presence.
   - Complete rewards are transition-gated for reward-eligible agent sessions defined in `src/agentRegistry.ts` (`codex`, `claude-code`, and `opencode`) moving from `thinking`, `executing`, `waiting_for_user`, or `error` into `complete`, and also tolerate a fresh active/connected `complete` snapshot so rewards are not missed when the first UI-visible status is already complete. Repeated Live reads of the same complete event do not reward again.
   - Reward-eligible `complete` events now also play `agent-complete-success.ogg` once after the existing complete-event de-duplication, so repeated bridge reads do not replay the success sound.
-  - Complete rewards can use token usage from the status payload. When usage is present, bits are based on weighted tokens: uncached input, output, and reasoning tokens count fully, cached input counts at 10%. The reward is capped at 40 bits by default, 100 bits when total token usage is greater than 100,000, and 1000 bits when total token usage is greater than 1,000,000, before any work boost bonus. Without usage, rewards fall back to the fixed 4-bit base.
+  - Complete rewards can use turn token usage from the status payload. Context-window-only usage with `scope: "context-window"` is used for meters but ignored by bits rewards. When turn usage is present, bits are based on weighted tokens: uncached input, output, and reasoning tokens count fully, cached input counts at 10%. The reward is capped at 100 bits by default and 1000 bits when total token usage is greater than 1,000,000, before any work boost bonus. Without reward-eligible turn usage, rewards fall back to the fixed 4-bit base.
   - Reward-eligible agent `complete`, `error`, and `waiting_for_user` statuses now update lightweight memory/growth state, including XP, recent memory events, and trait changes.
   - Life events such as sleeping, playing, using Coffee/Cola/Bento/Cookie, brewing Coffee, and buying items also write compact recent memory entries and small trait/preference changes.
   - Agent Sessions cards display model context window usage when `usage.contextTokens` and `usage.modelContextWindow` are present, and display token reward context as `tokens -> bits (weighted)` when a session includes reward usage. Context-only usage with `scope: "context-window"` is not shown as a reward summary.
@@ -1149,8 +1149,9 @@ Behavior mapping:
   - Active reward-eligible previous states are `thinking`, `executing`, `waiting_for_user`, and `error`.
   - If `usage.totalTokens` is present, token rewards use weighted tokens:
     - `weightedTokens = uncachedInputTokens + cachedInputTokens * 0.1 + outputTokens + reasoningOutputTokens`.
-    - `bits = min(40, 4 + floor(weightedTokens / 1000))`, before any work boost bonus.
-    - If usage is absent or invalid, the reward falls back to the fixed 4-bit base.
+    - `bits = min(100, 4 + floor(weightedTokens / 1000))`, before any work boost bonus.
+    - If `usage.totalTokens > 1,000,000`, the cap is `1000` instead of `100`.
+    - If usage is absent, invalid, or `scope: "context-window"`, the reward falls back to the fixed 4-bit base.
 
 Per-turn status protocol:
 
