@@ -39,6 +39,45 @@ export const ROOM_DOOR_OUTSIDE_POINT = {
 
 const SOCIAL_NAV_MEMORY_CELL_COUNT_LIMIT = 9999;
 const VISITOR_NAVIGATION_SCOPE_PREFIX = "room-visitor";
+export const ROOM_VISIT_BUBBLE_KEY_PREFIX = "roomVisit.bubble.";
+
+const ROOM_VISIT_BUBBLE_KEYS: Partial<Record<BehaviorName, string[]>> = {
+  play: [
+    "roomVisit.bubble.play.1",
+    "roomVisit.bubble.play.2",
+    "roomVisit.bubble.play.3",
+  ],
+  coffee: [
+    "roomVisit.bubble.coffee.1",
+    "roomVisit.bubble.coffee.2",
+    "roomVisit.bubble.coffee.3",
+  ],
+  interact: [
+    "roomVisit.bubble.interact.1",
+    "roomVisit.bubble.interact.2",
+    "roomVisit.bubble.interact.3",
+  ],
+  relax: [
+    "roomVisit.bubble.relax.1",
+    "roomVisit.bubble.relax.2",
+    "roomVisit.bubble.relax.3",
+  ],
+  admire: [
+    "roomVisit.bubble.admire.1",
+    "roomVisit.bubble.admire.2",
+    "roomVisit.bubble.admire.3",
+  ],
+  wander: [
+    "roomVisit.bubble.wander.1",
+    "roomVisit.bubble.wander.2",
+    "roomVisit.bubble.wander.3",
+  ],
+};
+
+export const roomVisitBubbleKeyForBehavior = (behavior: BehaviorName) => {
+  const keys = ROOM_VISIT_BUBBLE_KEYS[behavior] ?? ROOM_VISIT_BUBBLE_KEYS.interact ?? [];
+  return keys[Math.floor(Math.random() * keys.length)] ?? "roomVisit.bubble.interact.1";
+};
 
 export const createRoomDoorEntryRuntime = (): AvatarRuntime => ({
   x: ROOM_DOOR_OUTSIDE_POINT.x,
@@ -384,7 +423,7 @@ export const normalizeVisitSession = (
     guestSocialNavMemory,
     activity: value.activity,
     bubbleText:
-      typeof value.bubbleText === "string" ? value.bubbleText.slice(0, 24) : undefined,
+      typeof value.bubbleText === "string" ? value.bubbleText.slice(0, 64) : undefined,
     cancelReason:
       typeof value.cancelReason === "string" ? value.cancelReason.slice(0, 120) : undefined,
     createdAt:
@@ -576,7 +615,7 @@ export const advanceRoomVisitor = (
       activityLabel:
         runtime.activityLabel === "Planning route" ? runtime.activityLabel : "Visiting",
     };
-    bubbleText = "!";
+    bubbleText = "roomVisit.bubble.enter.1";
     if (distance(runtime, ROOM_DOOR_INSIDE_POINT) <= 2) {
       phase = "socializing";
       runtime = {
@@ -587,7 +626,7 @@ export const advanceRoomVisitor = (
         behaviorTimer: 3,
         activityLabel: "Chatting",
       };
-      bubbleText = "...";
+      bubbleText = roomVisitBubbleKeyForBehavior("interact");
     }
   } else if (phase === "leaving") {
     runtime = navigateVisitorRuntime(
@@ -612,7 +651,7 @@ export const advanceRoomVisitor = (
       activityLabel:
         runtime.activityLabel === "Planning route" ? runtime.activityLabel : "Heading home",
     };
-    bubbleText = "bye";
+    bubbleText = "roomVisit.bubble.leave.1";
   } else {
     if (
       runtime.behaviorTimer <= 0 ||
@@ -651,18 +690,7 @@ export const advanceRoomVisitor = (
                     ? "Hanging out"
                     : "Wandering together",
       };
-      bubbleText =
-        behavior === "play"
-          ? "++"
-          : behavior === "coffee"
-            ? "sip"
-            : behavior === "interact"
-              ? "..."
-              : behavior === "admire"
-                ? "*"
-                : behavior === "relax"
-                  ? "<3"
-                  : "?";
+      bubbleText = roomVisitBubbleKeyForBehavior(behavior);
     }
 
     runtime = navigateVisitorRuntime(

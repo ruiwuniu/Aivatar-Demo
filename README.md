@@ -9,24 +9,25 @@
 <p align="center">
   <span><strong>macOS DMG pending</strong></span>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.1/Aivatar_0.2.1_x64-setup.exe"><strong>Download Windows EXE</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.2/Aivatar_0.2.2_x64-setup.exe"><strong>Download Windows EXE</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.1/Aivatar_0.2.1_x64_en-US.msi"><strong>Download Windows MSI</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.2/Aivatar_0.2.2_x64_en-US.msi"><strong>Download Windows MSI</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.2.1">Release 0.2.1</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.2.2">Release 0.2.2</a>
 </p>
 
 <p align="center">
   <img src="docs/assets/aivatar-readme-0.2-agent-room.gif" width="760" alt="Aivatar 0.2 room with a new character, upgraded materials, agent sessions, desktop agents, task cabinet, and CLI launcher" />
 </p>
 
-## 0.2.1 Highlights / 0.2.1 更新亮点
+## 0.2.2 Highlights / 0.2.2 更新亮点
 
 **EN**
 
 - New companion appearances: Little Octopus, Rush Spark, Mood Slime, Red Crayfish, Cute Ghost, Cute Penguin, and Green Lizard.
 - Upgraded room visuals with richer floors, wall materials, windows, furniture skins, and animated room objects such as the record player, easel, phone, and tabletop items.
 - Broader AI agent support for Codex Desktop, Codex CLI, Claude Code, opencode, scheduled CLI tasks, and custom local status sources.
+- Room Visit companions now play, chat, drink coffee, relax, explore, and show localized social bubbles in English, Simplified Chinese, and Traditional Chinese.
 
 **中文**
 
@@ -44,7 +45,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.2.1 preview installers are available for Windows through GitHub Releases. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden. macOS packaging is pending for this patch release.
+> Current status / 当前状态: 0.2.2 preview installers are available for Windows through GitHub Releases. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden. macOS packaging is pending for this patch release.
 
 ## Contents / 目录
 
@@ -534,9 +535,9 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 Current release-prep notes:
 
-- The 0.2.1 preview release is available through GitHub Releases, with Windows NSIS `.exe` and Windows MSI installers. macOS DMG packaging is pending for this patch release.
+- The 0.2.2 preview release is available through GitHub Releases, with Windows NSIS `.exe` and Windows MSI installers. macOS DMG packaging is pending for this patch release.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
-- Character choices, upgraded room materials, furniture skins, expanded desktop/CLI agent workflows, and the Room Visit MVP are now part of the 0.2.1 preview surface.
+- Character choices, upgraded room materials, furniture skins, expanded desktop/CLI agent workflows, and the Room Visit MVP with localized social bubbles are now part of the 0.2.2 preview surface.
 - Native bridge support exists for local status, basic Codex Desktop session discovery, rollout watching, token-usage rewards, and local heuristic session learning.
 - A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
 - Linux packaging remains planned after the desktop integration path is stable.
@@ -545,9 +546,9 @@ Current release-prep notes:
 
 当前发布准备阶段说明：
 
-- 0.2.1 预览版已通过 GitHub Releases 提供 Windows NSIS `.exe` 和 Windows MSI 安装包，本次补丁版 macOS DMG 待补充。
+- 0.2.2 预览版已通过 GitHub Releases 提供 Windows NSIS `.exe` 和 Windows MSI 安装包，本次补丁版 macOS DMG 待补充。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
-- 多角色选择、升级后的房间材质、家具皮肤、扩展后的桌面/CLI agent 工作流，以及 Room Visit 串门 MVP，已经纳入 0.2.1 预览体验。
+- 多角色选择、升级后的房间材质、家具皮肤、扩展后的桌面/CLI agent 工作流，以及带本地化社交气泡的 Room Visit 串门 MVP，已经纳入 0.2.2 预览体验。
 - 本地状态、基础 Codex Desktop 会话发现、rollout watching、token 用量奖励、本地启发式 session learning 已有原生桥接预览实现。
 - 完全 Rust-native 的 connected runner 和面向发布模式的 provider-backed learning 仍是后续加固工作。
 - Linux 打包计划会在桌面集成路径继续稳定后推进。

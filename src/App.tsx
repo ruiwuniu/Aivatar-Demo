@@ -35,6 +35,7 @@ import {
 import {
   ROOM_DOOR_INSIDE_POINT,
   ROOM_DOOR_OUTSIDE_POINT,
+  ROOM_VISIT_BUBBLE_KEY_PREFIX,
   advanceRoomVisitor,
   completeSocialRoomVisit,
   createRoomDoorEntryRuntime,
@@ -48,6 +49,7 @@ import {
   normalizeVisitSession,
   recordSocialRoomNavSample,
   roomPresenceFromSave,
+  roomVisitBubbleKeyForBehavior,
   roomVisitorNavigationScopeKey,
   roomVisitExpiresAt,
   roomVisitNowIso,
@@ -1804,6 +1806,34 @@ type RoomVisitHostSocialTarget = {
   bubbleText: string;
 };
 
+const localizeRoomVisitBubbleText = (
+  bubbleText: string | undefined,
+  locale: Locale,
+) =>
+  bubbleText?.startsWith(ROOM_VISIT_BUBBLE_KEY_PREFIX)
+    ? t(locale, bubbleText)
+    : bubbleText;
+
+const localizedInteractionBubble = (
+  interaction: FurnitureInteractionState | null,
+  locale: Locale,
+): FurnitureInteractionState | null => {
+  if (!interaction?.bubbleText) return interaction;
+  const bubbleText = localizeRoomVisitBubbleText(interaction.bubbleText, locale);
+  return bubbleText === interaction.bubbleText
+    ? interaction
+    : { ...interaction, bubbleText };
+};
+
+const localizedRoomVisitors = (
+  visitors: AivatarRoomVisitor[],
+  locale: Locale,
+): AivatarRoomVisitor[] =>
+  visitors.map((visitor) => {
+    const bubbleText = localizeRoomVisitBubbleText(visitor.bubbleText, locale);
+    return bubbleText === visitor.bubbleText ? visitor : { ...visitor, bubbleText };
+  });
+
 const ROOM_VISIT_SOCIAL_BEHAVIORS = new Set<BehaviorName>([
   "play",
   "coffee",
@@ -1889,7 +1919,7 @@ const roomVisitHostSocialTarget = (
         targetY: point.y,
         alternates: standpoints,
         activityLabel: "Playing together",
-        bubbleText: "++",
+        bubbleText: roomVisitBubbleKeyForBehavior(behavior),
       };
     }
   }
@@ -1909,7 +1939,7 @@ const roomVisitHostSocialTarget = (
         targetY: point.y,
         alternates: standpoints,
         activityLabel: "Coffee together",
-        bubbleText: "sip",
+        bubbleText: roomVisitBubbleKeyForBehavior(behavior),
       };
     }
 
@@ -1933,7 +1963,7 @@ const roomVisitHostSocialTarget = (
         targetY: point.y,
         alternates: standpoints,
         activityLabel: "Coffee together",
-        bubbleText: "sip",
+        bubbleText: roomVisitBubbleKeyForBehavior(behavior),
       };
     }
   }
@@ -1951,13 +1981,7 @@ const roomVisitHostSocialTarget = (
             ? "Hanging out"
             : "Wandering together",
     bubbleText:
-      behavior === "interact"
-        ? "..."
-        : behavior === "admire"
-          ? "*"
-          : behavior === "relax"
-            ? "<3"
-            : "?",
+      roomVisitBubbleKeyForBehavior(behavior),
   };
 };
 
@@ -3306,6 +3330,7 @@ export const App = () => {
   const [alwaysOnTopEnabled, setAlwaysOnTopEnabled] = useState(() =>
     loadInitialAlwaysOnTopEnabled(),
   );
+  const localeRef = useRef(locale);
   const uiThemeRef = useRef(uiTheme);
   const autoMusicEnabledRef = useRef(autoMusicEnabled);
   const keyboardTypingAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -4081,7 +4106,7 @@ export const App = () => {
       message: ui("roomVisit.accepted", { name: visit.host.avatarName }),
       startedAt: performance.now(),
       endsAt: performance.now() + INTERACTION_FEEDBACK_SECONDS * 1000,
-      bubbleText: "!",
+      bubbleText: "roomVisit.bubble.enter.1",
     });
     void postRoomJson(VISIT_STATE_URL, accepted).catch(() => {
       console.warn("Could not accept room visit.");
@@ -4221,7 +4246,7 @@ export const App = () => {
       message: ui("roomVisit.invited", { name: room.avatarName }),
       startedAt: performance.now(),
       endsAt: performance.now() + INTERACTION_FEEDBACK_SECONDS * 1000,
-      bubbleText: "...",
+      bubbleText: roomVisitBubbleKeyForBehavior("interact"),
     });
 
     void postRoomJson(VISIT_INVITE_URL, visit).catch(() => {
@@ -5182,7 +5207,7 @@ export const App = () => {
         0,
         hoveredFurniture?.id,
         selectedFurniture?.id,
-        activeInteraction,
+        localizedInteractionBubble(activeInteraction, locale),
         placementPreview && placingItem
           ? { item: placingItem, ...placementPreview }
           : placementPreview && movingPlacedItem
@@ -5214,7 +5239,7 @@ export const App = () => {
         save.paintingGallery,
         activeRecordPlayerId,
         normalizeAvatarAppearanceId(save.avatarAppearanceId),
-        roomVisitor ? [roomVisitor] : [],
+        localizedRoomVisitors(roomVisitor ? [roomVisitor] : [], locale),
         !avatarAway,
       );
     }
@@ -5239,6 +5264,7 @@ export const App = () => {
     save.paintingGallery,
     taskCabinetEntries,
     uiTheme,
+    locale,
     navDebugOverlay,
     roomVisitor,
     avatarAway,
@@ -5542,6 +5568,7 @@ export const App = () => {
 
   useEffect(() => {
     localStorage.setItem(LOCALE_KEY, locale);
+    localeRef.current = locale;
   }, [locale]);
 
   useEffect(() => {
@@ -5977,7 +6004,7 @@ export const App = () => {
             frame,
             hoveredFurnitureRef.current?.id,
             selectedFurnitureRef.current?.id,
-            activeInteractionRef.current,
+            localizedInteractionBubble(activeInteractionRef.current, localeRef.current),
             null,
             selectedPlacedItemRef.current?.id,
             selectedWindowRef.current?.id,
@@ -5997,7 +6024,10 @@ export const App = () => {
             saveRef.current.paintingGallery,
             activeRecordPlayerIdRef.current,
             normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
-            roomVisitorRef.current ? [roomVisitorRef.current] : [],
+            localizedRoomVisitors(
+              roomVisitorRef.current ? [roomVisitorRef.current] : [],
+              localeRef.current,
+            ),
             false,
           );
         }
@@ -6185,7 +6215,7 @@ export const App = () => {
             guestRuntimeRoomInstanceId: activeRoomVisit.host.roomInstanceId,
             guestSocialNavMemory: socialRoomMemoryRef.current?.navMemory,
             activity: entryRuntime.behavior,
-            bubbleText: "!",
+            bubbleText: "roomVisit.bubble.enter.1",
           });
         } else if (now - visitStatePostedAtRef.current >= ROOM_VISIT_STATE_POST_MS) {
           visitStatePostedAtRef.current = now;
@@ -6195,7 +6225,7 @@ export const App = () => {
             guestRuntimeRoomInstanceId: roomInstanceIdRef.current,
             guestSocialNavMemory: socialRoomMemoryRef.current?.navMemory,
             activity: runtimeRef.current.behavior,
-            bubbleText: "!",
+            bubbleText: "roomVisit.bubble.enter.1",
           });
         }
       }
@@ -6238,7 +6268,7 @@ export const App = () => {
               behaviorTimer: 3,
               activityLabel: "Heading home",
             },
-            bubbleText: "bye",
+            bubbleText: "roomVisit.bubble.leave.1",
           };
           nextVisitPhase = "returning";
         }
@@ -7387,7 +7417,7 @@ export const App = () => {
           frame,
           hoveredFurnitureRef.current?.id,
           selectedFurnitureRef.current?.id,
-          activeInteractionRef.current,
+          localizedInteractionBubble(activeInteractionRef.current, localeRef.current),
           placementPreviewRef.current && placingItemRef.current
             ? { item: placingItemRef.current, ...placementPreviewRef.current }
             : placementPreviewRef.current && movingPlacedItemRef.current
@@ -7427,7 +7457,10 @@ export const App = () => {
             saveRef.current.paintingGallery,
             activeRecordPlayerIdRef.current,
             normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
-            roomVisitorRef.current ? [roomVisitorRef.current] : [],
+            localizedRoomVisitors(
+              roomVisitorRef.current ? [roomVisitorRef.current] : [],
+              localeRef.current,
+            ),
             !avatarAwayRef.current,
           );
       }
