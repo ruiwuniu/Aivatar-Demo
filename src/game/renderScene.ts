@@ -8617,6 +8617,7 @@ const drawRecordPlayerVinyl = (ctx: CanvasRenderingContext2D, spriteX: number, s
   const groove = "#263044";
   const grooveDark = "#161d2a";
 
+  drawPixelRect(ctx, spriteX + 15, spriteY + 6, 11, 1, rim);
   drawPixelRect(ctx, spriteX + 13, spriteY + 7, 17, 1, rim);
   drawPixelRect(ctx, spriteX + 9, spriteY + 8, 25, 2, outer);
   drawPixelRect(ctx, spriteX + 7, spriteY + 10, 29, 3, outer);

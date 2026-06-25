@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import {
   explorationCellKey,
+  getFurnitureInteractionStandpoints,
   getPlacedItemInteractionStandpoints,
   navigationLayoutFingerprint,
   tickAvatar,
@@ -211,7 +212,15 @@ export const completeSocialRoomVisit = (
   return {
     ...memory,
     visits: memory.visits + 1,
-    affinity: Math.min(999, memory.affinity + (activity === "play" ? 3 : 2)),
+    affinity: Math.min(
+      999,
+      memory.affinity +
+        (activity === "play" || activity === "coffee"
+          ? 3
+          : activity === "interact" || activity === "relax"
+            ? 2
+            : 1),
+    ),
     lastVisitAt: roomVisitNowIso(),
     favoriteActivities,
     learnedBubblePhrases,
@@ -450,9 +459,11 @@ const navigateVisitorRuntime = (
 const weightedBehavior = (
   traits: AivatarRoomPresence["traits"],
   hasGameConsole: boolean,
+  hasCoffeeSpot: boolean,
 ): BehaviorName => {
   const choices: Array<{ behavior: BehaviorName; weight: number }> = [
     { behavior: "play", weight: hasGameConsole ? 8 + traits.efficiency / 70 : 0 },
+    { behavior: "coffee", weight: hasCoffeeSpot ? 7 + traits.focus / 90 : 0 },
     { behavior: "wander", weight: 6 + traits.curiosity / 80 },
     { behavior: "admire", weight: 4 + traits.creativity / 90 },
     { behavior: "relax", weight: 5 + traits.warmth / 80 },
@@ -479,6 +490,26 @@ const randomSocialTarget = (
       const point = standpoints[standpoints.length > 1 ? 1 : 0];
       if (point) return point;
       return { x: gameConsole.x + 28, y: gameConsole.y + 30 };
+    }
+  }
+
+  if (behavior === "coffee") {
+    const table = content.room.furniture.find((item) => item.id === "table");
+    if (table) {
+      const standpoints = getFurnitureInteractionStandpoints(table, content, "coffee");
+      const point = standpoints[standpoints.length > 1 ? 1 : 0];
+      if (point) return point;
+      return { x: table.x + table.width / 2, y: table.y + table.height + 14 };
+    }
+
+    const coffeeSpot = content.placedItems?.find(
+      (item) => item.itemId === "coffee-cup" || item.itemId === "coffee-machine",
+    );
+    if (coffeeSpot) {
+      const standpoints = getPlacedItemInteractionStandpoints(coffeeSpot, content);
+      const point = standpoints[standpoints.length > 1 ? 1 : 0];
+      if (point) return point;
+      return { x: coffeeSpot.x + 18, y: coffeeSpot.y + 24 };
     }
   }
 
@@ -512,6 +543,12 @@ export const advanceRoomVisitor = (
   navMemory?: AivatarNavMemory,
 ) => {
   const hasGameConsole = Boolean(content.placedItems?.some((item) => item.itemId === "game-console"));
+  const hasCoffeeSpot = Boolean(
+    content.room.furniture.some((item) => item.id === "table") ||
+      content.placedItems?.some(
+        (item) => item.itemId === "coffee-cup" || item.itemId === "coffee-machine",
+      ),
+  );
   let runtime = visitor.runtime;
   let phase = visitor.phase ?? "entering";
   let bubbleText = visitor.bubbleText;
@@ -579,40 +616,53 @@ export const advanceRoomVisitor = (
   } else {
     if (
       runtime.behaviorTimer <= 0 ||
-      runtime.navigationFailure ||
-      distance(runtime, { x: runtime.targetX, y: runtime.targetY }) <= 4
+      runtime.navigationFailure
     ) {
-      const behavior = weightedBehavior(hostTraits, hasGameConsole);
+      const behavior = weightedBehavior(hostTraits, hasGameConsole, hasCoffeeSpot);
       const target = randomSocialTarget(content, behavior, hostRuntime);
       runtime = {
         ...runtime,
         targetX: target.x,
         targetY: target.y,
         behavior,
-        behaviorTimer: behavior === "play" ? 9 : behavior === "interact" ? 6 : 8,
-        expression: behavior === "interact" || behavior === "play" ? "happy" : "calm",
+        behaviorTimer:
+          behavior === "play"
+            ? 12
+            : behavior === "coffee"
+              ? 10
+              : behavior === "interact"
+                ? 8
+                : 9,
+        expression:
+          behavior === "interact" || behavior === "play" || behavior === "coffee"
+            ? "happy"
+            : "calm",
         navigationFailure: undefined,
         activityLabel:
           behavior === "play"
             ? "Playing together"
-            : behavior === "interact"
-              ? "Chatting"
-              : behavior === "admire"
-                ? "Looking around"
-                : behavior === "relax"
-                  ? "Hanging out"
-                  : "Wandering",
+            : behavior === "coffee"
+              ? "Coffee together"
+              : behavior === "interact"
+                ? "Chatting"
+                : behavior === "admire"
+                  ? "Looking around"
+                  : behavior === "relax"
+                    ? "Hanging out"
+                    : "Wandering together",
       };
       bubbleText =
         behavior === "play"
           ? "++"
-          : behavior === "interact"
-            ? "..."
-            : behavior === "admire"
-              ? "*"
-              : behavior === "relax"
-                ? "<3"
-                : "?";
+          : behavior === "coffee"
+            ? "sip"
+            : behavior === "interact"
+              ? "..."
+              : behavior === "admire"
+                ? "*"
+                : behavior === "relax"
+                  ? "<3"
+                  : "?";
     }
 
     runtime = navigateVisitorRuntime(

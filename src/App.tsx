@@ -1789,6 +1789,178 @@ const isNearActivePlayTarget = (
   );
 };
 
+type RoomVisitHostActivitySync = {
+  visitId: string;
+  behavior: BehaviorName;
+  targetKey: string;
+};
+
+type RoomVisitHostSocialTarget = {
+  behavior: BehaviorName;
+  targetX: number;
+  targetY: number;
+  alternates?: { x: number; y: number }[];
+  activityLabel: string;
+  bubbleText: string;
+};
+
+const ROOM_VISIT_SOCIAL_BEHAVIORS = new Set<BehaviorName>([
+  "play",
+  "coffee",
+  "interact",
+  "relax",
+  "admire",
+  "wander",
+]);
+
+const clampRoomVisitPoint = (
+  point: { x: number; y: number },
+): { x: number; y: number } => ({
+  x: Math.min(388, Math.max(92, point.x)),
+  y: Math.min(292, Math.max(148, point.y)),
+});
+
+const nearestPlacedItemToPoint = (
+  point: { x: number; y: number },
+  candidates: PlacedItem[],
+) =>
+  [...candidates].sort(
+    (left, right) =>
+      Math.hypot(left.x - point.x, left.y - point.y) -
+      Math.hypot(right.x - point.x, right.y - point.y),
+  )[0];
+
+const chooseCompanionStandpoint = (
+  standpoints: { x: number; y: number }[],
+  companionTarget: { x: number; y: number },
+  fallback: { x: number; y: number },
+) => {
+  const points = standpoints.length > 0 ? standpoints : [fallback];
+  return [...points].sort((left, right) => {
+    const leftDistance = Math.hypot(
+      left.x - companionTarget.x,
+      left.y - companionTarget.y,
+    );
+    const rightDistance = Math.hypot(
+      right.x - companionTarget.x,
+      right.y - companionTarget.y,
+    );
+    const leftScore = Math.abs(leftDistance - 28) + (leftDistance < 10 ? 100 : 0);
+    const rightScore = Math.abs(rightDistance - 28) + (rightDistance < 10 ? 100 : 0);
+    return leftScore - rightScore;
+  })[0];
+};
+
+const roomVisitBehaviorForVisitor = (visitor: AivatarRoomVisitor): BehaviorName =>
+  visitor.runtime.actionIntent ?? visitor.runtime.behavior;
+
+const roomVisitHostSocialTarget = (
+  visitor: AivatarRoomVisitor,
+  content: AivatarContent,
+  hostRuntime: AvatarRuntime,
+): RoomVisitHostSocialTarget | null => {
+  const behavior = roomVisitBehaviorForVisitor(visitor);
+  if (!ROOM_VISIT_SOCIAL_BEHAVIORS.has(behavior)) return null;
+
+  const companionTarget = {
+    x: visitor.runtime.targetX,
+    y: visitor.runtime.targetY,
+  };
+  const fallbackNearVisitor = clampRoomVisitPoint({
+    x: companionTarget.x + (hostRuntime.x <= companionTarget.x ? -24 : 24),
+    y: companionTarget.y + 4,
+  });
+
+  if (behavior === "play") {
+    const gameConsole = nearestPlacedItemToPoint(
+      companionTarget,
+      (content.placedItems ?? []).filter((item) => item.itemId === "game-console"),
+    );
+    if (gameConsole) {
+      const standpoints = getPlacedItemInteractionStandpoints(gameConsole, content);
+      const fallbackTarget = getPlacedItemInteractionTarget(gameConsole, content);
+      const point = chooseCompanionStandpoint(standpoints, companionTarget, {
+        x: fallbackTarget.targetX,
+        y: fallbackTarget.targetY,
+      });
+      return {
+        behavior,
+        targetX: point.x,
+        targetY: point.y,
+        alternates: standpoints,
+        activityLabel: "Playing together",
+        bubbleText: "++",
+      };
+    }
+  }
+
+  if (behavior === "coffee") {
+    const table = content.room.furniture.find((item) => item.id === TABLE_FURNITURE_ID);
+    if (table) {
+      const standpoints = getFurnitureInteractionStandpoints(table, content, "coffee");
+      const fallbackTarget = getFurnitureInteractionTarget(table, "coffee");
+      const point = chooseCompanionStandpoint(standpoints, companionTarget, {
+        x: fallbackTarget.targetX,
+        y: fallbackTarget.targetY,
+      });
+      return {
+        behavior,
+        targetX: point.x,
+        targetY: point.y,
+        alternates: standpoints,
+        activityLabel: "Coffee together",
+        bubbleText: "sip",
+      };
+    }
+
+    const coffeeSpot = nearestPlacedItemToPoint(
+      companionTarget,
+      (content.placedItems ?? []).filter(
+        (item) =>
+          item.itemId === COFFEE_CUP_ITEM_ID || item.itemId === COFFEE_MACHINE_ITEM_ID,
+      ),
+    );
+    if (coffeeSpot) {
+      const standpoints = getPlacedItemInteractionStandpoints(coffeeSpot, content);
+      const fallbackTarget = getPlacedItemInteractionTarget(coffeeSpot, content);
+      const point = chooseCompanionStandpoint(standpoints, companionTarget, {
+        x: fallbackTarget.targetX,
+        y: fallbackTarget.targetY,
+      });
+      return {
+        behavior,
+        targetX: point.x,
+        targetY: point.y,
+        alternates: standpoints,
+        activityLabel: "Coffee together",
+        bubbleText: "sip",
+      };
+    }
+  }
+
+  return {
+    behavior,
+    targetX: fallbackNearVisitor.x,
+    targetY: fallbackNearVisitor.y,
+    activityLabel:
+      behavior === "interact"
+        ? "Chatting"
+        : behavior === "admire"
+          ? "Looking around"
+          : behavior === "relax"
+            ? "Hanging out"
+            : "Wandering together",
+    bubbleText:
+      behavior === "interact"
+        ? "..."
+        : behavior === "admire"
+          ? "*"
+          : behavior === "relax"
+            ? "<3"
+            : "?",
+  };
+};
+
 const isNearFurnitureInteractionTarget = (
   avatar: AvatarRuntime,
   furniture: FurnitureDefinition,
@@ -3232,6 +3404,7 @@ export const App = () => {
   const completedVisitIdsRef = useRef(new Set<string>());
   const socialRoomMemoryRef = useRef<AivatarSocialRoomMemory | null>(null);
   const socialRoomMemoryWriteAtRef = useRef(0);
+  const roomVisitHostActivityRef = useRef<RoomVisitHostActivitySync | null>(null);
   const visitStatePostedAtRef = useRef(0);
   const visitHostStartedAtRef = useRef(0);
   const roomSnapshotFailuresRef = useRef(0);
@@ -3545,6 +3718,7 @@ export const App = () => {
     setAvatarAway(false);
     avatarAwayRef.current = false;
     socialRoomMemoryRef.current = null;
+    roomVisitHostActivityRef.current = null;
     visitHostStartedAtRef.current = 0;
     visitStatePostedAtRef.current = 0;
 
@@ -3714,6 +3888,105 @@ export const App = () => {
   };
 
   const isRoomVisitSessionBusy = () => isHighPriorityStatus(statusRef.current.status);
+
+  const syncHostAvatarWithRoomVisitor = (
+    visitor: AivatarRoomVisitor,
+    currentContent: AivatarContent,
+    currentStatus: CodexStatusMessage,
+    now: number,
+    options: {
+      pendingWorldInteraction: PendingWorldInteraction | null;
+      blockingInteraction: boolean;
+      busyRecoveryActive: boolean;
+      taskCabinetVisualFlowActive: boolean;
+    },
+  ) => {
+    const socialTarget = roomVisitHostSocialTarget(
+      visitor,
+      currentContent,
+      runtimeRef.current,
+    );
+    const canSync =
+      visitor.phase === "socializing" &&
+      socialTarget &&
+      !isHighPriorityStatus(currentStatus) &&
+      !options.pendingWorldInteraction &&
+      !options.blockingInteraction &&
+      !options.busyRecoveryActive &&
+      !options.taskCabinetVisualFlowActive;
+
+    if (!canSync || !socialTarget) {
+      roomVisitHostActivityRef.current = null;
+      return;
+    }
+
+    const targetKey = [
+      visitor.visitId,
+      socialTarget.behavior,
+      Math.round(socialTarget.targetX),
+      Math.round(socialTarget.targetY),
+    ].join(":");
+    const activeBehavior = runtimeActionBehavior(runtimeRef.current);
+    const alignedWithActivity =
+      activeBehavior === socialTarget.behavior &&
+      Math.abs(runtimeRef.current.targetX - socialTarget.targetX) <= 1 &&
+      Math.abs(runtimeRef.current.targetY - socialTarget.targetY) <= 1;
+    const currentSync = roomVisitHostActivityRef.current;
+    const needsSync =
+      !currentSync ||
+      currentSync.visitId !== visitor.visitId ||
+      currentSync.behavior !== socialTarget.behavior ||
+      currentSync.targetKey !== targetKey ||
+      !alignedWithActivity ||
+      Boolean(runtimeRef.current.navigationFailure);
+
+    if (!needsSync) return;
+
+    const arrivalGated = socialTarget.behavior !== "wander";
+    runtimeRef.current = {
+      ...runtimeRef.current,
+      targetX: socialTarget.targetX,
+      targetY: socialTarget.targetY,
+      behavior: "wander",
+      behaviorTimer:
+        socialTarget.behavior === "play"
+          ? 12
+          : socialTarget.behavior === "coffee"
+            ? 10
+            : socialTarget.behavior === "interact"
+              ? 8
+              : 9,
+      expression:
+        socialTarget.behavior === "play" ||
+        socialTarget.behavior === "coffee" ||
+        socialTarget.behavior === "interact"
+          ? "happy"
+          : "calm",
+      activityLabel: socialTarget.activityLabel,
+      interactionTargetAlternates:
+        socialTarget.alternates && socialTarget.alternates.length > 1
+          ? socialTarget.alternates
+          : undefined,
+      actionIntent: arrivalGated ? socialTarget.behavior : undefined,
+      actionActivityLabel: arrivalGated ? socialTarget.activityLabel : undefined,
+      navigationFailure: undefined,
+    };
+    roomVisitHostActivityRef.current = {
+      visitId: visitor.visitId,
+      behavior: socialTarget.behavior,
+      targetKey,
+    };
+    setAvatar(runtimeRef.current);
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: "room-visit-social",
+      furnitureName: ui("roomVisit.title"),
+      message: socialTarget.activityLabel,
+      startedAt: now,
+      endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
+      bubbleText: socialTarget.bubbleText,
+    });
+  };
 
   const sampleGuestVisitMemory = (visit: AivatarVisitSession) => {
     if (
@@ -5736,11 +6009,13 @@ export const App = () => {
       const recordPlayerPlayingForSeconds = activeRecordPlayerStartedAtRef.current
         ? (now - activeRecordPlayerStartedAtRef.current) / 1000
         : 0;
+      const hostRoomVisitSocialActive = Boolean(roomVisitHostActivityRef.current);
       const canAutonomouslyStopBgm =
         Boolean(activeRecordPlayerIdRef.current) &&
         recordPlayerPlayingForSeconds >= BGM_AUTONOMOUS_STOP_MIN_SECONDS &&
         !isHighPriorityStatus(currentStatus) &&
         !guestLeavingForVisit &&
+        !hostRoomVisitSocialActive &&
         !pendingWorldInteractionRef.current &&
         !blockingInteraction &&
         !taskCabinetVisualFlowActive;
@@ -5951,6 +6226,7 @@ export const App = () => {
           socialSeconds >= ROOM_VISIT_SOCIAL_SECONDS &&
           nextVisitor.phase !== "leaving"
         ) {
+          roomVisitHostActivityRef.current = null;
           nextVisitor = {
             ...nextVisitor,
             phase: "leaving",
@@ -5969,6 +6245,14 @@ export const App = () => {
 
         if (nextVisitor.phase === "leaving") {
           nextVisitPhase = "returning";
+          roomVisitHostActivityRef.current = null;
+        } else {
+          syncHostAvatarWithRoomVisitor(nextVisitor, currentContent, currentStatus, now, {
+            pendingWorldInteraction,
+            blockingInteraction,
+            busyRecoveryActive,
+            taskCabinetVisualFlowActive,
+          });
         }
 
         roomVisitorRef.current = nextVisitor;
