@@ -87,55 +87,103 @@ const rectsOverlap = (left: Rect, right: Rect) =>
   left.y < right.y + right.height - COLLISION_EDGE_EPSILON &&
   left.y + left.height > right.y + COLLISION_EDGE_EPSILON;
 
-let cachedNavWaypoint:
-  | {
-      behavior: BehaviorName;
-      targetX: number;
-      targetY: number;
-      ignoredFurnitureId?: string;
-      point: Point;
-      path?: Point[];
-    }
-  | null = null;
+type CachedNavWaypoint = {
+  behavior: BehaviorName;
+  targetX: number;
+  targetY: number;
+  ignoredFurnitureId?: string;
+  point: Point;
+  path?: Point[];
+};
 
-let cachedReplanPause:
-  | {
-      behavior: BehaviorName;
-      targetX: number;
-      targetY: number;
-      ignoredFurnitureId?: string;
-      remainingSeconds: number;
-    }
-  | null = null;
+type CachedReplanPause = {
+  behavior: BehaviorName;
+  targetX: number;
+  targetY: number;
+  ignoredFurnitureId?: string;
+  remainingSeconds: number;
+};
 
-let cachedBlockedTarget:
-  | {
-      behavior: BehaviorName;
-      targetX: number;
-      targetY: number;
-      ignoredFurnitureId?: string;
-      elapsedSeconds: number;
-    }
-  | null = null;
+type CachedBlockedTarget = {
+  behavior: BehaviorName;
+  targetX: number;
+  targetY: number;
+  ignoredFurnitureId?: string;
+  elapsedSeconds: number;
+};
 
-let cachedNavigationProgress:
-  | {
-      behavior: BehaviorName;
-      targetX: number;
-      targetY: number;
-      ignoredFurnitureId?: string;
-      bestDistance: number;
-      stalledSeconds: number;
-    }
-  | null = null;
+type CachedNavigationProgress = {
+  behavior: BehaviorName;
+  targetX: number;
+  targetY: number;
+  ignoredFurnitureId?: string;
+  bestDistance: number;
+  stalledSeconds: number;
+};
 
-let cachedActionNavigationFailsafe:
-  | {
-      behavior: BehaviorName;
-      ignoredFurnitureId?: string;
-      stalls: number;
-    }
-  | null = null;
+type CachedActionNavigationFailsafe = {
+  behavior: BehaviorName;
+  ignoredFurnitureId?: string;
+  stalls: number;
+};
+
+type NavigationCacheState = {
+  cachedNavWaypoint: CachedNavWaypoint | null;
+  cachedReplanPause: CachedReplanPause | null;
+  cachedBlockedTarget: CachedBlockedTarget | null;
+  cachedNavigationProgress: CachedNavigationProgress | null;
+  cachedActionNavigationFailsafe: CachedActionNavigationFailsafe | null;
+};
+
+let cachedNavWaypoint: CachedNavWaypoint | null = null;
+let cachedReplanPause: CachedReplanPause | null = null;
+let cachedBlockedTarget: CachedBlockedTarget | null = null;
+let cachedNavigationProgress: CachedNavigationProgress | null = null;
+let cachedActionNavigationFailsafe: CachedActionNavigationFailsafe | null = null;
+
+const scopedNavigationCaches = new Map<string, NavigationCacheState>();
+
+const emptyNavigationCache = (): NavigationCacheState => ({
+  cachedNavWaypoint: null,
+  cachedReplanPause: null,
+  cachedBlockedTarget: null,
+  cachedNavigationProgress: null,
+  cachedActionNavigationFailsafe: null,
+});
+
+const captureNavigationCache = (): NavigationCacheState => ({
+  cachedNavWaypoint,
+  cachedReplanPause,
+  cachedBlockedTarget,
+  cachedNavigationProgress,
+  cachedActionNavigationFailsafe,
+});
+
+const restoreNavigationCache = (cache: NavigationCacheState) => {
+  cachedNavWaypoint = cache.cachedNavWaypoint;
+  cachedReplanPause = cache.cachedReplanPause;
+  cachedBlockedTarget = cache.cachedBlockedTarget;
+  cachedNavigationProgress = cache.cachedNavigationProgress;
+  cachedActionNavigationFailsafe = cache.cachedActionNavigationFailsafe;
+};
+
+const withNavigationScope = <T,>(scopeKey: string | undefined, callback: () => T): T => {
+  if (!scopeKey) return callback();
+
+  const outerCache = captureNavigationCache();
+  restoreNavigationCache(scopedNavigationCaches.get(scopeKey) ?? emptyNavigationCache());
+
+  try {
+    return callback();
+  } finally {
+    scopedNavigationCaches.set(scopeKey, captureNavigationCache());
+    restoreNavigationCache(outerCache);
+  }
+};
+
+export const clearNavigationScope = (scopeKey: string) => {
+  scopedNavigationCaches.delete(scopeKey);
+};
 
 const sameNavigationTarget = (
   cache: NonNullable<typeof cachedNavWaypoint>,
@@ -1085,6 +1133,7 @@ const failNavigationTarget = (
   behavior: BehaviorName,
   forcedBehavior: BehaviorName | null,
   reason: "blocked" | "stalled",
+  holdCurrentBehavior = false,
 ): AvatarRuntime => {
   cachedNavWaypoint = null;
   cachedReplanPause = null;
@@ -1099,19 +1148,21 @@ const failNavigationTarget = (
     reason,
   };
 
-  if (forcedBehavior) {
+  if (forcedBehavior || holdCurrentBehavior) {
+    const nextBehavior = forcedBehavior ?? avatar.behavior;
     return {
       ...avatar,
       targetX: avatar.x,
       targetY: avatar.y,
-      behavior: forcedBehavior,
-      behaviorTimer: Math.max(avatar.behaviorTimer, 4),
+      behavior: nextBehavior,
+      behaviorTimer: Math.max(avatar.behaviorTimer, holdCurrentBehavior ? 0.5 : 4),
       facing:
-        forcedBehavior === "coding" || forcedBehavior === "thinking"
+        nextBehavior === "coding" || nextBehavior === "thinking"
           ? "back"
           : avatar.facing,
-      expression: expressionForBehavior(forcedBehavior),
-      activityLabel: activityLabelForBehavior(forcedBehavior),
+      expression: holdCurrentBehavior && !forcedBehavior ? "focused" : expressionForBehavior(nextBehavior),
+      activityLabel:
+        holdCurrentBehavior && !forcedBehavior ? "Planning route" : activityLabelForBehavior(nextBehavior),
       actionIntent: undefined,
       actionActivityLabel: undefined,
       interactionTargetAlternates: undefined,
@@ -2278,8 +2329,24 @@ export const tickAvatar = (
     navMemory?: AivatarNavMemory;
     autoMusicEnabled?: boolean;
     avatarAppearanceId?: AvatarAppearanceId;
+    navigationScopeKey?: string;
+    suppressAutonomousBehavior?: boolean;
   },
 ): AvatarRuntime => {
+  if (options?.navigationScopeKey) {
+    const { navigationScopeKey, ...scopedOptions } = options;
+    return withNavigationScope(navigationScopeKey, () =>
+      tickAvatar(
+        avatar,
+        content,
+        codexStatus,
+        elapsedSeconds,
+        memory,
+        scopedOptions,
+      ),
+    );
+  }
+
   const forcedBehavior = deriveBehaviorFromCodex(codexStatus);
   let next = avatar;
   const activeBehavior = activeBehaviorForRuntime(avatar);
@@ -2296,7 +2363,12 @@ export const tickAvatar = (
       forcedBehavior === "success" ? 3 : 8,
       undefined,
     );
-  } else if (!forcedBehavior && !avatar.actionIntent && avatar.behaviorTimer <= 0) {
+  } else if (
+    !options?.suppressAutonomousBehavior &&
+    !forcedBehavior &&
+    !avatar.actionIntent &&
+    avatar.behaviorTimer <= 0
+  ) {
     const autonomous = chooseAutonomousBehavior(content, memory, {
       autoMusicEnabled: options?.autoMusicEnabled,
       avatarAppearanceId: options?.avatarAppearanceId,
@@ -2541,6 +2613,7 @@ export const tickAvatar = (
             movementBehavior,
             forcedBehavior,
             "blocked",
+            options?.suppressAutonomousBehavior,
           );
         } else {
           return pauseForNavigationReplan(
@@ -2618,6 +2691,7 @@ export const tickAvatar = (
           movementBehavior,
           forcedBehavior,
           "stalled",
+          options?.suppressAutonomousBehavior,
         );
       }
     } else {

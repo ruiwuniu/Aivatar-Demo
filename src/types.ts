@@ -525,6 +525,7 @@ export interface AivatarVisitSession {
   hostRoomId: string;
   guestRuntime?: AvatarRuntime;
   guestRuntimeRoomInstanceId?: string;
+  guestSocialNavMemory?: AivatarNavMemory;
   activity?: BehaviorName;
   bubbleText?: string;
   cancelReason?: string;

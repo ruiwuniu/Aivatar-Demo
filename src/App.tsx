@@ -20,6 +20,7 @@ import {
   applyConsumableEffect,
   applyPetTick,
   applyPetStatEffect,
+  clearNavigationScope,
   explorationCellKey,
   explorationTargetReached,
   getFurnitureInteractionTarget,
@@ -47,6 +48,7 @@ import {
   normalizeVisitSession,
   recordSocialRoomNavSample,
   roomPresenceFromSave,
+  roomVisitorNavigationScopeKey,
   roomVisitExpiresAt,
   roomVisitNowIso,
   socialRoomMemoryStorageKey,
@@ -3531,6 +3533,11 @@ export const App = () => {
   };
 
   const clearLocalVisitState = (returnHome: boolean) => {
+    const visitId = activeVisitRef.current?.visitId ?? roomVisitorRef.current?.visitId;
+    if (visitId) {
+      clearNavigationScope(roomVisitorNavigationScopeKey(visitId));
+    }
+
     setActiveVisit(null);
     activeVisitRef.current = null;
     setRoomVisitor(null);
@@ -3725,7 +3732,7 @@ export const App = () => {
         visit.hostLayoutFingerprint,
       ),
       visit.guestRuntime,
-      "success",
+      visit.guestRuntime.navigationFailure ? "failure" : "success",
     );
     socialRoomMemoryRef.current = nextMemory;
 
@@ -3752,6 +3759,9 @@ export const App = () => {
     void readSocialRoomMemory(visit).then((memory) => {
       if (activeVisitRef.current?.visitId === visit.visitId) {
         socialRoomMemoryRef.current = memory;
+        publishVisitState(activeVisitRef.current, {
+          guestSocialNavMemory: memory.navMemory,
+        });
       }
     });
 
@@ -3770,6 +3780,7 @@ export const App = () => {
         activityLabel: "Visiting",
       },
       guestRuntimeRoomInstanceId: roomInstanceIdRef.current,
+      guestSocialNavMemory: socialRoomMemoryRef.current?.navMemory,
       updatedAt: roomVisitNowIso(),
       expiresAt: roomVisitExpiresAt(),
     });
@@ -5897,6 +5908,7 @@ export const App = () => {
             phase: "accepted",
             guestRuntime: entryRuntime,
             guestRuntimeRoomInstanceId: activeRoomVisit.host.roomInstanceId,
+            guestSocialNavMemory: socialRoomMemoryRef.current?.navMemory,
             activity: entryRuntime.behavior,
             bubbleText: "!",
           });
@@ -5906,6 +5918,7 @@ export const App = () => {
             phase: "accepted",
             guestRuntime: runtimeRef.current,
             guestRuntimeRoomInstanceId: roomInstanceIdRef.current,
+            guestSocialNavMemory: socialRoomMemoryRef.current?.navMemory,
             activity: runtimeRef.current.behavior,
             bubbleText: "!",
           });
@@ -5928,6 +5941,7 @@ export const App = () => {
           runtimeRef.current,
           activeRoomVisit.guest.traits,
           elapsedSeconds,
+          activeRoomVisit.guestSocialNavMemory,
         );
         const socialSeconds = (now - visitHostStartedAtRef.current) / 1000;
         let nextVisitPhase: AivatarVisitSession["phase"] =

@@ -16,6 +16,7 @@ import {
   explorationCellKey,
   getPlacedItemInteractionStandpoints,
   navigationLayoutFingerprint,
+  tickAvatar,
 } from "./simulation";
 
 export const ROOM_DOOR_RECT = {
@@ -36,7 +37,7 @@ export const ROOM_DOOR_OUTSIDE_POINT = {
 };
 
 const SOCIAL_NAV_MEMORY_CELL_COUNT_LIMIT = 9999;
-const VISIT_RUNTIME_SPEED = 42;
+const VISITOR_NAVIGATION_SCOPE_PREFIX = "room-visitor";
 
 export const createRoomDoorEntryRuntime = (): AvatarRuntime => ({
   x: ROOM_DOOR_OUTSIDE_POINT.x,
@@ -55,6 +56,9 @@ export const createRoomInstanceId = () =>
 
 export const createVisitId = () =>
   `visit-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+
+export const roomVisitorNavigationScopeKey = (visitId: string) =>
+  `${VISITOR_NAVIGATION_SCOPE_PREFIX}:${visitId}`;
 
 export const roomVisitNowIso = () => new Date().toISOString();
 
@@ -342,6 +346,18 @@ export const normalizeVisitSession = (
   ].includes(String(value.phase))
     ? value.phase!
     : "invited";
+  const guestSocialNavMemory =
+    value.guestSocialNavMemory &&
+    typeof value.guestSocialNavMemory === "object" &&
+    !Array.isArray(value.guestSocialNavMemory)
+      ? normalizeSocialRoomMemory(
+          { navMemory: value.guestSocialNavMemory },
+          guest.avatarId,
+          host.avatarId,
+          value.hostRoomId,
+          value.hostLayoutFingerprint,
+        ).navMemory
+      : undefined;
 
   return {
     type: "aivatar.room.visit",
@@ -356,6 +372,7 @@ export const normalizeVisitSession = (
       typeof value.guestRuntimeRoomInstanceId === "string"
         ? value.guestRuntimeRoomInstanceId
         : undefined,
+    guestSocialNavMemory,
     activity: value.activity,
     bubbleText:
       typeof value.bubbleText === "string" ? value.bubbleText.slice(0, 24) : undefined,
@@ -403,45 +420,32 @@ export const createVisitorFromVisit = (
 const distance = (left: { x: number; y: number }, right: { x: number; y: number }) =>
   Math.hypot(left.x - right.x, left.y - right.y);
 
-const moveToward = (
+const navigateVisitorRuntime = (
+  visitor: AivatarRoomVisitor,
   runtime: AvatarRuntime,
-  target: { x: number; y: number },
+  content: AivatarContent,
   elapsedSeconds: number,
-): AvatarRuntime => {
-  const dx = target.x - runtime.x;
-  const dy = target.y - runtime.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist <= 1) {
-    return {
-      ...runtime,
-      x: target.x,
-      y: target.y,
-      targetX: target.x,
-      targetY: target.y,
-    };
-  }
-
-  const step = Math.min(dist, VISIT_RUNTIME_SPEED * elapsedSeconds);
-  const nextX = runtime.x + (dx / dist) * step;
-  const nextY = runtime.y + (dy / dist) * step;
-  const facing =
-    Math.abs(dx) > Math.abs(dy)
-      ? dx < 0
-        ? "left"
-        : "right"
-      : dy < 0
-        ? "back"
-        : "front";
-
-  return {
-    ...runtime,
-    x: nextX,
-    y: nextY,
-    targetX: target.x,
-    targetY: target.y,
-    facing,
-  };
-};
+  navMemory?: AivatarNavMemory,
+) =>
+  tickAvatar(
+    runtime,
+    content,
+    {
+      agent: "aivatar",
+      sessionId: visitor.visitId,
+      status: "idle",
+      phase: "room-visit-navigation",
+      task: `${visitor.avatarName} is visiting`,
+      timestamp: roomVisitNowIso(),
+    },
+    elapsedSeconds,
+    visitor.memory,
+    {
+      navMemory,
+      navigationScopeKey: roomVisitorNavigationScopeKey(visitor.visitId),
+      suppressAutonomousBehavior: true,
+    },
+  );
 
 const weightedBehavior = (
   traits: AivatarRoomPresence["traits"],
@@ -505,6 +509,7 @@ export const advanceRoomVisitor = (
   hostRuntime: AvatarRuntime,
   hostTraits: AivatarRoomPresence["traits"],
   elapsedSeconds: number,
+  navMemory?: AivatarNavMemory,
 ) => {
   const hasGameConsole = Boolean(content.placedItems?.some((item) => item.itemId === "game-console"));
   let runtime = visitor.runtime;
@@ -512,13 +517,27 @@ export const advanceRoomVisitor = (
   let bubbleText = visitor.bubbleText;
 
   if (phase === "entering") {
-    runtime = moveToward(runtime, ROOM_DOOR_INSIDE_POINT, elapsedSeconds);
+    runtime = navigateVisitorRuntime(
+      visitor,
+      {
+        ...runtime,
+        targetX: ROOM_DOOR_INSIDE_POINT.x,
+        targetY: ROOM_DOOR_INSIDE_POINT.y,
+        behavior: "wander",
+        expression: "happy",
+        activityLabel: "Visiting",
+        navigationFailure: undefined,
+      },
+      content,
+      elapsedSeconds,
+      navMemory,
+    );
     runtime = {
       ...runtime,
       behavior: "wander",
-      expression: "happy",
-      activityLabel: "Visiting",
-      behaviorTimer: Math.max(0, runtime.behaviorTimer - elapsedSeconds),
+      expression: runtime.activityLabel === "Planning route" ? "focused" : "happy",
+      activityLabel:
+        runtime.activityLabel === "Planning route" ? runtime.activityLabel : "Visiting",
     };
     bubbleText = "!";
     if (distance(runtime, ROOM_DOOR_INSIDE_POINT) <= 2) {
@@ -534,22 +553,35 @@ export const advanceRoomVisitor = (
       bubbleText = "...";
     }
   } else if (phase === "leaving") {
-    runtime = moveToward(runtime, ROOM_DOOR_OUTSIDE_POINT, elapsedSeconds);
+    runtime = navigateVisitorRuntime(
+      visitor,
+      {
+        ...runtime,
+        targetX: ROOM_DOOR_OUTSIDE_POINT.x,
+        targetY: ROOM_DOOR_OUTSIDE_POINT.y,
+        behavior: "wander",
+        expression: "happy",
+        activityLabel: "Heading home",
+        navigationFailure: undefined,
+      },
+      content,
+      elapsedSeconds,
+      navMemory,
+    );
     runtime = {
       ...runtime,
       behavior: "wander",
-      expression: "happy",
-      activityLabel: "Heading home",
-      behaviorTimer: Math.max(0, runtime.behaviorTimer - elapsedSeconds),
+      expression: runtime.activityLabel === "Planning route" ? "focused" : "happy",
+      activityLabel:
+        runtime.activityLabel === "Planning route" ? runtime.activityLabel : "Heading home",
     };
     bubbleText = "bye";
   } else {
-    runtime = {
-      ...runtime,
-      behaviorTimer: runtime.behaviorTimer - elapsedSeconds,
-    };
-
-    if (runtime.behaviorTimer <= 0 || distance(runtime, { x: runtime.targetX, y: runtime.targetY }) <= 4) {
+    if (
+      runtime.behaviorTimer <= 0 ||
+      runtime.navigationFailure ||
+      distance(runtime, { x: runtime.targetX, y: runtime.targetY }) <= 4
+    ) {
       const behavior = weightedBehavior(hostTraits, hasGameConsole);
       const target = randomSocialTarget(content, behavior, hostRuntime);
       runtime = {
@@ -559,6 +591,7 @@ export const advanceRoomVisitor = (
         behavior,
         behaviorTimer: behavior === "play" ? 9 : behavior === "interact" ? 6 : 8,
         expression: behavior === "interact" || behavior === "play" ? "happy" : "calm",
+        navigationFailure: undefined,
         activityLabel:
           behavior === "play"
             ? "Playing together"
@@ -582,7 +615,13 @@ export const advanceRoomVisitor = (
                 : "?";
     }
 
-    runtime = moveToward(runtime, { x: runtime.targetX, y: runtime.targetY }, elapsedSeconds);
+    runtime = navigateVisitorRuntime(
+      visitor,
+      runtime,
+      content,
+      elapsedSeconds,
+      navMemory,
+    );
   }
 
   return {
