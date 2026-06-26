@@ -5,6 +5,7 @@ import type {
   AivatarRoomPresence,
   AivatarRoomVisitor,
   AivatarSaveState,
+  AivatarSocialRelationship,
   AivatarSocialRoomMemory,
   AivatarVisitSession,
   AvatarAppearanceId,
@@ -39,6 +40,17 @@ export const ROOM_DOOR_OUTSIDE_POINT = {
 
 const SOCIAL_NAV_MEMORY_CELL_COUNT_LIMIT = 9999;
 const VISITOR_NAVIGATION_SCOPE_PREFIX = "room-visitor";
+const SOCIAL_ROOM_X_MIN = 92;
+const SOCIAL_ROOM_X_MAX = 388;
+const SOCIAL_ROOM_Y_MIN = 148;
+const SOCIAL_ROOM_Y_MAX = 292;
+const SOCIAL_PAIR_DISTANCE = 44;
+const SOCIAL_PAIR_Y_OFFSET = 6;
+const SOCIAL_WILLINGNESS_DEFAULT = 50;
+const SOCIAL_WILLINGNESS_MIN_FOR_AUTONOMY = 32;
+const SOCIAL_AFFINITY_MAX = 999;
+const SOCIAL_HIGH_AFFINITY_THRESHOLD = 90;
+const SOCIAL_BED_CHAT_AFFINITY_THRESHOLD = 140;
 export const ROOM_VISIT_BUBBLE_KEY_PREFIX = "roomVisit.bubble.";
 
 const ROOM_VISIT_BUBBLE_KEYS: Partial<Record<BehaviorName, string[]>> = {
@@ -71,6 +83,11 @@ const ROOM_VISIT_BUBBLE_KEYS: Partial<Record<BehaviorName, string[]>> = {
     "roomVisit.bubble.wander.1",
     "roomVisit.bubble.wander.2",
     "roomVisit.bubble.wander.3",
+  ],
+  music: [
+    "roomVisit.bubble.dance.1",
+    "roomVisit.bubble.dance.2",
+    "roomVisit.bubble.dance.3",
   ],
 };
 
@@ -113,6 +130,200 @@ export const isPointInRoomDoor = (point: { x: number; y: number }) =>
 
 const clamp = (value: number, min = 0, max = 100) =>
   Math.min(max, Math.max(min, value));
+
+const sortedAvatarIds = (leftAvatarId: string, rightAvatarId: string): [string, string] =>
+  leftAvatarId <= rightAvatarId
+    ? [leftAvatarId, rightAvatarId]
+    : [rightAvatarId, leftAvatarId];
+
+const clampAffinity = (value: number) =>
+  Math.min(SOCIAL_AFFINITY_MAX, Math.max(0, Math.round(value)));
+
+export const clampSocialWillingness = (value: unknown, fallback = SOCIAL_WILLINGNESS_DEFAULT) => {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return fallback;
+  return Math.min(100, Math.max(0, Math.round(numericValue)));
+};
+
+export const socialRelationshipStorageKey = (
+  leftAvatarId: string,
+  rightAvatarId: string,
+) =>
+  [
+    "aivatar.socialRelationship.v1",
+    ...sortedAvatarIds(leftAvatarId, rightAvatarId),
+  ]
+    .map((part) => part.replace(/[^a-zA-Z0-9_.-]/g, "_"))
+    .join(".");
+
+export const normalizeSocialRelationship = (
+  value: Partial<AivatarSocialRelationship> | undefined,
+  leftAvatarId: string,
+  rightAvatarId: string,
+): AivatarSocialRelationship => {
+  const avatarIds = sortedAvatarIds(leftAvatarId, rightAvatarId);
+  const favoriteActivities =
+    value?.favoriteActivities && typeof value.favoriteActivities === "object"
+      ? value.favoriteActivities
+      : {};
+
+  return {
+    version: 1,
+    avatarIds,
+    affinity: clampAffinity(value?.affinity ?? 0),
+    visits: Math.max(0, Math.round(value?.visits ?? 0)),
+    lastVisitId:
+      typeof value?.lastVisitId === "string" && value.lastVisitId.trim()
+        ? value.lastVisitId
+        : undefined,
+    lastVisitAt:
+      typeof value?.lastVisitAt === "string" && Number.isFinite(Date.parse(value.lastVisitAt))
+        ? value.lastVisitAt
+        : undefined,
+    lastDialogueSummary:
+      typeof value?.lastDialogueSummary === "string" && value.lastDialogueSummary.trim()
+        ? value.lastDialogueSummary.slice(0, 160)
+        : undefined,
+    lastDialogueSource:
+      value?.lastDialogueSource === "llm" || value?.lastDialogueSource === "heuristic"
+        ? value.lastDialogueSource
+        : undefined,
+    favoriteActivities,
+    unlockedActivities: Array.isArray(value?.unlockedActivities)
+      ? value.unlockedActivities
+          .filter((activity): activity is string => typeof activity === "string")
+          .slice(0, 12)
+      : [],
+  };
+};
+
+const traitScale = (value: number | undefined) =>
+  Math.max(0, Math.min(1, Math.log10(Math.max(0, value ?? 0) + 1) / Math.log10(1_000_001)));
+
+const dominantTrait = (traits: AivatarRoomPresence["traits"]) =>
+  (Object.entries(traits) as Array<[keyof AivatarRoomPresence["traits"], number]>)
+    .sort((left, right) => right[1] - left[1])[0]?.[0] ?? "warmth";
+
+export const socialTraitCompatibilityScore = (
+  leftTraits: AivatarRoomPresence["traits"],
+  rightTraits: AivatarRoomPresence["traits"],
+) => {
+  const leftDominant = dominantTrait(leftTraits);
+  const rightDominant = dominantTrait(rightTraits);
+  const complementPairs = new Set([
+    "curiosity:creativity",
+    "creativity:curiosity",
+    "focus:efficiency",
+    "efficiency:focus",
+    "warmth:resilience",
+    "resilience:warmth",
+  ]);
+  const complementKey = `${leftDominant}:${rightDominant}`;
+  const dominantBonus =
+    leftDominant === rightDominant ? 10 : complementPairs.has(complementKey) ? 8 : 0;
+  const warmthBlend =
+    (traitScale(leftTraits.warmth) + traitScale(rightTraits.warmth)) * 4;
+  const curiosityBlend =
+    (traitScale(leftTraits.curiosity) + traitScale(rightTraits.curiosity)) * 2;
+
+  return Math.round(Math.min(18, dominantBonus + warmthBlend + curiosityBlend));
+};
+
+export const socialWillingnessScore = (
+  presence: Pick<AivatarRoomPresence, "traits" | "petStats">,
+  options: {
+    base?: number;
+    affinity?: number;
+    lastVisitAt?: string;
+    nowMs?: number;
+  } = {},
+) => {
+  const base = clampSocialWillingness(options.base);
+  const stats = presence.petStats;
+  if (stats.energy < 22 || stats.hunger < 22) return 0;
+
+  const traits = presence.traits;
+  const affinity = clampAffinity(options.affinity ?? 0);
+  const nowMs = options.nowMs ?? Date.now();
+  const lastVisitMs = options.lastVisitAt ? Date.parse(options.lastVisitAt) : Number.NaN;
+  const recentVisitPenalty =
+    Number.isFinite(lastVisitMs) && nowMs - lastVisitMs < 6 * 60 * 1000 ? 18 : 0;
+  const score =
+    base * 0.58 +
+    traitScale(traits.warmth) * 18 +
+    traitScale(traits.curiosity) * 10 +
+    traitScale(traits.creativity) * 8 +
+    (affinity / SOCIAL_AFFINITY_MAX) * 18 +
+    (stats.mood - 50) * 0.16 +
+    (stats.energy - 45) * 0.1 -
+    Math.max(0, 38 - stats.hunger) * 0.28 -
+    recentVisitPenalty;
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+};
+
+export const shouldAttemptAutonomousVisit = (
+  willingnessScore: number,
+  roll = Math.random(),
+) => {
+  if (willingnessScore < SOCIAL_WILLINGNESS_MIN_FOR_AUTONOMY) return false;
+  const chance = Math.min(0.2, Math.max(0.025, willingnessScore / 900));
+  return roll < chance;
+};
+
+export const roomVisitSocialDurationSeconds = (affinity = 0) =>
+  34 + Math.round(Math.min(26, Math.sqrt(clampAffinity(affinity) / SOCIAL_AFFINITY_MAX) * 26));
+
+export const completeSocialRelationship = (
+  relationship: AivatarSocialRelationship,
+  visitId: string,
+  leftTraits: AivatarRoomPresence["traits"],
+  rightTraits: AivatarRoomPresence["traits"],
+  activity?: BehaviorName,
+) => {
+  if (relationship.lastVisitId === visitId) return relationship;
+  const favoriteActivities = { ...(relationship.favoriteActivities ?? {}) };
+  if (activity) {
+    favoriteActivities[activity] = (favoriteActivities[activity] ?? 0) + 1;
+  }
+  const compatibilityScore = socialTraitCompatibilityScore(leftTraits, rightTraits);
+  const activityBonus =
+    activity === "music" || activity === "play" || activity === "coffee"
+      ? 3
+      : activity === "interact" || activity === "relax"
+        ? 2
+        : 1;
+  const nextAffinity = clampAffinity(
+    relationship.affinity + 2 + activityBonus + Math.round(compatibilityScore / 6),
+  );
+  const unlockedActivities = new Set(relationship.unlockedActivities ?? []);
+  if (nextAffinity >= SOCIAL_HIGH_AFFINITY_THRESHOLD) unlockedActivities.add("dance");
+  if (nextAffinity >= SOCIAL_BED_CHAT_AFFINITY_THRESHOLD) unlockedActivities.add("bed-chat");
+
+  return {
+    ...relationship,
+    affinity: nextAffinity,
+    visits: relationship.visits + 1,
+    lastVisitId: visitId,
+    lastVisitAt: roomVisitNowIso(),
+    favoriteActivities,
+    unlockedActivities: [...unlockedActivities],
+  };
+};
+
+const clampSocialRoomPoint = (point: { x: number; y: number }) => ({
+  x: clamp(point.x, SOCIAL_ROOM_X_MIN, SOCIAL_ROOM_X_MAX),
+  y: clamp(point.y, SOCIAL_ROOM_Y_MIN, SOCIAL_ROOM_Y_MAX),
+});
+
+const socialTargetNearHost = (hostRuntime: AvatarRuntime) => {
+  const midpoint = (SOCIAL_ROOM_X_MIN + SOCIAL_ROOM_X_MAX) / 2;
+  const side = hostRuntime.x <= midpoint ? 1 : -1;
+  return clampSocialRoomPoint({
+    x: hostRuntime.x + side * SOCIAL_PAIR_DISTANCE,
+    y: hostRuntime.y + SOCIAL_PAIR_Y_OFFSET,
+  });
+};
 
 const defaultNavMemory = (): AivatarNavMemory => ({
   exploredCells: {},
@@ -499,13 +710,27 @@ const weightedBehavior = (
   traits: AivatarRoomPresence["traits"],
   hasGameConsole: boolean,
   hasCoffeeSpot: boolean,
+  hasRecordPlayer: boolean,
+  hasBed: boolean,
+  relationshipAffinity = 0,
 ): BehaviorName => {
+  const highAffinity = relationshipAffinity >= SOCIAL_HIGH_AFFINITY_THRESHOLD;
   const choices: Array<{ behavior: BehaviorName; weight: number }> = [
     { behavior: "play", weight: hasGameConsole ? 8 + traits.efficiency / 70 : 0 },
     { behavior: "coffee", weight: hasCoffeeSpot ? 7 + traits.focus / 90 : 0 },
+    {
+      behavior: "music",
+      weight: hasRecordPlayer && highAffinity ? 5 + relationshipAffinity / 70 : 0,
+    },
     { behavior: "wander", weight: 6 + traits.curiosity / 80 },
     { behavior: "admire", weight: 4 + traits.creativity / 90 },
-    { behavior: "relax", weight: 5 + traits.warmth / 80 },
+    {
+      behavior: "relax",
+      weight:
+        5 +
+        traits.warmth / 80 +
+        (hasBed && relationshipAffinity >= SOCIAL_BED_CHAT_AFFINITY_THRESHOLD ? 6 : 0),
+    },
     { behavior: "interact", weight: 8 + traits.warmth / 60 },
   ];
   const total = choices.reduce((sum, choice) => sum + choice.weight, 0);
@@ -517,11 +742,32 @@ const weightedBehavior = (
   return "interact";
 };
 
+type RoomVisitSocialTarget = {
+  x: number;
+  y: number;
+  socialActivity?: "dance" | "bed-chat";
+};
+
 const randomSocialTarget = (
   content: AivatarContent,
   behavior: BehaviorName,
   hostRuntime: AvatarRuntime,
-) => {
+  relationshipAffinity = 0,
+): RoomVisitSocialTarget => {
+  if (behavior === "music") {
+    const recordPlayer = content.placedItems?.find((item) => item.itemId === "record-player");
+    if (recordPlayer) {
+      const standpoints = getPlacedItemInteractionStandpoints(recordPlayer, content);
+      const point = standpoints[standpoints.length > 1 ? 1 : 0];
+      if (point) return { ...point, socialActivity: "dance" as const };
+      return {
+        x: recordPlayer.x + 18,
+        y: recordPlayer.y + 24,
+        socialActivity: "dance" as const,
+      };
+    }
+  }
+
   if (behavior === "play") {
     const gameConsole = content.placedItems?.find((item) => item.itemId === "game-console");
     if (gameConsole) {
@@ -554,17 +800,31 @@ const randomSocialTarget = (
 
   if (behavior === "admire" && content.placedItems?.length) {
     const item = content.placedItems[Math.floor(Math.random() * content.placedItems.length)];
-    return {
-      x: clamp(item.x + 16 + (Math.random() - 0.5) * 42, 92, 388),
-      y: clamp(item.y + 30 + (Math.random() - 0.5) * 32, 148, 292),
-    };
+    return clampSocialRoomPoint({
+      x: item.x + 16 + (Math.random() - 0.5) * 42,
+      y: item.y + 30 + (Math.random() - 0.5) * 32,
+    });
+  }
+
+  if (
+    behavior === "relax" &&
+    relationshipAffinity >= SOCIAL_BED_CHAT_AFFINITY_THRESHOLD
+  ) {
+    const bed = content.room.furniture.find((item) => item.id === "bed");
+    if (bed) {
+      const standpoints = getFurnitureInteractionStandpoints(bed, content, "sleep");
+      const point = standpoints[standpoints.length > 1 ? 1 : 0];
+      if (point) return { ...point, socialActivity: "bed-chat" as const };
+      return {
+        x: bed.x + bed.width / 2,
+        y: bed.y + bed.height + 10,
+        socialActivity: "bed-chat" as const,
+      };
+    }
   }
 
   if (behavior === "interact" || behavior === "relax") {
-    return {
-      x: clamp(hostRuntime.x + (Math.random() > 0.5 ? 24 : -24), 92, 388),
-      y: clamp(hostRuntime.y + 8 + (Math.random() - 0.5) * 20, 148, 292),
-    };
+    return socialTargetNearHost(hostRuntime);
   }
 
   return {
@@ -579,7 +839,9 @@ export const advanceRoomVisitor = (
   hostRuntime: AvatarRuntime,
   hostTraits: AivatarRoomPresence["traits"],
   elapsedSeconds: number,
+  now: number,
   navMemory?: AivatarNavMemory,
+  relationshipAffinity = 0,
 ) => {
   const hasGameConsole = Boolean(content.placedItems?.some((item) => item.itemId === "game-console"));
   const hasCoffeeSpot = Boolean(
@@ -588,9 +850,20 @@ export const advanceRoomVisitor = (
         (item) => item.itemId === "coffee-cup" || item.itemId === "coffee-machine",
       ),
   );
+  const hasRecordPlayer = Boolean(content.placedItems?.some((item) => item.itemId === "record-player"));
+  const hasBed = content.room.furniture.some((item) => item.id === "bed");
   let runtime = visitor.runtime;
   let phase = visitor.phase ?? "entering";
   let bubbleText = visitor.bubbleText;
+  let bubbleStartedAt = visitor.bubbleStartedAt;
+  const setBubbleText = (nextBubbleText: string | undefined) => {
+    if (nextBubbleText !== bubbleText) {
+      bubbleStartedAt = nextBubbleText ? now : undefined;
+    } else if (nextBubbleText && typeof bubbleStartedAt !== "number") {
+      bubbleStartedAt = now;
+    }
+    bubbleText = nextBubbleText;
+  };
 
   if (phase === "entering") {
     runtime = navigateVisitorRuntime(
@@ -615,18 +888,19 @@ export const advanceRoomVisitor = (
       activityLabel:
         runtime.activityLabel === "Planning route" ? runtime.activityLabel : "Visiting",
     };
-    bubbleText = "roomVisit.bubble.enter.1";
+    setBubbleText("roomVisit.bubble.enter.1");
     if (distance(runtime, ROOM_DOOR_INSIDE_POINT) <= 2) {
+      const socialTarget = socialTargetNearHost(hostRuntime);
       phase = "socializing";
       runtime = {
         ...runtime,
-        targetX: hostRuntime.x + 22,
-        targetY: hostRuntime.y,
+        targetX: socialTarget.x,
+        targetY: socialTarget.y,
         behavior: "interact",
         behaviorTimer: 3,
         activityLabel: "Chatting",
       };
-      bubbleText = roomVisitBubbleKeyForBehavior("interact");
+      setBubbleText(roomVisitBubbleKeyForBehavior("interact"));
     }
   } else if (phase === "leaving") {
     runtime = navigateVisitorRuntime(
@@ -651,14 +925,21 @@ export const advanceRoomVisitor = (
       activityLabel:
         runtime.activityLabel === "Planning route" ? runtime.activityLabel : "Heading home",
     };
-    bubbleText = "roomVisit.bubble.leave.1";
+    setBubbleText("roomVisit.bubble.leave.1");
   } else {
     if (
       runtime.behaviorTimer <= 0 ||
       runtime.navigationFailure
     ) {
-      const behavior = weightedBehavior(hostTraits, hasGameConsole, hasCoffeeSpot);
-      const target = randomSocialTarget(content, behavior, hostRuntime);
+      const behavior = weightedBehavior(
+        hostTraits,
+        hasGameConsole,
+        hasCoffeeSpot,
+        hasRecordPlayer,
+        hasBed,
+        relationshipAffinity,
+      );
+      const target = randomSocialTarget(content, behavior, hostRuntime, relationshipAffinity);
       runtime = {
         ...runtime,
         targetX: target.x,
@@ -678,7 +959,11 @@ export const advanceRoomVisitor = (
             : "calm",
         navigationFailure: undefined,
         activityLabel:
-          behavior === "play"
+          target.socialActivity === "dance"
+            ? "Dancing together"
+            : target.socialActivity === "bed-chat"
+              ? "Bedside chat"
+              : behavior === "play"
             ? "Playing together"
             : behavior === "coffee"
               ? "Coffee together"
@@ -690,7 +975,7 @@ export const advanceRoomVisitor = (
                     ? "Hanging out"
                     : "Wandering together",
       };
-      bubbleText = roomVisitBubbleKeyForBehavior(behavior);
+      setBubbleText(roomVisitBubbleKeyForBehavior(behavior));
     }
 
     runtime = navigateVisitorRuntime(
@@ -707,5 +992,6 @@ export const advanceRoomVisitor = (
     runtime,
     phase,
     bubbleText,
+    bubbleStartedAt,
   };
 };

@@ -23,6 +23,7 @@ const DISCONNECT_SESSION_PATH: &str = "/agent-sessions/disconnect";
 const PRESENCE_PATH: &str = "/agent-presence";
 const AVATAR_STATE_PATH: &str = "/avatar-state";
 const PAINTING_PLAN_PATH: &str = "/painting-plan";
+const SOCIAL_DIALOGUE_PATH: &str = "/social-dialogue";
 const ROOMS_PATH: &str = "/rooms";
 const VISIT_INVITE_PATH: &str = "/visits/invite";
 const VISIT_STATE_PATH: &str = "/visits/state";
@@ -1788,6 +1789,278 @@ fn run_painting_worker(payload: Value) -> Result<Value, String> {
     normalize_painting_plan_response(plan)
 }
 
+fn normalize_social_dialogue_traits(value: Option<&Value>) -> Map<String, Value> {
+    let source_traits = value.and_then(Value::as_object);
+    let mut traits = Map::new();
+    for trait_name in PAINTING_TRAITS {
+        let next = source_traits
+            .and_then(|traits| traits.get(trait_name))
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or(0.0)
+            .round();
+        traits.insert(trait_name.to_string(), json!(next));
+    }
+    traits
+}
+
+fn normalized_social_stat(source: Option<&Map<String, Value>>, key: &str) -> f64 {
+    source
+        .and_then(|stats| stats.get(key))
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+        .round()
+        .clamp(0.0, 100.0)
+}
+
+fn normalize_social_dialogue_character(value: Option<&Value>) -> Value {
+    let object = value.and_then(Value::as_object);
+    let pet_stats = object
+        .and_then(|character| character.get("petStats"))
+        .and_then(Value::as_object);
+    let growth_level = object
+        .and_then(|character| character.get("growthLevel"))
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(1.0)
+        .round();
+
+    json!({
+        "id": object.and_then(|character| normalized_painting_text(character.get("id"), 80)),
+        "name": object.and_then(|character| normalized_painting_text(character.get("name"), 40)),
+        "growthLevel": growth_level,
+        "traits": normalize_social_dialogue_traits(
+            object.and_then(|character| character.get("traits"))
+        ),
+        "petStats": {
+            "energy": normalized_social_stat(pet_stats, "energy"),
+            "mood": normalized_social_stat(pet_stats, "mood"),
+            "hunger": normalized_social_stat(pet_stats, "hunger"),
+        },
+        "idleBubblePhrases": normalized_painting_string_array(
+            object.and_then(|character| character.get("idleBubblePhrases")),
+            6,
+            56,
+        ),
+    })
+}
+
+fn normalized_social_activity(value: Option<&Value>) -> String {
+    normalized_painting_text(value, 40)
+        .filter(|activity| {
+            matches!(
+                activity.as_str(),
+                "interact" | "coffee" | "play" | "music" | "relax" | "admire" | "wander"
+            )
+        })
+        .unwrap_or_else(|| "interact".to_string())
+}
+
+fn normalize_social_dialogue_payload(payload: Value) -> Result<Value, String> {
+    let source = payload
+        .as_object()
+        .ok_or_else(|| "Social dialogue payload must be a JSON object".to_string())?;
+    let relationship = source.get("relationship").and_then(Value::as_object);
+    let max_turns = source
+        .get("maxTurns")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(4.0)
+        .round()
+        .clamp(3.0, 6.0);
+
+    Ok(json!({
+        "visitId": normalized_painting_text(source.get("visitId"), 100),
+        "locale": normalized_painting_text(source.get("locale"), 16).unwrap_or_else(|| "en".to_string()),
+        "activity": normalized_social_activity(source.get("activity")),
+        "activityLabel": normalized_painting_text(source.get("activityLabel"), 60),
+        "host": normalize_social_dialogue_character(source.get("host")),
+        "guest": normalize_social_dialogue_character(source.get("guest")),
+        "relationship": {
+            "affinity": relationship
+                .and_then(|value| value.get("affinity"))
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite())
+                .unwrap_or(0.0)
+                .round()
+                .clamp(0.0, 999.0),
+            "visits": relationship
+                .and_then(|value| value.get("visits"))
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && *value >= 0.0)
+                .unwrap_or(0.0)
+                .round(),
+            "unlockedActivities": normalized_painting_string_array(
+                relationship.and_then(|value| value.get("unlockedActivities")),
+                8,
+                40,
+            ),
+            "lastDialogueSummary": relationship
+                .and_then(|value| normalized_painting_text(value.get("lastDialogueSummary"), 160)),
+        },
+        "roomFeatures": normalized_painting_string_array(source.get("roomFeatures"), 10, 40),
+        "maxTurns": max_turns,
+        "seedHint": normalized_painting_text(source.get("seedHint"), 160),
+    }))
+}
+
+fn normalize_social_dialogue_line(value: &Value, index: usize) -> Option<Value> {
+    let object = value.as_object()?;
+    let text = normalized_painting_text(object.get("text"), 56)?;
+    let speaker = normalized_painting_text(object.get("speaker"), 12)
+        .filter(|speaker| speaker == "host" || speaker == "guest")
+        .unwrap_or_else(|| {
+            if index % 2 == 0 {
+                "guest".to_string()
+            } else {
+                "host".to_string()
+            }
+        });
+    let expression = normalized_painting_text(object.get("expression"), 20)
+        .filter(|expression| {
+            matches!(
+                expression.as_str(),
+                "calm" | "focused" | "happy" | "sleepy" | "worried"
+            )
+        })
+        .unwrap_or_else(|| "happy".to_string());
+    let duration_ms = object
+        .get("durationMs")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(2300.0)
+        .round()
+        .clamp(1600.0, 3200.0);
+
+    Some(json!({
+        "speaker": speaker,
+        "text": text,
+        "expression": expression,
+        "durationMs": duration_ms,
+    }))
+}
+
+fn normalize_social_dialogue_response(value: Value) -> Result<Value, String> {
+    let source = value
+        .as_object()
+        .ok_or_else(|| "Social dialogue worker returned an invalid dialogue".to_string())?;
+    let lines: Vec<Value> = source
+        .get("lines")
+        .and_then(Value::as_array)
+        .map(|lines| {
+            lines
+                .iter()
+                .enumerate()
+                .filter_map(|(index, line)| normalize_social_dialogue_line(line, index))
+                .take(6)
+                .collect()
+        })
+        .unwrap_or_default();
+    if lines.len() < 2 {
+        return Err("Social dialogue worker returned too few lines".to_string());
+    }
+    let dialogue_source = source
+        .get("source")
+        .and_then(Value::as_str)
+        .filter(|value| *value == "heuristic")
+        .unwrap_or("llm");
+
+    Ok(json!({
+        "lines": lines,
+        "summary": normalized_painting_text(source.get("summary"), 160),
+        "relationshipDelta": source
+            .get("relationshipDelta")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.0)
+            .round()
+            .clamp(0.0, 6.0),
+        "source": dialogue_source,
+        "generatedAt": normalized_painting_text(source.get("generatedAt"), 80)
+            .unwrap_or_else(iso_now),
+    }))
+}
+
+fn current_social_dialogue_script() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("AIVATAR_SOCIAL_DIALOGUE_SCRIPT").map(PathBuf::from) {
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    current_learning_script()
+        .map(|path| path.with_file_name("aivatar-social-dialogue-worker.mjs"))
+        .filter(|path| path.is_file())
+}
+
+fn social_dialogue_provider() -> String {
+    std::env::var("AIVATAR_SOCIAL_DIALOGUE_PROVIDER")
+        .or_else(|_| std::env::var("AIVATAR_LEARNING_PROVIDER"))
+        .or_else(|_| std::env::var("AIVATAR_PROVIDER"))
+        .unwrap_or_else(|_| "claude-code".to_string())
+}
+
+fn social_dialogue_payload_file(payload: &Value) -> Result<PathBuf, String> {
+    let directory = std::env::temp_dir().join("aivatar-social-dialogue-context");
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let visit = payload
+        .get("visitId")
+        .and_then(Value::as_str)
+        .unwrap_or("visit");
+    let path = directory.join(format!(
+        "dialogue-{}-{}.json",
+        safe_session_name(visit),
+        now_ms()
+    ));
+    std::fs::write(&path, serde_json::to_vec_pretty(payload).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn run_social_dialogue_worker(payload: Value) -> Result<Value, String> {
+    let script = current_social_dialogue_script()
+        .ok_or_else(|| "Social dialogue worker script is unavailable.".to_string())?;
+    let payload_file = social_dialogue_payload_file(&payload)?;
+    let mut command = std::process::Command::new(node_command());
+    command
+        .arg(script)
+        .arg("--provider")
+        .arg(social_dialogue_provider())
+        .arg("--payload-file")
+        .arg(payload_file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = sanitized_digest_text(
+            if stderr.trim().is_empty() {
+                stdout.as_ref()
+            } else {
+                stderr.as_ref()
+            },
+            240,
+        );
+        return Err(format!(
+            "Social dialogue worker exited {}: {}",
+            output.status.code().unwrap_or(-1),
+            if detail.is_empty() { "no output" } else { detail.as_str() }
+        ));
+    }
+    let dialogue = serde_json::from_slice::<Value>(&output.stdout)
+        .map_err(|error| format!("Social dialogue worker output is not JSON: {error}"))?;
+    normalize_social_dialogue_response(dialogue)
+}
+
 fn handle_websocket(stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
     let Ok(mut websocket) = accept(stream) else {
         return;
@@ -1934,6 +2207,7 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                     "presenceHttp": format!("http://127.0.0.1:{HTTP_PORT}{PRESENCE_PATH}"),
                     "avatarStateHttp": format!("http://127.0.0.1:{HTTP_PORT}{AVATAR_STATE_PATH}"),
                     "paintingPlanHttp": format!("http://127.0.0.1:{HTTP_PORT}{PAINTING_PLAN_PATH}"),
+                    "socialDialogueHttp": format!("http://127.0.0.1:{HTTP_PORT}{SOCIAL_DIALOGUE_PATH}"),
                     "roomsHttp": format!("http://127.0.0.1:{HTTP_PORT}{ROOMS_PATH}"),
                     "visitInviteHttp": format!("http://127.0.0.1:{HTTP_PORT}{VISIT_INVITE_PATH}"),
                     "visitStateHttp": format!("http://127.0.0.1:{HTTP_PORT}{VISIT_STATE_PATH}"),
@@ -2278,6 +2552,22 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                     json!({
                         "ok": true,
                         "paintingPlan": painting_plan,
+                    }),
+                ),
+                Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+            }
+        }
+        ("POST", SOCIAL_DIALOGUE_PATH) => {
+            match parse_body(&request.body)
+                .and_then(normalize_social_dialogue_payload)
+                .and_then(run_social_dialogue_worker)
+            {
+                Ok(dialogue) => send_json(
+                    &mut stream,
+                    200,
+                    json!({
+                        "ok": true,
+                        "dialogue": dialogue,
                     }),
                 ),
                 Err(error) => send_json(&mut stream, 400, json!({ "error": error })),

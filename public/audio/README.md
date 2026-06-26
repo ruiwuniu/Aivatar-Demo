@@ -91,6 +91,17 @@ Aivatar uses this as a one-shot crunching and munching sound when the avatar
 starts the `bento` or `cookie` eating action. Playback stops when the food
 action ends.
 
+## sleep-snore.mp3
+
+- Source: Snore
+- Author: Universfield
+- URL: https://pixabay.com/sound-effects/people-snore-250959/
+- License: Pixabay Content License
+- Original file: downloaded MP3 from the Pixabay sound effect page
+
+Aivatar uses this as a quiet looping sleep snore only while the avatar is
+actually sleeping after reaching the bed.
+
 ## Game Console random pool
 
 Aivatar randomly chooses one of these tracks each time the Game Console play

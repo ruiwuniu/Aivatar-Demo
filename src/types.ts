@@ -16,6 +16,10 @@ export interface TokenUsage {
   totalTokens: number;
   contextTokens?: number;
   modelContextWindow?: number;
+  tokenLimit5hPercent?: number;
+  tokenLimit5hResetAt?: number;
+  tokenLimitWeekPercent?: number;
+  tokenLimitWeekResetAt?: number;
   source?: string;
   scope?: string;
 }
@@ -177,6 +181,7 @@ export interface AivatarPreferences {
   favoriteActivity?: BehaviorName;
   idleBubbleLanguage?: IdleBubbleLanguagePreference;
   idleBubblePhrases?: string[];
+  socialWillingness?: number;
   activityWeights: Partial<Record<BehaviorName, number>>;
   itemAffinities: Record<string, number>;
 }
@@ -555,6 +560,34 @@ export interface AivatarSocialRoomMemory {
   learnedBubblePhrases?: string[];
 }
 
+export interface AivatarSocialRelationship {
+  version: 1;
+  avatarIds: [string, string];
+  affinity: number;
+  visits: number;
+  lastVisitId?: string;
+  lastVisitAt?: string;
+  lastDialogueSummary?: string;
+  lastDialogueSource?: "llm" | "heuristic";
+  favoriteActivities?: Partial<Record<BehaviorName, number>>;
+  unlockedActivities?: string[];
+}
+
+export interface AivatarSocialDialogueLine {
+  speaker: "host" | "guest";
+  text: string;
+  expression?: AvatarRuntime["expression"];
+  durationMs?: number;
+}
+
+export interface AivatarSocialDialogue {
+  lines: AivatarSocialDialogueLine[];
+  summary?: string;
+  relationshipDelta?: number;
+  source?: "llm" | "heuristic";
+  generatedAt?: string;
+}
+
 export interface AivatarRoomVisitor {
   visitId: string;
   avatarId: string;
@@ -564,6 +597,7 @@ export interface AivatarRoomVisitor {
   petStats: PetStats;
   memory?: AivatarMemory;
   bubbleText?: string;
+  bubbleStartedAt?: number;
   phase?: "entering" | "socializing" | "leaving";
 }
 

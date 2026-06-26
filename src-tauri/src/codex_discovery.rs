@@ -109,6 +109,10 @@ struct UsageSnapshot {
     total: RawUsage,
     last: Option<RawUsage>,
     model_context_window: Option<u64>,
+    token_limit_5h_percent: Option<f64>,
+    token_limit_5h_reset_at: Option<u64>,
+    token_limit_week_percent: Option<f64>,
+    token_limit_week_reset_at: Option<u64>,
 }
 
 pub fn start(learning_script: Option<PathBuf>) -> Result<(), String> {
@@ -1429,10 +1433,20 @@ fn usage_snapshot_from_record(record: &Value) -> Option<UsageSnapshot> {
     let total = raw_usage(info.get("total_token_usage")?)?;
     let last = info.get("last_token_usage").and_then(raw_usage);
     let model_context_window = number_field(info, "model_context_window");
+    let (
+        token_limit_5h_percent,
+        token_limit_5h_reset_at,
+        token_limit_week_percent,
+        token_limit_week_reset_at,
+    ) = token_limit_fields(payload.get("rate_limits"));
     Some(UsageSnapshot {
         total,
         last,
         model_context_window,
+        token_limit_5h_percent,
+        token_limit_5h_reset_at,
+        token_limit_week_percent,
+        token_limit_week_reset_at,
     })
 }
 
@@ -1445,6 +1459,55 @@ fn raw_usage(value: &Value) -> Option<RawUsage> {
         reasoning_output_tokens: number_field(value, "reasoning_output_tokens").unwrap_or(0),
         total_tokens,
     })
+}
+
+fn token_limit_fields(
+    value: Option<&Value>,
+) -> (Option<f64>, Option<u64>, Option<f64>, Option<u64>) {
+    let mut token_limit_5h_percent = None;
+    let mut token_limit_5h_reset_at = None;
+    let mut token_limit_week_percent = None;
+    let mut token_limit_week_reset_at = None;
+    let Some(rate_limits) = value.and_then(Value::as_object) else {
+        return (
+            token_limit_5h_percent,
+            token_limit_5h_reset_at,
+            token_limit_week_percent,
+            token_limit_week_reset_at,
+        );
+    };
+
+    for key in ["primary", "secondary"] {
+        let Some(limit) = rate_limits.get(key) else {
+            continue;
+        };
+        let Some(window_minutes) = number_field(limit, "window_minutes") else {
+            continue;
+        };
+        let Some(used_percent) = float_field(limit, "used_percent") else {
+            continue;
+        };
+        let reset_at = number_field(limit, "resets_at");
+
+        match window_minutes {
+            300 => {
+                token_limit_5h_percent = Some(used_percent);
+                token_limit_5h_reset_at = reset_at;
+            }
+            10080 => {
+                token_limit_week_percent = Some(used_percent);
+                token_limit_week_reset_at = reset_at;
+            }
+            _ => {}
+        }
+    }
+
+    (
+        token_limit_5h_percent,
+        token_limit_5h_reset_at,
+        token_limit_week_percent,
+        token_limit_week_reset_at,
+    )
 }
 
 fn completion_usage(session: &WatchedSession) -> Option<Value> {
@@ -1462,6 +1525,7 @@ fn completion_usage(session: &WatchedSession) -> Option<Value> {
             scope,
             latest.last.as_ref(),
             latest.model_context_window,
+            Some(latest),
         )
     })
 }
@@ -1475,6 +1539,7 @@ fn context_usage(snapshot: &UsageSnapshot) -> Option<Value> {
             "context-window",
             Some(last),
             Some(model_context_window),
+            Some(snapshot),
         )
     })
 }
@@ -1498,6 +1563,7 @@ fn usage_to_aivatar(
     scope: &str,
     context: Option<&RawUsage>,
     model_context_window: Option<u64>,
+    snapshot: Option<&UsageSnapshot>,
 ) -> Value {
     let mut value = json!({
         "inputTokens": usage.input_tokens,
@@ -1516,6 +1582,28 @@ fn usage_to_aivatar(
                     "modelContextWindow".to_string(),
                     json!(model_context_window),
                 );
+            }
+        }
+    }
+    if let Some(snapshot) = snapshot {
+        if let Some(object) = value.as_object_mut() {
+            if let Some(percent) = snapshot.token_limit_5h_percent {
+                object.insert(
+                    "tokenLimit5hPercent".to_string(),
+                    json!(percent.clamp(0.0, 100.0)),
+                );
+            }
+            if let Some(reset_at) = snapshot.token_limit_5h_reset_at {
+                object.insert("tokenLimit5hResetAt".to_string(), json!(reset_at));
+            }
+            if let Some(percent) = snapshot.token_limit_week_percent {
+                object.insert(
+                    "tokenLimitWeekPercent".to_string(),
+                    json!(percent.clamp(0.0, 100.0)),
+                );
+            }
+            if let Some(reset_at) = snapshot.token_limit_week_reset_at {
+                object.insert("tokenLimitWeekResetAt".to_string(), json!(reset_at));
             }
         }
     }
@@ -2145,6 +2233,11 @@ fn string_field(value: &Value, field: &str) -> Option<String> {
 
 fn number_field(value: &Value, field: &str) -> Option<u64> {
     value.get(field)?.as_u64()
+}
+
+fn float_field(value: &Value, field: &str) -> Option<f64> {
+    let next = value.get(field)?.as_f64()?;
+    next.is_finite().then_some(next)
 }
 
 fn iso_now() -> String {

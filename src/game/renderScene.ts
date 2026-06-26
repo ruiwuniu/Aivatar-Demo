@@ -18,6 +18,13 @@ import type {
   RoomWindowDefinition,
 } from "../types";
 import {
+  FILE_CABINET_FURNITURE_HEIGHT,
+  FILE_CABINET_FURNITURE_WIDTH,
+  FILE_CABINET_PLACED_ITEM_OFFSET_X,
+  FILE_CABINET_PLACED_ITEM_OFFSET_Y,
+  FILE_CABINET_TOP_HIT_DEPTH,
+  FILE_CABINET_TOP_HIT_INSET_X,
+  FILE_CABINET_TOP_HIT_Y_OFFSET,
   getFurniturePlacementFootBounds,
   getFurnitureVisualBounds,
   getItemPlacementKind,
@@ -162,7 +169,7 @@ type TerminalMonitorSkinKey = "classic" | TerminalMonitorSkinId;
 
 type DominantTrait = keyof AivatarMemory["growth"]["traits"];
 type MoodBand = "high" | "normal" | "low" | "depleted";
-type UiThemeId = "classic" | "terminal" | "terminal-amber" | "arcade-cabinet";
+type UiThemeId = "classic" | "terminal" | "terminal-amber" | "arcade-cabinet" | "starship-console";
 
 interface BubblePalette {
   shadow: string;
@@ -221,6 +228,17 @@ const bubblePalettes: Record<UiThemeId, BubblePalette> = {
     progressTrack: "#05070b",
     progressFill: "#ffb32c",
   },
+  "starship-console": {
+    shadow: "#1b1024",
+    border: "#f2a34b",
+    fill: "#09070b",
+    tail: "#f2a34b",
+    infoText: "#f7d7a6",
+    warningText: "#c7b5ff",
+    errorText: "#ff7f6e",
+    progressTrack: "#050408",
+    progressFill: "#f2a34b",
+  },
 };
 
 const bubblePaletteForTheme = (uiTheme: UiThemeId): BubblePalette =>
@@ -233,28 +251,36 @@ const terminalScanlineForTheme = (uiTheme: UiThemeId) =>
     ? "#7a3d08"
     : uiTheme === "arcade-cabinet"
       ? "#00e5ff"
-      : "#145c22";
+      : uiTheme === "starship-console"
+        ? "#7d6bff"
+        : "#145c22";
 
 const terminalRoomBackdropForTheme = (uiTheme: UiThemeId) =>
   uiTheme === "terminal-amber"
     ? "#090500"
     : uiTheme === "arcade-cabinet"
       ? "#05070b"
-      : "#020804";
+      : uiTheme === "starship-console"
+        ? "#050408"
+        : "#020804";
 
 const terminalStatusPanelForTheme = (uiTheme: UiThemeId) =>
   uiTheme === "terminal-amber"
     ? "#160c03"
     : uiTheme === "arcade-cabinet"
       ? "#0b1018"
-      : "#031207";
+      : uiTheme === "starship-console"
+        ? "#0f0b14"
+        : "#031207";
 
 const terminalStatusTextForTheme = (uiTheme: UiThemeId) =>
   uiTheme === "terminal-amber"
     ? "#ffe4a3"
     : uiTheme === "arcade-cabinet"
       ? "#fff6bf"
-      : "#d8ffd0";
+      : uiTheme === "starship-console"
+        ? "#f7d7a6"
+        : "#d8ffd0";
 
 interface TraitVisualTheme {
   body: string;
@@ -1009,10 +1035,10 @@ const drawPlaceableFileCabinet = (
       tags: ["furniture", "file-cabinet"],
       placementSurfaces: ["floor"],
       zone: "office",
-      x: Math.round(x) - 22,
-      y: Math.round(y) - 58,
-      width: 44,
-      height: 58,
+      x: Math.round(x) - FILE_CABINET_PLACED_ITEM_OFFSET_X,
+      y: Math.round(y) - FILE_CABINET_PLACED_ITEM_OFFSET_Y,
+      width: FILE_CABINET_FURNITURE_WIDTH,
+      height: FILE_CABINET_FURNITURE_HEIGHT,
       color: "#54606f",
       interaction: "interact",
     },
@@ -7975,6 +8001,7 @@ const drawAvatarBubble = (
 
   const now = performance.now();
   const ageSeconds = (now - interaction.startedAt) / 1000;
+  if (ageSeconds < 0) return;
   const hasDuration = typeof interaction.endsAt === "number";
 
   const progress = hasDuration
@@ -8147,7 +8174,7 @@ const drawActivityBubble = (
   memory?: AivatarMemory,
   uiTheme: UiThemeId = "classic",
 ) => {
-  if (["coding", "thinking", "waiting"].includes(avatar.behavior)) {
+  if (["coding", "thinking", "waiting", "sleep"].includes(avatar.behavior)) {
     return;
   }
   const trait = dominantTraitFromMemory(memory);
@@ -9755,10 +9782,11 @@ const isPreviewOnSurface = (
   if (!preview) return false;
   if (surface.id === "file-cabinet") {
     return (
-      preview.x >= surface.x + 2 &&
-      preview.x <= surface.x + surface.width - 2 &&
-      preview.y >= surface.y - 10 &&
-      preview.y <= surface.y + 18
+      preview.x >= surface.x + FILE_CABINET_TOP_HIT_INSET_X &&
+      preview.x <= surface.x + surface.width - FILE_CABINET_TOP_HIT_INSET_X &&
+      preview.y >= surface.y + FILE_CABINET_TOP_HIT_Y_OFFSET &&
+      preview.y <=
+        surface.y + FILE_CABINET_TOP_HIT_Y_OFFSET + FILE_CABINET_TOP_HIT_DEPTH
     );
   }
 
@@ -12306,12 +12334,16 @@ const visitorIdleStatus = (visitor: AivatarRoomVisitor): CodexStatusMessage => (
   timestamp: new Date().toISOString(),
 });
 
+const VISITOR_BUBBLE_DURATION_MS = 1800;
+
 const drawVisitorBubble = (
   ctx: CanvasRenderingContext2D,
   visitor: AivatarRoomVisitor,
   uiTheme: UiThemeId,
 ) => {
   if (!visitor.bubbleText) return;
+  const startedAt = visitor.bubbleStartedAt ?? performance.now();
+  if (performance.now() - startedAt > VISITOR_BUBBLE_DURATION_MS) return;
   drawAvatarBubble(
     ctx,
     visitor.runtime,
@@ -12320,7 +12352,7 @@ const drawVisitorBubble = (
       furnitureId: `visitor-${visitor.avatarId}`,
       furnitureName: visitor.avatarName,
       message: visitor.bubbleText,
-      startedAt: performance.now(),
+      startedAt,
       bubbleText: visitor.bubbleText,
     },
     uiTheme,
@@ -12720,12 +12752,14 @@ export const renderScene = (
   drawFloorLightOverlay(ctx, floorSurface, content, avatar);
   if (primaryAvatarVisible) {
     drawSleepBlanketOverlay(ctx, content, avatar);
-    if (status.status === "thinking") {
-      drawCodexThinkingBubble(ctx, avatar, status, memory, uiTheme);
-    } else if (activeInteraction?.bubbleText) {
-      drawAvatarBubble(ctx, avatar, activeInteraction, uiTheme);
-    } else {
-      drawActivityBubble(ctx, avatar, memory, uiTheme);
+    if (avatar.behavior !== "sleep") {
+      if (status.status === "thinking") {
+        drawCodexThinkingBubble(ctx, avatar, status, memory, uiTheme);
+      } else if (activeInteraction?.bubbleText) {
+        drawAvatarBubble(ctx, avatar, activeInteraction, uiTheme);
+      } else {
+        drawActivityBubble(ctx, avatar, memory, uiTheme);
+      }
     }
   }
   visitors.forEach((visitor) => drawVisitorBubble(ctx, visitor, uiTheme));

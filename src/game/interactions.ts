@@ -107,6 +107,22 @@ const GRID_SIZE = 8;
 const WALL_AREA = { x: 76, y: 20, width: 328, height: 106 };
 const FLOOR_AREA = { x: 76, y: 126, width: 328, height: 180 };
 
+export const FILE_CABINET_FURNITURE_WIDTH = 44;
+export const FILE_CABINET_FURNITURE_HEIGHT = 58;
+export const FILE_CABINET_PLACED_ITEM_OFFSET_X = FILE_CABINET_FURNITURE_WIDTH / 2;
+export const FILE_CABINET_PLACED_ITEM_OFFSET_Y = FILE_CABINET_FURNITURE_HEIGHT;
+export const FILE_CABINET_TOP_HIT_INSET_X = 2;
+export const FILE_CABINET_TOP_HIT_Y_OFFSET = -20;
+export const FILE_CABINET_TOP_HIT_DEPTH = 62;
+export const FILE_CABINET_TOP_PLACEMENT_INSET_X = 4;
+export const FILE_CABINET_TOP_PLACEMENT_MIN_Y_OFFSET = -16;
+export const FILE_CABINET_TOP_PLACEMENT_MAX_Y_OFFSET = 34;
+export const FILE_CABINET_FOOT_BOUNDS_INSET_X = 5;
+export const FILE_CABINET_FOOT_BOUNDS_DEPTH = 36;
+export const FILE_CABINET_FOOT_BOUNDS_BOTTOM_OVERHANG = 10;
+export const FILE_CABINET_COLLISION_INSET_X = 7;
+export const FILE_CABINET_COLLISION_DEPTH = 24;
+
 interface Rect {
   x: number;
   y: number;
@@ -206,10 +222,10 @@ const desktopSurfaceHitBounds = (surface: FurnitureDefinition): Rect => {
 
   if (surface.id === "file-cabinet") {
     return {
-      x: surface.x + 2,
-      y: surface.y - 10,
-      width: surface.width - 4,
-      height: 26,
+      x: surface.x + FILE_CABINET_TOP_HIT_INSET_X,
+      y: surface.y + FILE_CABINET_TOP_HIT_Y_OFFSET,
+      width: surface.width - FILE_CABINET_TOP_HIT_INSET_X * 2,
+      height: FILE_CABINET_TOP_HIT_DEPTH,
     };
   }
 
@@ -343,10 +359,14 @@ export const getFurniturePlacementFootBounds = (
 
   if (furniture.id === "file-cabinet") {
     return {
-      x: x + 5,
-      y: y + furniture.height - 8,
-      width: furniture.width - 10,
-      height: 18,
+      x: x + FILE_CABINET_FOOT_BOUNDS_INSET_X,
+      y:
+        y +
+        furniture.height +
+        FILE_CABINET_FOOT_BOUNDS_BOTTOM_OVERHANG -
+        FILE_CABINET_FOOT_BOUNDS_DEPTH,
+      width: furniture.width - FILE_CABINET_FOOT_BOUNDS_INSET_X * 2,
+      height: FILE_CABINET_FOOT_BOUNDS_DEPTH,
     };
   }
 
@@ -461,10 +481,10 @@ const desktopSurfacePlacementBounds = (surface: FurnitureDefinition) => {
 
   if (surface.id === "file-cabinet") {
     return {
-      minX: surface.x + 4,
-      maxX: surface.x + surface.width - 4,
-      minY: surface.y - 6,
-      maxY: surface.y + 14,
+      minX: surface.x + FILE_CABINET_TOP_PLACEMENT_INSET_X,
+      maxX: surface.x + surface.width - FILE_CABINET_TOP_PLACEMENT_INSET_X,
+      minY: surface.y + FILE_CABINET_TOP_PLACEMENT_MIN_Y_OFFSET,
+      maxY: surface.y + FILE_CABINET_TOP_PLACEMENT_MAX_Y_OFFSET,
     };
   }
 

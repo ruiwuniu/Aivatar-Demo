@@ -37,6 +37,18 @@ const toCamelUsage = (usage, scope, context) => {
     next.modelContextWindow = context.modelContextWindow;
   }
 
+  for (const field of ["tokenLimit5hPercent", "tokenLimitWeekPercent"]) {
+    if (Number.isFinite(context?.[field]) && context[field] >= 0) {
+      next[field] = Math.max(0, Math.min(100, context[field]));
+    }
+  }
+
+  for (const field of ["tokenLimit5hResetAt", "tokenLimitWeekResetAt"]) {
+    if (Number.isFinite(context?.[field]) && context[field] >= 0) {
+      next[field] = context[field];
+    }
+  }
+
   return next;
 };
 
@@ -55,6 +67,35 @@ const isUsage = (value) =>
   value &&
   typeof value === "object" &&
   Number.isFinite(value.total_tokens);
+
+const tokenLimitsFromRateLimits = (rateLimits) => {
+  if (!rateLimits || typeof rateLimits !== "object") return {};
+
+  const tokenLimits = {};
+  for (const key of ["primary", "secondary"]) {
+    const limit = rateLimits[key];
+    if (!limit || typeof limit !== "object") continue;
+
+    const windowMinutes = Number(limit.window_minutes);
+    const usedPercent = Number(limit.used_percent);
+    if (!Number.isFinite(windowMinutes) || !Number.isFinite(usedPercent)) continue;
+
+    const clampedPercent = Math.max(0, Math.min(100, usedPercent));
+    const resetsAt = Number(limit.resets_at);
+    const normalized =
+      Number.isFinite(resetsAt) && resetsAt >= 0 ? resetsAt : undefined;
+
+    if (windowMinutes === 300) {
+      tokenLimits.tokenLimit5hPercent = clampedPercent;
+      if (normalized !== undefined) tokenLimits.tokenLimit5hResetAt = normalized;
+    } else if (windowMinutes === 10080) {
+      tokenLimits.tokenLimitWeekPercent = clampedPercent;
+      if (normalized !== undefined) tokenLimits.tokenLimitWeekResetAt = normalized;
+    }
+  }
+
+  return tokenLimits;
+};
 
 const readBaselines = async () => {
   try {
@@ -150,11 +191,13 @@ export const readLatestTokenUsage = async (sessionId) => {
     if (!isUsage(total)) continue;
 
     const modelContextWindow = Number(info.model_context_window);
+    const tokenLimits = tokenLimitsFromRateLimits(payload.rate_limits);
 
     latest = {
       timestamp: record.timestamp,
       total,
       last: isUsage(last) ? last : null,
+      tokenLimits,
       modelContextWindow:
         Number.isFinite(modelContextWindow) && modelContextWindow > 0
           ? modelContextWindow
@@ -224,17 +267,21 @@ export const getUsageDelta = async (sessionId, options = {}) => {
 
   if (!isUsage(rawUsage) || rawUsage.total_tokens <= 0) return null;
 
+  const context = {
+    ...(latest.tokenLimits ?? {}),
+    ...(latest.last && latest.modelContextWindow
+      ? {
+          contextTokens: latest.last.total_tokens,
+          modelContextWindow: latest.modelContextWindow,
+        }
+      : {}),
+  };
+
   return {
     usage: rawUsage,
     scope: baseline?.total ? "since-baseline" : "last-turn",
     timestamp: latest.timestamp,
-    context:
-      latest.last && latest.modelContextWindow
-        ? {
-            contextTokens: latest.last.total_tokens,
-            modelContextWindow: latest.modelContextWindow,
-          }
-        : null,
+    context: Object.keys(context).length > 0 ? context : null,
   };
 };
 
@@ -247,6 +294,7 @@ export const getContextUsage = async (sessionId) => {
     scope: "context-window",
     timestamp: latest.timestamp,
     context: {
+      ...(latest.tokenLimits ?? {}),
       contextTokens: latest.last.total_tokens,
       modelContextWindow: latest.modelContextWindow,
     },

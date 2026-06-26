@@ -21,6 +21,7 @@ const disconnectSessionPath = "/agent-sessions/disconnect";
 const presencePath = "/agent-presence";
 const avatarStatePath = "/avatar-state";
 const paintingPlanPath = "/painting-plan";
+const socialDialoguePath = "/social-dialogue";
 const roomsPath = "/rooms";
 const visitInvitePath = "/visits/invite";
 const visitStatePath = "/visits/state";
@@ -56,6 +57,13 @@ const paintingWorkerScript =
 const paintingPlanTimeoutMs = Math.max(
   5000,
   Number(process.env.AIVATAR_PAINTING_TIMEOUT_MS ?? 55000),
+);
+const socialDialogueWorkerScript =
+  process.env.AIVATAR_SOCIAL_DIALOGUE_SCRIPT ??
+  join(scriptDir, "aivatar-social-dialogue-worker.mjs");
+const socialDialogueTimeoutMs = Math.max(
+  5000,
+  Number(process.env.AIVATAR_SOCIAL_DIALOGUE_TIMEOUT_MS ?? 55000),
 );
 const roomFinishedVisitTtlMs = 30000;
 const learningEnabled = !/^(0|false|no|off)$/i.test(
@@ -404,6 +412,10 @@ const normalizeUsage = (value) => {
     "reasoningOutputTokens",
     "contextTokens",
     "modelContextWindow",
+    "tokenLimit5hPercent",
+    "tokenLimit5hResetAt",
+    "tokenLimitWeekPercent",
+    "tokenLimitWeekResetAt",
   ];
 
   for (const field of optionalNumberFields) {
@@ -772,6 +784,214 @@ const runPaintingWorker = async (payload) => {
       }
       try {
         resolve(normalizePaintingPlanResponse(extractJsonObject(stdout)));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+};
+
+const socialDialogueActivities = new Set([
+  "interact",
+  "coffee",
+  "play",
+  "music",
+  "relax",
+  "admire",
+  "wander",
+]);
+
+const socialDialogueExpressions = new Set([
+  "calm",
+  "focused",
+  "happy",
+  "sleepy",
+  "worried",
+]);
+
+const normalizeSocialDialogueTraits = (value) => {
+  const sourceTraits = value && typeof value === "object" ? value : {};
+  const traits = {};
+  for (const trait of paintingTraitNames) {
+    const next = Number(sourceTraits[trait]);
+    traits[trait] = Number.isFinite(next) && next >= 0 ? Math.round(next) : 0;
+  }
+  return traits;
+};
+
+const normalizeSocialDialogueCharacter = (value) => {
+  const character = value && typeof value === "object" ? value : {};
+  const petStats = character.petStats && typeof character.petStats === "object"
+    ? character.petStats
+    : {};
+  return {
+    id: normalizedPaintingText(character.id, 80) || undefined,
+    name: normalizedPaintingText(character.name, 40) || undefined,
+    growthLevel: Math.max(1, Math.round(Number(character.growthLevel) || 1)),
+    traits: normalizeSocialDialogueTraits(character.traits),
+    petStats: {
+      energy: Math.max(0, Math.min(100, Math.round(Number(petStats.energy) || 0))),
+      mood: Math.max(0, Math.min(100, Math.round(Number(petStats.mood) || 0))),
+      hunger: Math.max(0, Math.min(100, Math.round(Number(petStats.hunger) || 0))),
+    },
+    idleBubblePhrases: normalizedPaintingStringArray(
+      character.idleBubblePhrases,
+      6,
+      56,
+    ),
+  };
+};
+
+const normalizeSocialDialogueRequest = (value) => {
+  if (!value || typeof value !== "object") {
+    throw new Error("Social dialogue payload must be a JSON object");
+  }
+  const relationship =
+    value.relationship && typeof value.relationship === "object"
+      ? value.relationship
+      : {};
+  const activity = socialDialogueActivities.has(value.activity)
+    ? value.activity
+    : "interact";
+  const maxTurns = Math.round(Number(value.maxTurns) || 4);
+  return {
+    visitId: normalizedPaintingText(value.visitId, 100) || undefined,
+    locale: normalizedPaintingText(value.locale, 16) || "en",
+    activity,
+    activityLabel: normalizedPaintingText(value.activityLabel, 60) || undefined,
+    host: normalizeSocialDialogueCharacter(value.host),
+    guest: normalizeSocialDialogueCharacter(value.guest),
+    relationship: {
+      affinity: Math.max(0, Math.min(999, Math.round(Number(relationship.affinity) || 0))),
+      visits: Math.max(0, Math.round(Number(relationship.visits) || 0)),
+      unlockedActivities: normalizedPaintingStringArray(
+        relationship.unlockedActivities,
+        8,
+        40,
+      ),
+      lastDialogueSummary:
+        normalizedPaintingText(relationship.lastDialogueSummary, 160) || undefined,
+    },
+    roomFeatures: normalizedPaintingStringArray(value.roomFeatures, 10, 40),
+    maxTurns: Math.max(3, Math.min(6, maxTurns)),
+    seedHint: normalizedPaintingText(value.seedHint, 160) || undefined,
+  };
+};
+
+const normalizeSocialDialogueLine = (line, index) => {
+  if (!line || typeof line !== "object") return null;
+  const text = normalizedPaintingText(line.text, 56);
+  if (!text) return null;
+  const durationMs = Math.round(Number(line.durationMs) || 2300);
+  return {
+    speaker:
+      line.speaker === "host" || line.speaker === "guest"
+        ? line.speaker
+        : index % 2 === 0
+          ? "guest"
+          : "host",
+    text,
+    expression: socialDialogueExpressions.has(line.expression)
+      ? line.expression
+      : "happy",
+    durationMs: Math.max(1600, Math.min(3200, durationMs)),
+  };
+};
+
+const normalizeSocialDialogueResponse = (value) => {
+  if (!value || typeof value !== "object") {
+    throw new Error("Social dialogue worker returned an invalid dialogue");
+  }
+  const lines = Array.isArray(value.lines)
+    ? value.lines.map(normalizeSocialDialogueLine).filter(Boolean).slice(0, 6)
+    : [];
+  if (lines.length < 2) {
+    throw new Error("Social dialogue worker returned too few lines");
+  }
+  return {
+    lines,
+    summary: normalizedPaintingText(value.summary, 160) || undefined,
+    relationshipDelta: Math.max(
+      0,
+      Math.min(6, Math.round(Number(value.relationshipDelta) || 0)),
+    ),
+    source: value.source === "heuristic" ? "heuristic" : "llm",
+    generatedAt:
+      typeof value.generatedAt === "string"
+        ? value.generatedAt.slice(0, 80)
+        : new Date().toISOString(),
+  };
+};
+
+const socialDialogueProvider = () =>
+  process.env.AIVATAR_SOCIAL_DIALOGUE_PROVIDER ??
+  process.env.AIVATAR_LEARNING_PROVIDER ??
+  process.env.AIVATAR_PROVIDER ??
+  "claude-code";
+
+const socialDialoguePayloadPath = async (payload) => {
+  const visit = safeSessionName(payload.visitId ?? "visit");
+  const path = join(
+    tmpdir(),
+    "aivatar-social-dialogue-context",
+    `dialogue-${visit}-${Date.now()}.json`,
+  );
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(payload, null, 2), "utf8");
+  return path;
+};
+
+const runSocialDialogueWorker = async (payload) => {
+  if (!existsSync(socialDialogueWorkerScript)) {
+    throw new Error("Social dialogue worker script is unavailable");
+  }
+  const payloadFile = await socialDialoguePayloadPath(payload);
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      nodeCommand,
+      [
+        socialDialogueWorkerScript,
+        "--provider",
+        socialDialogueProvider(),
+        "--payload-file",
+        payloadFile,
+      ],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("Social dialogue worker timed out"));
+    }, socialDialogueTimeoutMs);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(
+          new Error(
+            `Social dialogue worker exited ${code}: ${
+              sanitizedDigestText(stderr || stdout, 240) || "no output"
+            }`,
+          ),
+        );
+        return;
+      }
+      try {
+        resolve(normalizeSocialDialogueResponse(extractJsonObject(stdout)));
       } catch (error) {
         reject(error);
       }
@@ -1661,6 +1881,7 @@ const httpServer = http.createServer(async (request, response) => {
       presenceHttp: `http://127.0.0.1:${httpPort}${presencePath}`,
       avatarStateHttp: `http://127.0.0.1:${httpPort}${avatarStatePath}`,
       paintingPlanHttp: `http://127.0.0.1:${httpPort}${paintingPlanPath}`,
+      socialDialogueHttp: `http://127.0.0.1:${httpPort}${socialDialoguePath}`,
       roomsHttp: `http://127.0.0.1:${httpPort}${roomsPath}`,
       visitInviteHttp: `http://127.0.0.1:${httpPort}${visitInvitePath}`,
       visitStateHttp: `http://127.0.0.1:${httpPort}${visitStatePath}`,
@@ -1805,6 +2026,24 @@ const httpServer = http.createServer(async (request, response) => {
       sendJson(response, 400, {
         error:
           error instanceof Error ? error.message : "Invalid painting plan payload",
+      });
+    }
+    return;
+  }
+
+  if (request.url === socialDialoguePath && request.method === "POST") {
+    try {
+      const body = await readBody(request);
+      const payload = normalizeSocialDialogueRequest(JSON.parse(body));
+      const dialogue = await runSocialDialogueWorker(payload);
+      sendJson(response, 200, {
+        ok: true,
+        dialogue,
+      });
+    } catch (error) {
+      sendJson(response, 400, {
+        error:
+          error instanceof Error ? error.message : "Invalid social dialogue payload",
       });
     }
     return;
@@ -2112,6 +2351,7 @@ httpServer.listen(httpPort, "127.0.0.1", () => {
   console.log(`Aivatar presence: http://127.0.0.1:${httpPort}${presencePath}`);
   console.log(`Aivatar avatar state: http://127.0.0.1:${httpPort}${avatarStatePath}`);
   console.log(`Aivatar painting plan: http://127.0.0.1:${httpPort}${paintingPlanPath}`);
+  console.log(`Aivatar social dialogue: http://127.0.0.1:${httpPort}${socialDialoguePath}`);
   console.log(`Aivatar rooms: http://127.0.0.1:${httpPort}${roomsPath}`);
   console.log(`Aivatar visits invite: http://127.0.0.1:${httpPort}${visitInvitePath}`);
   console.log(`Aivatar visits state: http://127.0.0.1:${httpPort}${visitStatePath}`);

@@ -19,6 +19,7 @@
     "aivatar:learn:codex": "node scripts/aivatar-learning-worker.mjs --provider codex",
     "aivatar:learn:opencode": "node scripts/aivatar-learning-worker.mjs --provider opencode",
     "aivatar:paint": "node scripts/aivatar-painting-worker.mjs",
+    "aivatar:social-dialogue": "node scripts/aivatar-social-dialogue-worker.mjs",
     "agent:run": "node scripts/aivatar-run.mjs",
     "agent:send": "node scripts/send-codex-status.mjs",
     "codex:run": "node scripts/aivatar-run.mjs --agent codex -- codex",

@@ -24,16 +24,17 @@
 
 **EN**
 
-- New companion appearances: Little Octopus, Rush Spark, Mood Slime, Red Crayfish, Cute Ghost, Cute Penguin, and Green Lizard.
-- Upgraded room visuals with richer floors, wall materials, windows, furniture skins, and animated room objects such as the record player, easel, phone, and tabletop items.
-- Broader AI agent support for Codex Desktop, Codex CLI, Claude Code, opencode, scheduled CLI tasks, and custom local status sources.
-- Room Visit companions now play, chat, drink coffee, relax, explore, and show localized social bubbles in English, Simplified Chinese, and Traditional Chinese.
+- New companion appearances and room polish: Little Octopus, Rush Spark, Mood Slime, Red Crayfish, Cute Ghost, Cute Penguin, Green Lizard, richer furniture/floor/window materials, the Starship console UI skin, bundled Antonio/Smiley Sans fonts, and quieter sleep snore audio.
+- Broader AI agent support for Codex Desktop, Codex CLI, Claude Code, opencode, scheduled CLI tasks, custom local status sources, and Codex 5-hour/weekly token-limit HUD readouts.
+- Room Visit now supports autonomous visits, pair affinity, shared activities, and generated guest/host social dialogue through the local bridge with safe heuristic fallbacks.
+- Task Cabinet/File Cabinet polish adds deeper visible cabinet-top sprite depth, expanded top placement area, and a larger lower collision footprint for better room editing and pathing.
 
 **中文**
 
-- 新增多个角色形象：小章鱼、急急 Spark、心情史莱姆、红色小龙虾、半透明小幽灵、可爱小企鹅、绿色小蜥蜴。
-- 升级房间视觉材质，包括更丰富的地板、墙面、窗景、家具皮肤，以及唱片机、画架、手机、桌面物件等动态房间物品。
-- 支持更多 AI agent 应用与工作流，包括 Codex Desktop、Codex CLI、Claude Code、opencode、定时 CLI 任务，以及可通过本地状态桥接接入的自定义 agent。
+- 新增并打磨多个角色与房间视觉：小章鱼、急急 Spark、心情史莱姆、红色小龙虾、半透明小幽灵、可爱小企鹅、绿色小蜥蜴，以及更丰富的家具/地板/窗景材质、Starship 控制台主题、内置 Antonio/Smiley Sans 字体和更安静的睡眠呼噜音效。
+- 扩展 AI agent 工作流：Codex Desktop、Codex CLI、Claude Code、opencode、定时 CLI 任务、自定义本地状态源，以及 Codex 5 小时/每周 token 限额 HUD。
+- Room Visit 串门支持自动拜访、关系亲密度、共享活动，以及通过本地桥接生成 guest/host 社交对话，并带安全的启发式回退。
+- Task Cabinet/File Cabinet 细节升级：文件柜顶部 sprite 视觉纵深加深，顶部可放置面积扩大，脚底碰撞范围加大，房间编辑和路径移动更稳定。
 
 <p align="center">
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4">
@@ -73,6 +74,8 @@
 - Provides local save slots, avatar naming, JSON/folder save import, and local state persistence.
 - Includes a Task Cabinet for launching one-off or scheduled markdown prompt tasks through the selected CLI agent.
 - Provides a CLI Launcher for starting connected Codex or Claude Code sessions from the desktop app.
+- Shows Codex context-window plus 5-hour and weekly token-limit usage in compact HUDs when available.
+- Supports Room Visit social dialogue, relationship affinity, and autonomous visits between currently open save-slot rooms.
 - Includes an Asset Studio entry point, but it is currently marked as in development.
 
 **中文**
@@ -87,6 +90,8 @@
 - 支持本地存档槽、角色命名、JSON/文件夹存档导入和本地状态持久化。
 - 提供任务柜，可以把 Markdown prompt 作为一次性或定时任务交给 CLI agent 执行。
 - 提供 CLI 启动器，可从桌面应用中启动已连接的 Codex 或 Claude Code 会话。
+- 在可用时显示 Codex context window、5 小时和每周 token 限额用量的紧凑 HUD。
+- 支持当前打开存档房间之间的 Room Visit 社交对话、关系亲密度和自动串门。
 - 包含素材工坊入口，但当前仍标记为开发中，不应视为完整功能。
 
 ### Basic Use / 基本使用
@@ -186,7 +191,7 @@ Task Cabinet lets you register Markdown prompt files and dispatch them through t
 - Aivatar reads the Markdown file once, creates a temporary prompt copy, and does not write back to the source file.
 - Tasks can be run once, rerun, or scheduled.
 - Schedule conditions include always, only when idle, and after the previous success.
-- A File Cabinet item is part of the in-room dispatch fantasy and can be placed as furniture.
+- A File Cabinet item is part of the in-room dispatch fantasy and can be placed as furniture. The File Cabinet now has a visibly deeper top surface, larger top placement area, and larger lower collision footprint.
 
 **中文**
 
@@ -197,7 +202,7 @@ Task Cabinet lets you register Markdown prompt files and dispatch them through t
 - Aivatar 只读取 Markdown 文件一次，生成临时 prompt 副本，不会写回源文件。
 - 任务可以一次性执行、重新执行或设置排程。
 - 排程条件包括永远执行、仅闲置时执行、上次成功后执行。
-- File Cabinet 文件柜既是房间家具，也是任务派发的视觉入口。
+- File Cabinet 文件柜既是房间家具，也是任务派发的视觉入口。文件柜现在拥有更深的可见顶部、更大的顶部摆放面积和更大的底部碰撞范围。
 
 ### Rewards, Growth, And Room Economy / 奖励、成长与房间经济
 
@@ -537,8 +542,8 @@ Current release-prep notes:
 
 - The 0.2.2 preview release is available through GitHub Releases, with Windows NSIS `.exe` and Windows MSI installers. macOS DMG packaging is pending for this patch release.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
-- Character choices, upgraded room materials, furniture skins, expanded desktop/CLI agent workflows, and the Room Visit MVP with localized social bubbles are now part of the 0.2.2 preview surface.
-- Native bridge support exists for local status, basic Codex Desktop session discovery, rollout watching, token-usage rewards, and local heuristic session learning.
+- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, and polished Task Cabinet/File Cabinet interactions are now part of the 0.2.2 preview surface.
+- Native bridge support exists for local status, Codex Desktop session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
 - A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
 - Linux packaging remains planned after the desktop integration path is stable.
 
@@ -548,8 +553,8 @@ Current release-prep notes:
 
 - 0.2.2 预览版已通过 GitHub Releases 提供 Windows NSIS `.exe` 和 Windows MSI 安装包，本次补丁版 macOS DMG 待补充。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
-- 多角色选择、升级后的房间材质、家具皮肤、扩展后的桌面/CLI agent 工作流，以及带本地化社交气泡的 Room Visit 串门 MVP，已经纳入 0.2.2 预览体验。
-- 本地状态、基础 Codex Desktop 会话发现、rollout watching、token 用量奖励、本地启发式 session learning 已有原生桥接预览实现。
+- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门，以及打磨后的 Task Cabinet/File Cabinet 交互，已经纳入 0.2.2 预览体验。
+- 本地状态、Codex Desktop 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。
 - 完全 Rust-native 的 connected runner 和面向发布模式的 provider-backed learning 仍是后续加固工作。
 - Linux 打包计划会在桌面集成路径继续稳定后推进。
 

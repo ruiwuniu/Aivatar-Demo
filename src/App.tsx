@@ -5,6 +5,15 @@ import { loadContentConfig } from "./data/loadContent";
 import {
   canvasPointToScene,
   attachedPlacedItemPosition,
+  FILE_CABINET_COLLISION_DEPTH,
+  FILE_CABINET_COLLISION_INSET_X,
+  FILE_CABINET_FURNITURE_HEIGHT,
+  FILE_CABINET_FURNITURE_WIDTH,
+  FILE_CABINET_PLACED_ITEM_OFFSET_X,
+  FILE_CABINET_PLACED_ITEM_OFFSET_Y,
+  FILE_CABINET_TOP_HIT_DEPTH,
+  FILE_CABINET_TOP_HIT_INSET_X,
+  FILE_CABINET_TOP_HIT_Y_OFFSET,
   findFurnitureAt,
   findPlacedItemAt,
   findWindowAt,
@@ -37,6 +46,8 @@ import {
   ROOM_DOOR_OUTSIDE_POINT,
   ROOM_VISIT_BUBBLE_KEY_PREFIX,
   advanceRoomVisitor,
+  clampSocialWillingness,
+  completeSocialRelationship,
   completeSocialRoomVisit,
   createRoomDoorEntryRuntime,
   createRoomInstanceId,
@@ -45,15 +56,20 @@ import {
   hostLayoutFingerprint,
   isPointInRoomDoor,
   normalizeRoomPresence,
+  normalizeSocialRelationship,
   normalizeSocialRoomMemory,
   normalizeVisitSession,
   recordSocialRoomNavSample,
   roomPresenceFromSave,
+  roomVisitSocialDurationSeconds,
   roomVisitBubbleKeyForBehavior,
   roomVisitorNavigationScopeKey,
   roomVisitExpiresAt,
   roomVisitNowIso,
+  shouldAttemptAutonomousVisit,
   socialRoomMemoryStorageKey,
+  socialRelationshipStorageKey,
+  socialWillingnessScore,
 } from "./game/roomVisits";
 import {
   PAINTING_GALLERY_LIMIT,
@@ -98,6 +114,9 @@ import type {
   AivatarRoomsSnapshot,
   AivatarRoomVisitor,
   AivatarSaveState,
+  AivatarSocialDialogue,
+  AivatarSocialDialogueLine,
+  AivatarSocialRelationship,
   AivatarSocialRoomMemory,
   AivatarVisitSession,
   AvatarAppearanceId,
@@ -155,6 +174,7 @@ const AUTO_MUSIC_KEY = "aivatar.autoMusic.v1";
 const ALWAYS_ON_TOP_KEY = "aivatar.alwaysOnTop.v1";
 const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
 const PAINTING_PLAN_URL = "http://127.0.0.1:38988/painting-plan";
+const SOCIAL_DIALOGUE_URL = "http://127.0.0.1:38988/social-dialogue";
 const ROOMS_URL = "http://127.0.0.1:38988/rooms";
 const VISIT_INVITE_URL = "http://127.0.0.1:38988/visits/invite";
 const VISIT_STATE_URL = "http://127.0.0.1:38988/visits/state";
@@ -293,9 +313,12 @@ const BRIDGE_START_MESSAGE_SECONDS = 8;
 const ROOM_PRESENCE_SYNC_MS = 1200;
 const ROOM_VISIT_STATE_POST_MS = 650;
 const ROOM_VISIT_NAV_SAMPLE_SECONDS = 2.5;
-const ROOM_VISIT_SOCIAL_SECONDS = 34;
 const ROOM_VISIT_CONNECTION_FAILURE_LIMIT = 3;
 const ROOM_VISIT_BUSY_CANCEL_REASON = "session-busy";
+const ROOM_VISIT_AUTO_CHECK_MS = 15_000;
+const ROOM_VISIT_AUTO_COOLDOWN_MS = 95_000;
+const ROOM_VISIT_PAIR_COOLDOWN_MS = 140_000;
+const ROOM_VISIT_PAIR_COOLDOWN_PREFIX = "aivatar.roomVisitPairCooldown.v1.";
 const COMPLETE_REWARD_FRESH_MS = 10000;
 const APP_HORIZONTAL_PADDING = 24;
 const APP_GRID_GAP = 12;
@@ -335,6 +358,7 @@ const COLA_CAN_OPEN_AUDIO_SRC = "/audio/cola-can-open.mp3";
 const COLA_DRINK_AUDIO_SRC = "/audio/cola-drink.mp3";
 const COFFEE_DRINK_AUDIO_SRC = "/audio/coffee-drink-slurping.mp3";
 const BENTO_EAT_AUDIO_SRC = "/audio/bento-eat-munchin.mp3";
+const SLEEP_SNORE_AUDIO_SRC = "/audio/sleep-snore.mp3";
 const GAME_CONSOLE_AUDIO_SOURCES = [
   "/audio/game-console-jump.ogg",
   "/audio/game-console-invincibility.ogg",
@@ -418,6 +442,7 @@ const COLA_DRINK_AUDIO_VOLUME_MULTIPLIER = 0.45;
 const COLA_DRINK_AFTER_CAN_OPEN_DELAY_MS = 1200;
 const COFFEE_DRINK_AUDIO_VOLUME_MULTIPLIER = 0.42;
 const BENTO_EAT_AUDIO_VOLUME_MULTIPLIER = 0.42;
+const SLEEP_SNORE_AUDIO_VOLUME_MULTIPLIER = 0.18;
 const AUTONOMOUS_ACTION_STUCK_SECONDS = 120;
 const DEMO_BEHAVIORS: BehaviorName[] = [
   "idle",
@@ -456,7 +481,7 @@ type ShopCategoryId =
 
 type DecorSurfaceCategoryId = "wallpaper" | "flooring";
 
-type UiThemeId = "classic" | "terminal" | "terminal-amber" | "arcade-cabinet";
+type UiThemeId = "classic" | "terminal" | "terminal-amber" | "arcade-cabinet" | "starship-console";
 type SceneUiThemeId = UiThemeId;
 type BgmTrack = (typeof BGM_TRACKS)[number];
 type BgmTrackId = BgmTrack["id"];
@@ -526,12 +551,14 @@ const UI_THEME_OPTIONS: Array<{ id: UiThemeId; copyKey: string }> = [
   { id: "terminal", copyKey: "theme.terminal" },
   { id: "terminal-amber", copyKey: "theme.amber" },
   { id: "arcade-cabinet", copyKey: "theme.arcade" },
+  { id: "starship-console", copyKey: "theme.starship" },
 ];
 
 const loadInitialUiTheme = (): UiThemeId => {
   const saved = localStorage.getItem(UI_THEME_KEY);
   if (saved === "terminal-amber") return "terminal-amber";
   if (saved === "arcade-cabinet") return "arcade-cabinet";
+  if (saved === "starship-console") return "starship-console";
   if (saved === "classic" || saved === "terminal") return saved;
   return "terminal";
 };
@@ -750,12 +777,42 @@ const contextWindowMeterForUsage = (usage?: TokenUsage) => {
   const rawPercent = (contextTokens / modelContextWindow) * 100;
   const percent = Math.max(0, Math.min(100, rawPercent));
   const level = rawPercent >= 85 ? "high" : rawPercent >= 65 ? "warm" : "calm";
+  const tokenLimitMeter = (
+    key: string,
+    labelKey: string,
+    value: number | undefined,
+  ) => {
+    if (value === undefined || !Number.isFinite(value) || value < 0) return null;
+    const clamped = Math.max(0, Math.min(100, value));
+    return {
+      key,
+      labelKey,
+      percent: clamped,
+      level: value >= 85 ? "high" : value >= 65 ? "warm" : "calm",
+      percentLabel: `${Math.round(value)}%`,
+    };
+  };
+  const optionalMeters = [
+    {
+      key: "context",
+      labelKey: "sessions.context",
+      percent,
+      level,
+      percentLabel: `${Math.round(rawPercent)}%`,
+    },
+    tokenLimitMeter("token-5h", "sessions.token5h", usage?.tokenLimit5hPercent),
+    tokenLimitMeter("token-week", "sessions.tokenWeek", usage?.tokenLimitWeekPercent),
+  ];
+  const meters = optionalMeters.filter(
+    (meter): meter is NonNullable<(typeof optionalMeters)[number]> => meter !== null,
+  );
 
   return {
     percent,
     level,
     label: `${formatTokenCount(contextTokens)} / ${formatTokenCount(modelContextWindow)} context`,
     percentLabel: `${Math.round(rawPercent)}%`,
+    meters,
   };
 };
 
@@ -783,6 +840,7 @@ const defaultMemory = (): AivatarMemory => ({
   },
   preferences: {
     idleBubbleLanguage: "auto",
+    socialWillingness: 50,
     activityWeights: {},
     itemAffinities: {},
   },
@@ -949,6 +1007,10 @@ const normalizeMemory = (memory?: Partial<AivatarMemory>): AivatarMemory => {
             .filter(Boolean)
             .slice(0, Math.max(1, growth?.level ?? fallback.growth.level))
         : fallback.preferences.idleBubblePhrases,
+      socialWillingness: clampSocialWillingness(
+        memory?.preferences?.socialWillingness,
+        fallback.preferences.socialWillingness,
+      ),
       activityWeights: {
         ...fallback.preferences.activityWeights,
         ...memory?.preferences?.activityWeights,
@@ -1806,6 +1868,20 @@ type RoomVisitHostSocialTarget = {
   bubbleText: string;
 };
 
+type RoomVisitDialoguePlayback = {
+  visitId: string;
+  dialogue: AivatarSocialDialogue;
+  startedAt: number;
+  appliedLineIndex: number;
+  completed: boolean;
+};
+
+const ROOM_VISIT_SOCIAL_SPACING = 44;
+const ROOM_VISIT_TOO_CLOSE_DISTANCE = 18;
+const ROOM_VISIT_HOST_REPLY_DELAY_MS = 2200;
+const ROOM_VISIT_DIALOGUE_START_DELAY_MS = 500;
+const ROOM_VISIT_DIALOGUE_LINE_GAP_MS = 260;
+
 const localizeRoomVisitBubbleText = (
   bubbleText: string | undefined,
   locale: Locale,
@@ -1834,10 +1910,88 @@ const localizedRoomVisitors = (
     return bubbleText === visitor.bubbleText ? visitor : { ...visitor, bubbleText };
   });
 
+const AVATAR_EXPRESSIONS = new Set<AvatarRuntime["expression"]>([
+  "calm",
+  "focused",
+  "happy",
+  "sleepy",
+  "worried",
+]);
+
+const compactSocialDialogueText = (value: unknown, maxLength: number) =>
+  String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+
+const normalizeSocialDialogueLineValue = (
+  value: unknown,
+  index: number,
+): AivatarSocialDialogueLine | null => {
+  const raw = value && typeof value === "object" ? value as {
+    speaker?: unknown;
+    text?: unknown;
+    expression?: unknown;
+    durationMs?: unknown;
+  } : {};
+  const text = compactSocialDialogueText(raw.text, 56);
+  if (!text) return null;
+  const durationMs = Math.round(Number(raw.durationMs));
+  return {
+    speaker:
+      raw.speaker === "host" || raw.speaker === "guest"
+        ? raw.speaker
+        : index % 2 === 0
+          ? "guest"
+          : "host",
+    text,
+    expression: AVATAR_EXPRESSIONS.has(raw.expression as AvatarRuntime["expression"])
+      ? raw.expression as AvatarRuntime["expression"]
+      : "happy",
+    durationMs:
+      Number.isFinite(durationMs) && durationMs >= 1600 && durationMs <= 3200
+        ? durationMs
+        : 2300,
+  };
+};
+
+const normalizeSocialDialogueValue = (value: unknown): AivatarSocialDialogue | null => {
+  const raw = value && typeof value === "object" ? value as {
+    dialogue?: unknown;
+    lines?: unknown;
+    summary?: unknown;
+    relationshipDelta?: unknown;
+    source?: unknown;
+    generatedAt?: unknown;
+  } : {};
+  const source = raw.dialogue && typeof raw.dialogue === "object"
+    ? raw.dialogue as typeof raw
+    : raw;
+  const lines = Array.isArray(source.lines)
+    ? source.lines
+        .map(normalizeSocialDialogueLineValue)
+        .filter((line): line is AivatarSocialDialogueLine => Boolean(line))
+        .slice(0, 6)
+    : [];
+  if (lines.length < 2) return null;
+  const relationshipDelta = Math.round(Number(source.relationshipDelta));
+  return {
+    lines,
+    summary: compactSocialDialogueText(source.summary, 160) || undefined,
+    relationshipDelta:
+      Number.isFinite(relationshipDelta)
+        ? Math.max(0, Math.min(6, relationshipDelta))
+        : undefined,
+    source: source.source === "heuristic" ? "heuristic" : "llm",
+    generatedAt: compactSocialDialogueText(source.generatedAt, 80) || undefined,
+  };
+};
+
 const ROOM_VISIT_SOCIAL_BEHAVIORS = new Set<BehaviorName>([
   "play",
   "coffee",
   "interact",
+  "music",
   "relax",
   "admire",
   "wander",
@@ -1875,8 +2029,12 @@ const chooseCompanionStandpoint = (
       right.x - companionTarget.x,
       right.y - companionTarget.y,
     );
-    const leftScore = Math.abs(leftDistance - 28) + (leftDistance < 10 ? 100 : 0);
-    const rightScore = Math.abs(rightDistance - 28) + (rightDistance < 10 ? 100 : 0);
+    const leftScore =
+      Math.abs(leftDistance - ROOM_VISIT_SOCIAL_SPACING) +
+      (leftDistance < ROOM_VISIT_TOO_CLOSE_DISTANCE ? 100 : 0);
+    const rightScore =
+      Math.abs(rightDistance - ROOM_VISIT_SOCIAL_SPACING) +
+      (rightDistance < ROOM_VISIT_TOO_CLOSE_DISTANCE ? 100 : 0);
     return leftScore - rightScore;
   })[0];
 };
@@ -1897,8 +2055,12 @@ const roomVisitHostSocialTarget = (
     y: visitor.runtime.targetY,
   };
   const fallbackNearVisitor = clampRoomVisitPoint({
-    x: companionTarget.x + (hostRuntime.x <= companionTarget.x ? -24 : 24),
-    y: companionTarget.y + 4,
+    x:
+      companionTarget.x +
+      (hostRuntime.x <= companionTarget.x
+        ? -ROOM_VISIT_SOCIAL_SPACING
+        : ROOM_VISIT_SOCIAL_SPACING),
+    y: companionTarget.y + 6,
   });
 
   if (behavior === "play") {
@@ -1968,18 +2130,42 @@ const roomVisitHostSocialTarget = (
     }
   }
 
+  if (behavior === "music") {
+    const recordPlayer = nearestPlacedItemToPoint(
+      companionTarget,
+      (content.placedItems ?? []).filter((item) => item.itemId === RECORD_PLAYER_ITEM_ID),
+    );
+    if (recordPlayer) {
+      const standpoints = getPlacedItemInteractionStandpoints(recordPlayer, content);
+      const fallbackTarget = getPlacedItemInteractionTarget(recordPlayer, content);
+      const point = chooseCompanionStandpoint(standpoints, companionTarget, {
+        x: fallbackTarget.targetX,
+        y: fallbackTarget.targetY,
+      });
+      return {
+        behavior,
+        targetX: point.x,
+        targetY: point.y,
+        alternates: standpoints,
+        activityLabel: visitor.runtime.activityLabel ?? "Dancing together",
+        bubbleText: roomVisitBubbleKeyForBehavior(behavior),
+      };
+    }
+  }
+
   return {
     behavior,
     targetX: fallbackNearVisitor.x,
     targetY: fallbackNearVisitor.y,
     activityLabel:
-      behavior === "interact"
+      visitor.runtime.activityLabel ??
+      (behavior === "interact"
         ? "Chatting"
         : behavior === "admire"
           ? "Looking around"
           : behavior === "relax"
             ? "Hanging out"
-            : "Wandering together",
+            : "Wandering together"),
     bubbleText:
       roomVisitBubbleKeyForBehavior(behavior),
   };
@@ -2292,8 +2478,8 @@ const taskCabinetFurnitureFromPlacedItem = (
   placedItem: PlacedItem,
   definition: ItemDefinition | null | undefined,
 ): FurnitureDefinition => {
-  const x = placedItem.x - 22;
-  const y = placedItem.y - 58;
+  const x = placedItem.x - FILE_CABINET_PLACED_ITEM_OFFSET_X;
+  const y = placedItem.y - FILE_CABINET_PLACED_ITEM_OFFSET_Y;
 
   return {
     id: TASK_CABINET_FURNITURE_ID,
@@ -2303,11 +2489,16 @@ const taskCabinetFurnitureFromPlacedItem = (
     zone: "office",
     x,
     y,
-    width: 44,
-    height: 58,
+    width: FILE_CABINET_FURNITURE_WIDTH,
+    height: FILE_CABINET_FURNITURE_HEIGHT,
     color: "#54606f",
     interaction: "interact",
-    collision: { x: x + 7, y: y + 46, width: 30, height: 12 },
+    collision: {
+      x: x + FILE_CABINET_COLLISION_INSET_X,
+      y: y + FILE_CABINET_FURNITURE_HEIGHT - FILE_CABINET_COLLISION_DEPTH,
+      width: FILE_CABINET_FURNITURE_WIDTH - FILE_CABINET_COLLISION_INSET_X * 2,
+      height: FILE_CABINET_COLLISION_DEPTH,
+    },
   };
 };
 
@@ -2316,10 +2507,10 @@ const isTerminalOnDesktopSurface = (
   surface: FurnitureDefinition,
 ) =>
   surface.id === "file-cabinet"
-    ? terminal.x >= surface.x + 2 &&
-      terminal.x <= surface.x + surface.width - 2 &&
-      terminal.y >= surface.y - 10 &&
-      terminal.y <= surface.y + 18
+    ? terminal.x >= surface.x + FILE_CABINET_TOP_HIT_INSET_X &&
+      terminal.x <= surface.x + surface.width - FILE_CABINET_TOP_HIT_INSET_X &&
+      terminal.y >= surface.y + FILE_CABINET_TOP_HIT_Y_OFFSET &&
+      terminal.y <= surface.y + FILE_CABINET_TOP_HIT_Y_OFFSET + FILE_CABINET_TOP_HIT_DEPTH
     : (surface.id === "desk" || surface.id === "table") &&
       terminal.x >= surface.x + 8 &&
       terminal.x <= surface.x + surface.width - 8 &&
@@ -3253,6 +3444,7 @@ export const App = () => {
     () => initialActiveSaveSlotIdRef.current,
   );
   const [saveMenuOpen, setSaveMenuOpen] = useState(true);
+  const saveMenuOpenRef = useRef(true);
   const [creatingSaveSlotIndex, setCreatingSaveSlotIndex] = useState<number | null>(
     saveSlots.length === 0 ? 0 : null,
   );
@@ -3354,6 +3546,7 @@ export const App = () => {
   const coffeeSippingAudioRef = useRef(false);
   const bentoEatAudioRef = useRef<HTMLAudioElement | null>(null);
   const bentoEatingAudioRef = useRef(false);
+  const sleepSnoreAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioUnlockedRef = useRef(false);
   const startupSoundPlayedRef = useRef(false);
   const bgmAudioContextRef = useRef<AudioContext | null>(null);
@@ -3407,7 +3600,7 @@ export const App = () => {
     new Map<string, "complete" | "error">(),
   );
   const taskCabinetVisualFlowRef = useRef<TaskCabinetVisualFlow | null>(null);
-  const lastRewardedCompleteKeyRef = useRef<string | null>(null);
+  const rewardedCompleteKeysRef = useRef(new Set<string>());
   const appliedLearningIdsRef = useRef(new Set<string>());
   const paintingPlanRequestsRef = useRef(new Set<string>());
   const behaviorDemoTimerRef = useRef<number | null>(null);
@@ -3418,6 +3611,7 @@ export const App = () => {
   const [roomSnapshot, setRoomSnapshot] = useState<AivatarRoomsSnapshot | null>(null);
   const roomSnapshotRef = useRef<AivatarRoomsSnapshot | null>(null);
   const [roomVisitMenuOpen, setRoomVisitMenuOpen] = useState(false);
+  const roomVisitMenuOpenRef = useRef(false);
   const [roomVisitMessage, setRoomVisitMessage] = useState("");
   const [activeVisit, setActiveVisit] = useState<AivatarVisitSession | null>(null);
   const activeVisitRef = useRef<AivatarVisitSession | null>(null);
@@ -3428,10 +3622,14 @@ export const App = () => {
   const handledVisitIdsRef = useRef(new Set<string>());
   const completedVisitIdsRef = useRef(new Set<string>());
   const socialRoomMemoryRef = useRef<AivatarSocialRoomMemory | null>(null);
+  const activeVisitRelationshipRef = useRef<AivatarSocialRelationship | null>(null);
   const socialRoomMemoryWriteAtRef = useRef(0);
   const roomVisitHostActivityRef = useRef<RoomVisitHostActivitySync | null>(null);
   const visitStatePostedAtRef = useRef(0);
   const visitHostStartedAtRef = useRef(0);
+  const autonomousRoomVisitCooldownUntilRef = useRef(0);
+  const roomVisitDialogueRef = useRef<RoomVisitDialoguePlayback | null>(null);
+  const roomVisitDialogueRequestRef = useRef<string | null>(null);
   const roomSnapshotFailuresRef = useRef(0);
 
   const content = useMemo(
@@ -3730,6 +3928,233 @@ export const App = () => {
     }
   };
 
+  const readSocialRelationship = (
+    leftAvatarId: string,
+    rightAvatarId: string,
+  ): AivatarSocialRelationship => {
+    const key = socialRelationshipStorageKey(leftAvatarId, rightAvatarId);
+    try {
+      const payload = localStorage.getItem(key);
+      return normalizeSocialRelationship(
+        payload ? JSON.parse(payload) as Partial<AivatarSocialRelationship> : undefined,
+        leftAvatarId,
+        rightAvatarId,
+      );
+    } catch {
+      return normalizeSocialRelationship(undefined, leftAvatarId, rightAvatarId);
+    }
+  };
+
+  const writeSocialRelationship = (relationship: AivatarSocialRelationship) => {
+    const [leftAvatarId, rightAvatarId] = relationship.avatarIds;
+    const key = socialRelationshipStorageKey(leftAvatarId, rightAvatarId);
+    try {
+      localStorage.setItem(key, JSON.stringify(relationship));
+    } catch {
+      console.warn("Could not persist social relationship.");
+    }
+  };
+
+  const relationshipForVisit = (visit: AivatarVisitSession) =>
+    readSocialRelationship(visit.host.avatarId, visit.guest.avatarId);
+
+  const syncActiveVisitRelationship = (visit: AivatarVisitSession) => {
+    activeVisitRelationshipRef.current = relationshipForVisit(visit);
+  };
+
+  const pairCooldownKey = (leftAvatarId: string, rightAvatarId: string) =>
+    `${ROOM_VISIT_PAIR_COOLDOWN_PREFIX}${[leftAvatarId, rightAvatarId]
+      .sort()
+      .map((part) => part.replace(/[^a-zA-Z0-9_.-]/g, "_"))
+      .join(".")}`;
+
+  const readPairCooldownUntil = (leftAvatarId: string, rightAvatarId: string) => {
+    try {
+      const raw = localStorage.getItem(pairCooldownKey(leftAvatarId, rightAvatarId));
+      const value = raw ? Number(raw) : 0;
+      return Number.isFinite(value) ? value : 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  const writePairCooldownUntil = (
+    leftAvatarId: string,
+    rightAvatarId: string,
+    untilMs: number,
+  ) => {
+    try {
+      localStorage.setItem(pairCooldownKey(leftAvatarId, rightAvatarId), String(untilMs));
+    } catch {
+      console.warn("Could not persist room visit cooldown.");
+    }
+  };
+
+  const roomFeaturesForSocialDialogue = (currentContent: AivatarContent) => {
+    const features = new Set<string>();
+    if (currentContent.room.furniture.some((item) => item.id === "bed")) {
+      features.add("bed");
+    }
+    if (currentContent.room.furniture.some((item) => item.id === TABLE_FURNITURE_ID)) {
+      features.add("table");
+    }
+    for (const item of currentContent.placedItems ?? []) {
+      if (item.itemId === RECORD_PLAYER_ITEM_ID) features.add("record-player");
+      if (item.itemId === "game-console") features.add("game-console");
+      if (item.itemId === COFFEE_MACHINE_ITEM_ID) features.add("coffee-machine");
+      if (item.itemId === COFFEE_CUP_ITEM_ID) features.add("coffee-cup");
+    }
+    return [...features].slice(0, 10);
+  };
+
+  const socialDialogueCharacterPayload = (presence: AivatarRoomPresence) => ({
+    id: presence.avatarId,
+    name: presence.avatarName,
+    growthLevel: presence.growthLevel,
+    traits: presence.traits,
+    petStats: presence.petStats,
+    idleBubblePhrases: presence.idleBubblePhrases ?? [],
+  });
+
+  const socialDialoguePayloadForVisit = (
+    visit: AivatarVisitSession,
+    visitor: AivatarRoomVisitor,
+    currentContent: AivatarContent,
+  ) => {
+    const behavior = roomVisitBehaviorForVisitor(visitor);
+    const relationship = activeVisitRelationshipRef.current ?? relationshipForVisit(visit);
+    return {
+      visitId: visit.visitId,
+      locale: localeRef.current,
+      activity: behavior,
+      activityLabel: visitor.runtime.activityLabel ?? behavior,
+      host: socialDialogueCharacterPayload(visit.host),
+      guest: socialDialogueCharacterPayload(visit.guest),
+      relationship: {
+        affinity: relationship.affinity,
+        visits: relationship.visits,
+        unlockedActivities: relationship.unlockedActivities ?? [],
+        lastDialogueSummary: relationship.lastDialogueSummary,
+      },
+      roomFeatures: roomFeaturesForSocialDialogue(currentContent),
+      maxTurns: 4,
+      seedHint: [
+        visit.host.avatarId,
+        visit.guest.avatarId,
+        behavior,
+        relationship.visits,
+      ].join(":"),
+    };
+  };
+
+  const requestSocialDialogueForVisit = (
+    visit: AivatarVisitSession,
+    visitor: AivatarRoomVisitor,
+    currentContent: AivatarContent,
+  ) => {
+    if (roomVisitDialogueRef.current?.visitId === visit.visitId) return;
+    if (roomVisitDialogueRequestRef.current === visit.visitId) return;
+    roomVisitDialogueRequestRef.current = visit.visitId;
+    const payload = socialDialoguePayloadForVisit(visit, visitor, currentContent);
+
+    void postRoomJson(SOCIAL_DIALOGUE_URL, payload)
+      .then((value) => {
+        const dialogue = normalizeSocialDialogueValue(value);
+        if (!dialogue) return;
+        if (
+          activeVisitRef.current?.visitId !== visit.visitId ||
+          roomVisitorRef.current?.visitId !== visitor.visitId
+        ) {
+          return;
+        }
+        roomVisitDialogueRef.current = {
+          visitId: visit.visitId,
+          dialogue,
+          startedAt: performance.now() + ROOM_VISIT_DIALOGUE_START_DELAY_MS,
+          appliedLineIndex: -1,
+          completed: false,
+        };
+      })
+      .catch(() => {
+        console.warn("Could not generate room visit social dialogue.");
+      });
+  };
+
+  const dialogueLineAtTime = (
+    dialogue: AivatarSocialDialogue,
+    startedAt: number,
+    now: number,
+  ) => {
+    let cursor = startedAt;
+    for (let index = 0; index < dialogue.lines.length; index += 1) {
+      const line = dialogue.lines[index];
+      const durationMs = line.durationMs ?? 2300;
+      const lineStartedAt = cursor;
+      const lineEndedAt = cursor + durationMs;
+      if (now >= lineStartedAt && now < lineEndedAt) {
+        return { index, line, lineStartedAt, lineEndedAt };
+      }
+      cursor = lineEndedAt + ROOM_VISIT_DIALOGUE_LINE_GAP_MS;
+    }
+    return now >= cursor ? { completed: true as const } : null;
+  };
+
+  const applyRoomVisitDialoguePlayback = (
+    visitor: AivatarRoomVisitor,
+    now: number,
+  ): AivatarRoomVisitor => {
+    const playback = roomVisitDialogueRef.current;
+    if (!playback || playback.visitId !== visitor.visitId || playback.completed) {
+      return visitor;
+    }
+    const current = dialogueLineAtTime(playback.dialogue, playback.startedAt, now);
+    if (!current) return visitor;
+    if ("completed" in current) {
+      playback.completed = true;
+      if (
+        activeInteractionRef.current?.furnitureId === "room-visit-dialogue" ||
+        activeInteractionRef.current?.furnitureId === "room-visit-social"
+      ) {
+        updateActiveInteraction(null);
+      }
+      return visitor;
+    }
+
+    if (current.line.speaker === "host") {
+      if (playback.appliedLineIndex !== current.index) {
+        playback.appliedLineIndex = current.index;
+        updateActiveInteraction({
+          kind: "none",
+          furnitureId: "room-visit-dialogue",
+          furnitureName: ui("roomVisit.title"),
+          message: current.line.text,
+          startedAt: current.lineStartedAt,
+          endsAt: current.lineEndedAt,
+          bubbleText: current.line.text,
+        });
+      }
+      return { ...visitor, bubbleText: undefined };
+    }
+
+    if (
+      playback.appliedLineIndex !== current.index &&
+      (activeInteractionRef.current?.furnitureId === "room-visit-dialogue" ||
+        activeInteractionRef.current?.furnitureId === "room-visit-social")
+    ) {
+      updateActiveInteraction(null);
+    }
+    playback.appliedLineIndex = current.index;
+    return {
+      ...visitor,
+      bubbleText: current.line.text,
+      bubbleStartedAt: current.lineStartedAt,
+      runtime: {
+        ...visitor.runtime,
+        expression: current.line.expression ?? visitor.runtime.expression,
+      },
+    };
+  };
+
   const clearLocalVisitState = (returnHome: boolean) => {
     const visitId = activeVisitRef.current?.visitId ?? roomVisitorRef.current?.visitId;
     if (visitId) {
@@ -3743,7 +4168,10 @@ export const App = () => {
     setAvatarAway(false);
     avatarAwayRef.current = false;
     socialRoomMemoryRef.current = null;
+    activeVisitRelationshipRef.current = null;
     roomVisitHostActivityRef.current = null;
+    roomVisitDialogueRef.current = null;
+    roomVisitDialogueRequestRef.current = null;
     visitHostStartedAtRef.current = 0;
     visitStatePostedAtRef.current = 0;
 
@@ -3781,6 +4209,37 @@ export const App = () => {
         : visit.host.idleBubblePhrases?.[0];
     const partnerName = role === "host" ? visit.guest.avatarName : visit.host.avatarName;
     const behavior = visit.activity ?? "interact";
+    const relationship = relationshipForVisit(visit);
+    const completedDialogue =
+      roomVisitDialogueRef.current?.visitId === visit.visitId
+        ? roomVisitDialogueRef.current.dialogue
+        : null;
+    const completedRelationship = completeSocialRelationship(
+      relationship,
+      visit.visitId,
+      visit.host.traits,
+      visit.guest.traits,
+      behavior,
+    );
+    const dialogueRelationshipDelta = Math.max(
+      0,
+      Math.min(6, Math.round(completedDialogue?.relationshipDelta ?? 0)),
+    );
+    const nextRelationship = completedDialogue
+      ? {
+          ...completedRelationship,
+          affinity: Math.min(
+            999,
+            completedRelationship.affinity + dialogueRelationshipDelta,
+          ),
+          lastDialogueSummary:
+            completedDialogue.summary ?? completedRelationship.lastDialogueSummary,
+          lastDialogueSource:
+            completedDialogue.source ?? completedRelationship.lastDialogueSource,
+        }
+      : completedRelationship;
+    activeVisitRelationshipRef.current = nextRelationship;
+    writeSocialRelationship(nextRelationship);
 
     if (role === "guest") {
       const completedMemory = completeSocialRoomVisit(
@@ -4002,13 +4461,14 @@ export const App = () => {
       targetKey,
     };
     setAvatar(runtimeRef.current);
+    const bubbleStartedAt = now + ROOM_VISIT_HOST_REPLY_DELAY_MS;
     updateActiveInteraction({
       kind: "none",
       furnitureId: "room-visit-social",
       furnitureName: ui("roomVisit.title"),
       message: socialTarget.activityLabel,
-      startedAt: now,
-      endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
+      startedAt: bubbleStartedAt,
+      endsAt: bubbleStartedAt + INTERACTION_FEEDBACK_SECONDS * 1000,
       bubbleText: socialTarget.bubbleText,
     });
   };
@@ -4086,6 +4546,7 @@ export const App = () => {
 
     activeVisitRef.current = accepted;
     setActiveVisit(accepted);
+    syncActiveVisitRelationship(accepted);
     runtimeRef.current = {
       ...runtimeRef.current,
       targetX: ROOM_DOOR_OUTSIDE_POINT.x,
@@ -4127,6 +4588,35 @@ export const App = () => {
       if (incomingVisit && !saveMenuOpen) {
         acceptIncomingVisit(incomingVisit);
       }
+      const hostedVisit = snapshot.visits.find(
+        (visit) =>
+          visit.host.roomInstanceId === ownRoomInstanceId &&
+          visit.phase !== "invited" &&
+          visit.phase !== "cancelled" &&
+          visit.phase !== "ended",
+      );
+      if (hostedVisit && !saveMenuOpen) {
+        if (isRoomVisitSessionBusy()) {
+          publishVisitEnd(hostedVisit, "cancelled", ROOM_VISIT_BUSY_CANCEL_REASON);
+          setRoomVisitMessage(ui("roomVisit.busySelf"));
+          return;
+        }
+        const hostPresence = currentRoomPresence("hosting", hostedVisit.visitId);
+        const adoptedVisit = normalizeVisitSession({
+          ...hostedVisit,
+          host: hostPresence ?? hostedVisit.host,
+          hostLayoutFingerprint: hostLayoutFingerprint(contentRef.current),
+          hostRoomId: saveRef.current.roomId ?? "room",
+          updatedAt: roomVisitNowIso(),
+          expiresAt: roomVisitExpiresAt(),
+        });
+        if (!adoptedVisit) return;
+        activeVisitRef.current = adoptedVisit;
+        setActiveVisit(adoptedVisit);
+        syncActiveVisitRelationship(adoptedVisit);
+        setRoomVisitMessage(ui("roomVisit.waiting", { name: adoptedVisit.guest.avatarName }));
+        publishVisitState(adoptedVisit, {});
+      }
       return;
     }
 
@@ -4165,6 +4655,7 @@ export const App = () => {
 
     activeVisitRef.current = latestVisit;
     setActiveVisit(latestVisit);
+    syncActiveVisitRelationship(latestVisit);
 
     if (latestVisit.guest.roomInstanceId === ownRoomInstanceId) {
       sampleGuestVisitMemory(latestVisit);
@@ -4179,7 +4670,10 @@ export const App = () => {
     ) {
       const existingVisitor = roomVisitorRef.current;
       if (!existingVisitor || existingVisitor.visitId !== latestVisit.visitId) {
-        const visitor = createVisitorFromVisit(latestVisit);
+        const visitor = {
+          ...createVisitorFromVisit(latestVisit),
+          bubbleStartedAt: performance.now(),
+        };
         roomVisitorRef.current = visitor;
         setRoomVisitor(visitor);
         visitHostStartedAtRef.current = performance.now();
@@ -4221,6 +4715,7 @@ export const App = () => {
 
     activeVisitRef.current = visit;
     setActiveVisit(visit);
+    syncActiveVisitRelationship(visit);
     setRoomVisitor(null);
     roomVisitorRef.current = null;
     setRoomVisitMenuOpen(false);
@@ -4255,6 +4750,136 @@ export const App = () => {
         message: ui("roomVisit.connectionLost"),
       });
     });
+  };
+
+  const visitRoom = (room: AivatarRoomPresence) => {
+    if (isRoomVisitSessionBusy()) {
+      setRoomVisitMenuOpen(false);
+      setRoomVisitMessage(ui("roomVisit.busySelf"));
+      return;
+    }
+    if (room.status !== "home") {
+      setRoomVisitMessage(ui("roomVisit.busyOther", { name: room.avatarName }));
+      return;
+    }
+
+    const visitId = createVisitId();
+    const guest = currentRoomPresence("away", visitId);
+    if (!guest) {
+      setRoomVisitMessage(ui("roomVisit.noActiveSlot"));
+      return;
+    }
+
+    const visit = normalizeVisitSession({
+      type: "aivatar.room.visit",
+      visitId,
+      phase: "invited",
+      host: room,
+      guest,
+      hostLayoutFingerprint: room.roomId,
+      hostRoomId: room.roomId,
+      createdAt: roomVisitNowIso(),
+      updatedAt: roomVisitNowIso(),
+      expiresAt: roomVisitExpiresAt(),
+    });
+    if (!visit) return;
+
+    setRoomVisitMenuOpen(false);
+    setRoomVisitMessage(ui("roomVisit.accepted", { name: room.avatarName }));
+    syncActiveVisitRelationship(visit);
+    acceptIncomingVisit(visit);
+  };
+
+  const onlineRoomsForAutonomousVisit = (nowMs: number) =>
+    (roomSnapshotRef.current?.rooms ?? []).filter((room) => {
+      if (room.roomInstanceId === roomInstanceIdRef.current) return false;
+      if (room.slotId === activeSaveSlotIdRef.current) return false;
+      if (room.status !== "home") return false;
+      const expiresAt = Date.parse(room.expiresAt);
+      return Number.isNaN(expiresAt) || expiresAt > nowMs;
+    });
+
+  const canStartAutonomousRoomVisit = (nowMs: number) => {
+    if (!activeSaveSlotIdRef.current || saveMenuOpenRef.current) return false;
+    if (roomVisitMenuOpenRef.current || activeVisitRef.current || avatarAwayRef.current) return false;
+    if (nowMs < autonomousRoomVisitCooldownUntilRef.current) return false;
+    if (isRoomVisitSessionBusy()) return false;
+    if (pendingWorldInteractionRef.current) return false;
+    if (isBlockingInteraction(activeInteractionRef.current)) return false;
+    return onlineRoomsForAutonomousVisit(nowMs).length > 0;
+  };
+
+  const pickAutonomousRoomVisitTarget = (
+    rooms: AivatarRoomPresence[],
+    ownPresence: AivatarRoomPresence,
+    nowMs: number,
+  ) => {
+    const ownMemory = normalizeMemory(saveRef.current.memory);
+    const candidates = rooms
+      .map((room) => {
+        const relationship = readSocialRelationship(ownPresence.avatarId, room.avatarId);
+        const pairCooldownUntil = readPairCooldownUntil(ownPresence.avatarId, room.avatarId);
+        if (pairCooldownUntil > nowMs) return null;
+        const willingness = socialWillingnessScore(ownPresence, {
+          base: ownMemory.preferences.socialWillingness,
+          affinity: relationship.affinity,
+          lastVisitAt: relationship.lastVisitAt,
+          nowMs,
+        });
+        return {
+          room,
+          relationship,
+          willingness,
+          weight: willingness + relationship.affinity / 35,
+        };
+      })
+      .filter(
+        (candidate): candidate is {
+          room: AivatarRoomPresence;
+          relationship: AivatarSocialRelationship;
+          willingness: number;
+          weight: number;
+        } => candidate !== null && candidate.weight > 0,
+      )
+      .sort((left, right) => right.weight - left.weight);
+
+    const topCandidate = candidates[0];
+    if (!topCandidate || !shouldAttemptAutonomousVisit(topCandidate.willingness)) {
+      return null;
+    }
+    return topCandidate;
+  };
+
+  const startAutonomousRoomVisit = (nowMs = Date.now()) => {
+    if (!canStartAutonomousRoomVisit(nowMs)) return;
+    const ownPresence = currentRoomPresence("home");
+    if (!ownPresence) return;
+    const rooms = onlineRoomsForAutonomousVisit(nowMs);
+    const target = pickAutonomousRoomVisitTarget(rooms, ownPresence, nowMs);
+    if (!target) return;
+
+    autonomousRoomVisitCooldownUntilRef.current = nowMs + ROOM_VISIT_AUTO_COOLDOWN_MS;
+    writePairCooldownUntil(
+      ownPresence.avatarId,
+      target.room.avatarId,
+      nowMs + ROOM_VISIT_PAIR_COOLDOWN_MS,
+    );
+
+    const traits = ownPresence.traits;
+    const curiosity = traits.curiosity;
+    const warmth = traits.warmth;
+    const visitBias = Math.min(
+      0.68,
+      Math.max(
+        0.28,
+        0.44 + (curiosity - warmth) / 4000 + target.relationship.affinity / 9000,
+      ),
+    );
+    if (Math.random() < visitBias) {
+      visitRoom(target.room);
+    } else {
+      inviteRoom(target.room);
+    }
   };
 
   const openRoomVisitMenu = () => {
@@ -5284,6 +5909,14 @@ export const App = () => {
   }, [activeSaveSlotId]);
 
   useEffect(() => {
+    saveMenuOpenRef.current = saveMenuOpen;
+  }, [saveMenuOpen]);
+
+  useEffect(() => {
+    roomVisitMenuOpenRef.current = roomVisitMenuOpen;
+  }, [roomVisitMenuOpen]);
+
+  useEffect(() => {
     saveRef.current = save;
     if (!activeSaveSlotId) return;
 
@@ -5382,6 +6015,15 @@ export const App = () => {
         publishVisitEnd(activeRoomVisit, "cancelled", "room closed");
       }
     };
+  }, [activeSaveSlotId, saveMenuOpen]);
+
+  useEffect(() => {
+    if (!activeSaveSlotId || saveMenuOpen) return;
+    const timer = window.setInterval(
+      () => startAutonomousRoomVisit(Date.now()),
+      ROOM_VISIT_AUTO_CHECK_MS,
+    );
+    return () => window.clearInterval(timer);
   }, [activeSaveSlotId, saveMenuOpen]);
 
   const compactPaintingPlanText = (value: unknown, maxLength: number) =>
@@ -5629,6 +6271,12 @@ export const App = () => {
     bentoEatAudio.volume = audioVolume;
     bentoEatAudioRef.current = bentoEatAudio;
 
+    const sleepSnoreAudio = new Audio(SLEEP_SNORE_AUDIO_SRC);
+    sleepSnoreAudio.loop = true;
+    sleepSnoreAudio.preload = "auto";
+    sleepSnoreAudio.volume = audioVolume;
+    sleepSnoreAudioRef.current = sleepSnoreAudio;
+
     const gameAudio = new Audio(gameConsoleAudioSourceRef.current);
     gameAudio.loop = true;
     gameAudio.preload = "auto";
@@ -5652,6 +6300,7 @@ export const App = () => {
       colaDrinkAudio.pause();
       coffeeDrinkAudio.pause();
       bentoEatAudio.pause();
+      sleepSnoreAudio.pause();
       if (colaDrinkAudioTimeoutRef.current !== null) {
         window.clearTimeout(colaDrinkAudioTimeoutRef.current);
         colaDrinkAudioTimeoutRef.current = null;
@@ -5672,6 +6321,7 @@ export const App = () => {
       colaDrinkAudioRef.current = null;
       coffeeDrinkAudioRef.current = null;
       bentoEatAudioRef.current = null;
+      sleepSnoreAudioRef.current = null;
       gameConsoleAudioRef.current = null;
       bgmAudioRef.current = null;
     };
@@ -5690,6 +6340,7 @@ export const App = () => {
       colaDrinkAudioRef.current,
       coffeeDrinkAudioRef.current,
       bentoEatAudioRef.current,
+      sleepSnoreAudioRef.current,
       gameConsoleAudioRef.current,
     ].forEach((audio) => {
       if (!audio) return;
@@ -5792,6 +6443,7 @@ export const App = () => {
     const isColaSipping = activeBehavior === "cola";
     const isCoffeeSipping = activeBehavior === "coffee";
     const isFoodEating = activeBehavior === "bento" || activeBehavior === "cookie";
+    const isSleepingForAudio = avatar.behavior === "sleep" && !avatar.actionIntent;
 
     if (isGameConsoleAnimating && !gameConsoleAnimatingRef.current) {
       prepareGameConsoleAudioForNewPlay();
@@ -5884,6 +6536,11 @@ export const App = () => {
       gameConsoleAudioRef.current,
       isGameConsoleAnimating && canPlayAudio && gameConsoleVolume > 0,
       gameConsoleVolume,
+    );
+    setAudioPlaying(
+      sleepSnoreAudioRef.current,
+      isSleepingForAudio && canPlayAudio,
+      SLEEP_SNORE_AUDIO_VOLUME_MULTIPLIER,
     );
     setRecordPlayerBgmPlaying(isRecordPlayerAnimating && canPlayAudio);
   }, [
@@ -6240,20 +6897,29 @@ export const App = () => {
           visitHostStartedAtRef.current = now;
         }
 
-        let nextVisitor = advanceRoomVisitor(
+        let nextVisitor: AivatarRoomVisitor = advanceRoomVisitor(
           visitor,
           currentContent,
           runtimeRef.current,
           activeRoomVisit.guest.traits,
           elapsedSeconds,
+          now,
           activeRoomVisit.guestSocialNavMemory,
+          activeVisitRelationshipRef.current?.affinity ?? 0,
         );
         const socialSeconds = (now - visitHostStartedAtRef.current) / 1000;
+        const socialDurationSeconds = roomVisitSocialDurationSeconds(
+          activeVisitRelationshipRef.current?.affinity ?? 0,
+        );
         let nextVisitPhase: AivatarVisitSession["phase"] =
           nextVisitor.phase === "socializing" ? "active" : activeRoomVisit.phase;
 
+        if (nextVisitor.phase === "socializing") {
+          requestSocialDialogueForVisit(activeRoomVisit, nextVisitor, currentContent);
+        }
+
         if (
-          socialSeconds >= ROOM_VISIT_SOCIAL_SECONDS &&
+          socialSeconds >= socialDurationSeconds &&
           nextVisitor.phase !== "leaving"
         ) {
           roomVisitHostActivityRef.current = null;
@@ -6269,6 +6935,7 @@ export const App = () => {
               activityLabel: "Heading home",
             },
             bubbleText: "roomVisit.bubble.leave.1",
+            bubbleStartedAt: now,
           };
           nextVisitPhase = "returning";
         }
@@ -6283,6 +6950,7 @@ export const App = () => {
             busyRecoveryActive,
             taskCabinetVisualFlowActive,
           });
+          nextVisitor = applyRoomVisitDialoguePlayback(nextVisitor, now);
         }
 
         roomVisitorRef.current = nextVisitor;
@@ -7476,9 +8144,22 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
-    const sessionKey = statusSessionKey(effectiveStatus);
-    const previousStatus = previousSessionStatusRef.current.get(sessionKey);
-    previousSessionStatusRef.current.set(sessionKey, effectiveStatus.status);
+    const statusCandidatesBySession = new Map<string, CodexStatusMessage>();
+    [effectiveStatus, ...sessions].forEach((candidate) => {
+      statusCandidatesBySession.set(statusSessionKey(candidate), candidate);
+    });
+
+    const previousStatusesBySession = new Map<
+      string,
+      CodexStatusMessage["status"] | undefined
+    >();
+    statusCandidatesBySession.forEach((candidate, candidateSessionKey) => {
+      previousStatusesBySession.set(
+        candidateSessionKey,
+        previousSessionStatusRef.current.get(candidateSessionKey),
+      );
+      previousSessionStatusRef.current.set(candidateSessionKey, candidate.status);
+    });
 
     const learning = effectiveStatus.learning;
     if (learning) {
@@ -7497,7 +8178,6 @@ export const App = () => {
     }
 
     const isSessionLearningStatus = effectiveStatus.phase === "session-learning";
-
     if (
       !isSessionLearningStatus &&
       isRewardAgent(effectiveStatus) &&
@@ -7510,63 +8190,65 @@ export const App = () => {
       }));
     }
 
-    if (effectiveStatus.status !== "complete") return;
-    if (isSessionLearningStatus) return;
-    if (!isRewardAgent(effectiveStatus)) return;
-    const completedAt = Date.parse(effectiveStatus.timestamp);
-    const freshComplete =
-      !Number.isNaN(completedAt) &&
-      Date.now() - completedAt <= COMPLETE_REWARD_FRESH_MS;
-    const followedSession =
-      sessionKey === activeSessionKey || sessionKey === connectedSessionKey;
-    const activeTransition =
-      previousStatus && isRewardEligiblePreviousStatus(previousStatus);
-    if (!activeTransition && !(freshComplete && followedSession)) return;
+    statusCandidatesBySession.forEach((candidate, candidateSessionKey) => {
+      if (candidate.status !== "complete") return;
+      if (candidate.phase === "session-learning") return;
+      if (!isRewardAgent(candidate)) return;
 
-    const completeKey = [
-      effectiveStatus.agent,
-      effectiveStatus.sessionId ?? "default",
-      effectiveStatus.timestamp,
-    ].join(":");
-    if (lastRewardedCompleteKeyRef.current === completeKey) return;
-    lastRewardedCompleteKeyRef.current = completeKey;
+      const previousStatus = previousStatusesBySession.get(candidateSessionKey);
+      const activeTransition =
+        previousStatus && isRewardEligiblePreviousStatus(previousStatus);
+      const completedAt = Date.parse(candidate.timestamp);
+      const freshComplete =
+        !Number.isNaN(completedAt) &&
+        Date.now() - completedAt <= COMPLETE_REWARD_FRESH_MS;
+      if (!activeTransition && !freshComplete) return;
 
-    const workBoostBits =
-      getWorkBoostRemainingSeconds(save.workBoostUntil, Date.now()) > 0
-        ? WORK_BOOST_COMPLETE_BONUS
-        : 0;
-    const rewardBits = Math.min(
-      maxRewardBitsForUsage(effectiveStatus.usage),
-      rewardBitsForUsage(effectiveStatus.usage) + workBoostBits,
-    );
+      const completeKey = [
+        candidate.agent,
+        candidate.sessionId ?? "default",
+        candidate.timestamp,
+      ].join(":");
+      if (rewardedCompleteKeysRef.current.has(completeKey)) return;
+      rewardedCompleteKeysRef.current.add(completeKey);
 
-    setSave((current) => ({
-      ...current,
-      wallet: { bits: current.wallet.bits + rewardBits },
-      memory: recordTaskCompleteMemory(
-        current.memory,
-        effectiveStatus,
-        previousStatus,
+      const workBoostBits =
+        getWorkBoostRemainingSeconds(save.workBoostUntil, Date.now()) > 0
+          ? WORK_BOOST_COMPLETE_BONUS
+          : 0;
+      const rewardBits = Math.min(
+        maxRewardBitsForUsage(candidate.usage),
+        rewardBitsForUsage(candidate.usage) + workBoostBits,
+      );
+
+      setSave((current) => ({
+        ...current,
+        wallet: { bits: current.wallet.bits + rewardBits },
+        memory: recordTaskCompleteMemory(
+          current.memory,
+          candidate,
+          previousStatus,
+          rewardBits,
+        ),
+      }));
+      playOneShotAudio(
+        agentCompleteAudioRef.current,
+        AGENT_COMPLETE_AUDIO_VOLUME_MULTIPLIER,
+      );
+      const now = performance.now();
+      const rewardAgentName = agentDisplayName(candidate);
+      updateActiveInteraction({
+        kind: "none",
+        furnitureId: candidate.agent ?? "agent",
+        furnitureName: rewardAgentName,
+        message: `${rewardAgentName} complete: +${rewardBits} ${ui("currency.bits")}${
+          workBoostBits > 0 ? ui("message.withBoost") : ""
+        }.`,
+        startedAt: now,
+        endsAt: now + REWARD_BUBBLE_SECONDS * 1000,
+        bubbleText: `+${rewardBits} ${ui("currency.bits")}`,
         rewardBits,
-      ),
-    }));
-    playOneShotAudio(
-      agentCompleteAudioRef.current,
-      AGENT_COMPLETE_AUDIO_VOLUME_MULTIPLIER,
-    );
-    const now = performance.now();
-    const rewardAgentName = agentDisplayName(effectiveStatus);
-    updateActiveInteraction({
-      kind: "none",
-      furnitureId: effectiveStatus.agent ?? "agent",
-      furnitureName: rewardAgentName,
-      message: `${rewardAgentName} complete: +${rewardBits} ${ui("currency.bits")}${
-        workBoostBits > 0 ? ui("message.withBoost") : ""
-      }.`,
-      startedAt: now,
-      endsAt: now + REWARD_BUBBLE_SECONDS * 1000,
-      bubbleText: `+${rewardBits} ${ui("currency.bits")}`,
-      rewardBits,
+      });
     });
   }, [
     activeSessionKey,
@@ -7578,6 +8260,7 @@ export const App = () => {
     effectiveStatus.status,
     locale,
     save.workBoostUntil,
+    sessions,
   ]);
 
   const inventoryItems = save.inventory
@@ -9332,7 +10015,11 @@ export const App = () => {
       if (furniture.id === TASK_CABINET_FURNITURE_ID) {
         const placedItems = current.placedItems.map((item) =>
           item.itemId === TASK_CABINET_FURNITURE_ID
-            ? { ...item, x: next.x + 22, y: next.y + 58 }
+            ? {
+                ...item,
+                x: next.x + FILE_CABINET_PLACED_ITEM_OFFSET_X,
+                y: next.y + FILE_CABINET_PLACED_ITEM_OFFSET_Y,
+              }
             : item,
         );
 
@@ -11252,6 +11939,7 @@ export const App = () => {
 
   return (
     <main
+      lang={locale}
       className={`app-shell ${
         uiTheme === "terminal-amber" ? "theme-terminal theme-terminal-amber" : `theme-${uiTheme}`
       }${sidePanelOpen ? "" : " side-panel-collapsed"}${
@@ -11477,18 +12165,22 @@ export const App = () => {
         {!sidePanelOpen && !sidePanelAnimating && currentSessionContextMeter ? (
           <div
             className={`room-context-overlay ${currentSessionContextMeter.level}`}
-            aria-label={`${ui("sessions.context")} ${currentSessionContextMeter.percentLabel}`}
+            aria-label={currentSessionContextMeter.meters
+              .map((meter) => `${ui(meter.labelKey)} ${meter.percentLabel}`)
+              .join(", ")}
           >
-            <div>
-              <span>{ui("sessions.context")}</span>
-              <strong>{currentSessionContextMeter.percentLabel}</strong>
-            </div>
-            <div className="room-context-bar">
-              <div
-                className="room-context-fill"
-                style={{ width: `${currentSessionContextMeter.percent}%` }}
-              />
-            </div>
+            {currentSessionContextMeter.meters.map((meter) => (
+              <div key={meter.key} className={`room-context-row ${meter.level}`}>
+                <span>{ui(meter.labelKey)}</span>
+                <div className="room-context-bar">
+                  <div
+                    className="room-context-fill"
+                    style={{ width: `${meter.percent}%` }}
+                  />
+                </div>
+                <strong>{meter.percentLabel}</strong>
+              </div>
+            ))}
           </div>
         ) : null}
         {!sidePanelOpen && !sidePanelAnimating ? (
@@ -11513,9 +12205,14 @@ export const App = () => {
                   {Math.round(growth.xp)}/{xpToNextLevel} {ui("growth.xp")}
                 </b>
               </div>
-              <span className="room-growth-trait">
-                {ui(`growth.trait.${dominantTrait}`)} {growth.traits[dominantTrait]}
-              </span>
+              <div className="room-growth-footer">
+                <span className="room-growth-trait">
+                  {ui(`growth.trait.${dominantTrait}`)} {growth.traits[dominantTrait]}
+                </span>
+                <b className="room-growth-bits">
+                  {save.wallet.bits} {ui("currency.bits")}
+                </b>
+              </div>
             </div>
           </>
         ) : null}
