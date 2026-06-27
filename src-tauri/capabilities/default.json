@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default desktop permissions for Aivatar.",
-  "windows": ["main"],
+  "windows": ["main", "save-slot-*"],
   "permissions": ["core:default", "core:window:allow-set-always-on-top"]
 }

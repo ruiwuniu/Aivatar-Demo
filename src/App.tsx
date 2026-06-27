@@ -158,6 +158,10 @@ type AgentIntegrationStatus = {
   cli_path?: string | null;
 };
 
+type SaveSlotWindowResult = {
+  label: string;
+};
+
 const SAVE_KEY = "aivatar.save.v1";
 const SAVE_SLOTS_KEY = "aivatar.saveSlots.v1";
 const ACTIVE_SAVE_SLOT_KEY = "aivatar.activeSaveSlot.v1";
@@ -2922,6 +2926,21 @@ const resolveActiveSaveSlotId = (slots: SaveSlotSummary[]) => {
   return slots[0]?.id ?? null;
 };
 
+const resolveRequestedSaveSlotId = (slots: SaveSlotSummary[]) => {
+  try {
+    const requestedSlotId = new URLSearchParams(window.location.search)
+      .get("slotId")
+      ?.trim();
+    if (requestedSlotId && slots.some((slot) => slot.id === requestedSlotId)) {
+      return requestedSlotId;
+    }
+  } catch {
+    // Web or test environments without a normal location fall back to the default slot.
+  }
+
+  return null;
+};
+
 const persistActiveSaveSlotId = (slotId: string | null) => {
   try {
     if (slotId) {
@@ -3346,13 +3365,19 @@ export const App = () => {
   const roomEditPanelRef = useRef<HTMLElement | null>(null);
   const initialSaveSlotsRef = useRef<SaveSlotSummary[] | null>(null);
   const initialActiveSaveSlotIdRef = useRef<string | null>(null);
+  const initialRequestedSaveSlotIdRef = useRef<string | null>(null);
   const initialSaveRef = useRef<AivatarSaveState | null>(null);
   const loadInitialSaveSlots = () => {
     if (!initialSaveSlotsRef.current) {
       initialSaveSlotsRef.current = ensureSaveSlotRegistry(defaultContent);
+      initialRequestedSaveSlotIdRef.current = resolveRequestedSaveSlotId(
+        initialSaveSlotsRef.current,
+      );
       initialActiveSaveSlotIdRef.current = resolveActiveSaveSlotId(
         initialSaveSlotsRef.current,
       );
+      initialActiveSaveSlotIdRef.current =
+        initialRequestedSaveSlotIdRef.current ?? initialActiveSaveSlotIdRef.current;
     }
     return initialSaveSlotsRef.current;
   };
@@ -3443,8 +3468,10 @@ export const App = () => {
   const [activeSaveSlotId, setActiveSaveSlotId] = useState<string | null>(
     () => initialActiveSaveSlotIdRef.current,
   );
-  const [saveMenuOpen, setSaveMenuOpen] = useState(true);
-  const saveMenuOpenRef = useRef(true);
+  const [saveMenuOpen, setSaveMenuOpen] = useState(
+    () => !initialRequestedSaveSlotIdRef.current,
+  );
+  const saveMenuOpenRef = useRef(!initialRequestedSaveSlotIdRef.current);
   const [creatingSaveSlotIndex, setCreatingSaveSlotIndex] = useState<number | null>(
     saveSlots.length === 0 ? 0 : null,
   );
@@ -5617,6 +5644,30 @@ export const App = () => {
     persistCurrentSaveSlot();
     const nextSave = loadSave(contentBase, saveSlotStorageKey(slot.id));
     applySaveSlotState(slot.id, nextSave);
+  };
+
+  const openSaveSlotWindow = async (slot: SaveSlotSummary) => {
+    setSaveSlotMessage("");
+    if (slot.id === activeSaveSlotIdRef.current) {
+      setSaveSlotMessage(ui("saveSlots.windowAlreadyOpen"));
+      return;
+    }
+
+    persistCurrentSaveSlot();
+
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke<SaveSlotWindowResult>("open_save_slot_window", {
+        request: {
+          slot_id: slot.id,
+          avatar_name: slot.avatarName,
+        },
+      });
+      setSaveSlotMessage(ui("saveSlots.windowOpened", { name: slot.avatarName }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setSaveSlotMessage(detail || ui("saveSlots.windowDesktopOnly"));
+    }
   };
 
   const startCreateSaveSlot = (slotIndex: number) => {
@@ -12017,6 +12068,13 @@ export const App = () => {
                         onClick={() => selectSaveSlot(slot.id)}
                       >
                         {ui("saveSlots.enter")}
+                      </button>
+                      <button
+                        type="button"
+                        className="pixel-button save-slot-window-button"
+                        onClick={() => void openSaveSlotWindow(slot)}
+                      >
+                        {ui("saveSlots.openWindow")}
                       </button>
                       <button
                         type="button"

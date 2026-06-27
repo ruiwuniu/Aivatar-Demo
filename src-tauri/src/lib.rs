@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+use std::hash::{Hash, Hasher};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -63,7 +65,82 @@ struct AgentIntegrationStatus {
     cli_path: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+struct SaveSlotWindowRequest {
+    slot_id: String,
+    avatar_name: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct SaveSlotWindowResult {
+    label: String,
+}
+
 const MAX_TASK_PROMPT_CHARS: usize = 24_000;
+
+fn hash_value(value: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn save_slot_window_label(slot_id: &str) -> String {
+    let sanitized: String = slot_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let compact = sanitized.trim_matches('-');
+    let prefix: String = compact.chars().take(40).collect();
+    let prefix = if prefix.is_empty() { "slot" } else { &prefix };
+
+    format!("save-slot-{prefix}-{:016x}", hash_value(slot_id))
+}
+
+fn url_component(value: &str) -> String {
+    let mut encoded = String::new();
+
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => {
+                let _ = write!(encoded, "%{byte:02X}");
+            }
+        }
+    }
+
+    encoded
+}
+
+fn attach_save_before_close_handler(window: tauri::WebviewWindow) {
+    let closing = Arc::new(AtomicBool::new(false));
+    let window_for_event = window.clone();
+    let closing_for_event = Arc::clone(&closing);
+
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if closing_for_event.load(Ordering::SeqCst) {
+                return;
+            }
+
+            api.prevent_close();
+            closing_for_event.store(true, Ordering::SeqCst);
+            let window_for_close = window_for_event.clone();
+            let _ = window_for_event.emit("aivatar://save-before-close", ());
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let _ = window_for_close.close();
+            });
+        }
+    });
+}
 
 fn project_root() -> Result<std::path::PathBuf, String> {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1188,6 +1265,52 @@ fn resize_main_window_for_side_panel(
     Ok(())
 }
 
+#[tauri::command]
+async fn open_save_slot_window(
+    app: tauri::AppHandle,
+    request: SaveSlotWindowRequest,
+) -> Result<SaveSlotWindowResult, String> {
+    let slot_id = request.slot_id.trim();
+    if slot_id.is_empty() {
+        return Err("Save slot id is required.".to_string());
+    }
+
+    let label = save_slot_window_label(slot_id);
+    if let Some(window) = app.get_webview_window(&label) {
+        window
+            .set_focus()
+            .map_err(|error| format!("Could not focus save window: {error}"))?;
+        return Ok(SaveSlotWindowResult { label });
+    }
+
+    let title = request
+        .avatar_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| format!("Aivatar - {name}"))
+        .unwrap_or_else(|| "Aivatar".to_string());
+    let url = format!("./?slotId={}", url_component(slot_id));
+    let window = tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
+    )
+    .title(title)
+    .inner_size(760.0, 520.0)
+    .min_inner_size(720.0, 500.0)
+    .resizable(false)
+    .always_on_top(false)
+    .decorations(true)
+    .focused(true)
+    .build()
+    .map_err(|error| format!("Could not open save window: {error}"))?;
+
+    attach_save_before_close_handler(window);
+
+    Ok(SaveSlotWindowResult { label })
+}
+
 fn safe_social_room_memory_key(key: &str) -> String {
     let sanitized: String = key
         .chars()
@@ -1266,6 +1389,7 @@ pub fn run() {
             start_agent_cli,
             start_task_agent,
             resize_main_window_for_side_panel,
+            open_save_slot_window,
             get_agent_integrations,
             enable_agent_integration,
             read_social_room_memory,
@@ -1273,25 +1397,7 @@ pub fn run() {
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
-                let closing = Arc::new(AtomicBool::new(false));
-                let window_for_event = window.clone();
-                let closing_for_event = Arc::clone(&closing);
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        if closing_for_event.load(Ordering::SeqCst) {
-                            return;
-                        }
-
-                        api.prevent_close();
-                        closing_for_event.store(true, Ordering::SeqCst);
-                        let window_for_close = window_for_event.clone();
-                        let _ = window_for_event.emit("aivatar://save-before-close", ());
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(150));
-                            let _ = window_for_close.close();
-                        });
-                    }
-                });
+                attach_save_before_close_handler(window);
             }
             let app_handle = app.handle().clone();
             let _ = start_status_bridge_inner(Some(&app_handle));
