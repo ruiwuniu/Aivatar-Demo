@@ -3472,6 +3472,7 @@ export const App = () => {
     () => !initialRequestedSaveSlotIdRef.current,
   );
   const saveMenuOpenRef = useRef(!initialRequestedSaveSlotIdRef.current);
+  const [saveMenuOpenedFromRoom, setSaveMenuOpenedFromRoom] = useState(false);
   const [creatingSaveSlotIndex, setCreatingSaveSlotIndex] = useState<number | null>(
     saveSlots.length === 0 ? 0 : null,
   );
@@ -5623,6 +5624,7 @@ export const App = () => {
     hadSavedStateRef.current = true;
     setActiveSaveSlotId(slotId);
     setSaveMenuOpen(false);
+    setSaveMenuOpenedFromRoom(false);
     setCreatingSaveSlotIndex(null);
     clearSelectedRoomObject();
     updatePlacingItem(null);
@@ -5644,6 +5646,15 @@ export const App = () => {
     persistCurrentSaveSlot();
     const nextSave = loadSave(contentBase, saveSlotStorageKey(slot.id));
     applySaveSlotState(slot.id, nextSave);
+  };
+
+  const openSaveSlotManager = () => {
+    setSaveSlotMessage("");
+    setDeleteSaveSlot(null);
+    setCreatingSaveSlotIndex(null);
+    persistCurrentSaveSlot();
+    setSaveMenuOpenedFromRoom(true);
+    setSaveMenuOpen(true);
   };
 
   const openSaveSlotWindow = async (slot: SaveSlotSummary) => {
@@ -5795,6 +5806,7 @@ export const App = () => {
       runtimeRef.current = initialAvatarRuntime();
       setAvatar(runtimeRef.current);
       setSave(saveFromContent(contentBase));
+      setSaveMenuOpenedFromRoom(false);
       setSaveMenuOpen(true);
       setCreatingSaveSlotIndex(nextSlots.length === 0 ? 0 : null);
     }
@@ -9231,6 +9243,7 @@ export const App = () => {
   const clearSaveState = () => {
     const activeSlotId = activeSaveSlotIdRef.current;
     if (!activeSlotId) {
+      setSaveMenuOpenedFromRoom(false);
       setSaveMenuOpen(true);
       setCreatingSaveSlotIndex(0);
       return;
@@ -12069,13 +12082,15 @@ export const App = () => {
                       >
                         {ui("saveSlots.enter")}
                       </button>
-                      <button
-                        type="button"
-                        className="pixel-button save-slot-window-button"
-                        onClick={() => void openSaveSlotWindow(slot)}
-                      >
-                        {ui("saveSlots.openWindow")}
-                      </button>
+                      {saveMenuOpenedFromRoom && slot.id !== activeSaveSlotId ? (
+                        <button
+                          type="button"
+                          className="pixel-button save-slot-window-button"
+                          onClick={() => void openSaveSlotWindow(slot)}
+                        >
+                          {ui("saveSlots.openWindow")}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="pixel-button danger-button save-slot-delete-button"
@@ -12521,6 +12536,14 @@ export const App = () => {
                   onChange={(event) => updateAvatarName(event.target.value)}
                 />
               </label>
+
+              <button
+                type="button"
+                className="pixel-button"
+                onClick={openSaveSlotManager}
+              >
+                {ui("saveSlots.manage")}
+              </button>
 
               <div className="language-switch" aria-label={ui("app.language")}>
                 {localeOptions.map((option) => (
