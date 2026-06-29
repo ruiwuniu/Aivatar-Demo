@@ -1639,14 +1639,47 @@ const readBody = (request) =>
     request.on("error", reject);
   });
 
+const allowedCorsOrigin = (origin) => {
+  if (typeof origin !== "string" || !origin.trim()) return "";
+  try {
+    const parsed = new URL(origin);
+    const hasOriginOnlyPath =
+      (parsed.pathname === "" || parsed.pathname === "/") &&
+      parsed.search === "" &&
+      parsed.hash === "";
+    if (parsed.protocol === "tauri:" && parsed.hostname === "localhost" && hasOriginOnlyPath) {
+      return "tauri://localhost";
+    }
+    if (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      hasOriginOnlyPath &&
+      (parsed.hostname === "localhost" ||
+        parsed.hostname === "127.0.0.1" ||
+        parsed.hostname === "tauri.localhost")
+    ) {
+      return parsed.origin;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+};
+
 const sendJson = (response, statusCode, payload) => {
+  const corsOrigin = response.aivatarCorsOrigin;
+  const corsHeaders = corsOrigin
+    ? {
+        "access-control-allow-origin": corsOrigin,
+        vary: "Origin",
+      }
+    : {};
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
-    "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
     "access-control-allow-headers": "content-type",
+    ...corsHeaders,
   });
-  response.end(JSON.stringify(payload));
+  response.end(statusCode === 204 ? "" : JSON.stringify(payload));
 };
 
 const roomTimestampMs = (value) => {
@@ -1855,6 +1888,12 @@ wsHttpServer.on("upgrade", (request, socket, head) => {
     socket.destroy();
     return;
   }
+  const requestOrigin = request.headers.origin;
+  if (requestOrigin && !allowedCorsOrigin(requestOrigin)) {
+    socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+    socket.destroy();
+    return;
+  }
 
   wsServer.handleUpgrade(request, socket, head, (websocket) => {
     wsServer.emit("connection", websocket, request);
@@ -1862,6 +1901,14 @@ wsHttpServer.on("upgrade", (request, socket, head) => {
 });
 
 const httpServer = http.createServer(async (request, response) => {
+  const requestOrigin = request.headers.origin;
+  const corsOrigin = allowedCorsOrigin(requestOrigin);
+  response.aivatarCorsOrigin = corsOrigin;
+  if (requestOrigin && !corsOrigin) {
+    sendJson(response, 403, { error: "Origin not allowed" });
+    return;
+  }
+
   if (request.method === "OPTIONS") {
     sendJson(response, 204, {});
     return;

@@ -101,6 +101,22 @@ import {
   t,
   type Locale,
 } from "./i18n";
+import {
+  SHOP_BULK_PURCHASE_QUANTITY,
+  SHOP_LONG_PRESS_CLICK_SUPPRESSION_MS,
+  SHOP_LONG_PRESS_MS,
+  SHOP_PURCHASE_COOLDOWN_MS,
+  affordableShopPurchaseQuantity as affordableShopPurchaseQuantityBase,
+  getShopItemUnlockLevel as getShopItemUnlockLevelBase,
+  isBulkPurchasableShopItem as isBulkPurchasableShopItemBase,
+  isFloorSurfaceItem,
+  isFurnitureSkinItem,
+  isSurfaceItem,
+  isUniqueShopItemOwned as isUniqueShopItemOwnedBase,
+  isWallSurfaceItem,
+  isWindowItem,
+  reserveShopPurchaseSlot as reserveShopPurchaseSlotBase,
+} from "./shopPurchase";
 import type {
   AivatarContent,
   AivatarGrowthTraits,
@@ -639,20 +655,6 @@ const SHOP_CATEGORIES: Array<{ id: ShopCategoryId; copyKey: string }> = [
   { id: "hangings", copyKey: "shop.hangings" },
 ];
 
-const isWallSurfaceItem = (item: ItemDefinition) =>
-  item.tags?.includes("wall-surface") ?? false;
-
-const isFloorSurfaceItem = (item: ItemDefinition) =>
-  item.tags?.includes("floor-surface") ?? false;
-
-const isSurfaceItem = (item: ItemDefinition) =>
-  isWallSurfaceItem(item) || isFloorSurfaceItem(item);
-
-const isWindowItem = (item: ItemDefinition) => item.kind === "window";
-
-const isFurnitureSkinItem = (item: ItemDefinition) =>
-  item.tags?.includes("furniture-skin") ?? false;
-
 const getShopCategoryId = (item: ItemDefinition): ShopCategoryId => {
   if (item.kind === "window") return "windows";
   if (isFurnitureSkinItem(item)) return "furniture-skins";
@@ -665,20 +667,39 @@ const getShopCategoryId = (item: ItemDefinition): ShopCategoryId => {
   return "furniture";
 };
 
+const UNIQUE_SHOP_ITEM_IDS = new Set<string>([TASK_CABINET_FURNITURE_ID]);
+const SPECIAL_SHOP_UNLOCK_LEVELS: Readonly<Record<string, number>> = {
+  [TASK_CABINET_FURNITURE_ID]: TASK_CABINET_UNLOCK_LEVEL,
+};
+
 const getShopItemUnlockLevel = (item: ItemDefinition) =>
-  item.unlockLevel ??
-  (item.id === TASK_CABINET_FURNITURE_ID ? TASK_CABINET_UNLOCK_LEVEL : 0);
+  getShopItemUnlockLevelBase(item, {
+    unlockLevelsByItemId: SPECIAL_SHOP_UNLOCK_LEVELS,
+  });
 
 const isTaskCabinetPlaced = (content: AivatarContent) =>
   content.room.furniture.some((item) => item.id === TASK_CABINET_FURNITURE_ID);
 
 const isUniqueShopItemOwned = (save: AivatarSaveState, item: ItemDefinition) =>
-  item.id === TASK_CABINET_FURNITURE_ID
-    ? save.inventory.some((entry) => entry.itemId === item.id && entry.quantity > 0) ||
-      save.placedItems.some((placedItem) => placedItem.itemId === item.id)
-    : item.tags?.includes("one-time")
-      ? save.purchasedItemIds.includes(item.id)
-    : false;
+  isUniqueShopItemOwnedBase(save, item, {
+    uniqueItemIds: UNIQUE_SHOP_ITEM_IDS,
+  });
+
+const isBulkPurchasableShopItem = (item: ItemDefinition) =>
+  isBulkPurchasableShopItemBase(item, {
+    uniqueItemIds: UNIQUE_SHOP_ITEM_IDS,
+  });
+
+const affordableShopPurchaseQuantity = (
+  save: AivatarSaveState,
+  item: ItemDefinition,
+  requestedQuantity: number,
+) =>
+  affordableShopPurchaseQuantityBase(save, item, requestedQuantity, {
+    growthLevel: normalizeMemory(save.memory).growth.level,
+    uniqueItemIds: UNIQUE_SHOP_ITEM_IDS,
+    unlockLevelsByItemId: SPECIAL_SHOP_UNLOCK_LEVELS,
+  });
 
 const clampQuantity = (entry: InventoryEntry): InventoryEntry => ({
   ...entry,
@@ -3299,6 +3320,32 @@ const persistTaskCabinetEntries = (entries: TaskCabinetEntry[]) => {
   }
 };
 
+const taskCabinetSceneCounts = (entries: TaskCabinetEntry[]) => {
+  let activeFileCount = 0;
+  let failedFileCount = 0;
+  let readyCount = 0;
+  let runningCount = 0;
+
+  entries.forEach((entry) => {
+    if (entry.status === "ready") {
+      activeFileCount += 1;
+      readyCount += 1;
+    } else if (entry.status === "failed") {
+      activeFileCount += 1;
+      failedFileCount += 1;
+    } else if (entry.status === "running") {
+      runningCount += 1;
+    }
+  });
+
+  return {
+    activeFileCount,
+    failedFileCount,
+    readyCount,
+    runningCount,
+  };
+};
+
 const taskCabinetFileName = (path: string) =>
   path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
@@ -3563,6 +3610,10 @@ export const App = () => {
   } | null>(null);
   const agentCompleteAudioRef = useRef<HTMLAudioElement | null>(null);
   const bitsSpendAudioRef = useRef<HTMLAudioElement | null>(null);
+  const shopPurchaseCooldownUntilRef = useRef<Record<string, number>>({});
+  const shopLongPressTimerRef = useRef<number | null>(null);
+  const shopLongPressTriggeredRef = useRef(false);
+  const shopLongPressTriggeredItemIdRef = useRef<string | null>(null);
   const gameConsoleAudioRef = useRef<HTMLAudioElement | null>(null);
   const gameConsoleAudioSourceRef = useRef(GAME_CONSOLE_AUDIO_SOURCES[0]);
   const gameConsoleAnimatingRef = useRef(false);
@@ -3609,6 +3660,10 @@ export const App = () => {
   const [taskCabinetEntries, setTaskCabinetEntries] = useState<TaskCabinetEntry[]>(
     () => loadTaskCabinetEntries(),
   );
+  const taskCabinetCounts = useMemo(
+    () => taskCabinetSceneCounts(taskCabinetEntries),
+    [taskCabinetEntries],
+  );
   const [taskCabinetPathInput, setTaskCabinetPathInput] = useState("");
   const [taskCabinetMessage, setTaskCabinetMessage] = useState("");
   const [launcherDirectory, setLauncherDirectory] = useState("");
@@ -3623,6 +3678,7 @@ export const App = () => {
   const effectiveSource = debugStatus ? "debug" : source;
   const statusRef = useRef({ status: effectiveStatus, source: effectiveSource, endpoint });
   const taskCabinetEntriesRef = useRef(taskCabinetEntries);
+  const taskCabinetSceneCountsRef = useRef(taskCabinetCounts);
   const taskCabinetLaunchingRef = useRef(false);
   const taskCabinetTerminalStatusRef = useRef(
     new Map<string, "complete" | "error">(),
@@ -5872,7 +5928,8 @@ export const App = () => {
   useEffect(() => {
     persistTaskCabinetEntries(taskCabinetEntries);
     taskCabinetEntriesRef.current = taskCabinetEntries;
-  }, [taskCabinetEntries]);
+    taskCabinetSceneCountsRef.current = taskCabinetCounts;
+  }, [taskCabinetEntries, taskCabinetCounts]);
 
   const getWindowTimeMs = (frame: number) => {
     const previewHour = windowPreviewHourRef.current;
@@ -5918,10 +5975,8 @@ export const App = () => {
         tableCoffeeStorage.quantity,
         save.memory,
         getWindowTimeMs(0),
-        taskCabinetEntries.filter(
-          (entry) => entry.status === "ready" || entry.status === "failed",
-        ).length,
-        taskCabinetEntries.filter((entry) => entry.status === "failed").length,
+        taskCabinetCounts.activeFileCount,
+        taskCabinetCounts.failedFileCount,
         uiThemeForScene(uiTheme),
         navDebugOverlay,
         save.paintingGallery,
@@ -5950,7 +6005,7 @@ export const App = () => {
     save.avatarAppearanceId,
     save.memory,
     save.paintingGallery,
-    taskCabinetEntries,
+    taskCabinetCounts,
     uiTheme,
     locale,
     navDebugOverlay,
@@ -6359,6 +6414,7 @@ export const App = () => {
       fridgeDoorCloseAudio.pause();
       agentCompleteAudio.pause();
       bitsSpendAudio.pause();
+      clearShopLongPressTimer();
       colaCanOpenAudio.pause();
       colaDrinkAudio.pause();
       coffeeDrinkAudio.pause();
@@ -6733,12 +6789,8 @@ export const App = () => {
             tableCoffeeStorage.quantity,
             saveRef.current.memory,
             getWindowTimeMs(frame),
-            taskCabinetEntriesRef.current.filter(
-              (entry) => entry.status === "ready" || entry.status === "failed",
-            ).length,
-            taskCabinetEntriesRef.current.filter(
-              (entry) => entry.status === "failed",
-            ).length,
+            taskCabinetSceneCountsRef.current.activeFileCount,
+            taskCabinetSceneCountsRef.current.failedFileCount,
             uiThemeForScene(uiThemeRef.current),
             navDebugOverlayRef.current,
             saveRef.current.paintingGallery,
@@ -8177,12 +8229,8 @@ export const App = () => {
             tableCoffeeStorage.quantity,
             saveRef.current.memory,
             getWindowTimeMs(frame),
-            taskCabinetEntriesRef.current.filter(
-              (entry) => entry.status === "ready" || entry.status === "failed",
-            ).length,
-            taskCabinetEntriesRef.current.filter(
-              (entry) => entry.status === "failed",
-            ).length,
+            taskCabinetSceneCountsRef.current.activeFileCount,
+            taskCabinetSceneCountsRef.current.failedFileCount,
             uiThemeForScene(uiThemeRef.current),
             navDebugOverlayRef.current,
             saveRef.current.paintingGallery,
@@ -10677,30 +10725,63 @@ export const App = () => {
     });
   };
 
-  const buyItem = (item: ItemDefinition) => {
+  const clearShopLongPressTimer = () => {
+    if (shopLongPressTimerRef.current === null) return;
+    window.clearTimeout(shopLongPressTimerRef.current);
+    shopLongPressTimerRef.current = null;
+  };
+
+  const clearShopLongPressTrigger = () => {
+    shopLongPressTriggeredRef.current = false;
+    shopLongPressTriggeredItemIdRef.current = null;
+  };
+
+  const reserveShopPurchaseSlot = (
+    itemId: string,
+    cooldownMs = SHOP_PURCHASE_COOLDOWN_MS,
+  ) => {
+    const result = reserveShopPurchaseSlotBase(
+      shopPurchaseCooldownUntilRef.current,
+      itemId,
+      performance.now(),
+      cooldownMs,
+    );
+    shopPurchaseCooldownUntilRef.current = result.cooldowns;
+    return result.reserved;
+  };
+
+  const buyItem = (
+    item: ItemDefinition,
+    requestedQuantity = 1,
+    options: { bypassCooldown?: boolean } = {},
+  ) => {
     const currentSave = saveRef.current;
-    if (isUniqueShopItemOwned(currentSave, item)) return;
-    if (normalizeMemory(currentSave.memory).growth.level < getShopItemUnlockLevel(item)) {
-      return;
-    }
-    if (currentSave.wallet.bits < item.price) return;
+    const optimisticQuantity = isSurfaceItem(item)
+      ? Math.min(1, affordableShopPurchaseQuantity(currentSave, item, 1))
+      : affordableShopPurchaseQuantity(currentSave, item, requestedQuantity);
+    if (optimisticQuantity <= 0) return false;
+    if (!options.bypassCooldown && !reserveShopPurchaseSlot(item.id)) return false;
 
     setSave((current) => {
-      if (isUniqueShopItemOwned(current, item)) return current;
-      if (normalizeMemory(current.memory).growth.level < getShopItemUnlockLevel(item)) {
-        return current;
-      }
-      if (current.wallet.bits < item.price) return current;
+      const purchaseQuantity = isSurfaceItem(item)
+        ? Math.min(1, affordableShopPurchaseQuantity(current, item, 1))
+        : affordableShopPurchaseQuantity(current, item, requestedQuantity);
+      if (purchaseQuantity <= 0) return current;
+      const purchaseCost = Math.max(0, item.price * purchaseQuantity);
+      const memorySummary =
+        purchaseQuantity > 1
+          ? `Bought ${purchaseQuantity} ${item.name}`
+          : `Bought ${item.name}`;
       if (isSurfaceItem(item)) {
         return {
           ...current,
-          wallet: { bits: current.wallet.bits - item.price },
+          wallet: { bits: current.wallet.bits - purchaseCost },
           purchasedItemIds: Array.from(new Set([...current.purchasedItemIds, item.id])),
           memory: recordLifeMemory(
             current.memory,
             {
               type: "item_bought",
-              summary: `Bought ${item.name}`,
+              summary: memorySummary,
               itemId: item.id,
             },
             traitChangesForPurchase(item),
@@ -10712,21 +10793,21 @@ export const App = () => {
       const inventory = existing
         ? current.inventory.map((entry) =>
             entry.itemId === item.id
-              ? { ...entry, quantity: entry.quantity + 1 }
+              ? { ...entry, quantity: entry.quantity + purchaseQuantity }
               : entry,
           )
-        : [...current.inventory, { itemId: item.id, quantity: 1 }];
+        : [...current.inventory, { itemId: item.id, quantity: purchaseQuantity }];
 
       return {
         ...current,
-        wallet: { bits: current.wallet.bits - item.price },
+        wallet: { bits: current.wallet.bits - purchaseCost },
         inventory,
         purchasedItemIds: Array.from(new Set([...current.purchasedItemIds, item.id])),
         memory: recordLifeMemory(
           current.memory,
           {
             type: "item_bought",
-            summary: `Bought ${item.name}`,
+            summary: memorySummary,
             itemId: item.id,
           },
           traitChangesForPurchase(item),
@@ -10734,6 +10815,52 @@ export const App = () => {
       };
     });
     playBitsSpendSound();
+    return true;
+  };
+
+  const startShopBulkPurchasePress = (
+    event: React.PointerEvent<HTMLButtonElement>,
+    item: ItemDefinition,
+  ) => {
+    unlockAppAudio();
+    if (event.button !== 0 || !isBulkPurchasableShopItem(item)) return;
+    clearShopLongPressTimer();
+    clearShopLongPressTrigger();
+    shopLongPressTimerRef.current = window.setTimeout(() => {
+      shopLongPressTimerRef.current = null;
+      const bought = buyItem(item, SHOP_BULK_PURCHASE_QUANTITY, { bypassCooldown: true });
+      if (!bought) return;
+      shopLongPressTriggeredRef.current = true;
+      shopLongPressTriggeredItemIdRef.current = item.id;
+      reserveShopPurchaseSlot(item.id, SHOP_PURCHASE_COOLDOWN_MS * 2);
+    }, SHOP_LONG_PRESS_MS);
+  };
+
+  const cancelShopBulkPurchasePress = () => {
+    clearShopLongPressTimer();
+    const triggeredItemId = shopLongPressTriggeredItemIdRef.current;
+    if (!shopLongPressTriggeredRef.current || triggeredItemId === null) return;
+    window.setTimeout(() => {
+      if (shopLongPressTriggeredItemIdRef.current === triggeredItemId) {
+        clearShopLongPressTrigger();
+      }
+    }, SHOP_LONG_PRESS_CLICK_SUPPRESSION_MS);
+  };
+
+  const clickShopItem = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    item: ItemDefinition,
+  ) => {
+    if (
+      shopLongPressTriggeredRef.current &&
+      shopLongPressTriggeredItemIdRef.current === item.id
+    ) {
+      clearShopLongPressTrigger();
+      event.preventDefault();
+      return;
+    }
+    if (shopLongPressTriggeredRef.current) clearShopLongPressTrigger();
+    buyItem(item);
   };
 
   const buyOrApplyWindow = (item: ItemDefinition) => {
@@ -11011,12 +11138,8 @@ export const App = () => {
   const paintingGallery = normalizePaintingGallery(save.paintingGallery);
   const growth = memory.growth;
   const canDispatchTasks = isTaskCabinetPlaced(content);
-  const taskCabinetReadyCount = taskCabinetEntries.filter(
-    (entry) => entry.status === "ready",
-  ).length;
-  const taskCabinetRunningCount = taskCabinetEntries.filter(
-    (entry) => entry.status === "running",
-  ).length;
+  const taskCabinetReadyCount = taskCabinetCounts.readyCount;
+  const taskCabinetRunningCount = taskCabinetCounts.runningCount;
   const xpToNextLevel = xpNeededForLevel(growth.level);
   const traitRows: Array<keyof AivatarGrowthTraits> = [
     "focus",
@@ -14198,6 +14321,10 @@ export const App = () => {
                       : uniqueShopItemOwned
                         ? `${item.name} ${ui("state.owned")}`
                       : `${item.name} ${item.price}`;
+              const buttonLabel =
+                isBulkPurchasableShopItem(item) && !levelLocked && !uniqueShopItemOwned
+                  ? `${label} (hold to buy up to ${SHOP_BULK_PURCHASE_QUANTITY})`
+                  : label;
 
               return (
                 <button
@@ -14210,16 +14337,21 @@ export const App = () => {
                     uniqueShopItemOwned ||
                     (!purchasedFurnitureSkin && save.wallet.bits < item.price)
                   }
-                  aria-label={label}
-                  title={label}
-                  onClick={() =>
+                  aria-label={buttonLabel}
+                  title={buttonLabel}
+                  onPointerDown={(event) => startShopBulkPurchasePress(event, item)}
+                  onPointerUp={cancelShopBulkPurchasePress}
+                  onPointerLeave={cancelShopBulkPurchasePress}
+                  onPointerCancel={cancelShopBulkPurchasePress}
+                  onBlur={cancelShopBulkPurchasePress}
+                  onClick={(event) =>
                     isWindowItem(item)
                       ? buyOrApplyWindow(item)
                       : isFurnitureSkinItem(item)
                         ? appliedFurnitureSkin
                           ? clearAppliedFurnitureSkin(item)
                           : buyOrApplyFurnitureSkin(item)
-                        : buyItem(item)
+                        : clickShopItem(event, item)
                   }
                 >
                   <span className="item-button-content">

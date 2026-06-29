@@ -143,6 +143,13 @@ type PlacedItemRenderLayer = "all" | "behind-avatar" | "in-front-of-avatar";
 type AvatarRenderLayer =
   | { kind: "primary"; y: number; runtime: AvatarRuntime }
   | { kind: "visitor"; y: number; runtime: AvatarRuntime; visitor: AivatarRoomVisitor };
+interface PlacedItemRenderCache {
+  filledCoffeeCupIds: Set<string>;
+  depthSortedPlacedItems: PlacedItem[];
+  wallPlacedItems: PlacedItem[];
+  floorUnderlayItems: PlacedItem[];
+  surfaceItemsByFurnitureId: Map<string, PlacedItem[]>;
+}
 type BedSkinId =
   | "classic"
   | "industrial-bed-skin"
@@ -9488,20 +9495,65 @@ const drawPlacedItem = (
 };
 
 const tableCoffeeCupFillSet = (
-  content: AivatarContent,
+  placedItems: PlacedItem[],
   tableCoffeeQuantity: number,
 ) =>
   new Set(
-    (content.placedItems ?? [])
+    placedItems
       .filter(
         (item) =>
           item.itemId === "coffee-cup" && item.surfaceFurnitureId === "table",
       )
       .slice()
-      .sort((left, right) => left.y - right.y || left.x - right.x || left.id.localeCompare(right.id))
+      .sort(placedItemYSort)
       .slice(0, Math.max(0, tableCoffeeQuantity))
       .map((item) => item.id),
   );
+
+const placedItemYSort = (left: PlacedItem, right: PlacedItem) =>
+  left.y - right.y || left.x - right.x || left.id.localeCompare(right.id);
+
+const createPlacedItemRenderCache = (
+  content: AivatarContent,
+  tableCoffeeQuantity: number,
+): PlacedItemRenderCache => {
+  const placedItems = content.placedItems ?? [];
+  const depthSortedPlacedItems: PlacedItem[] = [];
+  const wallPlacedItems: PlacedItem[] = [];
+  const floorUnderlayItems: PlacedItem[] = [];
+  const surfaceItemsByFurnitureId = new Map<string, PlacedItem[]>();
+
+  placedItems.forEach((item) => {
+    const wallPlacedItem = isWallPlacedItem(content, item);
+    const floorUnderlayItem = isFloorUnderlayItem(item.itemId);
+    if (item.surfaceFurnitureId) {
+      const surfaceItems = surfaceItemsByFurnitureId.get(item.surfaceFurnitureId) ?? [];
+      surfaceItems.push(item);
+      surfaceItemsByFurnitureId.set(item.surfaceFurnitureId, surfaceItems);
+    }
+    if (wallPlacedItem) {
+      wallPlacedItems.push(item);
+    } else if (floorUnderlayItem) {
+      floorUnderlayItems.push(item);
+    }
+    if (!floorUnderlayItem && !wallPlacedItem) {
+      depthSortedPlacedItems.push(item);
+    }
+  });
+
+  depthSortedPlacedItems.sort(placedItemYSort);
+  wallPlacedItems.sort(placedItemYSort);
+  floorUnderlayItems.sort(placedItemYSort);
+  surfaceItemsByFurnitureId.forEach((items) => items.sort(placedItemYSort));
+
+  return {
+    filledCoffeeCupIds: tableCoffeeCupFillSet(placedItems, tableCoffeeQuantity),
+    depthSortedPlacedItems,
+    wallPlacedItems,
+    floorUnderlayItems,
+    surfaceItemsByFurnitureId,
+  };
+};
 
 const drawPlacedItems = (
   ctx: CanvasRenderingContext2D,
@@ -9517,16 +9569,21 @@ const drawPlacedItems = (
   layer: PlacedItemRenderLayer = "all",
   paintingGallery?: AivatarPaintingGallery,
   activeRecordPlayerId?: string | null,
+  renderCache?: PlacedItemRenderCache,
 ) => {
   const placedItems = content.placedItems ?? [];
-  const filledCoffeeCups = tableCoffeeCupFillSet(content, tableCoffeeQuantity);
-  placedItems
-    .filter(
-      (item) =>
-        !isFloorUnderlayItem(item.itemId) && !isWallPlacedItem(content, item),
-    )
-    .slice()
-    .sort((left, right) => left.y - right.y)
+  const filledCoffeeCups =
+    renderCache?.filledCoffeeCupIds ?? tableCoffeeCupFillSet(placedItems, tableCoffeeQuantity);
+  const depthSortedPlacedItems =
+    renderCache?.depthSortedPlacedItems ??
+    placedItems
+      .filter(
+        (item) =>
+          !isFloorUnderlayItem(item.itemId) && !isWallPlacedItem(content, item),
+      )
+      .sort(placedItemYSort);
+
+  depthSortedPlacedItems
     .forEach((item) => {
       const definition = content.itemDefinitions.find(
         (candidate) => candidate.id === item.itemId,
@@ -9597,17 +9654,21 @@ const drawPlacedItemsInFrontOfForegroundFurniture = (
   activeInteraction?: FurnitureInteractionState | null,
   tableCoffeeQuantity = 0,
   activeRecordPlayerId?: string | null,
+  renderCache?: PlacedItemRenderCache,
 ) => {
   const placedItems = content.placedItems ?? [];
-  const filledCoffeeCups = tableCoffeeCupFillSet(content, tableCoffeeQuantity);
+  const filledCoffeeCups =
+    renderCache?.filledCoffeeCupIds ?? tableCoffeeCupFillSet(placedItems, tableCoffeeQuantity);
+  const depthSortedPlacedItems =
+    renderCache?.depthSortedPlacedItems ??
+    placedItems
+      .filter(
+        (item) =>
+          !isFloorUnderlayItem(item.itemId) && !isWallPlacedItem(content, item),
+      )
+      .sort(placedItemYSort);
 
-  placedItems
-    .filter(
-      (item) =>
-        !isFloorUnderlayItem(item.itemId) && !isWallPlacedItem(content, item),
-    )
-    .slice()
-    .sort((left, right) => left.y - right.y)
+  depthSortedPlacedItems
     .forEach((item) => {
       const definition = content.itemDefinitions.find(
         (candidate) => candidate.id === item.itemId,
@@ -9684,29 +9745,32 @@ const drawWallPlacedItems = (
   selectedPlacedItemId?: string | null,
   preview?: PlacementPreview | null,
   paintingGallery?: AivatarPaintingGallery,
+  renderCache?: PlacedItemRenderCache,
 ) => {
-  (content.placedItems ?? [])
-    .filter((item) => isWallPlacedItem(content, item))
-    .slice()
-    .sort((left, right) => left.y - right.y || left.x - right.x)
-    .forEach((item) => {
-      drawPlacedItem(
-        ctx,
-        item,
-        content,
-        frame,
-        avatar,
-        undefined,
-        undefined,
-        false,
-        0,
-        0,
-        paintingGallery,
-      );
-      if (item.id === selectedPlacedItemId) {
-        drawPlacedItemHighlight(ctx, item);
-      }
-    });
+  const wallPlacedItems =
+    renderCache?.wallPlacedItems ??
+    (content.placedItems ?? [])
+      .filter((item) => isWallPlacedItem(content, item))
+      .sort(placedItemYSort);
+
+  wallPlacedItems.forEach((item) => {
+    drawPlacedItem(
+      ctx,
+      item,
+      content,
+      frame,
+      avatar,
+      undefined,
+      undefined,
+      false,
+      0,
+      0,
+      paintingGallery,
+    );
+    if (item.id === selectedPlacedItemId) {
+      drawPlacedItemHighlight(ctx, item);
+    }
+  });
 
   if (preview && getItemPlacementKind(preview.item) === "wall") {
     drawPlaceableItem(
@@ -9732,29 +9796,35 @@ const drawPlacedItemsForSurface = (
   tableCoffeeQuantity = 0,
   activeRecordPlayerId?: string | null,
   paintingGallery?: AivatarPaintingGallery,
+  renderCache?: PlacedItemRenderCache,
 ) => {
-  const filledCoffeeCups = tableCoffeeCupFillSet(content, tableCoffeeQuantity);
-  (content.placedItems ?? [])
-    .filter((item) => item.surfaceFurnitureId === surfaceFurnitureId)
-    .sort((left, right) => left.y - right.y)
-    .forEach((item) => {
-      drawPlacedItem(
-        ctx,
-        item,
-        content,
-        frame,
-        avatar,
-        activeInteraction,
-        activeRecordPlayerId,
-        filledCoffeeCups.has(item.id),
-        0,
-        0,
-        paintingGallery,
-      );
-      if (item.id === selectedPlacedItemId) {
-        drawPlacedItemHighlight(ctx, item);
-      }
-    });
+  const placedItems = content.placedItems ?? [];
+  const filledCoffeeCups =
+    renderCache?.filledCoffeeCupIds ?? tableCoffeeCupFillSet(placedItems, tableCoffeeQuantity);
+  const surfaceItems =
+    renderCache?.surfaceItemsByFurnitureId.get(surfaceFurnitureId) ??
+    placedItems
+      .filter((item) => item.surfaceFurnitureId === surfaceFurnitureId)
+      .sort(placedItemYSort);
+
+  surfaceItems.forEach((item) => {
+    drawPlacedItem(
+      ctx,
+      item,
+      content,
+      frame,
+      avatar,
+      activeInteraction,
+      activeRecordPlayerId,
+      filledCoffeeCups.has(item.id),
+      0,
+      0,
+      paintingGallery,
+    );
+    if (item.id === selectedPlacedItemId) {
+      drawPlacedItemHighlight(ctx, item);
+    }
+  });
 };
 
 const drawFloorUnderlayItems = (
@@ -9763,16 +9833,20 @@ const drawFloorUnderlayItems = (
   frame: number,
   avatar: AvatarRuntime,
   selectedPlacedItemId?: string | null,
+  renderCache?: PlacedItemRenderCache,
 ) => {
-  (content.placedItems ?? [])
-    .filter((item) => isFloorUnderlayItem(item.itemId))
-    .sort((left, right) => left.y - right.y)
-    .forEach((item) => {
-      drawPlacedItem(ctx, item, content, frame, avatar);
-      if (item.id === selectedPlacedItemId) {
-        drawPlacedItemHighlight(ctx, item);
-      }
-    });
+  const floorUnderlayItems =
+    renderCache?.floorUnderlayItems ??
+    (content.placedItems ?? [])
+      .filter((item) => isFloorUnderlayItem(item.itemId))
+      .sort(placedItemYSort);
+
+  floorUnderlayItems.forEach((item) => {
+    drawPlacedItem(ctx, item, content, frame, avatar);
+    if (item.id === selectedPlacedItemId) {
+      drawPlacedItemHighlight(ctx, item);
+    }
+  });
 };
 
 const isPreviewOnSurface = (
@@ -12444,6 +12518,7 @@ const drawAvatarForegroundOcclusion = (
   failedTaskCabinetFileCount = 0,
   paintingGallery?: AivatarPaintingGallery,
   activeRecordPlayerId?: string | null,
+  renderCache?: PlacedItemRenderCache,
 ) => {
   const runtime = layer.runtime;
   const clipBounds = avatarOcclusionClipBounds(runtime);
@@ -12470,6 +12545,7 @@ const drawAvatarForegroundOcclusion = (
     "in-front-of-avatar",
     paintingGallery,
     activeRecordPlayerId,
+    renderCache,
   );
 
   foregroundFurniture.forEach((item) => {
@@ -12512,6 +12588,7 @@ const drawAvatarForegroundOcclusion = (
       tableCoffeeQuantity,
       activeRecordPlayerId,
       paintingGallery,
+      renderCache,
     );
     if (placementPreview && isPreviewOnSurface(placementPreview, item)) {
       drawPlaceableItem(
@@ -12537,6 +12614,7 @@ const drawAvatarForegroundOcclusion = (
     activeInteraction,
     tableCoffeeQuantity,
     activeRecordPlayerId,
+    renderCache,
   );
 
   ctx.restore();
@@ -12572,8 +12650,13 @@ export const renderScene = (
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  canvas.width = sceneSize.width;
-  canvas.height = sceneSize.height;
+  if (canvas.width !== sceneSize.width || canvas.height !== sceneSize.height) {
+    canvas.width = sceneSize.width;
+    canvas.height = sceneSize.height;
+  } else {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, sceneSize.width, sceneSize.height);
+  }
   ctx.imageSmoothingEnabled = false;
 
   const floorSurface = resolveSurface(
@@ -12581,6 +12664,7 @@ export const renderScene = (
     content.room.floorSurfaceId,
     fallbackFloorPalette,
   );
+  const placedItemRenderCache = createPlacedItemRenderCache(content, tableCoffeeQuantity);
 
   drawRoom(
     ctx,
@@ -12593,7 +12677,15 @@ export const renderScene = (
     windowPreview,
     furniturePreview,
     activeInteraction,
-    () => drawFloorUnderlayItems(ctx, content, frame, avatar, selectedPlacedItemId),
+    () =>
+      drawFloorUnderlayItems(
+        ctx,
+        content,
+        frame,
+        avatar,
+        selectedPlacedItemId,
+        placedItemRenderCache,
+      ),
     () =>
       drawWallPlacedItems(
         ctx,
@@ -12603,6 +12695,7 @@ export const renderScene = (
         selectedPlacedItemId,
         placementPreview,
         paintingGallery,
+        placedItemRenderCache,
       ),
     "behind-avatar",
     windowTimeMs,
@@ -12624,6 +12717,7 @@ export const renderScene = (
     "behind-avatar",
     paintingGallery,
     activeRecordPlayerId,
+    placedItemRenderCache,
   );
   const avatarLayers = createAvatarRenderLayers(avatar, visitors, primaryAvatarVisible);
 
@@ -12652,6 +12746,7 @@ export const renderScene = (
     "in-front-of-avatar",
     paintingGallery,
     activeRecordPlayerId,
+    placedItemRenderCache,
   );
   const foregroundFurniture = furnitureByDepth(content.room.furniture).filter((item) =>
     isFurnitureInFrontOfAvatar(item, avatar),
@@ -12694,6 +12789,7 @@ export const renderScene = (
       tableCoffeeQuantity,
       activeRecordPlayerId,
       paintingGallery,
+      placedItemRenderCache,
     );
     const surfacePreview = placementPreview;
     if (surfacePreview && isPreviewOnSurface(surfacePreview, item)) {
@@ -12719,6 +12815,7 @@ export const renderScene = (
     activeInteraction,
     tableCoffeeQuantity,
     activeRecordPlayerId,
+    placedItemRenderCache,
   );
   if (visitors.length > 0) {
     avatarLayers.forEach((layer) => {
@@ -12746,6 +12843,7 @@ export const renderScene = (
         failedTaskCabinetFileCount,
         paintingGallery,
         activeRecordPlayerId,
+        placedItemRenderCache,
       );
     });
   }

@@ -71,6 +71,61 @@ body {
   background: #141823;
 }
 
+.app-error-boundary {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  padding: 24px;
+  place-items: center;
+  background: #141823;
+  color: #f4ead2;
+}
+
+.app-error-panel {
+  width: min(520px, 100%);
+  border: 2px solid #f2a65a;
+  padding: 20px;
+  background: #202638;
+  box-shadow: 8px 8px 0 #080b14;
+}
+
+.app-error-panel h1 {
+  margin: 0 0 10px;
+  color: #ffe66d;
+  font-size: 24px;
+}
+
+.app-error-panel p {
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.app-error-kicker {
+  color: #9ee6ff;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.app-error-panel pre {
+  max-height: 130px;
+  overflow: auto;
+  border: 1px solid #52607d;
+  margin: 0 0 16px;
+  padding: 10px;
+  background: #101522;
+  color: #ffd6d6;
+  white-space: pre-wrap;
+}
+
+.app-error-panel button {
+  border: 2px solid #fff6c8;
+  padding: 8px 14px;
+  background: #ffe66d;
+  color: #141823;
+  cursor: pointer;
+}
+
 button,
 input,
 select,

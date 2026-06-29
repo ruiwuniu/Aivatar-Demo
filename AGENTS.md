@@ -93,10 +93,30 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 
 The Tauri desktop app attempts to start the local status bridge automatically during app setup. The Debug panel also includes a `Start bridge` button for manually starting it from the app. Starting the bridge from Tauri also attempts to start Codex Desktop session discovery.
 
+The desktop shell registers the Tauri single-instance plugin before other plugins. A second app launch should focus/show the existing main window instead of keeping another full WebView process alive.
+
 Run real local status bridge:
 
 ```powershell
 npm.cmd run status:bridge
+```
+
+Run the bridge Origin/CORS smoke test:
+
+```powershell
+npm.cmd run status:bridge:smoke
+```
+
+Run the shop purchase pressure smoke test:
+
+```powershell
+npm.cmd run shop:purchase:smoke
+```
+
+Run the DOM-level shop UI smoke test:
+
+```powershell
+npm.cmd run shop:ui:smoke
 ```
 
 Run Codex Desktop session discovery:
@@ -486,6 +506,8 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 |   |-- aivatar-claude-desktop-link.mjs
 |   |-- aivatar-connected-run.mjs
 |   |-- aivatar-desktop-agent-adapters-smoke.mjs
+|   |-- aivatar-bridge-security-smoke.mjs
+|   |-- aivatar-shop-ui-smoke.mjs
 |   |-- aivatar-learning-worker.mjs
 |   |-- aivatar-opencode-plugin.mjs
 |   |-- aivatar-run.mjs
@@ -529,6 +551,9 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 
 ## Key Files
 
+- `src/main.tsx`
+  - Wraps `App` in a small React error boundary. If a render-time React error escapes the app, the fallback keeps the desktop/web window usable with a reload button instead of leaving a blank crashed surface.
+
 - `src/App.tsx`
   - Main React app.
   - Owns loaded content, save state, Canvas events, categorized shop UI, inventory/shop interactions, the Decor panel for wall/floor surfaces, furniture/window interactions, placement mode, Room Edit mode, Debug controls, custom avatar name, agent status display, the right-side Agent Sessions panel, and the Desktop Agents integration panel.
@@ -549,6 +574,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Existing startup save slots support `Enter` and `Remove`. `Remove` opens a warning dialog and only removes/unlinks the save from the startup menu/local slot registry; it does not delete any original local save JSON or imported folder, so the user can load that save again later. Local import currently reads a selected `.json` file directly or scans a selected folder for `aivatar-save.json`/`save.json`, then normalizes missing legacy fields into the slot copy.
   - Canvas click priority is placed items first, then base furniture, then active windows, so large windows do not steal clicks from desk objects.
   - Uses content `tags` and `placementSurfaces` for shop grouping, placement targets, and item-vs-furniture labeling.
+  - Shop item buttons have a short per-item purchase cooldown to avoid rapid-click state churn. Repeatable non-surface, non-window, non-furniture-skin, non-unique items also support long press: holding a buy button buys up to 10 units, clamped by available bits and current unlock/ownership state. Long-press follow-up click suppression is item-scoped so a completed hold cannot swallow an unrelated later shop click.
   - Adds a Furniture Skins shop category. Furniture skin items use `tags: ["furniture-skin"]` plus `targetFurnitureId`, ownership is stored in `purchasedItemIds`, and the currently applied skin per supported furniture or placed skin target is stored in `activeFurnitureSkinIds`.
   - Furniture skin passes currently include bed, desk, dining-table, fridge, and built-in Terminal skins. Bed skins include Industrial Bed Skin, Wood Red Bed Skin, Ivory Pink Plaid Bed Skin, Modern Minimal Bed Skin, and Space White Deep Gray Bed Skin. Desk skins include Industrial Desk Skin, Rococo Ivory Desk Skin, and Transparent Acrylic Desk Skin. Table skins include Rococo Ivory Table Skin, Dark Oak Table Skin, and White Tech Table Skin. Fridge skins include Ivory Fridge Skin, Red Retro Fridge Skin, and White Tech Fridge Skin. Terminal skins include Green Amber Terminal Skin, White Cyan Terminal Skin, and Neon Dark Terminal Skin, all targeting the locked placed item `builtin-terminal`. Purchased skins can be applied or cleared without entering placement mode and do not affect furniture/item placement, collision, pathfinding, or interaction targets. Clearing an applied furniture skin removes that target id from `activeFurnitureSkinIds` while preserving ownership in `purchasedItemIds`.
   - Furniture and placed-object art should be understood as orthographic / parallel projection: front and back edges do not narrow, there is no vanishing point, and near/far spans remain equal width. Preserve this rule when redesigning desks, tables, beds, cabinets, rugs, windows, and tabletop objects.
@@ -672,6 +698,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Draws the pixel room, configurable floor/wall surfaces, configurable windows, furniture, appearance-aware four-direction avatar, placed decor/furniture, placement previews, Room Edit highlights, avatar bubbles/progress, and status light.
   - Accepts the current UI theme so the canvas presentation can harmonize with Classic, Terminal, Amber, Arcade Cabinet, and Starship app-shell skins. `App.tsx` passes `arcade-cabinet` and `starship-console` through `uiThemeForScene()` so the canvas room backdrop, scanline/status colors, progress bars, and bubbles can use theme-specific palettes while CSS carries the shell/frame skin.
   - Matrix sprites rendered through `drawTableSprite` are cached by `palette + rows` into an offscreen canvas on first use, then drawn each frame with `drawImage`. This keeps high-detail floor, wall, desk, dining-table, fridge, File Cabinet, and Terminal monitor matrix assets visually identical while avoiding repeated per-frame row/run `fillRect` work.
+  - `renderScene` keeps the canvas backing store size stable between frames, clearing with `setTransform(...); clearRect(...)` unless the scene size changes. It also builds one per-frame placed-item render cache for coffee-cup fill state, wall items, rug underlays, furniture-surface items, and depth-sorted placed items so repeated draw passes do not each re-filter and re-sort the same arrays.
   - Renders the current mixed pixel art pass, including the Stardew-inspired bed with optional skins, matrix-backed retro drawer desk with optional Industrial, Rococo Ivory, and Transparent Acrylic skins, placed CRT-style Terminal with optional Green Amber, White Cyan, and Neon Dark skins plus animated keyboard, matrix-backed dining table with optional Rococo Ivory, Dark Oak, and White Tech skins, matrix-backed retro two-door fridge with optional Ivory, Red Retro, and White Tech skins and deeper top clutter, matrix-backed buyable File Cabinet, premium black/gray Coffee Machine, Coffee Cup, Switch-style Game Console, Oil Easel, Digital Wall Clock, rainbow Cozy Rug, purple morph-blob rug, Blue Persian Rug, Sky Sentinel Poster, fridge door open/hold/close animation, and blanket overlay used when the avatar sleeps under the covers.
   - The bed renderer supports `skinId`. The default bed keeps the warm wood frame, blue star blanket, pillows, sheet, and plush toy. `industrial-bed-skin` swaps in a metal industrial frame, light gray pillows/sheet, and a deeper dark-gray blanket with smoother horizontal pixel shading while preserving the plush toy. `wood-red-bed-skin` uses a wooden frame with a red blanket. `ivory-pink-plaid-bed-skin` uses a refined ivory frame with warm highlights/gold details and a denser pink plaid blanket; the sleep blanket overlay reads the same palette and plaid pattern. `modern-minimal-bed-skin` is a modern low-platform bed pass with a single clean wood headboard, no traditional bed posts or footboard, wider bedding aligned to the headboard, an extended muted-sage blanket, a thin visible white mattress front edge, a matching-width blanket dark edge over that mattress edge, a thin wood tray/platform edge below the mattress, and slim dark legs. Its mattress front edge also has 2px blanket-colored side strips moved outward to visually connect the blanket down to the wood tray edge. `space-white-deep-gray-bed-skin` reuses the modern low-platform geometry with a space-white headboard/platform, cold pale-gray trim, a plain deep-space-gray blanket, and subtle gray highlights. It is visual-only and preserves bed placement, collision, pathfinding, sleep targets, and interaction geometry.
   - The desk renderer supports `skinId`. The default desk body is a reference-derived `108 x 84` palette-plus-row-matrix sprite in `src/game/deskSprites.ts`, rendered through `drawTableSprite` with `CLASSIC_DESK_SPRITE_*` rather than approximated with broad rectangle drawing. Its accepted reference is split into desk-top and front sections before resizing so the app keeps the original room proportion: about `42px` desk-top height and `42px` front/drawer height. The default desk keeps the retro drawer/writing-pad look, placement, collision, interaction geometry, and semi-transparent base shadow matching the dining-table shadow opacity. Its underside includes a sleeping black-cat/oval shadow silhouette: while the cat is asleep no eyes are drawn, and a subtle pair of yellow eyes opens briefly on a low-frequency cycle. `industrial-desk-skin` preserves the base desk dimensions, placement, collision, and interaction geometry while swapping in a smoother dark oak desktop, no desk pad, black metal four-corner legs, thicker/aligned front legs with highlighted feet, tabletop-over-leg occlusion, semi-transparent underside shadows, and a tiny sleeping black-cat silhouette in the desk shadow that uses the same brief eyes-open animation. `transparent-acrylic-desk-skin` reuses the Industrial Desk `108 x 84` structure while rendering a genuinely semi-transparent ice-blue acrylic tabletop through `rgba` palette entries, visible tabletop support pieces under the back and side edges, rear legs that are as thick as the front legs and aligned to the lower exposed rear-leg columns, shallower under-desk shadowing so transparent layers stay readable, optical-shaft/glass highlights, tabletop-over-leg occlusion, and the same sleeping black-cat silhouette, placement, collision, pathfinding, and interaction geometry. `rococo-ivory-desk-skin` keeps the same geometry while rendering an ivory desk with gold trim, carved panel details, curved legs, and segmented foot highlights.
@@ -1560,6 +1587,7 @@ High-priority agent states should not be interrupted by right-click context-menu
 - Runtime save state includes `layoutVersion`, `avatarId`, `roomId`, `avatarAppearanceId`, `avatarName`, `avatarRuntime`, `memory`, `navMemory`, `petStats`, `inventory`, `placedItems`, `wallet`, `purchasedItemIds`, `activeFurnitureSkinIds`, `furnitureStorage`, `workBoostUntil`, `activeWindowId`, `wallSurfaceId`, `floorSurfaceId`, `windowPlacements`, and `furniturePlacements`. `avatarId` and `roomId` are generated for new saves and normalized into older saves; `avatarAppearanceId` is selected during save creation from the visible create-save list (`octopus`, `demo-spark`, `mood-slime`, `cute-crayfish`, `cute-ghost`, or `cute-penguin`) and normalized against all registered appearances, including development-only `wave-lizard`, defaulting to `octopus` for unsupported older saves; `avatarName` can be set from the startup create-save form and still falls back to the content default when blank; `memory`, Growth fields, and `navMemory` are per-slot character state and must not be shared globally; `navMemory` and `activeFurnitureSkinIds` are normalized for older saves. File Cabinet ownership/placement is saved in `placedItems`, then converted into runtime furniture during content assembly.
 - Startup local save import is read-only toward the selected source file/folder: the app copies the parsed save into the active slot storage and does not write changes back to the imported path. Removing a startup save slot removes the slot association from Aivatar's local menu, not the original imported file or folder.
 - Default new saves start with too few bits to buy most furniture skins. Use an existing save with enough bits or Debug/Add supplies before testing the purchase and apply flow.
+- Shop bulk-purchase QA should use a low-cost repeatable item such as Cookie or Coffee before testing expensive furniture. Ordinary rapid clicks should leave the app responsive, while long press should buy at most 10 units and never exceed the wallet's affordable quantity.
 - Memory/Growth v1 stores local lightweight state and still does not store full chat transcripts or use a vector database. It can now consume optional session-learning payloads produced by `scripts/aivatar-learning-worker.mjs`, which may call Codex or Claude Code on a sanitized digest and then stores only bounded summaries, candidate bubbles, XP, and trait deltas.
 - Navigation-learning v1 is local and lightweight: idle exploration and ordinary movement write visited cells, learned `walkableCells`, successes, failures, and latest exploration time into `navMemory`. `walkableCells` stores `0` for learned walkable and `1` for learned blocked/risky cells, scoped by `layoutFingerprint`. Ordinary A* avoids cells marked `1`; `explore` can ignore learned blocked values to retest cells after layout changes or previous false negatives. Older `trickySpots` remain in the save schema for compatibility but no longer drive route-cost penalties.
 - Session-derived idle bubble suggestions are generated by local rules from Codex watcher user/final-agent messages and by session-learning workers from sanitized transcript digests. The Codex watcher currently uses a bilingual theme/template approach, including a `daily` life category, so suggestions feel more like pet thoughts than transcript snippets. Claude Code and native Codex discovery learning digests include low-sensitivity `user:` / `assistant:` snippets and can produce topic-aware heuristic bubbles when the LLM provider is unavailable. Suggestions are not automatically used: users must add them in the Growth panel, and saved phrase slots are capped by avatar level.

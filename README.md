@@ -9,21 +9,25 @@
 <p align="center">
   <span><strong>macOS DMG pending</strong></span>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.2/Aivatar_0.2.2_x64-setup.exe"><strong>Download Windows EXE</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.3/Aivatar_0.2.3_x64-setup.exe"><strong>Download Windows EXE</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.2/Aivatar_0.2.2_x64_en-US.msi"><strong>Download Windows MSI</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.3/Aivatar_0.2.3_x64_en-US.msi"><strong>Download Windows MSI</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.2.2">Release 0.2.2</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.2.3">Release 0.2.3</a>
 </p>
 
 <p align="center">
   <img src="docs/assets/aivatar-readme-0.2-agent-room.gif" width="760" alt="Aivatar 0.2 room with a new character, upgraded materials, agent sessions, desktop agents, task cabinet, and CLI launcher" />
 </p>
 
-## 0.2.2 Highlights / 0.2.2 更新亮点
+## 0.2.3 Patch Highlights / 0.2.3 补丁亮点
 
 **EN**
 
+- 0.2.3 focuses on desktop stability: shop buy buttons now debounce rapid clicks, long press buys up to 10 repeatable items, and DOM-level smoke coverage verifies the purchase path remains responsive.
+- Rendering and runtime resilience are tighter, with stable canvas backing-store sizing, cached placed-item render passes, and a React error boundary fallback.
+- Local bridge security is hardened with explicit CSP plus Origin/CORS checks for HTTP and WebSocket status traffic.
+- Desktop launches now use a single-instance guard so repeat launches focus the existing window instead of leaving extra WebView processes alive.
 - New companion appearances and room polish: Little Octopus, Rush Spark, Mood Slime, Red Crayfish, Cute Ghost, Cute Penguin, Green Lizard, richer furniture/floor/window materials, the Starship console UI skin, bundled Antonio/Smiley Sans fonts, and quieter sleep snore audio.
 - Broader AI agent support for Codex Desktop, Codex CLI, Claude Code, opencode, scheduled CLI tasks, custom local status sources, and Codex 5-hour/weekly token-limit HUD readouts.
 - Room Visit now supports autonomous visits, pair affinity, shared activities, and generated guest/host social dialogue through the local bridge with safe heuristic fallbacks.
@@ -31,6 +35,10 @@
 
 **中文**
 
+- 0.2.3 重点加固桌面稳定性：商店购买按钮现在会抑制快速连点，长按可一次购买最多 10 个可重复物品，并新增 DOM 级烟测确认购买路径保持响应。
+- 渲染和运行时韧性进一步增强：稳定 canvas backing store 尺寸、缓存摆放物渲染分类/排序，并增加 React Error Boundary 兜底。
+- 本地桥接安全加固：显式 CSP，并对 HTTP/WebSocket 状态流量做 Origin/CORS 校验。
+- 桌面启动加入 single-instance 防护，重复启动会聚焦已有窗口，不再留下额外 WebView 进程。
 - 新增并打磨多个角色与房间视觉：小章鱼、急急 Spark、心情史莱姆、红色小龙虾、半透明小幽灵、可爱小企鹅、绿色小蜥蜴，以及更丰富的家具/地板/窗景材质、Starship 控制台主题、内置 Antonio/Smiley Sans 字体和更安静的睡眠呼噜音效。
 - 扩展 AI agent 工作流：Codex Desktop、Codex CLI、Claude Code、opencode、定时 CLI 任务、自定义本地状态源，以及 Codex 5 小时/每周 token 限额 HUD。
 - Room Visit 串门支持自动拜访、关系亲密度、共享活动，以及通过本地桥接生成 guest/host 社交对话，并带安全的启发式回退。
@@ -46,7 +54,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.2.2 preview installers are available for Windows through GitHub Releases. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden. macOS packaging is pending for this patch release.
+> Current status / 当前状态: 0.2.3 preview installers are available for Windows through GitHub Releases. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden. macOS packaging is pending for this patch release.
 
 ## Contents / 目录
 
@@ -540,9 +548,9 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 Current release-prep notes:
 
-- The 0.2.2 preview release is available through GitHub Releases, with Windows NSIS `.exe` and Windows MSI installers. macOS DMG packaging is pending for this patch release.
+- The 0.2.3 preview release is available through GitHub Releases, with Windows NSIS `.exe` and Windows MSI installers. macOS DMG packaging is pending for this patch release.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
-- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, and polished Task Cabinet/File Cabinet interactions are now part of the 0.2.2 preview surface.
+- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, shop rapid-click protection, and long-press bulk buying are now part of the 0.2.3 preview surface.
 - Native bridge support exists for local status, Codex Desktop session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
 - A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
 - Linux packaging remains planned after the desktop integration path is stable.
@@ -551,9 +559,9 @@ Current release-prep notes:
 
 当前发布准备阶段说明：
 
-- 0.2.2 预览版已通过 GitHub Releases 提供 Windows NSIS `.exe` 和 Windows MSI 安装包，本次补丁版 macOS DMG 待补充。
+- 0.2.3 预览版已通过 GitHub Releases 提供 Windows NSIS `.exe` 和 Windows MSI 安装包，本次补丁版 macOS DMG 待补充。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
-- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门，以及打磨后的 Task Cabinet/File Cabinet 交互，已经纳入 0.2.2 预览体验。
+- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、商店快速点击保护与长按批量购买，已经纳入 0.2.3 预览体验。
 - 本地状态、Codex Desktop 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。
 - 完全 Rust-native 的 connected runner 和面向发布模式的 provider-backed learning 仍是后续加固工作。
 - Linux 打包计划会在桌面集成路径继续稳定后推进。
