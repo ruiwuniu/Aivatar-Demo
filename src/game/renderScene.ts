@@ -12408,7 +12408,7 @@ const visitorIdleStatus = (visitor: AivatarRoomVisitor): CodexStatusMessage => (
   timestamp: new Date().toISOString(),
 });
 
-const VISITOR_BUBBLE_DURATION_MS = 1800;
+const VISITOR_BUBBLE_DURATION_MS = 2200;
 
 const drawVisitorBubble = (
   ctx: CanvasRenderingContext2D,
@@ -12416,8 +12416,10 @@ const drawVisitorBubble = (
   uiTheme: UiThemeId,
 ) => {
   if (!visitor.bubbleText) return;
-  const startedAt = visitor.bubbleStartedAt ?? performance.now();
-  if (performance.now() - startedAt > VISITOR_BUBBLE_DURATION_MS) return;
+  const now = performance.now();
+  const startedAt = visitor.bubbleStartedAt ?? now;
+  const endsAt = visitor.bubbleEndsAt ?? startedAt + VISITOR_BUBBLE_DURATION_MS;
+  if (now >= endsAt) return;
   drawAvatarBubble(
     ctx,
     visitor.runtime,

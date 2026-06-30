@@ -5,12 +5,19 @@ import type {
   AivatarRoomPresence,
   AivatarRoomVisitor,
   AivatarSaveState,
+  AivatarSocialBubble,
+  AivatarSocialBubbleCandidate,
+  AivatarSocialBubbleKind,
+  AivatarSocialBubbleLocale,
+  AivatarSocialBubbleSet,
   AivatarSocialRelationship,
   AivatarSocialRoomMemory,
   AivatarVisitSession,
+  AivatarVisitRole,
   AvatarAppearanceId,
   AvatarRuntime,
   BehaviorName,
+  IdleBubbleLanguagePreference,
   PetStats,
 } from "../types";
 import {
@@ -94,6 +101,642 @@ const ROOM_VISIT_BUBBLE_KEYS: Partial<Record<BehaviorName, string[]>> = {
 export const roomVisitBubbleKeyForBehavior = (behavior: BehaviorName) => {
   const keys = ROOM_VISIT_BUBBLE_KEYS[behavior] ?? ROOM_VISIT_BUBBLE_KEYS.interact ?? [];
   return keys[Math.floor(Math.random() * keys.length)] ?? "roomVisit.bubble.interact.1";
+};
+
+const SOCIAL_BUBBLE_TEXT_MAX_LENGTH = 56;
+const SOCIAL_BUBBLE_TAG_MAX_COUNT = 6;
+const SOCIAL_BUBBLE_DEFAULT_WEIGHT = 1;
+const SOCIAL_BUBBLE_PRESENCE_LIMIT = 24;
+
+const SOCIAL_BUBBLE_ACTIVITIES = new Set<BehaviorName>([
+  "interact",
+  "coffee",
+  "play",
+  "music",
+  "relax",
+  "admire",
+  "wander",
+]);
+
+export const socialVisitRolePair = (role: AivatarVisitRole): AivatarVisitRole =>
+  role === "host" ? "guest" : "host";
+
+const socialBubbleHash = (value: string) => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+};
+
+export const normalizeSocialBubbleText = (value: unknown) =>
+  String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, SOCIAL_BUBBLE_TEXT_MAX_LENGTH);
+
+const hasHanSocialText = (value: string) => /[\u3400-\u9fff]/u.test(value);
+
+const normalizeSocialBubbleLocale = (
+  value: unknown,
+  text: string,
+): AivatarSocialBubbleLocale => {
+  if (value === "zh" || value === "en" || value === "mixed") return value;
+  return hasHanSocialText(text) ? "zh" : "en";
+};
+
+const normalizeSocialBubbleIntent = (value: unknown, fallbackText: string) => {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return normalized || `intent-${socialBubbleHash(fallbackText)}`;
+};
+
+const normalizeSocialBubbleRoles = (value: unknown): AivatarVisitRole[] => {
+  if (!Array.isArray(value)) return ["host", "guest"];
+  const roles = value.filter(
+    (role): role is AivatarVisitRole => role === "host" || role === "guest",
+  );
+  return roles.length ? Array.from(new Set(roles)) : ["host", "guest"];
+};
+
+const normalizeSocialBubbleTags = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? Array.from(
+        new Set(
+          value
+            .map((tag) => normalizeSocialBubbleText(tag).slice(0, 18))
+            .filter(Boolean),
+        ),
+      ).slice(0, SOCIAL_BUBBLE_TAG_MAX_COUNT)
+    : [];
+
+const normalizeSocialBubbleActivity = (value: unknown): BehaviorName | undefined =>
+  SOCIAL_BUBBLE_ACTIVITIES.has(value as BehaviorName)
+    ? value as BehaviorName
+    : undefined;
+
+export const normalizeSocialBubbleCandidate = (
+  value: unknown,
+): AivatarSocialBubbleCandidate | null => {
+  const source = value && typeof value === "object"
+    ? value as Partial<AivatarSocialBubbleCandidate>
+    : {};
+  const text = normalizeSocialBubbleText(source.text);
+  if (!text) return null;
+  const kind = source.kind === "response" ? "response" : "active";
+  const intentId = normalizeSocialBubbleIntent(source.intentId, text);
+  const replyToIntentIds = Array.isArray(source.replyToIntentIds)
+    ? Array.from(
+        new Set(
+          source.replyToIntentIds
+            .map((intent) => normalizeSocialBubbleIntent(intent, text))
+            .filter(Boolean),
+        ),
+      ).slice(0, 6)
+    : [];
+  return {
+    kind,
+    text,
+    locale: normalizeSocialBubbleLocale(source.locale, text),
+    intentId,
+    replyToIntentIds,
+    allowedVisitRoles: normalizeSocialBubbleRoles(source.allowedVisitRoles),
+    activity: normalizeSocialBubbleActivity(source.activity),
+    tags: normalizeSocialBubbleTags(source.tags),
+  };
+};
+
+export const socialBubbleSignature = (
+  bubble: Pick<AivatarSocialBubbleCandidate, "kind" | "text" | "intentId">,
+) =>
+  [
+    bubble.kind,
+    normalizeSocialBubbleIntent(bubble.intentId, bubble.text),
+    normalizeSocialBubbleText(bubble.text).toLowerCase(),
+  ].join(":");
+
+export const normalizeSocialBubble = (
+  value: unknown,
+  options: {
+    source?: AivatarSocialBubble["source"];
+    learnedFromAgent?: string;
+    learnedFromSessionId?: string;
+    learnedFromAvatarId?: string;
+    learnedAt?: string;
+  } = {},
+): AivatarSocialBubble | null => {
+  const candidate = normalizeSocialBubbleCandidate(value);
+  if (!candidate) return null;
+  const source = value && typeof value === "object"
+    ? value as Partial<AivatarSocialBubble>
+    : {};
+  const bubbleSource =
+    source.source === "initial" ||
+    source.source === "learned" ||
+    source.source === "session"
+      ? source.source
+      : options.source ?? "learned";
+  const id = typeof source.id === "string" && source.id.trim()
+    ? source.id.trim()
+    : `${bubbleSource}-${candidate.kind}-${candidate.intentId}-${socialBubbleHash(candidate.text)}`;
+  const weight = Math.max(
+    0.1,
+    Math.min(6, Number(source.weight) || SOCIAL_BUBBLE_DEFAULT_WEIGHT),
+  );
+  return {
+    ...candidate,
+    id,
+    locale: candidate.locale ?? "en",
+    allowedVisitRoles: candidate.allowedVisitRoles ?? ["host", "guest"],
+    tags: candidate.tags ?? [],
+    weight,
+    source: bubbleSource,
+    learnedFromAgent: source.learnedFromAgent ?? options.learnedFromAgent,
+    learnedFromSessionId: source.learnedFromSessionId ?? options.learnedFromSessionId,
+    learnedFromAvatarId: source.learnedFromAvatarId ?? options.learnedFromAvatarId,
+    learnedAt: source.learnedAt ?? options.learnedAt,
+  };
+};
+
+export const normalizeSocialBubbleSet = (
+  value?: Partial<AivatarSocialBubbleSet> | null,
+): AivatarSocialBubbleSet => {
+  const normalizeList = (items: unknown, kind: AivatarSocialBubble["kind"]) =>
+    Array.isArray(items)
+      ? items
+          .map((item) => normalizeSocialBubble({ ...(item as object), kind }))
+          .filter((bubble): bubble is AivatarSocialBubble => Boolean(bubble))
+          .slice(0, 48)
+      : [];
+  return {
+    active: normalizeList(value?.active, "active"),
+    responses: normalizeList(value?.responses, "response"),
+    disabledIds: Array.isArray(value?.disabledIds)
+      ? value.disabledIds
+          .filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+          .slice(0, 96)
+      : [],
+  };
+};
+
+const initialSocialBubble = (
+  bubble: Omit<AivatarSocialBubble, "id" | "source" | "weight"> & {
+    id: string;
+  },
+): AivatarSocialBubble => ({
+  ...bubble,
+  source: "initial",
+  weight: SOCIAL_BUBBLE_DEFAULT_WEIGHT,
+});
+
+export const INITIAL_SOCIAL_BUBBLES: AivatarSocialBubble[] = [
+  initialSocialBubble({
+    id: "zh-guest-tour-request",
+    kind: "active",
+    text: "\u53ef\u4ee5\u5e26\u6211\u770b\u770b\u8fd9\u4e2a\u89d2\u843d\u5417",
+    locale: "zh",
+    intentId: "tour_request",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["guest"],
+    activity: "admire",
+    tags: ["\u53c2\u89c2", "\u4e3b\u52a8"],
+  }),
+  initialSocialBubble({
+    id: "zh-host-tour-reply",
+    kind: "response",
+    text: "\u5f53\u7136\uff0c\u5148\u4ece\u8fd9\u8fb9\u5f00\u59cb\u5427",
+    locale: "zh",
+    intentId: "tour_reply",
+    replyToIntentIds: ["tour_request"],
+    allowedVisitRoles: ["host"],
+    activity: "admire",
+    tags: ["\u53c2\u89c2", "\u5e94\u7b54"],
+  }),
+  initialSocialBubble({
+    id: "zh-host-tour-offer",
+    kind: "active",
+    text: "\u8981\u770b\u770b\u6211\u65b0\u6446\u7684\u89d2\u843d\u5417",
+    locale: "zh",
+    intentId: "tour_offer",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["host"],
+    activity: "admire",
+    tags: ["\u53c2\u89c2", "\u4e3b\u52a8"],
+  }),
+  initialSocialBubble({
+    id: "zh-guest-tour-offer-reply",
+    kind: "response",
+    text: "\u597d\u5440\uff0c\u8fd9\u91cc\u770b\u8d77\u6765\u5f88\u8212\u670d",
+    locale: "zh",
+    intentId: "tour_offer_reply",
+    replyToIntentIds: ["tour_offer"],
+    allowedVisitRoles: ["guest"],
+    activity: "admire",
+    tags: ["\u53c2\u89c2", "\u5e94\u7b54"],
+  }),
+  initialSocialBubble({
+    id: "zh-guest-coffee-comment",
+    kind: "active",
+    text: "\u8fd9\u91cc\u7684\u5496\u5561\u95fb\u8d77\u6765\u5f88\u9999",
+    locale: "zh",
+    intentId: "coffee_comment",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["guest"],
+    activity: "coffee",
+    tags: ["\u5496\u5561", "\u4e3b\u52a8"],
+  }),
+  initialSocialBubble({
+    id: "zh-host-coffee-comment-reply",
+    kind: "response",
+    text: "\u5750\u4e00\u4f1a\u5427\uff0c\u6162\u6162\u559d",
+    locale: "zh",
+    intentId: "coffee_reply",
+    replyToIntentIds: ["coffee_comment"],
+    allowedVisitRoles: ["host"],
+    activity: "coffee",
+    tags: ["\u5496\u5561", "\u5e94\u7b54"],
+  }),
+  initialSocialBubble({
+    id: "zh-host-coffee-offer",
+    kind: "active",
+    text: "\u6211\u7ed9\u4f60\u7559\u4e86\u4e00\u676f\u5496\u5561",
+    locale: "zh",
+    intentId: "coffee_offer",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["host"],
+    activity: "coffee",
+    tags: ["\u5496\u5561", "\u4e3b\u52a8"],
+  }),
+  initialSocialBubble({
+    id: "zh-guest-coffee-offer-reply",
+    kind: "response",
+    text: "\u592a\u597d\u4e86\uff0c\u6211\u6b63\u60f3\u6696\u4e00\u4e0b",
+    locale: "zh",
+    intentId: "coffee_offer_reply",
+    replyToIntentIds: ["coffee_offer"],
+    allowedVisitRoles: ["guest"],
+    activity: "coffee",
+    tags: ["\u5496\u5561", "\u5e94\u7b54"],
+  }),
+  initialSocialBubble({
+    id: "zh-guest-play-try",
+    kind: "active",
+    text: "\u8fd9\u4e00\u5c40\u8ba9\u6211\u5148\u8bd5\u8bd5",
+    locale: "zh",
+    intentId: "play_try",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["guest"],
+    activity: "play",
+    tags: ["\u6e38\u620f", "\u4e3b\u52a8"],
+  }),
+  initialSocialBubble({
+    id: "zh-host-play-try-reply",
+    kind: "response",
+    text: "\u597d\uff0c\u6211\u770b\u770b\u4f60\u7684\u64cd\u4f5c",
+    locale: "zh",
+    intentId: "play_try_reply",
+    replyToIntentIds: ["play_try"],
+    allowedVisitRoles: ["host"],
+    activity: "play",
+    tags: ["\u6e38\u620f", "\u5e94\u7b54"],
+  }),
+  initialSocialBubble({
+    id: "zh-host-relax-offer",
+    kind: "active",
+    text: "\u8fd9\u91cc\u53ef\u4ee5\u5b89\u5fc3\u6b47\u4e00\u4f1a\u513f",
+    locale: "zh",
+    intentId: "relax_offer",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["host"],
+    activity: "relax",
+    tags: ["\u4f11\u606f", "\u4e3b\u52a8"],
+  }),
+  initialSocialBubble({
+    id: "zh-guest-relax-offer-reply",
+    kind: "response",
+    text: "\u90a3\u6211\u5c31\u591a\u5f85\u4e00\u5c0f\u4f1a\u513f",
+    locale: "zh",
+    intentId: "relax_reply",
+    replyToIntentIds: ["relax_offer"],
+    allowedVisitRoles: ["guest"],
+    activity: "relax",
+    tags: ["\u4f11\u606f", "\u5e94\u7b54"],
+  }),
+  initialSocialBubble({
+    id: "zh-shared-chat-calm",
+    kind: "active",
+    text: "\u4eca\u5929\u8fd9\u91cc\u597d\u5b89\u9759",
+    locale: "zh",
+    intentId: "casual_chat_calm",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["host", "guest"],
+    activity: "interact",
+    tags: ["\u95f2\u804a", "\u4e3b\u52a8"],
+  }),
+  initialSocialBubble({
+    id: "zh-shared-chat-calm-reply",
+    kind: "response",
+    text: "\u55ef\uff0c\u6b63\u597d\u6162\u6162\u804a\u4e00\u4f1a\u513f",
+    locale: "zh",
+    intentId: "casual_chat_calm_reply",
+    replyToIntentIds: ["casual_chat_calm"],
+    allowedVisitRoles: ["host", "guest"],
+    activity: "interact",
+    tags: ["\u95f2\u804a", "\u5e94\u7b54"],
+  }),
+  initialSocialBubble({
+    id: "en-guest-tour-request",
+    kind: "active",
+    text: "Can you show me this corner",
+    locale: "en",
+    intentId: "tour_request",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["guest"],
+    activity: "admire",
+    tags: ["tour", "active"],
+  }),
+  initialSocialBubble({
+    id: "en-host-tour-reply",
+    kind: "response",
+    text: "Of course, start over here",
+    locale: "en",
+    intentId: "tour_reply",
+    replyToIntentIds: ["tour_request"],
+    allowedVisitRoles: ["host"],
+    activity: "admire",
+    tags: ["tour", "response"],
+  }),
+  initialSocialBubble({
+    id: "en-host-tour-offer",
+    kind: "active",
+    text: "Want to see the new little corner",
+    locale: "en",
+    intentId: "tour_offer",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["host"],
+    activity: "admire",
+    tags: ["tour", "active"],
+  }),
+  initialSocialBubble({
+    id: "en-guest-tour-offer-reply",
+    kind: "response",
+    text: "Yes, this place looks cozy",
+    locale: "en",
+    intentId: "tour_offer_reply",
+    replyToIntentIds: ["tour_offer"],
+    allowedVisitRoles: ["guest"],
+    activity: "admire",
+    tags: ["tour", "response"],
+  }),
+  initialSocialBubble({
+    id: "en-guest-coffee-comment",
+    kind: "active",
+    text: "The coffee smells really good",
+    locale: "en",
+    intentId: "coffee_comment",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["guest"],
+    activity: "coffee",
+    tags: ["coffee", "active"],
+  }),
+  initialSocialBubble({
+    id: "en-host-coffee-comment-reply",
+    kind: "response",
+    text: "Sit for a minute, sip slowly",
+    locale: "en",
+    intentId: "coffee_reply",
+    replyToIntentIds: ["coffee_comment"],
+    allowedVisitRoles: ["host"],
+    activity: "coffee",
+    tags: ["coffee", "response"],
+  }),
+  initialSocialBubble({
+    id: "en-host-coffee-offer",
+    kind: "active",
+    text: "I saved a tiny coffee for you",
+    locale: "en",
+    intentId: "coffee_offer",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["host"],
+    activity: "coffee",
+    tags: ["coffee", "active"],
+  }),
+  initialSocialBubble({
+    id: "en-guest-coffee-offer-reply",
+    kind: "response",
+    text: "Perfect, I needed something warm",
+    locale: "en",
+    intentId: "coffee_offer_reply",
+    replyToIntentIds: ["coffee_offer"],
+    allowedVisitRoles: ["guest"],
+    activity: "coffee",
+    tags: ["coffee", "response"],
+  }),
+  initialSocialBubble({
+    id: "en-guest-play-try",
+    kind: "active",
+    text: "Let me try this round first",
+    locale: "en",
+    intentId: "play_try",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["guest"],
+    activity: "play",
+    tags: ["game", "active"],
+  }),
+  initialSocialBubble({
+    id: "en-host-play-try-reply",
+    kind: "response",
+    text: "Go on, I want to see your move",
+    locale: "en",
+    intentId: "play_try_reply",
+    replyToIntentIds: ["play_try"],
+    allowedVisitRoles: ["host"],
+    activity: "play",
+    tags: ["game", "response"],
+  }),
+  initialSocialBubble({
+    id: "en-host-relax-offer",
+    kind: "active",
+    text: "You can rest here for a bit",
+    locale: "en",
+    intentId: "relax_offer",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["host"],
+    activity: "relax",
+    tags: ["rest", "active"],
+  }),
+  initialSocialBubble({
+    id: "en-guest-relax-offer-reply",
+    kind: "response",
+    text: "Then I will stay a little longer",
+    locale: "en",
+    intentId: "relax_reply",
+    replyToIntentIds: ["relax_offer"],
+    allowedVisitRoles: ["guest"],
+    activity: "relax",
+    tags: ["rest", "response"],
+  }),
+  initialSocialBubble({
+    id: "en-shared-chat-calm",
+    kind: "active",
+    text: "It feels calm in here today",
+    locale: "en",
+    intentId: "casual_chat_calm",
+    replyToIntentIds: [],
+    allowedVisitRoles: ["host", "guest"],
+    activity: "interact",
+    tags: ["chat", "active"],
+  }),
+  initialSocialBubble({
+    id: "en-shared-chat-calm-reply",
+    kind: "response",
+    text: "Yeah, we can talk for a while",
+    locale: "en",
+    intentId: "casual_chat_calm_reply",
+    replyToIntentIds: ["casual_chat_calm"],
+    allowedVisitRoles: ["host", "guest"],
+    activity: "interact",
+    tags: ["chat", "response"],
+  }),
+];
+
+export const socialBubbleLanguageForPreference = (
+  preference: IdleBubbleLanguagePreference,
+  uiLocale: string,
+): AivatarSocialBubbleLocale =>
+  preference === "mixed"
+    ? "mixed"
+    : preference === "zh" || preference === "en"
+      ? preference
+      : uiLocale.toLowerCase().startsWith("zh")
+        ? "zh"
+        : "en";
+
+const socialBubbleMatchesLocale = (
+  bubble: AivatarSocialBubbleCandidate,
+  locale: AivatarSocialBubbleLocale,
+) => locale === "mixed" || bubble.locale === "mixed" || bubble.locale === locale;
+
+const socialBubbleMatchesRole = (
+  bubble: AivatarSocialBubbleCandidate,
+  role: AivatarVisitRole,
+) => !bubble.allowedVisitRoles || bubble.allowedVisitRoles.includes(role);
+
+const socialBubbleActivityPool = <T extends AivatarSocialBubbleCandidate>(
+  bubbles: T[],
+  activity: BehaviorName,
+): T[] => {
+  const exactPool = bubbles.filter(
+    (bubble) => !bubble.activity || bubble.activity === activity,
+  );
+  if (exactPool.length || activity === "interact") return exactPool;
+  return bubbles.filter((bubble) => bubble.activity === "interact");
+};
+
+const weightedSocialBubble = (bubbles: AivatarSocialBubble[]) => {
+  const total = bubbles.reduce((sum, bubble) => sum + Math.max(0.1, bubble.weight), 0);
+  let cursor = Math.random() * total;
+  for (const bubble of bubbles) {
+    cursor -= Math.max(0.1, bubble.weight);
+    if (cursor <= 0) return bubble;
+  }
+  return bubbles[0];
+};
+
+const socialBubblesByKind = (
+  set: AivatarSocialBubbleSet | undefined,
+  kind: AivatarSocialBubbleKind,
+) => {
+  const saved = kind === "active" ? set?.active ?? [] : set?.responses ?? [];
+  const disabledIds = new Set(set?.disabledIds ?? []);
+  return [
+    ...INITIAL_SOCIAL_BUBBLES.filter((bubble) => bubble.kind === kind),
+    ...saved,
+  ].filter((bubble) => !disabledIds.has(bubble.id));
+};
+
+export type AivatarSocialBubbleExchange = {
+  active: AivatarSocialBubble;
+  response: AivatarSocialBubble;
+};
+
+const fallbackSocialResponse = (
+  active: AivatarSocialBubble,
+  responderRole: AivatarVisitRole,
+): AivatarSocialBubble => {
+  const zh = active.locale === "zh";
+  return {
+    id: `fallback-response-${active.intentId}-${responderRole}-${active.locale}`,
+    kind: "response",
+    text: zh ? "\u55ef\uff0c\u8fd9\u6837\u5f88\u8212\u670d" : "Mhm, that feels nice",
+    locale: active.locale,
+    intentId: "generic_response",
+    replyToIntentIds: [active.intentId],
+    allowedVisitRoles: [responderRole],
+    activity: active.activity,
+    tags: zh ? ["\u5e94\u7b54"] : ["response"],
+    weight: 1,
+    source: "initial",
+  };
+};
+
+export const selectSocialBubbleExchange = (options: {
+  hostBubbles?: AivatarSocialBubbleSet;
+  guestBubbles?: AivatarSocialBubbleSet;
+  speakerRole: AivatarVisitRole;
+  activity: BehaviorName;
+  idleBubbleLanguage: IdleBubbleLanguagePreference;
+  uiLocale: string;
+  recentIntentIds?: string[];
+}): AivatarSocialBubbleExchange | null => {
+  const preferredLocale = socialBubbleLanguageForPreference(
+    options.idleBubbleLanguage,
+    options.uiLocale,
+  );
+  const speakerBubbles = options.speakerRole === "host"
+    ? options.hostBubbles
+    : options.guestBubbles;
+  const responderRole = socialVisitRolePair(options.speakerRole);
+  const responderBubbles = responderRole === "host"
+    ? options.hostBubbles
+    : options.guestBubbles;
+  const recentIntentIds = new Set(options.recentIntentIds ?? []);
+  const activeCandidates = socialBubblesByKind(speakerBubbles, "active")
+    .filter((bubble) => socialBubbleMatchesRole(bubble, options.speakerRole))
+    .filter((bubble) => socialBubbleMatchesLocale(bubble, preferredLocale));
+  const activePool = socialBubbleActivityPool(activeCandidates, options.activity);
+  const freshActivePool = activePool.filter(
+    (bubble) => !recentIntentIds.has(bubble.intentId),
+  );
+  const active = weightedSocialBubble(freshActivePool.length ? freshActivePool : activePool);
+  if (!active) return null;
+
+  const responseCandidates = socialBubblesByKind(responderBubbles, "response")
+    .filter((bubble) => socialBubbleMatchesRole(bubble, responderRole))
+    .filter((bubble) => bubble.replyToIntentIds?.includes(active.intentId))
+    .filter((bubble) => socialBubbleMatchesLocale(bubble, active.locale));
+  const responsePool = socialBubbleActivityPool(
+    responseCandidates,
+    active.activity ?? options.activity,
+  );
+  const response = weightedSocialBubble(responsePool) ??
+    fallbackSocialResponse(active, responderRole);
+  return { active, response };
+};
+
+export const socialBubblePresenceSet = (
+  set?: AivatarSocialBubbleSet,
+): AivatarSocialBubbleSet => {
+  const normalized = normalizeSocialBubbleSet(set);
+  return {
+    active: normalized.active.slice(0, SOCIAL_BUBBLE_PRESENCE_LIMIT),
+    responses: normalized.responses.slice(0, SOCIAL_BUBBLE_PRESENCE_LIMIT),
+    disabledIds: normalized.disabledIds?.slice(0, SOCIAL_BUBBLE_PRESENCE_LIMIT),
+  };
 };
 
 export const createRoomDoorEntryRuntime = (): AvatarRuntime => ({
@@ -543,6 +1186,7 @@ export const normalizeRoomPresence = (
           .filter(Boolean)
           .slice(0, 8)
       : [],
+    socialBubbles: socialBubblePresenceSet(value.socialBubbles),
     petStats: {
       energy: clamp(value.petStats?.energy ?? 70),
       mood: clamp(value.petStats?.mood ?? 70),
@@ -577,6 +1221,7 @@ export const roomPresenceFromSave = (
   growthLevel: memory.growth.level,
   traits: memory.growth.traits,
   idleBubblePhrases: (memory.preferences.idleBubblePhrases ?? []).slice(0, 8),
+  socialBubbles: socialBubblePresenceSet(memory.preferences.socialBubbles),
   petStats: save.petStats,
 });
 
@@ -856,12 +1501,14 @@ export const advanceRoomVisitor = (
   let phase = visitor.phase ?? "entering";
   let bubbleText = visitor.bubbleText;
   let bubbleStartedAt = visitor.bubbleStartedAt;
+  let bubbleEndsAt = visitor.bubbleEndsAt;
   const setBubbleText = (nextBubbleText: string | undefined) => {
     if (nextBubbleText !== bubbleText) {
       bubbleStartedAt = nextBubbleText ? now : undefined;
     } else if (nextBubbleText && typeof bubbleStartedAt !== "number") {
       bubbleStartedAt = now;
     }
+    bubbleEndsAt = undefined;
     bubbleText = nextBubbleText;
   };
 
@@ -993,5 +1640,6 @@ export const advanceRoomVisitor = (
     phase,
     bubbleText,
     bubbleStartedAt,
+    bubbleEndsAt,
   };
 };

@@ -447,6 +447,74 @@ const normalizeIdleBubbleCandidates = (value) => {
   return candidates.length > 0 ? candidates : undefined;
 };
 
+const socialBubbleKinds = new Set(["active", "response"]);
+const socialBubbleLocales = new Set(["zh", "en", "mixed"]);
+const socialBubbleRoles = new Set(["host", "guest"]);
+const socialBubbleActivities = new Set([
+  "interact",
+  "coffee",
+  "play",
+  "music",
+  "relax",
+  "admire",
+  "wander",
+]);
+
+const compactSocialBubbleText = (value, limit) =>
+  String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+
+const normalizeSocialBubbleIntent = (value, fallbackText) => {
+  const intent = compactSocialBubbleText(value, 40)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return intent || `session-${safeSessionName(fallbackText || "bubble").slice(0, 16)}`;
+};
+
+const normalizeSocialBubbleCandidates = (value) => {
+  if (!Array.isArray(value)) return undefined;
+  const seen = new Set();
+  const candidates = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const text = compactSocialBubbleText(entry.text, 56);
+    const length = Array.from(text).length;
+    if (length < 2 || length > 56) continue;
+    const kind = socialBubbleKinds.has(entry.kind) ? entry.kind : "active";
+    const locale = socialBubbleLocales.has(entry.locale) ? entry.locale : undefined;
+    const intentId = normalizeSocialBubbleIntent(entry.intentId, text);
+    const signature = `${kind}:${intentId}:${text.toLowerCase()}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    const replyToIntentIds = Array.isArray(entry.replyToIntentIds)
+      ? [...new Set(entry.replyToIntentIds.map((item) => normalizeSocialBubbleIntent(item, text)))]
+          .slice(0, 4)
+      : [];
+    const allowedVisitRoles = Array.isArray(entry.allowedVisitRoles)
+      ? [...new Set(entry.allowedVisitRoles.filter((role) => socialBubbleRoles.has(role)))]
+      : [];
+    const tags = Array.isArray(entry.tags)
+      ? [...new Set(entry.tags.map((tag) => compactSocialBubbleText(tag, 18)).filter(Boolean))]
+          .slice(0, 4)
+      : [];
+    candidates.push({
+      kind,
+      text,
+      locale,
+      intentId,
+      replyToIntentIds: kind === "response" ? replyToIntentIds : [],
+      allowedVisitRoles: allowedVisitRoles.length ? allowedVisitRoles : ["host", "guest"],
+      activity: socialBubbleActivities.has(entry.activity) ? entry.activity : undefined,
+      tags,
+    });
+    if (candidates.length >= 12) break;
+  }
+  return candidates.length > 0 ? candidates : undefined;
+};
+
 const normalizeTraitChanges = (value) => {
   if (!value || typeof value !== "object") return undefined;
   const traitNames = [
@@ -491,6 +559,9 @@ const normalizeLearning = (value) => {
     summary: summary.length > 180 ? `${summary.slice(0, 177)}...` : summary,
     idleBubbleCandidates: normalizeIdleBubbleCandidates(
       value.idleBubbleCandidates,
+    ),
+    socialBubbleCandidates: normalizeSocialBubbleCandidates(
+      value.socialBubbleCandidates,
     ),
     traitChanges: normalizeTraitChanges(value.traitChanges),
     xp: Number.isFinite(xp) && xp > 0 ? Math.min(12, Math.round(xp)) : undefined,
