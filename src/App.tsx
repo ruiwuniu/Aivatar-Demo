@@ -6624,6 +6624,10 @@ export const App = () => {
       statAccumulator += elapsedSeconds;
       uiAccumulator += elapsedSeconds;
       const currentContent = contentRef.current;
+      const currentTableCoffeeQuantity = getTableCoffeeQuantity(
+        saveRef.current.furnitureStorage,
+        currentContent.placedItems,
+      );
       const navLayoutFingerprint = navigationLayoutFingerprint(currentContent);
       const currentStatus = statusRef.current.status;
       const currentInteraction = activeInteractionRef.current;
@@ -6685,7 +6689,7 @@ export const App = () => {
             selectedWindowRef.current?.id,
             null,
             null,
-            tableCoffeeStorage.quantity,
+            currentTableCoffeeQuantity,
             saveRef.current.memory,
             getWindowTimeMs(frame),
             taskCabinetSceneCountsRef.current.activeFileCount,
@@ -8125,7 +8129,7 @@ export const App = () => {
                   ...furniturePlacementPreviewRef.current,
                 }
               : null,
-            tableCoffeeStorage.quantity,
+            currentTableCoffeeQuantity,
             saveRef.current.memory,
             getWindowTimeMs(frame),
             taskCabinetSceneCountsRef.current.activeFileCount,
