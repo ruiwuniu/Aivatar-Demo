@@ -23,7 +23,10 @@ Scopes:
 
 const EVENT_GROUPS = [
   ["SessionStart"],
+  ["Setup"],
+  ["InstructionsLoaded"],
   ["UserPromptSubmit"],
+  ["UserPromptExpansion"],
   ["MessageDisplay"],
   ["PreToolUse", "*"],
   ["PermissionRequest", "*"],
@@ -32,11 +35,19 @@ const EVENT_GROUPS = [
   ["PostToolUse", "*"],
   ["PostToolUseFailure", "*"],
   ["PostToolBatch"],
-  ["Stop"],
+  ["SubagentStart"],
   ["SubagentStop"],
+  ["TaskCreated"],
+  ["TaskCompleted"],
+  ["PreCompact"],
+  ["PostCompact"],
+  ["Elicitation"],
+  ["ElicitationResult"],
+  ["ConfigChange"],
+  ["CwdChanged"],
+  ["Stop"],
   ["TeammateIdle"],
   ["StopFailure"],
-  ["TaskCompleted"],
   ["SessionEnd"],
 ];
 

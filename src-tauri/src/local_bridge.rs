@@ -225,7 +225,15 @@ fn is_claude_lifecycle_only_idle_status(status: &Value) -> bool {
         && string_field(status, "status").as_deref() == Some("idle")
         && matches!(
             string_field(status, "phase").as_deref(),
-            Some("session-start" | "session-end" | "other")
+            Some(
+                "session-start"
+                    | "setup"
+                    | "instructions-loaded"
+                    | "config-change"
+                    | "cwd-changed"
+                    | "session-end"
+                    | "other",
+            )
         )
         && status.get("usage").is_none()
         && status.get("learning").is_none()
@@ -880,7 +888,10 @@ fn claude_digest_entry(input: &Value) -> Option<String> {
             &["message", "reason", "notification_type"],
         )
         .map(|text| format!("{event}: {}", sanitized_digest_text(&text, 220))),
-        "Stop" | "TaskCompleted" => Some("turn: Claude Code completed the turn".to_string()),
+        "Stop" | "TeammateIdle" => Some("turn: Claude Code completed the turn".to_string()),
+        "TaskCompleted" | "SubagentStop" => {
+            Some("turn: Claude Code completed delegated work".to_string())
+        }
         "StopFailure" => Some("turn: Claude Code reported an error".to_string()),
         _ => {
             let detail = first_string(
@@ -1101,26 +1112,61 @@ fn claude_usage_from_input(input: &Value, terminal: bool) -> Option<Value> {
     }))
 }
 
-fn claude_status_for_event(event: &str, status_line: bool, _has_usage: bool) -> (&'static str, &'static str) {
+fn claude_notification_needs_user(input: &Value) -> bool {
+    let text = first_string(input, &["message", "reason", "notification_type"])
+        .or_else(|| {
+            input
+                .get("notification")
+                .and_then(|value| first_string(value, &["message", "type"]))
+        })
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    text.contains("permission")
+        || text.contains("approval")
+        || text.contains("approve")
+        || text.contains("confirm")
+        || text.contains("input")
+        || text.contains("required")
+        || text.contains("waiting")
+        || text.contains("elicitation")
+}
+
+fn claude_status_for_event(
+    event: &str,
+    status_line: bool,
+    _has_usage: bool,
+) -> (&'static str, &'static str) {
     if status_line {
         return ("idle", "context-window");
     }
     match event {
         "SessionStart" => ("idle", "session-start"),
+        "Setup" => ("idle", "setup"),
+        "InstructionsLoaded" => ("idle", "instructions-loaded"),
+        "ConfigChange" => ("idle", "config-change"),
+        "CwdChanged" => ("idle", "cwd-changed"),
         "UserPromptSubmit" => ("thinking", "user-prompt"),
-        "PreToolUse" | "PostToolUse" | "PostToolBatch" => ("executing", "tool-use"),
-        "MessageDisplay" => ("thinking", "message-display"),
-        "PermissionRequest" => ("waiting_for_user", "permission"),
+        "UserPromptExpansion" => ("thinking", "user-prompt-expansion"),
+        "PreCompact" => ("thinking", "pre-compact"),
+        "PostCompact" => ("thinking", "post-compact"),
+        "ElicitationResult" => ("thinking", "elicitation-result"),
+        "PreToolUse" | "SubagentStart" | "TaskCreated" => ("executing", "tool-use"),
+        "PostToolUse" | "PostToolBatch" | "SubagentStop" | "TaskCompleted" => {
+            ("thinking", "tool-result")
+        }
+        "MessageDisplay" => ("executing", "message-display"),
+        "PermissionRequest" | "Elicitation" => ("waiting_for_user", "permission"),
         "PermissionDenied" | "StopFailure" | "PostToolUseFailure" => ("error", "error"),
-        "Stop" | "SubagentStop" | "TeammateIdle" | "TaskCompleted" => ("complete", "turn-complete"),
+        "Stop" | "TeammateIdle" => ("complete", "turn-complete"),
         "SessionEnd" => ("idle", "session-end"),
-        "Notification" => ("waiting_for_user", "notification"),
+        "Notification" => ("thinking", "notification"),
         _ => {
             let lower = event.to_ascii_lowercase();
             if lower.contains("permission")
                 || lower.contains("approval")
                 || lower.contains("waiting")
                 || lower.contains("input_required")
+                || lower.contains("elicitation")
             {
                 ("waiting_for_user", "permission")
             } else if lower.contains("fail")
@@ -1138,6 +1184,8 @@ fn claude_status_for_event(event: &str, status_line: bool, _has_usage: bool) -> 
                 || lower.contains("command")
                 || lower.contains("execute")
                 || lower.contains("running")
+                || lower.contains("task")
+                || lower.contains("subagent")
             {
                 ("executing", "tool-use")
             } else {
@@ -1216,26 +1264,31 @@ fn normalize_claude_hook_status(input: Value, status_line: bool) -> Result<Value
     let event = claude_event_name(&input, status_line);
     let usage = claude_usage_from_input(
         &input,
-        matches!(
-            event.as_str(),
-            "Stop" | "SubagentStop" | "TeammateIdle" | "TaskCompleted"
-        ),
+        matches!(event.as_str(), "Stop" | "TeammateIdle" | "StopFailure"),
     );
-    let (status, phase) = claude_status_for_event(&event, status_line, usage.is_some());
+    let (mut status, mut phase) = claude_status_for_event(&event, status_line, usage.is_some());
+    if event == "Notification" && claude_notification_needs_user(&input) {
+        status = "waiting_for_user";
+        phase = "notification";
+    }
     let session_id = claude_session_id(&input);
     let label = claude_surface_label(&input);
+    let tool = input.get("tool_name").and_then(Value::as_str);
     let message = match event.as_str() {
         "UserPromptSubmit" => format!("{label} is thinking"),
+        "UserPromptExpansion" => format!("{label} is expanding the prompt"),
         "MessageDisplay" => format!("{label} is responding"),
-        "PreToolUse" | "PostToolUse" | "PostToolBatch" => input
-            .get("tool_name")
-            .and_then(Value::as_str)
-            .map(|tool| format!("{label} used {tool}"))
+        "PreToolUse" => tool
+            .map(|tool| format!("{label} is using {tool}"))
             .unwrap_or_else(|| format!("{label} is using a tool")),
+        "PostToolUse" | "PostToolBatch" => format!("{label} is reviewing tool results"),
+        "SubagentStart" => format!("{label} started a subagent"),
+        "SubagentStop" => format!("{label} is reviewing subagent results"),
+        "TaskCreated" => format!("{label} created a task"),
+        "TaskCompleted" => format!("{label} is reviewing task results"),
         "PermissionRequest" => format!("{label} needs approval"),
-        "Stop" | "SubagentStop" | "TeammateIdle" | "TaskCompleted" => {
-            format!("{label} turn complete")
-        }
+        "Elicitation" => format!("{label} needs input"),
+        "Stop" | "TeammateIdle" => format!("{label} turn complete"),
         "StopFailure" | "PostToolUseFailure" => format!("{label} turn failed"),
         "SessionEnd" => format!("{label} session ended"),
         _ => format!("{label} {event}"),

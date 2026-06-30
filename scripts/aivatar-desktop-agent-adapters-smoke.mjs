@@ -77,8 +77,15 @@ assert.equal(fragment.env.AIVATAR_LEARNING_ENABLED, "1");
 assert.equal(fragment.env.AIVATAR_LEARNING_PROVIDER, "claude-code");
 assert.equal(fragment.statusLine.type, "command");
 assert.ok(fragment.hooks.SessionStart);
+assert.ok(fragment.hooks.Setup);
+assert.ok(fragment.hooks.InstructionsLoaded);
 assert.ok(fragment.hooks.UserPromptSubmit);
+assert.ok(fragment.hooks.UserPromptExpansion);
 assert.ok(fragment.hooks.PreToolUse[0].matcher);
+assert.ok(fragment.hooks.SubagentStart);
+assert.ok(fragment.hooks.TaskCreated);
+assert.ok(fragment.hooks.TaskCompleted);
+assert.ok(fragment.hooks.Elicitation);
 
 const merged = claudeModule.mergeClaudeDesktopSettings(
   {
@@ -374,6 +381,37 @@ try {
     turn_id: "turn-smoke-1",
     delta: "The Desktop Agents card now feels more consistent.",
   });
+  snapshot = await readSnapshot();
+  claudeSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
+  );
+  assert.ok(claudeSession);
+  assert.equal(claudeSession.status, "executing");
+  assert.equal(claudeSession.phase, "message-display");
+  await postHook({
+    hook_event_name: "PostToolUse",
+    session_id: "claude_native_smoke",
+    turn_id: "turn-smoke-1",
+    tool_name: "Read",
+  });
+  snapshot = await readSnapshot();
+  claudeSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
+  );
+  assert.ok(claudeSession);
+  assert.equal(claudeSession.status, "thinking");
+  assert.equal(claudeSession.phase, "tool-result");
+  await postHook({
+    hook_event_name: "TaskCompleted",
+    session_id: "claude_native_smoke",
+    turn_id: "turn-smoke-1",
+  });
+  snapshot = await readSnapshot();
+  claudeSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
+  );
+  assert.ok(claudeSession);
+  assert.equal(claudeSession.status, "thinking");
   await postHook({
     hook_event_name: "Stop",
     session_id: "claude_native_smoke",

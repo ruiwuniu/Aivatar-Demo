@@ -304,6 +304,18 @@ const usageFromClaudeTranscript = async (input, scope = "context-window") => {
 const toolName = (input) =>
   firstString(input?.tool_name, input?.tool?.name, input?.tool_use?.name);
 
+const notificationNeedsUser = (input) => {
+  const text = firstString(
+    input?.message,
+    input?.reason,
+    input?.notification?.message,
+    input?.notification_type,
+  );
+  return /permission|approval|approve|confirm|input|required|waiting|elicitation/i.test(
+    text ?? "",
+  );
+};
+
 const statusForEvent = (input) => {
   const event = hookEventName(input);
   const lowerEvent = event.toLowerCase();
@@ -316,15 +328,63 @@ const statusForEvent = (input) => {
         phase: "session-start",
         message: `${label} session connected`,
       };
+    case "Setup":
+      return {
+        status: "idle",
+        phase: "setup",
+        message: `${label} setup loaded`,
+      };
+    case "InstructionsLoaded":
+      return {
+        status: "idle",
+        phase: "instructions-loaded",
+        message: `${label} instructions loaded`,
+      };
+    case "ConfigChange":
+      return {
+        status: "idle",
+        phase: "config-change",
+        message: `${label} configuration changed`,
+      };
+    case "CwdChanged":
+      return {
+        status: "idle",
+        phase: "cwd-changed",
+        message: `${label} workspace changed`,
+      };
     case "UserPromptSubmit":
       return {
         status: "thinking",
         phase: "user-prompt",
         message: `${label} is thinking`,
       };
-    case "MessageDisplay":
+    case "UserPromptExpansion":
       return {
         status: "thinking",
+        phase: "user-prompt-expansion",
+        message: `${label} is expanding the prompt`,
+      };
+    case "PreCompact":
+      return {
+        status: "thinking",
+        phase: "pre-compact",
+        message: `${label} is preparing context compaction`,
+      };
+    case "PostCompact":
+      return {
+        status: "thinking",
+        phase: "post-compact",
+        message: `${label} is reviewing compacted context`,
+      };
+    case "ElicitationResult":
+      return {
+        status: "thinking",
+        phase: "elicitation-result",
+        message: `${label} received your response`,
+      };
+    case "MessageDisplay":
+      return {
+        status: "executing",
         phase: "message-display",
         message: `${label} is responding`,
       };
@@ -350,11 +410,41 @@ const statusForEvent = (input) => {
         message: name ? `${label} is using ${name}` : `${label} is using a tool`,
       };
     }
+    case "SubagentStart":
+      return {
+        status: "executing",
+        phase: "subagent-start",
+        message: `${label} started a subagent`,
+      };
+    case "TaskCreated":
+      return {
+        status: "executing",
+        phase: "task-created",
+        message: `${label} created a task`,
+      };
+    case "SubagentStop":
+      return {
+        status: "thinking",
+        phase: "subagent-result",
+        message: `${label} is reviewing subagent results`,
+      };
+    case "TaskCompleted":
+      return {
+        status: "thinking",
+        phase: "task-result",
+        message: `${label} is reviewing task results`,
+      };
     case "PermissionRequest":
       return {
         status: "waiting_for_user",
         phase: "permission",
         message: `${label} is waiting for permission`,
+      };
+    case "Elicitation":
+      return {
+        status: "waiting_for_user",
+        phase: "elicitation",
+        message: `${label} is waiting for input`,
       };
     case "PermissionDenied":
       return {
@@ -372,7 +462,7 @@ const statusForEvent = (input) => {
     }
     case "Notification": {
       const message = firstString(input?.message, input?.notification?.message);
-      const waiting = /permission|input|waiting|idle/i.test(message ?? "");
+      const waiting = notificationNeedsUser(input);
       return {
         status: waiting ? "waiting_for_user" : "thinking",
         phase: "notification",
@@ -380,9 +470,7 @@ const statusForEvent = (input) => {
       };
     }
     case "Stop":
-    case "SubagentStop":
     case "TeammateIdle":
-    case "TaskCompleted":
       return {
         status: "complete",
         phase: event,
@@ -401,7 +489,7 @@ const statusForEvent = (input) => {
         message: `${label} session ended`,
       };
     default:
-      if (/permission|approval|waiting|input_required/u.test(lowerEvent)) {
+      if (/permission|approval|waiting|input_required|elicitation/u.test(lowerEvent)) {
         return {
           status: "waiting_for_user",
           phase: event,
@@ -422,7 +510,7 @@ const statusForEvent = (input) => {
           message: `${label} turn complete`,
         };
       }
-      if (/tool|command|execute|executing|running/u.test(lowerEvent)) {
+      if (/tool|command|execute|executing|running|task|subagent/u.test(lowerEvent)) {
         return {
           status: "executing",
           phase: event,
@@ -453,7 +541,14 @@ const preserveTerminalStatusAfterTurnEnd = (input, status, previousState) => {
 const isTerminalStatusName = (status) => status === "complete" || status === "error";
 
 const isLifecycleOnlyEvent = (event) =>
-  event === "SessionStart" || event === "SessionEnd";
+  [
+    "SessionStart",
+    "Setup",
+    "InstructionsLoaded",
+    "ConfigChange",
+    "CwdChanged",
+    "SessionEnd",
+  ].includes(event);
 
 const shouldStatusLineComplete = (previousState, usage) => {
   if (!usage?.outputTokens || usage.outputTokens <= 0) return false;

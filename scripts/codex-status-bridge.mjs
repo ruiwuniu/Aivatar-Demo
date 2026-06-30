@@ -1299,8 +1299,11 @@ const claudeDigestEntry = (input) => {
     ]);
     return detail ? `${event}: ${sanitizedDigestText(detail, 220)}` : undefined;
   }
-  if (event === "Stop" || event === "TaskCompleted") {
+  if (event === "Stop" || event === "TeammateIdle") {
     return "turn: Claude Code completed the turn";
+  }
+  if (event === "TaskCompleted" || event === "SubagentStop") {
+    return "turn: Claude Code completed delegated work";
   }
   if (event === "StopFailure") return "turn: Claude Code reported an error";
   return undefined;
@@ -1441,6 +1444,15 @@ const claudeUsageFromInput = (input, terminal) => {
   };
 };
 
+const claudeNotificationNeedsUser = (input) => {
+  const text =
+    firstObjectString(input, ["message", "reason", "notification_type"]) ??
+    firstObjectString(input?.notification, ["message", "type"]);
+  return /permission|approval|approve|confirm|input|required|waiting|elicitation/u.test(
+    String(text ?? "").toLowerCase(),
+  );
+};
+
 const claudeStatusForEvent = (event, statusLine, hasUsage) => {
   if (statusLine) {
     return ["idle", "context-window"];
@@ -1448,31 +1460,51 @@ const claudeStatusForEvent = (event, statusLine, hasUsage) => {
   switch (event) {
     case "SessionStart":
       return ["idle", "session-start"];
+    case "Setup":
+      return ["idle", "setup"];
+    case "InstructionsLoaded":
+      return ["idle", "instructions-loaded"];
+    case "ConfigChange":
+      return ["idle", "config-change"];
+    case "CwdChanged":
+      return ["idle", "cwd-changed"];
     case "UserPromptSubmit":
       return ["thinking", "user-prompt"];
+    case "UserPromptExpansion":
+      return ["thinking", "user-prompt-expansion"];
+    case "PreCompact":
+      return ["thinking", "pre-compact"];
+    case "PostCompact":
+      return ["thinking", "post-compact"];
+    case "ElicitationResult":
+      return ["thinking", "elicitation-result"];
     case "PreToolUse":
+    case "SubagentStart":
+    case "TaskCreated":
+      return ["executing", "tool-use"];
     case "PostToolUse":
     case "PostToolBatch":
-      return ["executing", "tool-use"];
+    case "SubagentStop":
+    case "TaskCompleted":
+      return ["thinking", "tool-result"];
     case "MessageDisplay":
-      return ["thinking", "message-display"];
+      return ["executing", "message-display"];
     case "PermissionRequest":
+    case "Elicitation":
       return ["waiting_for_user", "permission"];
     case "PermissionDenied":
     case "StopFailure":
     case "PostToolUseFailure":
       return ["error", "error"];
     case "Stop":
-    case "SubagentStop":
     case "TeammateIdle":
-    case "TaskCompleted":
       return ["complete", "turn-complete"];
     case "SessionEnd":
       return ["idle", "session-end"];
     case "Notification":
-      return ["waiting_for_user", "notification"];
+      return ["thinking", "notification"];
     default:
-      if (/permission|approval|waiting|input_required/u.test(event.toLowerCase())) {
+      if (/permission|approval|waiting|input_required|elicitation/u.test(event.toLowerCase())) {
         return ["waiting_for_user", event];
       }
       if (/fail|failed|error|exception/u.test(event.toLowerCase())) {
@@ -1481,7 +1513,7 @@ const claudeStatusForEvent = (event, statusLine, hasUsage) => {
       if (/stop|complete|completed|done|idle/u.test(event.toLowerCase())) {
         return ["complete", event];
       }
-      if (/tool|command|execute|executing|running/u.test(event.toLowerCase())) {
+      if (/tool|command|execute|executing|running|task|subagent/u.test(event.toLowerCase())) {
         return ["executing", event];
       }
       return ["thinking", "hook"];
@@ -1534,7 +1566,15 @@ const isTerminalSessionStatus = (status) =>
 const isClaudeLifecycleOnlyIdleStatus = (status) =>
   status?.agent === "claude-code" &&
   status?.status === "idle" &&
-  ["session-start", "session-end", "other"].includes(status?.phase) &&
+  [
+    "session-start",
+    "setup",
+    "instructions-loaded",
+    "config-change",
+    "cwd-changed",
+    "session-end",
+    "other",
+  ].includes(status?.phase) &&
   !status?.usage &&
   !status?.learning;
 
@@ -1639,34 +1679,48 @@ const normalizeClaudeHookStatus = (input, statusLine) => {
   const event = claudeEventName(input, statusLine);
   const usage = claudeUsageFromInput(
     input,
-    ["Stop", "SubagentStop", "TeammateIdle", "TaskCompleted"].includes(event),
+    ["Stop", "TeammateIdle", "StopFailure"].includes(event),
   );
-  const [status, phase] = claudeStatusForEvent(event, statusLine, Boolean(usage));
+  let [status, phase] = claudeStatusForEvent(event, statusLine, Boolean(usage));
+  if (event === "Notification" && claudeNotificationNeedsUser(input)) {
+    status = "waiting_for_user";
+    phase = "notification";
+  }
   const sessionId = claudeSessionId(input);
   const label = claudeSurfaceLabel(input);
+  const tool = firstObjectString(input, ["tool_name"]);
   const message =
     event === "UserPromptSubmit"
       ? `${label} is thinking`
+      : event === "UserPromptExpansion"
+        ? `${label} is expanding the prompt`
       : event === "MessageDisplay"
         ? `${label} is responding`
-      : event === "PreToolUse" ||
-          event === "PostToolUse" ||
-          event === "PostToolBatch"
-        ? firstObjectString(input, ["tool_name"])
-          ? `${label} used ${firstObjectString(input, ["tool_name"])}`
+      : event === "PreToolUse"
+        ? tool
+          ? `${label} is using ${tool}`
           : `${label} is using a tool`
-        : event === "PermissionRequest"
-          ? `${label} needs approval`
-          : event === "Stop" ||
-              event === "SubagentStop" ||
-              event === "TeammateIdle" ||
-              event === "TaskCompleted"
-            ? `${label} turn complete`
-            : event === "StopFailure" || event === "PostToolUseFailure"
-              ? `${label} turn failed`
-              : event === "SessionEnd"
-                ? `${label} session ended`
-                : `${label} ${event}`;
+      : event === "PostToolUse" || event === "PostToolBatch"
+        ? `${label} is reviewing tool results`
+      : event === "SubagentStart"
+        ? `${label} started a subagent`
+      : event === "SubagentStop"
+        ? `${label} is reviewing subagent results`
+      : event === "TaskCreated"
+        ? `${label} created a task`
+      : event === "TaskCompleted"
+        ? `${label} is reviewing task results`
+      : event === "PermissionRequest"
+        ? `${label} needs approval`
+      : event === "Elicitation"
+        ? `${label} needs input`
+      : event === "Stop" || event === "TeammateIdle"
+        ? `${label} turn complete`
+      : event === "StopFailure" || event === "PostToolUseFailure"
+        ? `${label} turn failed`
+      : event === "SessionEnd"
+        ? `${label} session ended`
+      : `${label} ${event}`;
   const payload = {
     agent: "claude-code",
     sessionId,
