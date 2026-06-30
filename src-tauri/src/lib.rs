@@ -76,6 +76,16 @@ struct SaveSlotWindowResult {
     label: String,
 }
 
+#[derive(serde::Deserialize)]
+struct CardRoomWindowRequest {
+    host_slot_id: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct CardRoomWindowResult {
+    label: String,
+}
+
 const MAX_TASK_PROMPT_CHARS: usize = 24_000;
 
 fn hash_value(value: &str) -> u64 {
@@ -100,6 +110,24 @@ fn save_slot_window_label(slot_id: &str) -> String {
     let prefix = if prefix.is_empty() { "slot" } else { &prefix };
 
     format!("save-slot-{prefix}-{:016x}", hash_value(slot_id))
+}
+
+fn card_room_window_label(host_slot_id: &str) -> String {
+    let sanitized: String = host_slot_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let compact = sanitized.trim_matches('-');
+    let prefix: String = compact.chars().take(34).collect();
+    let prefix = if prefix.is_empty() { "table" } else { &prefix };
+
+    format!("card-room-{prefix}-{:016x}", hash_value(host_slot_id))
 }
 
 fn url_component(value: &str) -> String {
@@ -1311,6 +1339,47 @@ async fn open_save_slot_window(
     Ok(SaveSlotWindowResult { label })
 }
 
+#[tauri::command]
+async fn open_card_room_window(
+    app: tauri::AppHandle,
+    request: CardRoomWindowRequest,
+) -> Result<CardRoomWindowResult, String> {
+    let host_slot_id = request
+        .host_slot_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("local-table");
+    let label = card_room_window_label(host_slot_id);
+    if let Some(window) = app.get_webview_window(&label) {
+        window
+            .set_focus()
+            .map_err(|error| format!("Could not focus card room: {error}"))?;
+        return Ok(CardRoomWindowResult { label });
+    }
+
+    let url = format!(
+        "./?view=card-room&hostSlotId={}",
+        url_component(host_slot_id)
+    );
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
+    )
+    .title("Aivatar - Card Room")
+    .inner_size(1040.0, 760.0)
+    .min_inner_size(960.0, 700.0)
+    .resizable(true)
+    .always_on_top(false)
+    .decorations(true)
+    .focused(true)
+    .build()
+    .map_err(|error| format!("Could not open card room: {error}"))?;
+
+    Ok(CardRoomWindowResult { label })
+}
+
 fn safe_social_room_memory_key(key: &str) -> String {
     let sanitized: String = key
         .chars()
@@ -1390,6 +1459,7 @@ pub fn run() {
             start_task_agent,
             resize_main_window_for_side_panel,
             open_save_slot_window,
+            open_card_room_window,
             get_agent_integrations,
             enable_agent_integration,
             read_social_room_memory,

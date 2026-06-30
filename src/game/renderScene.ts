@@ -7613,7 +7613,7 @@ const drawCuteGhostAvatar = (
   drawTraitMicroExpression(ctx, dominantTrait, avatar, x, y, frame, theme);
 };
 
-const drawAvatar = (
+export const drawAvatar = (
   ctx: CanvasRenderingContext2D,
   avatar: AvatarRuntime,
   frame: number,

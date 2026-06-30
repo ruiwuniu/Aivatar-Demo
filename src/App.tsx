@@ -3,6 +3,10 @@ import { listen } from "@tauri-apps/api/event";
 import { defaultContent } from "./data/defaultContent";
 import { loadContentConfig } from "./data/loadContent";
 import {
+  normalizePokerChips,
+  normalizeWalletBits,
+} from "./cardRoom/chipEconomy";
+import {
   canvasPointToScene,
   attachedPlacedItemPosition,
   FILE_CABINET_COLLISION_DEPTH,
@@ -103,6 +107,7 @@ import {
 } from "./i18n";
 import type {
   AivatarContent,
+  AivatarDarkTraits,
   AivatarGrowthTraits,
   AivatarMemory,
   AivatarMemoryEvent,
@@ -159,6 +164,10 @@ type AgentIntegrationStatus = {
 };
 
 type SaveSlotWindowResult = {
+  label: string;
+};
+
+type CardRoomWindowResult = {
   label: string;
 };
 
@@ -829,6 +838,26 @@ const defaultGrowthTraits = (): AivatarGrowthTraits => ({
   warmth: 0,
 });
 
+const defaultDarkTraits = (): AivatarDarkTraits => ({
+  greed: 0,
+  foolishness: 0,
+  recklessness: 0,
+  cowardice: 0,
+  arrogance: 0,
+  coldness: 0,
+});
+
+const normalizeDarkTraits = (
+  traits?: Partial<AivatarDarkTraits>,
+): AivatarDarkTraits => ({
+  greed: clampTrait(traits?.greed ?? 0),
+  foolishness: clampTrait(traits?.foolishness ?? 0),
+  recklessness: clampTrait(traits?.recklessness ?? 0),
+  cowardice: clampTrait(traits?.cowardice ?? 0),
+  arrogance: clampTrait(traits?.arrogance ?? 0),
+  coldness: clampTrait(traits?.coldness ?? 0),
+});
+
 const defaultMemory = (): AivatarMemory => ({
   recentEvents: [],
   growth: {
@@ -842,6 +871,7 @@ const defaultMemory = (): AivatarMemory => ({
     weightedTokensLearned: 0,
     traits: defaultGrowthTraits(),
   },
+  darkTraits: defaultDarkTraits(),
   preferences: {
     idleBubbleLanguage: "auto",
     socialWillingness: 50,
@@ -999,6 +1029,7 @@ const normalizeMemory = (memory?: Partial<AivatarMemory>): AivatarMemory => {
         ...traits,
       },
     },
+    darkTraits: normalizeDarkTraits(memory?.darkTraits ?? fallback.darkTraits),
     preferences: {
       ...fallback.preferences,
       ...memory?.preferences,
@@ -2683,6 +2714,14 @@ const normalizeAvatarAppearanceId = (appearanceId: unknown): AvatarAppearanceId 
 
 const saveSlotStorageKey = (slotId: string) => `${SAVE_SLOT_KEY_PREFIX}${slotId}`;
 
+const normalizeSaveWallet = (
+  wallet: Partial<AivatarSaveState["wallet"]> | undefined,
+  fallback: AivatarSaveState["wallet"] = defaultContent.wallet,
+): AivatarSaveState["wallet"] => ({
+  bits: normalizeWalletBits(wallet?.bits, fallback.bits),
+  pokerChips: normalizePokerChips(wallet?.pokerChips ?? fallback.pokerChips),
+});
+
 const normalizeFurnitureSkinIds = (value: unknown): Record<string, string> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
 
@@ -2717,7 +2756,7 @@ const saveFromContent = (
   inventory: removeDeprecatedInventoryItems(content.inventory),
   furnitureStorage: defaultFurnitureStorage(),
   ...loadDefaultLayout(content),
-  wallet: content.wallet,
+  wallet: normalizeSaveWallet(content.wallet),
   purchasedItemIds: [],
   activeFurnitureSkinIds: {},
 });
@@ -2755,6 +2794,7 @@ const normalizeSavePayload = (
     memory: normalizeMemory(parsed.memory),
     navMemory: normalizeNavMemory(parsed.navMemory),
     paintingGallery: normalizePaintingGallery(parsed.paintingGallery),
+    wallet: normalizeSaveWallet(parsed.wallet, fallback.wallet),
     activeFurnitureSkinIds: normalizeFurnitureSkinIds(parsed.activeFurnitureSkinIds),
     inventory: removeDeprecatedInventoryItems(
       parsed.inventory ?? fallback.inventory,
@@ -3481,6 +3521,7 @@ export const App = () => {
   const [newSaveAvatarName, setNewSaveAvatarName] = useState(defaultContent.avatar.name);
   const [deleteSaveSlot, setDeleteSaveSlot] = useState<SaveSlotSummary | null>(null);
   const [saveSlotMessage, setSaveSlotMessage] = useState("");
+  const [cardRoomMessage, setCardRoomMessage] = useState("");
   const [contentBase, setContentBase] = useState(defaultContent);
   const [configState, setConfigState] = useState<"builtin" | "config" | "fallback">(
     "builtin",
@@ -5678,6 +5719,30 @@ export const App = () => {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       setSaveSlotMessage(detail || ui("saveSlots.windowDesktopOnly"));
+    }
+  };
+
+  const openCardRoomWindow = async () => {
+    setCardRoomMessage("");
+    const slotId = activeSaveSlotIdRef.current;
+    if (!slotId) {
+      setCardRoomMessage(ui("cardRoom.noActiveSlot"));
+      return;
+    }
+
+    persistCurrentSaveSlot();
+
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke<CardRoomWindowResult>("open_card_room_window", {
+        request: {
+          host_slot_id: slotId,
+        },
+      });
+      setCardRoomMessage(ui("cardRoom.windowOpened"));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setCardRoomMessage(detail || ui("cardRoom.windowDesktopOnly"));
     }
   };
 
@@ -8048,7 +8113,7 @@ export const App = () => {
               if (tableCoffeeCount < tableCoffeeCapacity) {
                 return {
                   ...current,
-                  wallet: { bits: current.wallet.bits - COFFEE_BREW_BIT_COST },
+                  wallet: { ...current.wallet, bits: current.wallet.bits - COFFEE_BREW_BIT_COST },
                   furnitureStorage: addFurnitureStorageItem(
                     current.furnitureStorage,
                     TABLE_FURNITURE_ID,
@@ -8071,7 +8136,7 @@ export const App = () => {
 
               return {
                 ...current,
-                wallet: { bits: current.wallet.bits - COFFEE_BREW_BIT_COST },
+                wallet: { ...current.wallet, bits: current.wallet.bits - COFFEE_BREW_BIT_COST },
                 inventory: addInventoryItem(
                   current.inventory,
                   COFFEE_ITEM_ID,
@@ -8286,7 +8351,7 @@ export const App = () => {
 
       setSave((current) => ({
         ...current,
-        wallet: { bits: current.wallet.bits + rewardBits },
+        wallet: { ...current.wallet, bits: current.wallet.bits + rewardBits },
         memory: recordTaskCompleteMemory(
           current.memory,
           candidate,
@@ -9205,7 +9270,7 @@ export const App = () => {
   const addTestSupplies = () => {
     setSave((current) => ({
       ...current,
-      wallet: { bits: current.wallet.bits + 500 },
+      wallet: { ...current.wallet, bits: current.wallet.bits + 500 },
       inventory: addInventoryItem(
         addInventoryItem(
           addInventoryItem(
@@ -9500,7 +9565,7 @@ export const App = () => {
 
       return {
         ...current,
-        wallet: { bits: current.wallet.bits + currentSaleBits },
+        wallet: { ...current.wallet, bits: current.wallet.bits + currentSaleBits },
         placedItems: current.placedItems.map((item) =>
           item.artworkId === currentArtwork.id
             ? { ...item, artworkId: undefined }
@@ -9766,7 +9831,7 @@ export const App = () => {
 
       return {
         ...current,
-        wallet: { bits: current.wallet.bits + bitsEarned },
+        wallet: { ...current.wallet, bits: current.wallet.bits + bitsEarned },
         placedItems,
         furnitureStorage: clampTableCoffeeStorage(current.furnitureStorage, placedItems),
       };
@@ -9792,7 +9857,7 @@ export const App = () => {
 
     setSave((current) => ({
       ...current,
-      wallet: { bits: current.wallet.bits + bitsEarned },
+      wallet: { ...current.wallet, bits: current.wallet.bits + bitsEarned },
       placedItems: current.placedItems.filter(
         (item) => item.itemId !== TASK_CABINET_FURNITURE_ID,
       ),
@@ -9976,7 +10041,7 @@ export const App = () => {
 
       return {
         ...current,
-        wallet: { bits: current.wallet.bits + refundBits },
+        wallet: { ...current.wallet, bits: current.wallet.bits + refundBits },
         purchasedItemIds,
         activeWindowId:
           current.activeWindowId === soldWindowId
@@ -10368,7 +10433,7 @@ export const App = () => {
 
     setSave((current) => ({
       ...current,
-      wallet: { bits: current.wallet.bits + bitsEarned },
+      wallet: { ...current.wallet, bits: current.wallet.bits + bitsEarned },
       workBoostUntil: boostUntil,
     }));
 
@@ -10433,7 +10498,7 @@ export const App = () => {
 
     setSave((current) => ({
       ...current,
-      wallet: { bits: current.wallet.bits - COFFEE_BREW_BIT_COST },
+      wallet: { ...current.wallet, bits: current.wallet.bits - COFFEE_BREW_BIT_COST },
       furnitureStorage:
         getTableCoffeeQuantity(current.furnitureStorage, current.placedItems) <
         getTableCoffeeCapacity(current.placedItems)
@@ -10694,7 +10759,7 @@ export const App = () => {
       if (isSurfaceItem(item)) {
         return {
           ...current,
-          wallet: { bits: current.wallet.bits - item.price },
+          wallet: { ...current.wallet, bits: current.wallet.bits - item.price },
           purchasedItemIds: Array.from(new Set([...current.purchasedItemIds, item.id])),
           memory: recordLifeMemory(
             current.memory,
@@ -10719,7 +10784,7 @@ export const App = () => {
 
       return {
         ...current,
-        wallet: { bits: current.wallet.bits - item.price },
+        wallet: { ...current.wallet, bits: current.wallet.bits - item.price },
         inventory,
         purchasedItemIds: Array.from(new Set([...current.purchasedItemIds, item.id])),
         memory: recordLifeMemory(
@@ -10779,7 +10844,7 @@ export const App = () => {
         ...current,
         wallet: purchased
           ? current.wallet
-          : { bits: current.wallet.bits - item.price },
+          : { ...current.wallet, bits: current.wallet.bits - item.price },
         purchasedItemIds: purchased
           ? current.purchasedItemIds
           : Array.from(new Set([...current.purchasedItemIds, item.id])),
@@ -10839,7 +10904,9 @@ export const App = () => {
 
       return {
         ...current,
-        wallet: purchased ? current.wallet : { bits: current.wallet.bits - item.price },
+        wallet: purchased
+          ? current.wallet
+          : { ...current.wallet, bits: current.wallet.bits - item.price },
         purchasedItemIds: purchased
           ? current.purchasedItemIds
           : Array.from(new Set([...current.purchasedItemIds, item.id])),
@@ -10940,7 +11007,7 @@ export const App = () => {
 
       return {
         ...current,
-        wallet: { bits: current.wallet.bits - purchaseCost - applyCost },
+        wallet: { ...current.wallet, bits: current.wallet.bits - purchaseCost - applyCost },
         purchasedItemIds: purchased
           ? current.purchasedItemIds
           : Array.from(new Set([...current.purchasedItemIds, item.id])),
@@ -12544,6 +12611,17 @@ export const App = () => {
               >
                 {ui("saveSlots.manage")}
               </button>
+
+              <button
+                type="button"
+                className="pixel-button"
+                onClick={() => void openCardRoomWindow()}
+              >
+                {ui("cardRoom.open")}
+              </button>
+              {cardRoomMessage ? (
+                <small className="settings-action-message">{cardRoomMessage}</small>
+              ) : null}
 
               <div className="language-switch" aria-label={ui("app.language")}>
                 {localeOptions.map((option) => (

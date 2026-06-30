@@ -133,6 +133,23 @@ export interface AivatarGrowthTraits {
   warmth: number;
 }
 
+export type AivatarDarkTrait =
+  | "greed"
+  | "foolishness"
+  | "recklessness"
+  | "cowardice"
+  | "arrogance"
+  | "coldness";
+
+export interface AivatarDarkTraits {
+  greed: number;
+  foolishness: number;
+  recklessness: number;
+  cowardice: number;
+  arrogance: number;
+  coldness: number;
+}
+
 export type AivatarMemoryEventType =
   | "task_complete"
   | "task_error"
@@ -195,6 +212,7 @@ export interface AivatarMilestone {
 export interface AivatarMemory {
   recentEvents: AivatarMemoryEvent[];
   growth: AivatarGrowth;
+  darkTraits?: AivatarDarkTraits;
   preferences: AivatarPreferences;
   milestones: AivatarMilestone[];
 }
@@ -421,6 +439,7 @@ export interface AivatarContent {
   petStats: PetStats;
   wallet: {
     bits: number;
+    pokerChips?: number;
   };
 }
 
@@ -479,6 +498,7 @@ export interface AivatarSaveState {
   placedItems: PlacedItem[];
   wallet: {
     bits: number;
+    pokerChips?: number;
   };
   purchasedItemIds: string[];
   furnitureStorage?: FurnitureStorageEntry[];

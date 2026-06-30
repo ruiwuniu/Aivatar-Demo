@@ -1269,5 +1269,6 @@ export const defaultContent: AivatarContent = {
   },
   wallet: {
     bits: 32,
+    pokerChips: 0,
   },
 };

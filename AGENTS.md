@@ -497,6 +497,15 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 |   |-- mock-codex-status.mjs
 |   `-- send-codex-status.mjs
 |-- src/
+|   |-- cardRoom/
+|   |   |-- CardRoomApp.tsx
+|   |   |-- cardRoomContent.ts
+|   |   |-- cardRoomRenderer.ts
+|   |   |-- cardRoomRuntime.ts
+|   |   |-- chipEconomy.ts
+|   |   |-- holdemEngine.ts
+|   |   |-- pokerAi.ts
+|   |   `-- saveRoster.ts
 |   |-- components/
 |   |   `-- PixelAssetEditor.tsx
 |   |-- App.tsx
@@ -645,6 +654,21 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - `Window preview` accelerates the room window's time input so dynamic windows such as City Night Window, Ocean Window, and Cyberpunk City Window can be visually checked across a full day/night cycle without changing the system clock. The fixed `Window time` slider and `06:00`/`12:00`/`18:00`/`22:00` presets override the dynamic window time until `Real time` is selected.
   - When a Debug status override is active, the status card shows `Debug override active - click Live` and the Live button is highlighted so test overrides are not mistaken for live agent state.
 
+- Card Room / poker side room
+  - `src/main.tsx` routes `?view=card-room` to `CardRoomApp`. The main room should only open or link to this dedicated room; Card Room play, chip exchange, poker controls, and poker HUD state belong in `src/cardRoom/CardRoomApp.tsx`.
+  - `src/cardRoom/cardRoomContent.ts` defines a separate wide poker room, not a stretched copy of the main room. It uses its own wall/floor/furniture layout, contains the large poker table as real room furniture, and should not import or mirror the active main-room placed items.
+  - `src/cardRoom/CardRoomApp.tsx` owns the Card Room React shell, canvas loop, save-slot roster selection, invited companions, player name editing, Card Room-local player wallet, dedicated chip shop, poker controls, top/bottom HUD, AI action timing, hand result persistence, and dark-trait writes. Keep the Card Room shop here rather than adding poker-chip exchange to the main room shop.
+  - `src/cardRoom/cardRoomRenderer.ts` draws the dedicated room canvas: lower wall height, floor, poker table, chairs, real avatar occupants, hidden/user-only bottom seat, community cards, table-positioned hole cards, per-seat chip stacks, per-seat bet chips, card/action text, and top-down table collision visualization. Do not render the user's avatar in the room; the user's hand is shown in the lower floating hand area.
+  - `src/cardRoom/cardRoomRuntime.ts` owns Card Room visitors and movement. Before a hand, save-slot characters enter as visitors, can free-roam, reuse furniture/placed-object interaction style, show short Card Room social bubbles, and maintain Card Room navigation memory separately from ordinary per-slot `navMemory`. When a hand starts, characters walk to seats and enter `seated`; already seated characters should keep their assigned seat across later hands until explicitly released to free roam.
+  - Card Room table collision must be real navigation collision. Characters should route around the table footprint and never walk on top of the visual poker table except for deliberate seated/table-edge presentation positions.
+  - Seat assignment should remain character-driven rather than fixed by roster order where practical. The bottom seat is reserved for the user and must stay visually empty; other seats can be used by characters around the top, left, and right sides of the table. Cards in front of side/top players should face that player's side, while chip-stack icons stay visually upright.
+  - `src/cardRoom/holdemEngine.ts` is the Texas Hold'em rules engine: deck/deal, blinds, legal actions, betting streets, folds/checks/calls/bets/raises/all-ins, showdown, winner/rank labels, and pot distribution. Table stacks use poker chips only; do not make table-side credit a hidden stack source.
+  - `src/cardRoom/pokerAi.ts` derives poker action choice from public table state, private hole cards, normal Growth traits, and hidden `memory.darkTraits`. `choosePokerAiMove` returns the action plus a non-fixed `delayMs` and a pre-action cue such as `think`, `hesitate`, `pressure`, or `snap`; `CardRoomApp` should render that pre-action cue before applying the final fold/check/call/bet/raise/all-in cue.
+  - `src/cardRoom/saveRoster.ts` reads the local save-slot registry, derives Card Room characters from real saved avatars, normalizes `memory.darkTraits`, persists `wallet.pokerChips`, and writes dark-trait changes back through each character's save slot. Keep gambling memory scoped to `memory.darkTraits`; do not mutate unrelated main-room memory structures.
+  - `src/cardRoom/chipEconomy.ts` defines the Card Room chip economy. Saved characters exchange their own `wallet.bits` into `wallet.pokerChips` and can borrow bits up to `CARD_ROOM_BITS_DEBT_LIMIT`. The user/player is not a saved character and has no bits account; the user has a separate Card Room-local `pokerChips` / `chipDebt` wallet with its own borrowing limit.
+  - Top HUD result text should describe the completed hand in reader-facing terms: winner name, payout delta, and winning hand rank. Bottom HUD should show the user's real card faces as poker cards, current chips/debt, status, and action buttons beside the hand without covering the room canvas.
+  - Verify Card Room behavior in the live preview at `http://127.0.0.1:1427/?view=card-room`, in addition to `npm run build` and `git diff --check`, because most Card Room regressions are visual/runtime issues rather than TypeScript-only issues.
+
 - `src/agentRegistry.ts`
   - Central registry for first-class agent integrations shown in the app. It currently defines Codex, Claude Code, and opencode labels, short source badges, launcher command names, complete-reward eligibility, Terminal bubble eligibility, and Launcher availability.
   - `src/App.tsx` uses this registry for CLI Launcher buttons, Growth suggestion source badges, display names, and reward gating. `src/game/renderScene.ts` uses it to decide which agent statuses can show Terminal notification bubbles.
@@ -655,6 +679,8 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Includes the `file-cabinet` content tag used by the buyable unique File Cabinet furniture/task-cabinet visual MVP, plus the `easel` tag used by the Oil Easel placed-object painting interaction.
   - Defines Task Cabinet task metadata types: `TaskCabinetStatus` and `TaskCabinetEntry`. Task entries store the source `.md` path and execution metadata such as status, agent, cwd, session id, timestamps, and error text, but not the `.md` file content.
   - Defines lightweight Memory & Growth types: `AivatarMemory`, `AivatarGrowth`, six-axis `AivatarGrowthTraits`, `AivatarMemoryEvent`, `AivatarPreferences`, and `AivatarMilestone`.
+  - Defines hidden Card Room dark-trait support through `AivatarDarkTrait`, `AivatarDarkTraits`, and `AivatarMemory.darkTraits`. The dark traits are `greed`, `foolishness`, `recklessness`, `cowardice`, `arrogance`, and `coldness`; they should affect poker behavior together with normal Growth traits without replacing main-room personality.
+  - `AivatarContent.defaultSave.wallet` and `AivatarSaveState.wallet` include optional `pokerChips` alongside `bits`. Only saved characters have `bits`; the Card Room user/player wallet is local to Card Room state and should not be modeled as a normal save-slot bits account.
   - Defines `AivatarNavMemory`, which stores exploration/navigation-learning counters plus learned `walkableCells` occupancy values, `layoutFingerprint`, success/failure counts, and the latest exploration timestamp.
   - `AvatarRuntime` includes `actionIntent` and `actionActivityLabel` for arrival-gated actions. `behavior` can represent the current approach/movement state while `actionIntent` records the real action to start after arrival. It also includes optional `navigationFailure` metadata so the App layer can clear pending interactions and show blocked feedback when a target cannot be reached.
   - `CodexStatusMessage` can carry optional `idleBubbleCandidates?: string[]` from the local bridge, and `AivatarPreferences` can store accepted `idleBubblePhrases?: string[]` plus `idleBubbleLanguage?: "auto" | "zh" | "en" | "mixed"`.
