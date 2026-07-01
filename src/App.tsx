@@ -3533,6 +3533,7 @@ export const App = () => {
   const [decorPanelOpen, setDecorPanelOpen] = useState(false);
   const [paintingGalleryPanelOpen, setPaintingGalleryPanelOpen] = useState(false);
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
+  const [entertainmentPanelOpen, setEntertainmentPanelOpen] = useState(false);
   const [growthPanelOpen, setGrowthPanelOpen] = useState(false);
   const [sessionsPanelOpen, setSessionsPanelOpen] = useState(false);
   const [integrationsPanelOpen, setIntegrationsPanelOpen] = useState(false);
@@ -4268,6 +4269,8 @@ export const App = () => {
     visit: AivatarVisitSession,
     role: "host" | "guest",
   ) => {
+    if (visit.visitKind === "card-room") return;
+
     const rewardKey = `${role}:${visit.visitId}`;
     if (completedVisitIdsRef.current.has(rewardKey)) return;
     completedVisitIdsRef.current.add(rewardKey);
@@ -4576,21 +4579,24 @@ export const App = () => {
   const acceptIncomingVisit = (visit: AivatarVisitSession) => {
     if (handledVisitIdsRef.current.has(visit.visitId)) return;
     handledVisitIdsRef.current.add(visit.visitId);
+    const isCardRoomVisit = visit.visitKind === "card-room";
 
     if (isRoomVisitSessionBusy()) {
       publishVisitEnd(visit, "cancelled", ROOM_VISIT_BUSY_CANCEL_REASON);
-      setRoomVisitMessage(ui("roomVisit.busySelf"));
+      setRoomVisitMessage(ui(isCardRoomVisit ? "cardRoom.busySelf" : "roomVisit.busySelf"));
       return;
     }
 
-    void readSocialRoomMemory(visit).then((memory) => {
-      if (activeVisitRef.current?.visitId === visit.visitId) {
-        socialRoomMemoryRef.current = memory;
-        publishVisitState(activeVisitRef.current, {
-          guestSocialNavMemory: memory.navMemory,
-        });
-      }
-    });
+    if (!isCardRoomVisit) {
+      void readSocialRoomMemory(visit).then((memory) => {
+        if (activeVisitRef.current?.visitId === visit.visitId) {
+          socialRoomMemoryRef.current = memory;
+          publishVisitState(activeVisitRef.current, {
+            guestSocialNavMemory: memory.navMemory,
+          });
+        }
+      });
+    }
 
     clearPendingFurnitureInteraction();
 
@@ -4615,7 +4621,9 @@ export const App = () => {
 
     activeVisitRef.current = accepted;
     setActiveVisit(accepted);
-    syncActiveVisitRelationship(accepted);
+    if (!isCardRoomVisit) {
+      syncActiveVisitRelationship(accepted);
+    }
     runtimeRef.current = {
       ...runtimeRef.current,
       targetX: ROOM_DOOR_OUTSIDE_POINT.x,
@@ -4633,10 +4641,12 @@ export const App = () => {
       kind: "none",
       furnitureId: "room-door",
       furnitureName: ui("roomVisit.title"),
-      message: ui("roomVisit.accepted", { name: visit.host.avatarName }),
+      message: ui(isCardRoomVisit ? "cardRoom.accepted" : "roomVisit.accepted", {
+        name: visit.host.avatarName,
+      }),
       startedAt: performance.now(),
       endsAt: performance.now() + INTERACTION_FEEDBACK_SECONDS * 1000,
-      bubbleText: "roomVisit.bubble.enter.1",
+      bubbleText: isCardRoomVisit ? ui("cardRoom.away") : "roomVisit.bubble.enter.1",
     });
     void postRoomJson(VISIT_STATE_URL, accepted).catch(() => {
       console.warn("Could not accept room visit.");
@@ -4693,20 +4703,24 @@ export const App = () => {
       (visit) => visit.visitId === currentVisit.visitId,
     );
     if (!latestVisit) {
+      const isCardRoomVisit = currentVisit.visitKind === "card-room";
       finishVisitLocally(currentVisit, {
         returnHome: avatarAwayRef.current,
         cancelled: true,
-        message: ui("roomVisit.connectionLost"),
+        message: ui(isCardRoomVisit ? "cardRoom.cancelled" : "roomVisit.connectionLost"),
       });
       return;
     }
 
+    const isLatestCardRoomVisit = latestVisit.visitKind === "card-room";
     if (latestVisit.phase === "cancelled") {
       finishVisitLocally(latestVisit, {
         returnHome: latestVisit.guest.roomInstanceId === ownRoomInstanceId,
         cancelled: true,
         message:
-          latestVisit.cancelReason === ROOM_VISIT_BUSY_CANCEL_REASON
+          isLatestCardRoomVisit
+            ? ui("cardRoom.cancelled")
+            : latestVisit.cancelReason === ROOM_VISIT_BUSY_CANCEL_REASON
             ? ui("roomVisit.busyOther", { name: latestVisit.guest.avatarName })
             : ui("roomVisit.cancelled"),
       });
@@ -4716,18 +4730,22 @@ export const App = () => {
     if (latestVisit.phase === "ended") {
       finishVisitLocally(latestVisit, {
         returnHome: latestVisit.guest.roomInstanceId === ownRoomInstanceId,
-        reward: true,
-        message: ui("roomVisit.ended"),
+        reward: !isLatestCardRoomVisit,
+        message: ui(isLatestCardRoomVisit ? "cardRoom.returned" : "roomVisit.ended"),
       });
       return;
     }
 
     activeVisitRef.current = latestVisit;
     setActiveVisit(latestVisit);
-    syncActiveVisitRelationship(latestVisit);
+    if (!isLatestCardRoomVisit) {
+      syncActiveVisitRelationship(latestVisit);
+    }
 
     if (latestVisit.guest.roomInstanceId === ownRoomInstanceId) {
-      sampleGuestVisitMemory(latestVisit);
+      if (!isLatestCardRoomVisit) {
+        sampleGuestVisitMemory(latestVisit);
+      }
       return;
     }
 
@@ -4770,6 +4788,7 @@ export const App = () => {
 
     const visit = normalizeVisitSession({
       type: "aivatar.room.visit",
+      visitKind: "room-visit",
       visitId,
       phase: "invited",
       host,
@@ -4841,6 +4860,7 @@ export const App = () => {
 
     const visit = normalizeVisitSession({
       type: "aivatar.room.visit",
+      visitKind: "room-visit",
       visitId,
       phase: "invited",
       host: room,
@@ -4863,6 +4883,7 @@ export const App = () => {
     (roomSnapshotRef.current?.rooms ?? []).filter((room) => {
       if (room.roomInstanceId === roomInstanceIdRef.current) return false;
       if (room.slotId === activeSaveSlotIdRef.current) return false;
+      if (room.roomId === "card-room") return false;
       if (room.status !== "home") return false;
       const expiresAt = Date.parse(room.expiresAt);
       return Number.isNaN(expiresAt) || expiresAt > nowMs;
@@ -6921,6 +6942,8 @@ export const App = () => {
       }
 
       if (guestLeavingForVisit) {
+        const leavingActivityLabel =
+          activeRoomVisit?.visitKind === "card-room" ? "Playing cards" : "Visiting";
         runtimeRef.current = {
           ...runtimeRef.current,
           targetX: ROOM_DOOR_OUTSIDE_POINT.x,
@@ -6928,7 +6951,7 @@ export const App = () => {
           behavior: "wander",
           behaviorTimer: Math.max(runtimeRef.current.behaviorTimer, 2),
           expression: "happy",
-          activityLabel: "Visiting",
+          activityLabel: leavingActivityLabel,
           actionIntent: undefined,
           actionActivityLabel: undefined,
           interactionTargetAlternates: undefined,
@@ -7000,7 +7023,10 @@ export const App = () => {
             guestRuntimeRoomInstanceId: activeRoomVisit.host.roomInstanceId,
             guestSocialNavMemory: socialRoomMemoryRef.current?.navMemory,
             activity: entryRuntime.behavior,
-            bubbleText: "roomVisit.bubble.enter.1",
+            bubbleText:
+              activeRoomVisit.visitKind === "card-room"
+                ? ui("cardRoom.away")
+                : "roomVisit.bubble.enter.1",
           });
         } else if (now - visitStatePostedAtRef.current >= ROOM_VISIT_STATE_POST_MS) {
           visitStatePostedAtRef.current = now;
@@ -7010,7 +7036,10 @@ export const App = () => {
             guestRuntimeRoomInstanceId: roomInstanceIdRef.current,
             guestSocialNavMemory: socialRoomMemoryRef.current?.navMemory,
             activity: runtimeRef.current.behavior,
-            bubbleText: "roomVisit.bubble.enter.1",
+            bubbleText:
+              activeRoomVisit.visitKind === "card-room"
+                ? ui("cardRoom.away")
+                : "roomVisit.bubble.enter.1",
           });
         }
       }
@@ -11101,10 +11130,13 @@ export const App = () => {
   const onlineVisitRooms = (roomSnapshot?.rooms ?? []).filter((room) => {
     if (room.roomInstanceId === roomInstanceIdRef.current) return false;
     if (room.slotId === activeSaveSlotId) return false;
+    if (room.roomId === "card-room") return false;
     if (room.status !== "home" && room.status !== "busy") return false;
     const expiresAt = Date.parse(room.expiresAt);
     return Number.isNaN(expiresAt) || expiresAt > nowMs;
   });
+  const avatarAwayLabel =
+    activeVisit?.visitKind === "card-room" ? ui("cardRoom.away") : ui("roomVisit.away");
   const idleBubbleSlotCount = Math.max(1, growth.level);
   const idleBubbleSlotsAvailable = idleBubblePhrases.length < idleBubbleSlotCount;
   const filterIdleBubbleCandidates = (phrases: string[]) =>
@@ -12366,7 +12398,7 @@ export const App = () => {
         />
         {avatarAway ? (
           <div className="room-away-overlay" aria-live="polite">
-            <span>{ui("roomVisit.away")}</span>
+            <span>{avatarAwayLabel}</span>
           </div>
         ) : null}
         {roomVisitMessage && !roomVisitMenuOpen ? (
@@ -12426,11 +12458,13 @@ export const App = () => {
                   ? ui(
                       activeVisit.guestRuntimeRoomInstanceId ===
                         activeVisit.host.roomInstanceId
-                        ? "roomVisit.hosting"
+                        ? activeVisit.visitKind === "card-room"
+                          ? "cardRoom.away"
+                          : "roomVisit.hosting"
                         : "roomVisit.waiting",
                       { name: activeVisit.guest.avatarName },
                     )
-                  : ui("roomVisit.away")}
+                  : avatarAwayLabel}
               </p>
             ) : null}
           </div>
@@ -12611,17 +12645,6 @@ export const App = () => {
               >
                 {ui("saveSlots.manage")}
               </button>
-
-              <button
-                type="button"
-                className="pixel-button"
-                onClick={() => void openCardRoomWindow()}
-              >
-                {ui("cardRoom.open")}
-              </button>
-              {cardRoomMessage ? (
-                <small className="settings-action-message">{cardRoomMessage}</small>
-              ) : null}
 
               <div className="language-switch" aria-label={ui("app.language")}>
                 {localeOptions.map((option) => (
@@ -13641,6 +13664,46 @@ export const App = () => {
               </button>
               {launcherMessage ? (
                 <p className="launcher-message">{launcherMessage}</p>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+
+        <section
+          className="settings-card entertainment-card"
+          aria-label={ui("entertainment.title")}
+        >
+          <button
+            type="button"
+            className={`settings-toggle entertainment-toggle${
+              entertainmentPanelOpen ? " active" : ""
+            }`}
+            onClick={() => setEntertainmentPanelOpen((current) => !current)}
+            aria-expanded={entertainmentPanelOpen}
+          >
+            <span className="settings-toggle-main entertainment-toggle-main">
+              <span>{ui("entertainment.title")}</span>
+              <b>1</b>
+            </span>
+            <span className="settings-toggle-status entertainment-toggle-status">
+              {ui("cardRoom.title")}
+            </span>
+            <span className="settings-toggle-chevron entertainment-toggle-chevron" aria-hidden="true">
+              {entertainmentPanelOpen ? "-" : "+"}
+            </span>
+          </button>
+
+          {entertainmentPanelOpen ? (
+            <div className="settings-submenu entertainment-submenu">
+              <button
+                type="button"
+                className="pixel-button"
+                onClick={() => void openCardRoomWindow()}
+              >
+                {ui("cardRoom.open")}
+              </button>
+              {cardRoomMessage ? (
+                <small className="settings-action-message">{cardRoomMessage}</small>
               ) : null}
             </div>
           ) : null}

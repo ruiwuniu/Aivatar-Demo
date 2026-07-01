@@ -432,6 +432,12 @@ Validate frontend:
 npm.cmd run build
 ```
 
+Run Card Room Hold'em rule smoke checks:
+
+```powershell
+npm.cmd run test:card-room-rules
+```
+
 Validate Tauri/Rust:
 
 ```powershell
@@ -656,17 +662,26 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 
 - Card Room / poker side room
   - `src/main.tsx` routes `?view=card-room` to `CardRoomApp`. The main room should only open or link to this dedicated room; Card Room play, chip exchange, poker controls, and poker HUD state belong in `src/cardRoom/CardRoomApp.tsx`.
-  - `src/cardRoom/cardRoomContent.ts` defines a separate wide poker room, not a stretched copy of the main room. It uses its own wall/floor/furniture layout, contains the large poker table as real room furniture, and should not import or mirror the active main-room placed items.
-  - `src/cardRoom/CardRoomApp.tsx` owns the Card Room React shell, canvas loop, save-slot roster selection, invited companions, player name editing, Card Room-local player wallet, dedicated chip shop, poker controls, top/bottom HUD, AI action timing, hand result persistence, and dark-trait writes. Keep the Card Room shop here rather than adding poker-chip exchange to the main room shop.
-  - `src/cardRoom/cardRoomRenderer.ts` draws the dedicated room canvas: lower wall height, floor, poker table, chairs, real avatar occupants, hidden/user-only bottom seat, community cards, table-positioned hole cards, per-seat chip stacks, per-seat bet chips, card/action text, and top-down table collision visualization. Do not render the user's avatar in the room; the user's hand is shown in the lower floating hand area.
+  - `src/cardRoom/cardRoomContent.ts` defines a separate wide poker room, not a stretched copy of the main room. It uses its own wall/floor/furniture layout, contains the large poker table as real room furniture, owns Card Room decor/shop categories, and persists Card Room decor state under `aivatar.cardRoom.decor.v1`. It should not import or mirror the active main-room placed items.
+  - `src/cardRoom/CardRoomApp.tsx` owns the Card Room React shell, canvas loop, save-slot roster selection, invited companions, Card Room visit invitations/away-state cleanup, player name editing, Card Room-local player wallet, dedicated chip shop, compact target-wager controls, called-clock UI/timing, poker controls, top/bottom HUD, AI action timing, hand result persistence, one-shot deal/reveal/winner motion timing, and dark-trait writes. Keep the Card Room shop here rather than adding poker-chip exchange to the main room shop.
+  - `src/cardRoom/cardRoomRenderer.ts` draws the dedicated room canvas: lower wall height, floor, city window, wall sconces, poker table, red sofa seats, real avatar occupants, hidden/user-only bottom seat, community cards, table-positioned hole cards, per-seat chip stacks, per-seat bet chips, card/action text, bet-to-pot and pot-to-winner chip flights, winner burst effects, and top-down table collision visualization. Do not render the user's avatar in the room; the user's hand is shown in the lower floating hand area.
   - `src/cardRoom/cardRoomRuntime.ts` owns Card Room visitors and movement. Before a hand, save-slot characters enter as visitors, can free-roam, reuse furniture/placed-object interaction style, show short Card Room social bubbles, and maintain Card Room navigation memory separately from ordinary per-slot `navMemory`. When a hand starts, characters walk to seats and enter `seated`; already seated characters should keep their assigned seat across later hands until explicitly released to free roam.
   - Card Room table collision must be real navigation collision. Characters should route around the table footprint and never walk on top of the visual poker table except for deliberate seated/table-edge presentation positions.
   - Seat assignment should remain character-driven rather than fixed by roster order where practical. The bottom seat is reserved for the user and must stay visually empty; other seats can be used by characters around the top, left, and right sides of the table. Cards in front of side/top players should face that player's side, while chip-stack icons stay visually upright.
-  - `src/cardRoom/holdemEngine.ts` is the Texas Hold'em rules engine: deck/deal, blinds, legal actions, betting streets, folds/checks/calls/bets/raises/all-ins, showdown, winner/rank labels, and pot distribution. Table stacks use poker chips only; do not make table-side credit a hidden stack source.
+  - Side sofas use directional red-sofa sprites plus a foreground armrest mask. For free-roam depth, characters in front of a sofa should cover the sofa, characters behind it should be covered by the sofa, and side sofa armrests should remain visually integral to the seat rather than separate hollow overlay pieces.
+  - Static Card Room image assets live under `public/assets/card-room/`. The current fixed PNG assets are `city-window-wide.png`, `wall-sconce.png`, and card-face/back reference files under `public/assets/card-room/cards/`; Card Room floor, wall, table, and sofa art are still code-embedded palette/row matrix sprites in `src/cardRoom/cardRoomFloorSprites.ts`, `cardRoomWallSprites.ts`, `cardRoomTableSprites.ts`, and `cardRoomSeatSprites.ts`. `city-window-wide.png` relies on transparent rounded corners; if the PNG changes, verify its alpha on a checkerboard background and bump the renderer query string if browser cache would hide the update.
+  - The current table art is a `640 x 220` sprite with public-card frame guides baked into `cardRoomTableSprites.ts`. Keep the public-card frame and shallow guide line in the table asset rather than reintroducing runtime overlay patches. Runtime community cards should stay aligned to `COMMUNITY_CARD_FRAME_CENTERS_X` and `COMMUNITY_CARD_FRAME_CENTER_Y`.
+  - Playing-card faces are procedurally drawn by `drawPlayingCard`: rank text is mirrored in opposite corners, suit art is a centered vector glyph, and all card-face art must stay clipped inside the card rectangle. Table cards and the bottom user hand should share this drawing style, with hand-card scale adjusted through the hand-card canvas constants rather than a separate DOM card face.
+  - Seat, hand, stack, and bet anchors belong in `opponentSeatSpot`, `userSeatSpot`, and `stackChipsBesideSeatCards`. The user seat is a bottom table position aligned opposite the second top seat; its committed bet label should sit close to the hand but remain above the hand cards, and side-seat bet anchors can be adjusted independently when crowding appears.
+  - Chip-stack drawing stays compact and capped: `0 chips` shows only the numeric label, positive stacks use a `10`-row cap with `350 chips` per visual row, and positive chip piles use ten value-tier palettes from warm colors toward cool colors, ending in black/gray for the highest tier. Negative/debt-like stacks stay red warning colors instead of value-tier colors.
+  - Pot visuals are phase-specific. During normal betting streets, the Pot area shows the numeric `POT` value only. At settlement, committed bet piles fly from each seat to the Pot, then Pot chips fly to winners; the Pot clears quickly after payout takeoff, and the payout flight count is based on the visible Pot stack count to make large wins feel substantial without changing payout math.
+  - `src/cardRoom/holdemEngine.ts` is the Texas Hold'em rules engine: deck/deal, blinds, legal actions, betting streets, folds/checks/calls/bets/raises/all-ins, called-clock timeout actions, showdown, winner/rank labels, and pot distribution. It owns short all-in/full-raise reopening behavior, uncalled-chip refunds, side-pot/odd-chip settlement, and showdown reveal order. Table stacks use poker chips only; do not make table-side credit a hidden stack source.
+  - Dealing, blind rotation, active-player flow, and presentation animation should follow the same clockwise seat order. Keep the user/bottom seat, left side seat, top seats, and right side seat ordering consistent across `CardRoomApp.tsx`, `holdemEngine.ts`, and `cardRoomRenderer.ts`.
   - `src/cardRoom/pokerAi.ts` derives poker action choice from public table state, private hole cards, normal Growth traits, and hidden `memory.darkTraits`. `choosePokerAiMove` returns the action plus a non-fixed `delayMs` and a pre-action cue such as `think`, `hesitate`, `pressure`, or `snap`; `CardRoomApp` should render that pre-action cue before applying the final fold/check/call/bet/raise/all-in cue.
   - `src/cardRoom/saveRoster.ts` reads the local save-slot registry, derives Card Room characters from real saved avatars, normalizes `memory.darkTraits`, persists `wallet.pokerChips`, and writes dark-trait changes back through each character's save slot. Keep gambling memory scoped to `memory.darkTraits`; do not mutate unrelated main-room memory structures.
   - `src/cardRoom/chipEconomy.ts` defines the Card Room chip economy. Saved characters exchange their own `wallet.bits` into `wallet.pokerChips` and can borrow bits up to `CARD_ROOM_BITS_DEBT_LIMIT`. The user/player is not a saved character and has no bits account; the user has a separate Card Room-local `pokerChips` / `chipDebt` wallet with its own borrowing limit.
   - Top HUD result text should describe the completed hand in reader-facing terms: winner name, payout delta, and winning hand rank. Bottom HUD should show the user's real card faces as poker cards, current chips/debt, status, and action buttons beside the hand without covering the room canvas.
+  - User victory has two visual layers: Canvas winner bursts are derived from real `table.winners` / `motion.completionStartedAt`, and the React overlay uses `.card-room-victory-overlay` for spotlight, rings, medallion, and confetti. `?victoryDemo=1` is a development-only preview switch that plays the user victory overlay once without changing table state, settlement, or saves.
   - Verify Card Room behavior in the live preview at `http://127.0.0.1:1427/?view=card-room`, in addition to `npm run build` and `git diff --check`, because most Card Room regressions are visual/runtime issues rather than TypeScript-only issues.
 
 - `src/agentRegistry.ts`
@@ -1084,6 +1099,15 @@ The PostToolUse hook remains as a fallback activity signal, but the watcher is n
   - Desktop: `32 x 32`, for desktop/tabletop items.
   - Furniture: `64 x 64`, for small furniture or decor.
   - Room Ref: `480 x 320`, for full-scene reference work.
+- Card Room reference sizes:
+  - Card Room canvas: `960 x 640`.
+  - Poker table sprite: `640 x 220`, positioned around `x=160, y=320` in Card Room logical coordinates.
+  - Table card scale: `0.62` of the base `42 x 58` card.
+  - Public-card frame centers in table-local coordinates: `x=[224.5, 272, 319.5, 367.5, 414.5]`, `y=125`.
+  - Wide city window PNG: `480 x 154`; outer corners are transparent rounded PNG pixels, and glass rect is `x=34, y=37, width=412, height=84`.
+  - Wall sconce PNG: `24 x 36`; renderer draws a separate circular warm glow behind it.
+  - Chip-stack rows: `350 chips` per visual row, `10` row cap, three visible chip columns per row.
+  - Payout animation: Pot-to-winner flights clear the visible Pot in about `240ms`; flying chip count is based on the visible Pot stack count, not on the raw payout amount.
 
 ## Agent Status Bridge
 

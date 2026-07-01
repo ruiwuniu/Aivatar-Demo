@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:card-room-rules": "node scripts/card-room-holdem-rules-smoke.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "aivatar:run": "node scripts/aivatar-run.mjs",

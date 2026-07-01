@@ -24,6 +24,7 @@ import type {
   AvatarRuntime,
   CodexStatusMessage,
   FurnitureDefinition,
+  RoomSurfacePalette,
 } from "../types";
 import { cardRoomDefaultPetStats } from "./cardRoomContent";
 import type { CardRoomActionCue } from "./cardRoomRuntime";
@@ -46,6 +47,23 @@ const SIDE_OPPONENT_CARD_Y_OFFSET = 30 - SIDE_OPPONENT_VERTICAL_CARD_WIDTH;
 const SIDE_OPPONENT_BET_Y_OFFSET = 90 - SIDE_OPPONENT_VERTICAL_CARD_WIDTH;
 const COMMUNITY_CARD_FRAME_CENTERS_X = [224.5, 272, 319.5, 367.5, 414.5] as const;
 const COMMUNITY_CARD_FRAME_CENTER_Y = 125;
+const CHIP_FLIGHT_DURATION_MS = 720;
+const CHIP_FLIGHT_STAGGER_MS = 52;
+const CHIP_FLIGHT_LAND_AT = 0.86;
+const CHIP_STACK_ROW_GAP = 3;
+const CHIP_STACK_MAX_ROWS = 10;
+const CHIP_STACK_VALUE_PER_ROW = 350;
+const BET_STACK_VALUE_PER_ROW = 350;
+const SHOWDOWN_REVEAL_STAGGER_MS = 520;
+const POT_COLLECTION_CHIP_FLIGHT_DURATION_MS = 780;
+const POT_COLLECTION_CHIP_FLIGHT_STAGGER_MS = 48;
+const POT_COLLECTION_CHIP_FLIGHT_LAND_AT = 0.86;
+const POT_COLLECTION_ACCOUNTING_WINDOW_MS = 4600;
+const PAYOUT_CHIP_FLIGHT_DURATION_MS = 980;
+const PAYOUT_CHIP_FLIGHT_STAGGER_MS = 28;
+const PAYOUT_CHIP_FLIGHT_LAND_AT = 0.86;
+const PAYOUT_ACCOUNTING_WINDOW_MS = 4600;
+const PAYOUT_POT_CLEAR_MS = 240;
 
 interface CardRoomRenderLayout {
   width: number;
@@ -66,6 +84,9 @@ export interface CardRoomTableMotion {
   streetStartedAt: number;
   actionSerial: number;
   actionStartedAt: number;
+  chipFlights: CardRoomChipFlight[];
+  potCollectionFlights: CardRoomPotCollectionFlight[];
+  payoutFlights: CardRoomPayoutFlight[];
   communityRevealFrom: number;
   communityRevealCount: number;
   communityRevealStartedAt: number;
@@ -74,13 +95,39 @@ export interface CardRoomTableMotion {
   userVictoryStartedAt: number | null;
 }
 
+export interface CardRoomChipFlight {
+  avatarId: string;
+  handNumber: number;
+  actionSerial: number;
+  amount: number;
+  fromCommitted: number;
+  toCommitted: number;
+  startedAt: number;
+}
+
+export interface CardRoomPotCollectionFlight {
+  avatarId: string;
+  handNumber: number;
+  actionSerial: number;
+  amount: number;
+  startedAt: number;
+}
+
+export interface CardRoomPayoutFlight {
+  avatarId: string;
+  handNumber: number;
+  actionSerial: number;
+  amount: number;
+  startedAt: number;
+}
+
 type CardRoomDepthRenderItem = {
   depth: number;
   order: number;
   draw: () => void;
 };
 
-const CARD_ROOM_CITY_WINDOW_SPRITE_SRC = "/assets/card-room/city-window-wide.png";
+const CARD_ROOM_CITY_WINDOW_SPRITE_SRC = "/assets/card-room/city-window-wide.png?v=2";
 const CARD_ROOM_CITY_WINDOW_SPRITE_WIDTH = 480;
 const CARD_ROOM_CITY_WINDOW_SPRITE_HEIGHT = 154;
 const CARD_ROOM_CITY_WINDOW_GLASS = {
@@ -113,6 +160,21 @@ const drawPixelRect = (
 ) => {
   ctx.fillStyle = color;
   ctx.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
+};
+
+const drawPixelRectAlpha = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  color: string,
+  alpha: number,
+) => {
+  const previousAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = Math.max(0, Math.min(1, previousAlpha * alpha));
+  drawPixelRect(ctx, x, y, width, height, color);
+  ctx.globalAlpha = previousAlpha;
 };
 
 const drawPixelStroke = (
@@ -305,6 +367,71 @@ const surfacePalette = (
   surfaces?.find((surface) => surface.id === surfaceId)?.palette ??
   surfaces?.find((surface) => surface.id === fallbackId)?.palette;
 
+const FALLBACK_CARD_ROOM_WALL_PALETTE: RoomSurfacePalette = {
+  base: "#2d1812",
+  border: "#140b09",
+  plankA: "#3a2018",
+  plankB: "#43261c",
+  plankC: "#26130f",
+  plankD: "#5b3525",
+  seam: "#1b0d0a",
+  highlight: "#8a5636",
+  grainDark: "#160907",
+  grainLight: "#70442e",
+};
+
+const drawCardRoomBaseboard = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  floorY: number,
+  width: number,
+  wallPalette: RoomSurfacePalette | undefined,
+  floorPalette: RoomSurfacePalette | undefined,
+) => {
+  const wall = wallPalette ?? FALLBACK_CARD_ROOM_WALL_PALETTE;
+  const floor = floorPalette ?? wall;
+  const left = Math.round(x);
+  const right = Math.round(x + width);
+  const y = Math.round(floorY - 7);
+  const baseboardHeight = 8;
+
+  drawPixelRect(ctx, left, y, right - left, baseboardHeight, wall.plankC);
+  drawPixelRect(ctx, left, y, right - left, 1, wall.border);
+  drawPixelRect(ctx, left, y + baseboardHeight - 1, right - left, 1, wall.seam);
+  drawPixelRectAlpha(ctx, left, floorY, right - left, 2, floor.grainDark, 0.58);
+
+  let segmentIndex = 0;
+  for (let segmentX = left; segmentX < right; segmentX += 38) {
+    const segmentWidth = Math.min(38, right - segmentX);
+    const bodyTone =
+      segmentIndex % 3 === 0
+        ? wall.plankA
+        : segmentIndex % 3 === 1
+          ? wall.plankC
+          : wall.plankB;
+    drawPixelRect(ctx, segmentX, y + 1, segmentWidth, 5, bodyTone);
+    drawPixelRect(ctx, segmentX, y + 6, segmentWidth, 1, wall.grainDark);
+    drawPixelRect(ctx, segmentX, y + 1, 1, 6, wall.seam);
+    if (segmentX + segmentWidth < right) {
+      drawPixelRectAlpha(ctx, segmentX + segmentWidth - 1, y + 1, 1, 5, wall.grainLight, 0.18);
+    }
+
+    const lightGrainWidth = Math.min(13, Math.max(0, segmentWidth - 7));
+    const darkGrainWidth = Math.min(17, Math.max(0, segmentWidth - 14));
+    if (lightGrainWidth > 0) {
+      drawPixelRectAlpha(ctx, segmentX + 5, y + 2, lightGrainWidth, 1, wall.grainLight, 0.22);
+    }
+    if (darkGrainWidth > 0) {
+      drawPixelRectAlpha(ctx, segmentX + 12, y + 4, darkGrainWidth, 1, wall.grainDark, 0.4);
+    }
+    if (segmentIndex % 2 === 0 && segmentWidth > 24) {
+      drawPixelRectAlpha(ctx, segmentX + 25, y + 3, 5, 1, wall.highlight, 0.16);
+      drawPixelRectAlpha(ctx, segmentX + 30, y + 4, 2, 1, wall.grainDark, 0.44);
+    }
+    segmentIndex += 1;
+  }
+};
+
 interface CachedCardRoomMatrixSprite {
   canvas: HTMLCanvasElement;
   width: number;
@@ -464,6 +591,112 @@ const drawText = (
   ctx.fillText(text, Math.round(x), Math.round(y));
 };
 
+const drawCardIndex = (
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  x: number,
+  y: number,
+  scale: number,
+  color: string,
+) => {
+  const labelSize = (12 / TABLE_CARD_SCALE) * scale;
+  drawText(ctx, label, x, y, {
+    color,
+    size: labelSize,
+    weight: "900",
+  });
+};
+
+const drawRotatedCardIndex = (
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  x: number,
+  y: number,
+  scale: number,
+  color: string,
+) => {
+  ctx.save();
+  ctx.translate(Math.round(x), Math.round(y));
+  ctx.rotate(Math.PI);
+  drawCardIndex(ctx, label, 0, 0, scale, color);
+  ctx.restore();
+};
+
+const drawCenterSuitIcon = (
+  ctx: CanvasRenderingContext2D,
+  suit: PlayingCard["suit"],
+  centerX: number,
+  centerY: number,
+  scale: number,
+  color = suitColor[suit],
+) => {
+  const size = Math.max(6, 8.7 * scale);
+  ctx.save();
+  ctx.translate(centerX, centerY);
+  ctx.fillStyle = color;
+
+  if (suit === "h") {
+    ctx.beginPath();
+    ctx.moveTo(0, size * 0.82);
+    ctx.bezierCurveTo(-size * 1.05, size * 0.16, -size * 0.95, -size * 0.76, -size * 0.36, -size * 0.68);
+    ctx.bezierCurveTo(-size * 0.13, -size * 0.65, 0, -size * 0.5, 0, -size * 0.32);
+    ctx.bezierCurveTo(0, -size * 0.5, size * 0.13, -size * 0.65, size * 0.36, -size * 0.68);
+    ctx.bezierCurveTo(size * 0.95, -size * 0.76, size * 1.05, size * 0.16, 0, size * 0.82);
+    ctx.fill();
+  } else if (suit === "d") {
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.96);
+    ctx.lineTo(size * 0.72, 0);
+    ctx.lineTo(0, size * 0.96);
+    ctx.lineTo(-size * 0.72, 0);
+    ctx.closePath();
+    ctx.fill();
+  } else if (suit === "c") {
+    const radius = size * 0.34;
+    [
+      [0, -size * 0.48],
+      [-size * 0.48, size * 0.08],
+      [size * 0.48, size * 0.08],
+    ].forEach(([circleX, circleY]) => {
+      ctx.beginPath();
+      ctx.arc(circleX, circleY, radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.18, -size * 0.14);
+    ctx.lineTo(size * 0.18, -size * 0.14);
+    ctx.lineTo(size * 0.26, size * 0.3);
+    ctx.lineTo(-size * 0.26, size * 0.3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.14, size * 0.22);
+    ctx.bezierCurveTo(-size * 0.1, size * 0.48, -size * 0.25, size * 0.73, -size * 0.39, size * 0.92);
+    ctx.lineTo(size * 0.39, size * 0.92);
+    ctx.bezierCurveTo(size * 0.25, size * 0.73, size * 0.1, size * 0.48, size * 0.14, size * 0.22);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 1.02);
+    ctx.bezierCurveTo(-size * 0.92, -size * 0.34, -size * 1.05, size * 0.38, -size * 0.42, size * 0.54);
+    ctx.bezierCurveTo(-size * 0.16, size * 0.61, -size * 0.04, size * 0.43, 0, size * 0.24);
+    ctx.bezierCurveTo(size * 0.04, size * 0.43, size * 0.16, size * 0.61, size * 0.42, size * 0.54);
+    ctx.bezierCurveTo(size * 1.05, size * 0.38, size * 0.92, -size * 0.34, 0, -size * 1.02);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.16, size * 0.28);
+    ctx.bezierCurveTo(-size * 0.12, size * 0.52, -size * 0.28, size * 0.76, -size * 0.42, size * 0.96);
+    ctx.lineTo(size * 0.42, size * 0.96);
+    ctx.bezierCurveTo(size * 0.28, size * 0.76, size * 0.12, size * 0.52, size * 0.16, size * 0.28);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.restore();
+};
+
 const drawCardBack = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -497,9 +730,10 @@ export const drawPlayingCard = (
   card: PlayingCard | null,
   x: number,
   y: number,
-  options: { hidden?: boolean; scale?: number } = {},
+  options: { faceScale?: number; hidden?: boolean; scale?: number } = {},
 ) => {
   const scale = options.scale ?? 1;
+  const faceScale = scale * (options.faceScale ?? 1);
   const width = 42 * scale;
   const height = 58 * scale;
   if (!card || options.hidden) {
@@ -511,11 +745,13 @@ export const drawPlayingCard = (
   const ink = suitColor[card.suit];
   const border = Math.max(2, Math.round(3 * scale));
   const inner = border + 2 * scale;
-  const labelSize = (label.length > 1 ? 17 : 21) * scale;
-  const suitScale = scale * 1.28;
-  const suitUnit = Math.max(1, Math.round(suitScale));
-  const suitCenterX = x + width - border - suitUnit * 5 - 1;
-  const suitCenterY = y + height - border - suitUnit * 7 - 1;
+  const hairline = Math.max(1, Math.round(scale));
+  const indexX = x + 5 * scale;
+  const indexY = y + 5 * scale;
+  const mirroredIndexX = x + width - 5 * scale;
+  const mirroredIndexY = y + height - 5 * scale;
+  const centerSuitX = x + width / 2;
+  const centerSuitY = y + height * 0.51;
 
   drawPixelRect(ctx, x + 2 * scale, y + 3 * scale, width, height, "rgba(2, 6, 23, 0.25)");
   drawPixelRect(ctx, x, y, width, height, "#111827");
@@ -528,13 +764,32 @@ export const drawPlayingCard = (
     height - inner * 2,
     "#fff7ed",
   );
-  drawPixelRect(ctx, x + border, y + border, width - border * 2, Math.max(1, scale), "#ffffff");
-  drawText(ctx, label, x + 6 * scale, y + 6 * scale, {
-    color: ink,
-    size: labelSize,
-    weight: "900",
-  });
-  drawSuitIcon(ctx, card.suit, suitCenterX, suitCenterY, suitScale, ink);
+  drawPixelRect(ctx, x + border, y + border, width - border * 2, hairline, "#ffffff");
+  drawPixelRect(
+    ctx,
+    x + border,
+    y + height - border - hairline,
+    width - border * 2,
+    hairline,
+    "#e8dcc7",
+  );
+  drawPixelRect(
+    ctx,
+    x + width - border - hairline,
+    y + border,
+    hairline,
+    height - border * 2,
+    "#eadcc6",
+  );
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x + border, y + border, width - border * 2, height - border * 2);
+  ctx.clip();
+  drawCenterSuitIcon(ctx, card.suit, centerSuitX, centerSuitY, faceScale, ink);
+  drawCardIndex(ctx, label, indexX, indexY, faceScale, ink);
+  drawRotatedCardIndex(ctx, label, mirroredIndexX, mirroredIndexY, faceScale, ink);
+  ctx.restore();
 };
 
 const drawDealerShuffle = (
@@ -1067,10 +1322,7 @@ const drawRoomShell = (
       }
     }
   }
-  drawPixelRect(ctx, 28, floorY - 8, roomWidth - 56, 12, wallHighlight);
-  drawPixelRect(ctx, 28, floorY - 8, roomWidth - 56, 3, "rgba(255, 255, 255, 0.18)");
-  drawPixelRect(ctx, 28, floorY + 2, roomWidth - 56, 4, "#431407");
-  drawPixelRect(ctx, 58, floorY + 22, roomWidth - 116, 5, "rgba(250, 204, 21, 0.08)");
+  drawCardRoomBaseboard(ctx, 28, floorY, roomWidth - 56, wallPalette, floorPalette);
   drawPixelRect(ctx, 28, floorBottom, roomWidth - 56, 4, "#0d0706");
   drawPixelRect(ctx, 36, floorBottom - 10, roomWidth - 72, 2, floorDark);
 
@@ -1201,7 +1453,7 @@ const opponentSeatSpot = (
       side: leftSide ? "left" : "right",
       cardX: leftSide ? table.x + 52 : table.x + table.width - 52,
       cardY: middleY + SIDE_OPPONENT_CARD_Y_OFFSET,
-      betX: leftSide ? table.x + 116 : table.x + table.width - 116,
+      betX: leftSide ? table.x + 106 : table.x + table.width - 116,
       betY: middleY + SIDE_OPPONENT_BET_Y_OFFSET,
     };
   }
@@ -1221,7 +1473,7 @@ const opponentSeatSpot = (
 };
 
 const userSeatSpot = (table: FurnitureDefinition): TableSeatSpot => {
-  const handCenterX = table.x + table.width / 2;
+  const handCenterX = topSeatX(1, TOP_OPPONENT_SEAT_COUNT, table);
 
   return {
     x: handCenterX,
@@ -1230,8 +1482,8 @@ const userSeatSpot = (table: FurnitureDefinition): TableSeatSpot => {
     side: "bottom",
     cardX: handCenterX,
     cardY: table.y + table.height - 64,
-    betX: handCenterX - 95,
-    betY: table.y + table.height - 42,
+    betX: handCenterX,
+    betY: table.y + table.height - 84,
   };
 };
 
@@ -1339,20 +1591,357 @@ const drawPokerChip = (
   drawPixelRect(ctx, x + width / 2 - 4, y - 2, 2, 1, "#fff7ed");
 };
 
+type CardRoomChipFlightLike = {
+  amount: number;
+  startedAt: number;
+};
+
+const chipFlightProgress = (
+  now: number,
+  flight: CardRoomChipFlightLike,
+  chipIndex = 0,
+  durationMs = CHIP_FLIGHT_DURATION_MS,
+  staggerMs = CHIP_FLIGHT_STAGGER_MS,
+) =>
+  timedProgress(now, flight.startedAt + chipIndex * staggerMs, durationMs);
+
+const chipFlightChipCount = (amount: number) =>
+  Math.min(7, Math.max(3, Math.ceil(Math.abs(amount) / 80)));
+
+const unresolvedChipFlightAmount = (
+  flights: CardRoomChipFlightLike[],
+  now: number,
+  options: {
+    durationMs?: number;
+    staggerMs?: number;
+    landAt?: number;
+    chipCountForFlight?: (flight: CardRoomChipFlightLike) => number;
+  } = {},
+) =>
+  flights.reduce((total, flight) => {
+    const durationMs = options.durationMs ?? CHIP_FLIGHT_DURATION_MS;
+    const staggerMs = options.staggerMs ?? CHIP_FLIGHT_STAGGER_MS;
+    const landAt = options.landAt ?? CHIP_FLIGHT_LAND_AT;
+    const chipCount = options.chipCountForFlight?.(flight) ?? chipFlightChipCount(flight.amount);
+    const landed = chipFlightProgress(now, flight, chipCount - 1, durationMs, staggerMs) >= landAt;
+    return landed ? total : total + flight.amount;
+  }, 0);
+
+const departedChipFlightAmountByTakeoff = (
+  flights: CardRoomChipFlightLike[],
+  now: number,
+  clearMs: number,
+) =>
+  flights.reduce(
+    (total, flight) => total + flight.amount * easeOutCubic(timedProgress(now, flight.startedAt, clearMs)),
+    0,
+  );
+
+const chipFlightActiveWindowMs = (
+  amount: number,
+  durationMs = CHIP_FLIGHT_DURATION_MS,
+  staggerMs = CHIP_FLIGHT_STAGGER_MS,
+) => durationMs + staggerMs * chipFlightChipCount(amount);
+
+const activeChipFlightsForPlayer = (
+  motion: CardRoomTableMotion | undefined,
+  table: HoldemTableState,
+  player: HoldemPlayer,
+  now: number,
+) =>
+  motion?.handNumber === table.handNumber
+    ? motion.chipFlights.filter(
+        (flight) =>
+          flight.avatarId === player.avatarId &&
+          flight.handNumber === table.handNumber &&
+          now - flight.startedAt <= chipFlightActiveWindowMs(flight.amount),
+      )
+    : [];
+
+const activePotCollectionFlightsForPlayer = (
+  motion: CardRoomTableMotion | undefined,
+  table: HoldemTableState,
+  player: HoldemPlayer,
+  now: number,
+) =>
+  motion?.handNumber === table.handNumber
+    ? motion.potCollectionFlights.filter(
+        (flight) =>
+          flight.avatarId === player.avatarId &&
+          flight.handNumber === table.handNumber &&
+          now - flight.startedAt <= POT_COLLECTION_ACCOUNTING_WINDOW_MS,
+      )
+    : [];
+
+const activePotCollectionFlightsForTable = (
+  motion: CardRoomTableMotion | undefined,
+  table: HoldemTableState,
+  now: number,
+) =>
+  motion?.handNumber === table.handNumber
+    ? motion.potCollectionFlights.filter(
+        (flight) =>
+          flight.handNumber === table.handNumber &&
+          now - flight.startedAt <= POT_COLLECTION_ACCOUNTING_WINDOW_MS,
+      )
+    : [];
+
+const activePayoutFlightsForPlayer = (
+  motion: CardRoomTableMotion | undefined,
+  table: HoldemTableState,
+  player: HoldemPlayer,
+  now: number,
+) =>
+  motion?.handNumber === table.handNumber
+    ? motion.payoutFlights.filter(
+        (flight) =>
+          flight.avatarId === player.avatarId &&
+          flight.handNumber === table.handNumber &&
+          now - flight.startedAt <= PAYOUT_ACCOUNTING_WINDOW_MS,
+      )
+    : [];
+
+const activePayoutFlightsForTable = (
+  motion: CardRoomTableMotion | undefined,
+  table: HoldemTableState,
+  now: number,
+) =>
+  motion?.handNumber === table.handNumber
+    ? motion.payoutFlights.filter(
+        (flight) =>
+          flight.handNumber === table.handNumber &&
+          now - flight.startedAt <= PAYOUT_ACCOUNTING_WINDOW_MS,
+      )
+    : [];
+
+const chipFlightColors = [
+  ["#facc15", "#713f12"],
+  ["#14b8a6", "#134e4a"],
+  ["#f97316", "#7c2d12"],
+  ["#a855f7", "#4c1d95"],
+] as const;
+
+const CHIP_STACK_TIER_FULL_STACK_MULTIPLIERS = [
+  1,
+  2,
+  4,
+  7,
+  11,
+  16,
+  22,
+  29,
+  37,
+  Number.POSITIVE_INFINITY,
+] as const;
+
+const CHIP_STACK_TIER_PALETTES = [
+  {
+    colors: ["#facc15", "#f97316", "#ef4444"],
+    shadows: ["#92400e", "#7c2d12", "#7f1d1d"],
+  },
+  {
+    colors: ["#fb923c", "#f59e0b", "#f43f5e"],
+    shadows: ["#9a3412", "#92400e", "#881337"],
+  },
+  {
+    colors: ["#fb7185", "#e11d48", "#c026d3"],
+    shadows: ["#9f1239", "#881337", "#701a75"],
+  },
+  {
+    colors: ["#e879f9", "#a855f7", "#7c3aed"],
+    shadows: ["#86198f", "#581c87", "#4c1d95"],
+  },
+  {
+    colors: ["#a78bfa", "#6366f1", "#4f46e5"],
+    shadows: ["#5b21b6", "#3730a3", "#312e81"],
+  },
+  {
+    colors: ["#60a5fa", "#2563eb", "#1d4ed8"],
+    shadows: ["#1e3a8a", "#1e40af", "#172554"],
+  },
+  {
+    colors: ["#22d3ee", "#06b6d4", "#0891b2"],
+    shadows: ["#155e75", "#164e63", "#083344"],
+  },
+  {
+    colors: ["#2dd4bf", "#14b8a6", "#0f766e"],
+    shadows: ["#115e59", "#134e4a", "#042f2e"],
+  },
+  {
+    colors: ["#94a3b8", "#475569", "#1e40af"],
+    shadows: ["#334155", "#1e293b", "#172554"],
+  },
+  {
+    colors: ["#d1d5db", "#6b7280", "#111827"],
+    shadows: ["#4b5563", "#1f2937", "#020617"],
+  },
+] as const;
+
+const chipStackRowCount = (amount: number, valuePerRow: number) => {
+  if (amount <= 0) return 0;
+  return Math.max(1, Math.ceil(amount / valuePerRow));
+};
+
+const chipStackVisibleChipCount = (amount: number, valuePerRow: number) =>
+  Math.min(CHIP_STACK_MAX_ROWS, chipStackRowCount(Math.abs(amount), valuePerRow)) * 3;
+
+const chipStackPaletteForAmount = (amount: number, valuePerRow: number) => {
+  const fullStackValue = Math.max(1, valuePerRow * CHIP_STACK_MAX_ROWS);
+  const tierIndex = CHIP_STACK_TIER_FULL_STACK_MULTIPLIERS.findIndex(
+    (multiplier) => amount <= fullStackValue * multiplier,
+  );
+  return CHIP_STACK_TIER_PALETTES[
+    tierIndex >= 0 ? tierIndex : CHIP_STACK_TIER_PALETTES.length - 1
+  ];
+};
+
+const payoutFlightChipCount = (amount: number, totalPayoutAmount: number) => {
+  if (totalPayoutAmount <= 0) return chipFlightChipCount(amount);
+  const potChipCount = chipStackVisibleChipCount(totalPayoutAmount, BET_STACK_VALUE_PER_ROW);
+  return Math.max(3, Math.round((potChipCount * Math.abs(amount)) / totalPayoutAmount));
+};
+
+const drawChipStackPile = (
+  ctx: CanvasRenderingContext2D,
+  amount: number,
+  x: number,
+  y: number,
+  colors: string[],
+  shadows: string[],
+  valuePerRow: number,
+  width = 10,
+  options: { useValueTier?: boolean } = {},
+) => {
+  const totalRows = chipStackRowCount(Math.abs(amount), valuePerRow);
+  if (totalRows <= 0) return 0;
+  const stackHeight = Math.min(CHIP_STACK_MAX_ROWS, totalRows);
+  const palette = options.useValueTier
+    ? chipStackPaletteForAmount(Math.abs(amount), valuePerRow)
+    : { colors, shadows };
+  drawPixelRect(
+    ctx,
+    x - 18,
+    y - stackHeight * CHIP_STACK_ROW_GAP - 5,
+    42,
+    stackHeight * CHIP_STACK_ROW_GAP + 8,
+    "rgba(0, 0, 0, 0.22)",
+  );
+  for (let column = 0; column < 3; column += 1) {
+    for (let row = 0; row < stackHeight; row += 1) {
+      const chipX = x - 7 + column * 7;
+      const chipY = y - row * CHIP_STACK_ROW_GAP + column * 2;
+      const colorIndex = (column + row) % palette.colors.length;
+      const shadowIndex = colorIndex % palette.shadows.length;
+      drawPokerChip(
+        ctx,
+        chipX,
+        chipY,
+        palette.colors[colorIndex],
+        palette.shadows[shadowIndex],
+        width,
+      );
+    }
+  }
+  return stackHeight;
+};
+
+const drawChipFlights = (
+  ctx: CanvasRenderingContext2D,
+  flights: CardRoomChipFlightLike[],
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  now: number,
+  options: {
+    durationMs?: number;
+    staggerMs?: number;
+    arcBase?: number;
+  } = {},
+) => {
+  const durationMs = options.durationMs ?? CHIP_FLIGHT_DURATION_MS;
+  const staggerMs = options.staggerMs ?? CHIP_FLIGHT_STAGGER_MS;
+  const arcBase = options.arcBase ?? 24;
+  flights.forEach((flight) => {
+    const chipCount = chipFlightChipCount(flight.amount);
+    for (let index = 0; index < chipCount; index += 1) {
+      const progress = chipFlightProgress(now, flight, index, durationMs, staggerMs);
+      if (progress < 0 || progress >= 1) continue;
+      const eased = easeInOutSine(progress);
+      const colorPair = chipFlightColors[index % chipFlightColors.length];
+      const spread = index - (chipCount - 1) / 2;
+      const arc = Math.sin(eased * Math.PI) * (arcBase + (index % 3) * 5);
+      const wobble = Math.sin(progress * Math.PI * 2 + index * 1.7) * 2;
+      const chipX = lerp(from.x + spread * 4, to.x + spread * 3, eased) + wobble;
+      const chipY = lerp(from.y - 6 - (index % 2) * 3, to.y - 8 - (index % 2) * 2, eased) - arc;
+      const shadowY = lerp(from.y + 5, to.y + 5, eased);
+      const shadowAlpha = 0.16 + Math.sin(eased * Math.PI) * 0.12;
+      drawPixelRect(ctx, chipX - 7, shadowY, 14, 3, `rgba(2, 6, 23, ${shadowAlpha.toFixed(3)})`);
+      drawPokerChip(ctx, chipX, chipY, colorPair[0], colorPair[1], 12);
+    }
+  });
+};
+
+const drawPayoutChipFlights = (
+  ctx: CanvasRenderingContext2D,
+  flights: CardRoomPayoutFlight[],
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  now: number,
+  options: { totalPayoutAmount?: number } = {},
+) => {
+  const totalPayoutAmount =
+    options.totalPayoutAmount ?? flights.reduce((total, flight) => total + flight.amount, 0);
+  const palette = chipStackPaletteForAmount(
+    Math.max(totalPayoutAmount, ...flights.map((flight) => flight.amount), 1),
+    BET_STACK_VALUE_PER_ROW,
+  );
+  flights.forEach((flight, flightIndex) => {
+    const chipCount = payoutFlightChipCount(flight.amount, totalPayoutAmount);
+    for (let index = 0; index < chipCount; index += 1) {
+      const progress = chipFlightProgress(
+        now,
+        flight,
+        index,
+        PAYOUT_CHIP_FLIGHT_DURATION_MS,
+        PAYOUT_CHIP_FLIGHT_STAGGER_MS,
+      );
+      if (progress < 0 || progress >= 1) continue;
+      const eased = easeInOutSine(progress);
+      const colorIndex = (index + flightIndex) % palette.colors.length;
+      const spread = index - (chipCount - 1) / 2;
+      const arc = Math.sin(eased * Math.PI) * (42 + (index % 4) * 6);
+      const drift = Math.sin(progress * Math.PI * 2 + index * 1.35 + flightIndex) * 2.8;
+      const chipX = lerp(from.x + spread * 2.2, to.x + spread * 1.3, eased) + drift;
+      const chipY = lerp(from.y - 8 - (index % 2) * 2, to.y - 11 - (index % 2) * 2, eased) - arc;
+      const shadowY = lerp(from.y + 4, to.y + 6, eased);
+      const shadowAlpha = 0.12 + Math.sin(eased * Math.PI) * 0.16;
+      drawPixelRect(ctx, chipX - 8, shadowY, 16, 3, `rgba(2, 6, 23, ${shadowAlpha.toFixed(3)})`);
+      drawPokerChip(ctx, chipX, chipY, palette.colors[colorIndex], palette.shadows[colorIndex], 12);
+    }
+  });
+};
+
 const drawBet = (
   ctx: CanvasRenderingContext2D,
   player: HoldemPlayer,
   x: number,
   y: number,
+  committed = player.committed,
 ) => {
-  if (player.committed <= 0) return;
-  drawPixelRect(ctx, x - 22, y - 7, 44, 13, "rgba(2, 6, 23, 0.48)");
-  drawPokerChip(ctx, x - 9, y - 6, "#7c3aed", "#2e1065", 13);
-  drawPokerChip(ctx, x, y - 10, "#a855f7", "#4c1d95", 13);
-  drawPokerChip(ctx, x + 9, y - 6, "#f59e0b", "#713f12", 13);
+  if (committed <= 0) return;
+  drawChipStackPile(
+    ctx,
+    committed,
+    x,
+    y - 6,
+    ["#7c3aed", "#a855f7", "#f59e0b"],
+    ["#2e1065", "#4c1d95", "#713f12"],
+    BET_STACK_VALUE_PER_ROW,
+    13,
+    { useValueTier: true },
+  );
   drawPixelRect(ctx, x - 20, y + 5, 40, 11, "#020617");
   drawPixelStroke(ctx, x - 20, y + 5, 40, 11, "#7dd3fc", 1);
-  drawText(ctx, String(player.committed), x, y + 6, {
+  drawText(ctx, String(committed), x, y + 6, {
     align: "center",
     color: "#f5f3ff",
     size: 8,
@@ -1369,21 +1958,22 @@ const drawStackChips = (
   const colors = stack < 0 ? ["#fb7185", "#f43f5e"] : ["#facc15", "#14b8a6", "#f97316"];
   const shadows = stack < 0 ? ["#881337", "#7f1d1d"] : ["#713f12", "#134e4a", "#7c2d12"];
   const label = stackLabel(stack);
-  const stackHeight = Math.min(6, Math.max(2, Math.ceil(Math.abs(stack) / 350)));
-  drawPixelRect(ctx, x - 18, y - stackHeight * 3 - 5, 42, stackHeight * 3 + 8, "rgba(0, 0, 0, 0.22)");
-  for (let column = 0; column < 3; column += 1) {
-    for (let row = 0; row < stackHeight; row += 1) {
-      const chipX = x - 7 + column * 7;
-      const chipY = y - row * 3 + column * 2;
-      const colorIndex = (column + row) % colors.length;
-      drawPokerChip(ctx, chipX, chipY, colors[colorIndex], shadows[colorIndex], 10);
-    }
-  }
+  drawChipStackPile(ctx, Math.abs(stack), x, y, colors, shadows, CHIP_STACK_VALUE_PER_ROW, 10, {
+    useValueTier: stack >= 0,
+  });
   drawPixelRect(ctx, x - 17, y + 8, 40, 12, "#020617");
-  drawPixelStroke(ctx, x - 17, y + 8, 40, 12, stack < 0 ? "#fb7185" : "#facc15", 1);
+  drawPixelStroke(
+    ctx,
+    x - 17,
+    y + 8,
+    40,
+    12,
+    stack < 0 ? "#fb7185" : stack === 0 ? "#64748b" : "#facc15",
+    1,
+  );
   drawText(ctx, label, x + 3, y + 10, {
     align: "center",
-    color: stack < 0 ? "#fb7185" : "#fde68a",
+    color: stack < 0 ? "#fb7185" : stack === 0 ? "#e2e8f0" : "#fde68a",
     size: 7,
     weight: "900",
   });
@@ -1418,7 +2008,22 @@ const drawSeatCards = (
 ) => {
   if (table.street === "waiting") return;
   if (player.holeCards.length === 0) return;
-  const visibleCards = options.hidden ? [] : visibleHoleCardsForPlayer(table, player);
+  const motion = options.motion;
+  const now = options.now ?? performance.now();
+  const showdownOrderIndex =
+    table.street === "handComplete"
+      ? table.showdownOrderSeatIndexes.indexOf(player.seatIndex)
+      : -1;
+  const showdownRevealStartedAt =
+    motion?.handNumber === table.handNumber ? motion.completionStartedAt : null;
+  const showdownRevealed =
+    player.isUser ||
+    showdownOrderIndex < 0 ||
+    !showdownRevealStartedAt ||
+    now >= showdownRevealStartedAt + showdownOrderIndex * SHOWDOWN_REVEAL_STAGGER_MS;
+  const visibleCards = options.hidden || !showdownRevealed
+    ? []
+    : visibleHoleCardsForPlayer(table, player);
   const hidden = options.hidden || visibleCards.length === 0;
   const cards = hidden ? [null, null] : visibleCards;
   const scale = options.scale ?? TABLE_CARD_SCALE;
@@ -1429,8 +2034,6 @@ const drawSeatCards = (
   const startX = -cardRowWidth / 2;
   const rotation = rotationForSeatFacing(spot.facing);
   const centerY = spot.cardY + cardHeight / 2;
-  const motion = options.motion;
-  const now = options.now ?? performance.now();
   const handDealActive =
     Boolean(motion && options.dealOrigin) &&
     motion?.handNumber === table.handNumber;
@@ -1506,6 +2109,11 @@ const stackChipsBesideSeatCards = (
   };
 };
 
+const potChipSpotForTable = (furniture: FurnitureDefinition) => ({
+  x: furniture.x + furniture.width / 2,
+  y: furniture.y + furniture.height - 35,
+});
+
 const drawPokerTable = (
   ctx: CanvasRenderingContext2D,
   table: HoldemTableState,
@@ -1571,7 +2179,38 @@ const drawPokerTable = (
       });
     }
   });
-  drawText(ctx, `POT ${table.pot}`, x + width / 2, y + height - 19, {
+  const collectionFlights = activePotCollectionFlightsForTable(motion, table, now);
+  const collectionAmount = collectionFlights.reduce((total, flight) => total + flight.amount, 0);
+  const unresolvedCollectionAmount = unresolvedChipFlightAmount(collectionFlights, now, {
+    durationMs: POT_COLLECTION_CHIP_FLIGHT_DURATION_MS,
+    staggerMs: POT_COLLECTION_CHIP_FLIGHT_STAGGER_MS,
+    landAt: POT_COLLECTION_CHIP_FLIGHT_LAND_AT,
+  });
+  const payoutFlights = activePayoutFlightsForTable(motion, table, now);
+  const payoutDepartedAmount = departedChipFlightAmountByTakeoff(
+    payoutFlights,
+    now,
+    PAYOUT_POT_CLEAR_MS,
+  );
+  const visiblePotAmount = Math.max(
+    0,
+    Math.round(table.pot + collectionAmount - unresolvedCollectionAmount - payoutDepartedAmount),
+  );
+  const potSpot = potChipSpotForTable(furniture);
+  if (table.street === "handComplete" && visiblePotAmount > 0) {
+    drawChipStackPile(
+      ctx,
+      visiblePotAmount,
+      potSpot.x,
+      potSpot.y,
+      ["#facc15", "#14b8a6", "#f97316", "#a855f7"],
+      ["#713f12", "#134e4a", "#7c2d12", "#4c1d95"],
+      BET_STACK_VALUE_PER_ROW,
+      12,
+      { useValueTier: true },
+    );
+  }
+  drawText(ctx, `POT ${visiblePotAmount}`, x + width / 2, y + height - 19, {
     align: "center",
     baseline: "middle",
     color: "#f8e7bd",
@@ -1739,6 +2378,13 @@ export const renderCardRoom = (
 
   addRenderItem(shiftedPokerTable.y + 90, () => {
     drawPokerTable(ctx, table, shiftedPokerTable, motion, now);
+    const potSpot = potChipSpotForTable(shiftedPokerTable);
+    const payoutFlightDraws: Array<() => void> = [];
+    const activeTablePayoutFlights = activePayoutFlightsForTable(motion, table, now);
+    const activeTablePayoutAmount = activeTablePayoutFlights.reduce(
+      (total, flight) => total + flight.amount,
+      0,
+    );
 
     opponents.forEach((player, index) => {
       const roomSeatIndex = player.roomSeatIndex ?? index;
@@ -1754,8 +2400,69 @@ export const renderCardRoom = (
         dealOrigin: dealerDeckOrigin,
       });
       const stackSpot = stackChipsBesideSeatCards(spot);
-      drawStackChips(ctx, player.stack, stackSpot.x, stackSpot.y);
-      drawBet(ctx, player, spot.betX, spot.betY);
+      const chipFlights = activeChipFlightsForPlayer(motion, table, player, now);
+      const collectionFlights = activePotCollectionFlightsForPlayer(motion, table, player, now);
+      const payoutFlights = activePayoutFlightsForPlayer(motion, table, player, now);
+      const unresolvedFlightAmount = Math.min(
+        player.committed,
+        unresolvedChipFlightAmount(chipFlights, now),
+      );
+      const unresolvedCollectionAmount = Math.min(
+        player.committed,
+        unresolvedChipFlightAmount(collectionFlights, now, {
+          durationMs: POT_COLLECTION_CHIP_FLIGHT_DURATION_MS,
+          staggerMs: POT_COLLECTION_CHIP_FLIGHT_STAGGER_MS,
+          landAt: POT_COLLECTION_CHIP_FLIGHT_LAND_AT,
+        }),
+      );
+      const unresolvedPayoutAmount = unresolvedChipFlightAmount(payoutFlights, now, {
+        durationMs: PAYOUT_CHIP_FLIGHT_DURATION_MS,
+        staggerMs: PAYOUT_CHIP_FLIGHT_STAGGER_MS,
+        landAt: PAYOUT_CHIP_FLIGHT_LAND_AT,
+        chipCountForFlight: (flight) =>
+          payoutFlightChipCount(flight.amount, activeTablePayoutAmount),
+      });
+      drawStackChips(
+        ctx,
+        player.stack + unresolvedFlightAmount - unresolvedPayoutAmount,
+        stackSpot.x,
+        stackSpot.y,
+      );
+      drawBet(
+        ctx,
+        player,
+        spot.betX,
+        spot.betY,
+        table.street === "handComplete"
+          ? unresolvedCollectionAmount
+          : player.committed - unresolvedFlightAmount,
+      );
+      drawChipFlights(
+        ctx,
+        chipFlights,
+        stackSpot,
+        { x: spot.betX, y: spot.betY },
+        now,
+      );
+      drawChipFlights(
+        ctx,
+        collectionFlights,
+        { x: spot.betX, y: spot.betY },
+        potSpot,
+        now,
+        {
+          durationMs: POT_COLLECTION_CHIP_FLIGHT_DURATION_MS,
+          staggerMs: POT_COLLECTION_CHIP_FLIGHT_STAGGER_MS,
+          arcBase: 30,
+        },
+      );
+      if (payoutFlights.length > 0) {
+        payoutFlightDraws.push(() =>
+          drawPayoutChipFlights(ctx, payoutFlights, potSpot, stackSpot, now, {
+            totalPayoutAmount: activeTablePayoutAmount,
+          }),
+        );
+      }
     });
     const userPlayer = table.players.find((player) => player.isUser);
     if (userPlayer) {
@@ -1768,9 +2475,71 @@ export const renderCardRoom = (
         dealOrigin: dealerDeckOrigin,
       });
       const stackSpot = stackChipsBesideSeatCards(spot);
-      drawStackChips(ctx, userPlayer.stack, stackSpot.x, stackSpot.y);
-      drawBet(ctx, userPlayer, spot.betX, spot.betY);
+      const chipFlights = activeChipFlightsForPlayer(motion, table, userPlayer, now);
+      const collectionFlights = activePotCollectionFlightsForPlayer(motion, table, userPlayer, now);
+      const payoutFlights = activePayoutFlightsForPlayer(motion, table, userPlayer, now);
+      const unresolvedFlightAmount = Math.min(
+        userPlayer.committed,
+        unresolvedChipFlightAmount(chipFlights, now),
+      );
+      const unresolvedCollectionAmount = Math.min(
+        userPlayer.committed,
+        unresolvedChipFlightAmount(collectionFlights, now, {
+          durationMs: POT_COLLECTION_CHIP_FLIGHT_DURATION_MS,
+          staggerMs: POT_COLLECTION_CHIP_FLIGHT_STAGGER_MS,
+          landAt: POT_COLLECTION_CHIP_FLIGHT_LAND_AT,
+        }),
+      );
+      const unresolvedPayoutAmount = unresolvedChipFlightAmount(payoutFlights, now, {
+        durationMs: PAYOUT_CHIP_FLIGHT_DURATION_MS,
+        staggerMs: PAYOUT_CHIP_FLIGHT_STAGGER_MS,
+        landAt: PAYOUT_CHIP_FLIGHT_LAND_AT,
+        chipCountForFlight: (flight) =>
+          payoutFlightChipCount(flight.amount, activeTablePayoutAmount),
+      });
+      drawStackChips(
+        ctx,
+        userPlayer.stack + unresolvedFlightAmount - unresolvedPayoutAmount,
+        stackSpot.x,
+        stackSpot.y,
+      );
+      drawBet(
+        ctx,
+        userPlayer,
+        spot.betX,
+        spot.betY,
+        table.street === "handComplete"
+          ? unresolvedCollectionAmount
+          : userPlayer.committed - unresolvedFlightAmount,
+      );
+      drawChipFlights(
+        ctx,
+        chipFlights,
+        stackSpot,
+        { x: spot.betX, y: spot.betY },
+        now,
+      );
+      drawChipFlights(
+        ctx,
+        collectionFlights,
+        { x: spot.betX, y: spot.betY },
+        potSpot,
+        now,
+        {
+          durationMs: POT_COLLECTION_CHIP_FLIGHT_DURATION_MS,
+          staggerMs: POT_COLLECTION_CHIP_FLIGHT_STAGGER_MS,
+          arcBase: 30,
+        },
+      );
+      if (payoutFlights.length > 0) {
+        payoutFlightDraws.push(() =>
+          drawPayoutChipFlights(ctx, payoutFlights, potSpot, stackSpot, now, {
+            totalPayoutAmount: activeTablePayoutAmount,
+          }),
+        );
+      }
     }
+    payoutFlightDraws.forEach((draw) => draw());
   });
 
   renderItems

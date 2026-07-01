@@ -1,6 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LOCALE_KEY, localeOptions, resolveInitialLocale, t, type Locale } from "../i18n";
-import type { AivatarDarkTraits, AvatarRuntime } from "../types";
+import type {
+  AivatarDarkTraits,
+  AivatarRoomPresence,
+  AivatarRoomsSnapshot,
+  AivatarVisitSession,
+  AvatarRuntime,
+} from "../types";
+import {
+  createVisitId,
+  normalizeRoomPresence,
+  normalizeVisitSession,
+  roomVisitExpiresAt,
+  roomVisitNowIso,
+} from "../game/roomVisits";
 import type {
   CardRoomCharacter,
   HoldemPlayer,
@@ -48,6 +61,7 @@ import {
 } from "./chipEconomy";
 import {
   compactCards,
+  drawPlayingCard,
   renderCardRoom,
   type CardRoomTableMotion,
 } from "./cardRoomRenderer";
@@ -77,6 +91,32 @@ const USER_PLAYER_SLOT_ID = "card-room-user";
 const USER_PLAYER_AVATAR_ID = "card-room-user";
 const PLAYER_WALLET_STORAGE_KEY = "aivatar.cardRoom.playerWallet.v1";
 const HOUSE_BANK_STORAGE_KEY = "aivatar.cardRoom.houseBank.v1";
+const USER_HAND_CARD_SCALE = 1.2;
+const USER_HAND_CARD_FACE_SCALE = 0.86;
+const USER_HAND_CARD_CANVAS_WIDTH = Math.ceil(42 * USER_HAND_CARD_SCALE + 5 * USER_HAND_CARD_SCALE);
+const USER_HAND_CARD_CANVAS_HEIGHT = Math.ceil(58 * USER_HAND_CARD_SCALE + 6 * USER_HAND_CARD_SCALE);
+const USER_HAND_CARD_OFFSET_X = 1.5 * USER_HAND_CARD_SCALE;
+const USER_HAND_CARD_OFFSET_Y = 1.5 * USER_HAND_CARD_SCALE;
+const MIN_WAGER_TARGET = 1;
+const CARD_ROOM_ROOMS_URL = "http://127.0.0.1:38988/rooms";
+const CARD_ROOM_VISIT_INVITE_URL = "http://127.0.0.1:38988/visits/invite";
+const CARD_ROOM_VISIT_STATE_URL = "http://127.0.0.1:38988/visits/state";
+const CARD_ROOM_VISIT_END_URL = "http://127.0.0.1:38988/visits/end";
+const CARD_ROOM_PRESENCE_SYNC_MS = 1500;
+const CARD_ROOM_VISIT_TTL_MS = 8000;
+const CARD_ROOM_CHIP_FLIGHT_KEEPALIVE_MS = 1400;
+const CARD_ROOM_POT_COLLECTION_FLIGHT_KEEPALIVE_MS = 4600;
+const CARD_ROOM_POT_COLLECTION_FLIGHT_START_DELAY_MS = 120;
+const CARD_ROOM_POT_COLLECTION_TO_PAYOUT_DELAY_MS = 1500;
+const CARD_ROOM_PAYOUT_FLIGHT_KEEPALIVE_MS = 2600;
+const CARD_ROOM_CLOCK_MAIN_MS = 25000;
+const CARD_ROOM_CLOCK_COUNTDOWN_MS = 5000;
+const CARD_ROOM_CLOCK_TOTAL_MS = CARD_ROOM_CLOCK_MAIN_MS + CARD_ROOM_CLOCK_COUNTDOWN_MS;
+const CARD_ROOM_CLOCK_TICK_MS = 250;
+const CARD_ROOM_HAND_DEAL_INITIAL_DELAY_MS = 480;
+const CARD_ROOM_HAND_DEAL_STAGGER_MS = 90;
+const CARD_ROOM_HAND_DEAL_TRAVEL_MS = 360;
+const CARD_ROOM_HAND_DEAL_FACE_REVEAL_PROGRESS = 0.82;
 
 type CardRoomHandDarkStats = {
   handNumber: number;
@@ -90,6 +130,15 @@ type CardRoomHandDarkStats = {
   folds: number;
   chaseActions: number;
   largePressureActions: number;
+};
+
+type CardRoomCalledClock = {
+  handNumber: number;
+  actionSerial: number;
+  seatIndex: number;
+  avatarName: string;
+  startedAt: number;
+  deadlineAt: number;
 };
 
 const queryValue = (key: string) => {
@@ -159,6 +208,85 @@ const writeHouseBank = (bank: CardRoomHouseBank) => {
   return nextBank;
 };
 
+const createCardRoomInstanceId = () =>
+  `card-room-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+
+const createCardRoomPresence = (
+  roomInstanceId: string,
+  hostSlotId: string | null,
+): AivatarRoomPresence => ({
+  type: "aivatar.room.presence",
+  roomInstanceId,
+  slotId: `card-room-${hostSlotId ?? "preview"}`,
+  slotIndex: 0,
+  avatarId: `card-room-${hostSlotId ?? "preview"}`,
+  avatarName: "Card Room",
+  avatarAppearanceId: "octopus",
+  roomId: "card-room",
+  status: "hosting",
+  currentVisitId: null,
+  updatedAt: roomVisitNowIso(),
+  expiresAt: roomVisitExpiresAt(CARD_ROOM_VISIT_TTL_MS),
+  growthLevel: 1,
+  traits: {
+    focus: 0,
+    resilience: 0,
+    curiosity: 0,
+    efficiency: 0,
+    creativity: 0,
+    warmth: 0,
+  },
+  idleBubblePhrases: [],
+  petStats: {
+    energy: 100,
+    mood: 100,
+    hunger: 100,
+  },
+});
+
+const postCardRoomJson = async (
+  url: string,
+  payload: unknown,
+  options: { keepalive?: boolean } = {},
+) => {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    keepalive: options.keepalive,
+  });
+  if (!response.ok) {
+    throw new Error(`Card room bridge request failed: ${response.status}`);
+  }
+  return response.json() as Promise<unknown>;
+};
+
+const normalizeCardRoomSnapshot = (value: unknown): AivatarRoomsSnapshot => {
+  const raw = value && typeof value === "object" ? value as {
+    rooms?: unknown;
+    visits?: unknown;
+    timestamp?: unknown;
+  } : {};
+  const rooms = Array.isArray(raw.rooms)
+    ? raw.rooms
+        .map((room) => normalizeRoomPresence(room as Partial<AivatarRoomPresence>))
+        .filter((room): room is AivatarRoomPresence => Boolean(room))
+    : [];
+  const visits = Array.isArray(raw.visits)
+    ? raw.visits
+        .map((visit) => normalizeVisitSession(visit as Partial<AivatarVisitSession>))
+        .filter((visit): visit is AivatarVisitSession => Boolean(visit))
+    : [];
+
+  return {
+    type: "aivatar.rooms.snapshot",
+    rooms,
+    visits,
+    timestamp:
+      typeof raw.timestamp === "string" ? raw.timestamp : roomVisitNowIso(),
+  };
+};
+
 const readCardRoomDecorState = (): CardRoomDecorState => {
   try {
     const raw = localStorage.getItem(CARD_ROOM_DECOR_STORAGE_KEY);
@@ -194,6 +322,98 @@ const winnerAvatarIdsForTable = (table: HoldemTableState) =>
 const userWonTable = (table: HoldemTableState) =>
   table.winners.some((winner) => Boolean(table.players[winner.seatIndex]?.isUser));
 
+const chipFlightsForTableTransition = (
+  previousTable: HoldemTableState,
+  nextTable: HoldemTableState,
+  startedAt: number,
+): CardRoomTableMotion["chipFlights"] => {
+  if (nextTable.actionSerial === previousTable.actionSerial) return [];
+  const previousCommittedByAvatarId = new Map(
+    previousTable.players.map((player) => [player.avatarId, player.committed]),
+  );
+  return nextTable.players.flatMap((player) => {
+    const fromCommitted = previousCommittedByAvatarId.get(player.avatarId) ?? 0;
+    const toCommitted = player.committed;
+    const amount = toCommitted - fromCommitted;
+    if (amount <= 0) return [];
+    return [
+      {
+        avatarId: player.avatarId,
+        handNumber: nextTable.handNumber,
+        actionSerial: nextTable.actionSerial,
+        amount,
+        fromCommitted,
+        toCommitted,
+        startedAt,
+      },
+    ];
+  });
+};
+
+const potCollectionFlightsForTableTransition = (
+  previousTable: HoldemTableState,
+  nextTable: HoldemTableState,
+  startedAt: number,
+): CardRoomTableMotion["potCollectionFlights"] => {
+  if (nextTable.street !== "handComplete") return [];
+  if (nextTable.winners.length === 0) return [];
+  if (
+    previousTable.street === "handComplete" &&
+    previousTable.handNumber === nextTable.handNumber
+  ) {
+    return [];
+  }
+
+  return nextTable.players.flatMap((player, index) => {
+    const amount = Math.max(0, Math.round(player.committed));
+    if (amount <= 0) return [];
+    return [
+      {
+        avatarId: player.avatarId,
+        handNumber: nextTable.handNumber,
+        actionSerial: nextTable.actionSerial,
+        amount,
+        startedAt: startedAt + index * 70,
+      },
+    ];
+  });
+};
+
+const payoutFlightsForTableTransition = (
+  previousTable: HoldemTableState,
+  nextTable: HoldemTableState,
+  startedAt: number,
+): CardRoomTableMotion["payoutFlights"] => {
+  if (nextTable.street !== "handComplete") return [];
+  if (nextTable.winners.length === 0) return [];
+  if (
+    previousTable.street === "handComplete" &&
+    previousTable.handNumber === nextTable.handNumber
+  ) {
+    return [];
+  }
+
+  const payoutByAvatarId = new Map<string, { avatarId: string; amount: number }>();
+  nextTable.winners.forEach((winner) => {
+    const player = nextTable.players[winner.seatIndex];
+    const amount = Math.max(0, Math.round(winner.amount));
+    if (!player || amount <= 0) return;
+    const current = payoutByAvatarId.get(player.avatarId);
+    payoutByAvatarId.set(player.avatarId, {
+      avatarId: player.avatarId,
+      amount: (current?.amount ?? 0) + amount,
+    });
+  });
+
+  return Array.from(payoutByAvatarId.values()).map((payout, index) => ({
+    avatarId: payout.avatarId,
+    handNumber: nextTable.handNumber,
+    actionSerial: nextTable.actionSerial,
+    amount: payout.amount,
+    startedAt: startedAt + index * 90,
+  }));
+};
+
 const createInitialCardRoomMotion = (): CardRoomTableMotion => ({
   handNumber: 0,
   handStartedAt: 0,
@@ -201,6 +421,9 @@ const createInitialCardRoomMotion = (): CardRoomTableMotion => ({
   streetStartedAt: 0,
   actionSerial: 0,
   actionStartedAt: 0,
+  chipFlights: [],
+  potCollectionFlights: [],
+  payoutFlights: [],
   communityRevealFrom: 0,
   communityRevealCount: 0,
   communityRevealStartedAt: 0,
@@ -208,6 +431,38 @@ const createInitialCardRoomMotion = (): CardRoomTableMotion => ({
   winningAvatarIds: [],
   userVictoryStartedAt: null,
 });
+
+const dealStartingSeatIndexForTable = (table: HoldemTableState) => {
+  const playerCount = table.players.length;
+  if (playerCount <= 1) return 0;
+  const buttonIndex = ((table.buttonIndex % playerCount) + playerCount) % playerCount;
+  return playerCount === 2 ? buttonIndex : (buttonIndex + 1) % playerCount;
+};
+
+const handHudCardsReadyForPlayer = (
+  table: HoldemTableState,
+  player: HoldemPlayer | undefined,
+  motion: CardRoomTableMotion,
+  now: number,
+) => {
+  if (!player || player.holeCards.length === 0) return false;
+  if (table.street === "waiting") return false;
+  if (table.street === "handComplete") return true;
+  if (motion.handNumber !== table.handNumber) return false;
+  if (!Number.isFinite(motion.handStartedAt)) return false;
+
+  const playerCount = Math.max(1, table.players.length);
+  const dealStartSeatIndex = dealStartingSeatIndexForTable(table);
+  const seatDealOffset = (player.seatIndex - dealStartSeatIndex + playerCount) % playerCount;
+  const lastCardIndex = Math.max(0, Math.min(2, player.holeCards.length) - 1);
+  const lastDealIndex = lastCardIndex * playerCount + seatDealOffset;
+  const revealAt =
+    motion.handStartedAt +
+    CARD_ROOM_HAND_DEAL_INITIAL_DELAY_MS +
+    lastDealIndex * CARD_ROOM_HAND_DEAL_STAGGER_MS +
+    CARD_ROOM_HAND_DEAL_TRAVEL_MS * CARD_ROOM_HAND_DEAL_FACE_REVEAL_PROGRESS;
+  return now >= revealAt;
+};
 
 const mergeDefaultStacks = (
   characters: CardRoomCharacter[],
@@ -463,6 +718,57 @@ const cardSuitSymbol = (card: PlayingCard) =>
 const cardTone = (card: PlayingCard) =>
   card.suit === "h" || card.suit === "d" ? "red" : "black";
 
+const recommendedWagerTarget = (legal: ReturnType<typeof legalActionsForActivePlayer>) => {
+  if (legal.maxRaiseTo <= 0) return 0;
+  return Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, MIN_WAGER_TARGET));
+};
+
+const clampWagerTarget = (
+  rawValue: string | number,
+  legal: ReturnType<typeof legalActionsForActivePlayer>,
+) => {
+  if (legal.maxRaiseTo <= 0) return 0;
+  const parsed =
+    typeof rawValue === "number"
+      ? rawValue
+      : Number.parseInt(rawValue.replace(/[^\d-]/g, ""), 10);
+  const target = Number.isFinite(parsed) ? Math.round(parsed) : recommendedWagerTarget(legal);
+  return Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, target));
+};
+
+const CardRoomHandCard = ({ card }: { card: PlayingCard }) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.ceil(USER_HAND_CARD_CANVAS_WIDTH * dpr);
+    canvas.height = Math.ceil(USER_HAND_CARD_CANVAS_HEIGHT * dpr);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, USER_HAND_CARD_CANVAS_WIDTH, USER_HAND_CARD_CANVAS_HEIGHT);
+    drawPlayingCard(ctx, card, USER_HAND_CARD_OFFSET_X, USER_HAND_CARD_OFFSET_Y, {
+      faceScale: USER_HAND_CARD_FACE_SCALE,
+      scale: USER_HAND_CARD_SCALE,
+    });
+  }, [card.rank, card.suit]);
+
+  const label = `${cardRankText(card)}${cardSuitSymbol(card)}`;
+  return (
+    <canvas
+      ref={canvasRef}
+      className={`card-room-hand-card ${cardTone(card)}`}
+      width={USER_HAND_CARD_CANVAS_WIDTH}
+      height={USER_HAND_CARD_CANVAS_HEIGHT}
+      aria-label={label}
+      title={label}
+    />
+  );
+};
+
 const darkTraitValue = (player: HoldemPlayer, trait: keyof HoldemPlayer["darkTraits"]) =>
   player.darkTraits[trait] ?? 0;
 
@@ -574,6 +880,10 @@ export const CardRoomApp = () => {
     t(locale, key, params);
   const [roster, setRoster] = useState<CardRoomCharacter[]>(() => readCardRoomRoster());
   const [hostSlotId] = useState<string | null>(() => initialHostSlotId());
+  const cardRoomInstanceIdRef = useRef(createCardRoomInstanceId());
+  const [roomSnapshot, setRoomSnapshot] = useState<AivatarRoomsSnapshot | null>(null);
+  const roomSnapshotRef = useRef<AivatarRoomsSnapshot | null>(null);
+  const activeCardRoomVisitsRef = useRef(new Map<string, AivatarVisitSession>());
   const [playerWallet, setPlayerWallet] = useState<PlayerChipWallet>(() =>
     readPlayerChipWallet(),
   );
@@ -632,6 +942,9 @@ export const CardRoomApp = () => {
   );
   const [table, setTable] = useState<HoldemTableState>(() => emptyHoldemTable());
   const [statusMessage, setStatusMessage] = useState("");
+  const [wagerTargetInput, setWagerTargetInput] = useState("");
+  const [calledClock, setCalledClock] = useState<CardRoomCalledClock | null>(null);
+  const [clockNow, setClockNow] = useState(() => performance.now());
   const [userVictoryEffect, setUserVictoryEffect] = useState<{
     handNumber: number;
     startedAt: number;
@@ -651,6 +964,8 @@ export const CardRoomApp = () => {
   const freeRoamEnabledRef = useRef(freeRoamEnabled);
   const [playersSeatedReady, setPlayersSeatedReady] = useState(false);
   const playersSeatedReadyRef = useRef(false);
+  const [userHandCardsReady, setUserHandCardsReady] = useState(false);
+  const userHandCardsReadyRef = useRef(false);
   const actionCuesRef = useRef<Record<string, CardRoomActionCue>>({});
   const playerActionSnapshotsRef = useRef<Record<string, string>>({});
   const hostHandDarkStatsRef = useRef<CardRoomHandDarkStats | null>(null);
@@ -659,9 +974,173 @@ export const CardRoomApp = () => {
   const victoryDemoPlayedRef = useRef(false);
   const roomKey = hostSlotId ?? "preview";
 
+  const currentCardRoomPresence = () =>
+    createCardRoomPresence(cardRoomInstanceIdRef.current, hostSlotId);
+
+  const endCardRoomVisit = (slotId: string, keepalive = false) => {
+    const visit = activeCardRoomVisitsRef.current.get(slotId);
+    if (!visit) return;
+
+    activeCardRoomVisitsRef.current.delete(slotId);
+    const endedVisit = normalizeVisitSession({
+      ...visit,
+      host: currentCardRoomPresence(),
+      phase: "ended",
+      updatedAt: roomVisitNowIso(),
+      expiresAt: roomVisitExpiresAt(30000),
+    });
+    if (!endedVisit) return;
+    void postCardRoomJson(CARD_ROOM_VISIT_END_URL, endedVisit, { keepalive }).catch(() => {
+      console.warn("Could not end card room visit.");
+    });
+  };
+
+  const endAllCardRoomVisits = (keepalive = false) => {
+    Array.from(activeCardRoomVisitsRef.current.keys()).forEach((slotId) =>
+      endCardRoomVisit(slotId, keepalive),
+    );
+  };
+
+  const keepCardRoomVisitAlive = (
+    slotId: string,
+    visit: AivatarVisitSession,
+    guestRoom: AivatarRoomPresence | undefined,
+  ) => {
+    if (visit.phase === "ended" || visit.phase === "cancelled") return;
+    const nextVisit = normalizeVisitSession({
+      ...visit,
+      host: currentCardRoomPresence(),
+      guest: guestRoom ?? visit.guest,
+      updatedAt: roomVisitNowIso(),
+      expiresAt: roomVisitExpiresAt(CARD_ROOM_VISIT_TTL_MS),
+    });
+    if (!nextVisit) return;
+    activeCardRoomVisitsRef.current.set(slotId, nextVisit);
+    void postCardRoomJson(CARD_ROOM_VISIT_STATE_URL, nextVisit).catch(() => {
+      console.warn("Could not keep card room visit alive.");
+    });
+  };
+
+  const inviteRoomToCardRoom = (room: AivatarRoomPresence) => {
+    if (activeCardRoomVisitsRef.current.has(room.slotId)) return;
+    const visit = normalizeVisitSession({
+      type: "aivatar.room.visit",
+      visitKind: "card-room",
+      visitId: createVisitId(),
+      phase: "invited",
+      host: currentCardRoomPresence(),
+      guest: room,
+      hostLayoutFingerprint: "card-room",
+      hostRoomId: "card-room",
+      createdAt: roomVisitNowIso(),
+      updatedAt: roomVisitNowIso(),
+      expiresAt: roomVisitExpiresAt(CARD_ROOM_VISIT_TTL_MS),
+    });
+    if (!visit) return;
+
+    activeCardRoomVisitsRef.current.set(room.slotId, visit);
+    setStatusMessage(ui("cardRoom.invitedToPlay", { name: room.avatarName }));
+    void postCardRoomJson(CARD_ROOM_VISIT_INVITE_URL, visit).catch(() => {
+      activeCardRoomVisitsRef.current.delete(room.slotId);
+      console.warn("Could not invite room to card room.");
+    });
+  };
+
+  const syncCardRoomInvites = (snapshot: AivatarRoomsSnapshot) => {
+    const selectedSlots = new Set(selectedSlotIds);
+    const roomForSlot = (slotId: string) => {
+      const candidates = snapshot.rooms.filter(
+        (room) =>
+          room.slotId === slotId &&
+          room.roomId !== "card-room" &&
+          room.roomInstanceId !== cardRoomInstanceIdRef.current,
+      );
+      return candidates.find((room) => room.status === "home") ?? candidates[0];
+    };
+
+    activeCardRoomVisitsRef.current.forEach((visit, slotId) => {
+      const latestVisit = snapshot.visits.find(
+        (candidate) => candidate.visitId === visit.visitId,
+      );
+      if (
+        latestVisit &&
+        (latestVisit.phase === "ended" || latestVisit.phase === "cancelled")
+      ) {
+        activeCardRoomVisitsRef.current.delete(slotId);
+        return;
+      }
+      if (latestVisit) {
+        activeCardRoomVisitsRef.current.set(slotId, latestVisit);
+      }
+    });
+
+    activeCardRoomVisitsRef.current.forEach((_visit, slotId) => {
+      if (!selectedSlots.has(slotId)) {
+        endCardRoomVisit(slotId);
+      }
+    });
+
+    selectedSlotIds.forEach((slotId) => {
+      if (!availableCompanions.some((character) => character.slotId === slotId)) return;
+      const guestRoom = roomForSlot(slotId);
+      const currentVisit = activeCardRoomVisitsRef.current.get(slotId);
+      if (currentVisit) {
+        keepCardRoomVisitAlive(slotId, currentVisit, guestRoom);
+        return;
+      }
+      if (guestRoom?.status === "home") {
+        inviteRoomToCardRoom(guestRoom);
+      }
+    });
+  };
+
   useEffect(() => {
     localStorage.setItem(LOCALE_KEY, locale);
   }, [locale]);
+
+  useEffect(() => {
+    let stopped = false;
+
+    const syncRooms = async () => {
+      try {
+        await postCardRoomJson(CARD_ROOM_ROOMS_URL, currentCardRoomPresence());
+        const response = await fetch(CARD_ROOM_ROOMS_URL);
+        if (!response.ok) {
+          throw new Error(`Card room rooms snapshot failed: ${response.status}`);
+        }
+        const snapshot = normalizeCardRoomSnapshot(await response.json());
+        if (stopped) return;
+        roomSnapshotRef.current = snapshot;
+        setRoomSnapshot(snapshot);
+      } catch {
+        // The Card Room still works without the local bridge; open save windows just cannot leave.
+      }
+    };
+
+    void syncRooms();
+    const timer = window.setInterval(syncRooms, CARD_ROOM_PRESENCE_SYNC_MS);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [hostSlotId]);
+
+  useEffect(() => {
+    if (!roomSnapshot) return;
+    roomSnapshotRef.current = roomSnapshot;
+    syncCardRoomInvites(roomSnapshot);
+  }, [availableCompanions, roomSnapshot, selectedSlotIds]);
+
+  useEffect(() => {
+    const handlePageHide = () => endAllCardRoomVisits(true);
+    window.addEventListener("pagehide", handlePageHide);
+
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      endAllCardRoomVisits(true);
+    };
+  }, []);
 
   useEffect(() => {
     const currentTable = tableRef.current;
@@ -867,6 +1346,16 @@ export const CardRoomApp = () => {
             };
           }
         }
+        const nextUserHandCardsReady = handHudCardsReadyForPlayer(
+          currentTable,
+          currentTable.players.find((player) => player.isUser),
+          tableMotionRef.current,
+          now,
+        );
+        if (userHandCardsReadyRef.current !== nextUserHandCardsReady) {
+          userHandCardsReadyRef.current = nextUserHandCardsReady;
+          setUserHandCardsReady(nextUserHandCardsReady);
+        }
         renderCardRoom(canvasRef.current, {
           content,
           table: currentTable,
@@ -941,6 +1430,12 @@ export const CardRoomApp = () => {
       (previousTable.street === "waiting" && nextTable.street !== "waiting");
     const streetChanged = nextTable.street !== previousTable.street;
     const actionChanged = nextTable.actionSerial !== previousTable.actionSerial;
+    const nextChipFlights = chipFlightsForTableTransition(previousTable, nextTable, now);
+    const continuingChipFlights = handChanged
+      ? []
+      : previousMotion.chipFlights.filter(
+          (flight) => now - flight.startedAt <= CARD_ROOM_CHIP_FLIGHT_KEEPALIVE_MS,
+        );
     const completionStartedAt =
       nextTable.street === "handComplete" && nextTable.winners.length > 0
         ? previousTable.street === "handComplete" &&
@@ -948,6 +1443,32 @@ export const CardRoomApp = () => {
           ? previousMotion.completionStartedAt
           : now + communityRevealCount * 130 + (communityRevealCount > 0 ? 440 : 0)
         : null;
+    const collectionStartedAt =
+      (completionStartedAt ?? now) + CARD_ROOM_POT_COLLECTION_FLIGHT_START_DELAY_MS;
+    const nextPotCollectionFlights = potCollectionFlightsForTableTransition(
+      previousTable,
+      nextTable,
+      collectionStartedAt,
+    );
+    const nextPayoutFlights = payoutFlightsForTableTransition(
+      previousTable,
+      nextTable,
+      nextPotCollectionFlights.length > 0
+        ? collectionStartedAt +
+          CARD_ROOM_POT_COLLECTION_TO_PAYOUT_DELAY_MS +
+          nextPotCollectionFlights.length * 70
+        : (completionStartedAt ?? now) + 160,
+    );
+    const continuingPotCollectionFlights = handChanged
+      ? []
+      : previousMotion.potCollectionFlights.filter(
+          (flight) => now - flight.startedAt <= CARD_ROOM_POT_COLLECTION_FLIGHT_KEEPALIVE_MS,
+        );
+    const continuingPayoutFlights = handChanged
+      ? []
+      : previousMotion.payoutFlights.filter(
+          (flight) => now - flight.startedAt <= CARD_ROOM_PAYOUT_FLIGHT_KEEPALIVE_MS,
+        );
 
     tableMotionRef.current = {
       ...previousMotion,
@@ -957,6 +1478,12 @@ export const CardRoomApp = () => {
       streetStartedAt: streetChanged || handChanged ? now : previousMotion.streetStartedAt,
       actionSerial: nextTable.actionSerial,
       actionStartedAt: actionChanged || handChanged ? now : previousMotion.actionStartedAt,
+      chipFlights: [...continuingChipFlights, ...nextChipFlights].slice(-32),
+      potCollectionFlights: [
+        ...continuingPotCollectionFlights,
+        ...nextPotCollectionFlights,
+      ].slice(-16),
+      payoutFlights: [...continuingPayoutFlights, ...nextPayoutFlights].slice(-16),
       communityRevealFrom:
         communityRevealCount > 0
           ? previousTable.communityCards.length
@@ -974,6 +1501,10 @@ export const CardRoomApp = () => {
           ? completionStartedAt ?? now
           : null,
     };
+    if (handChanged) {
+      userHandCardsReadyRef.current = false;
+      setUserHandCardsReady(false);
+    }
 
     if (nextTable.street === "handComplete" && userWonTable(nextTable)) {
       setUserVictoryEffect({
@@ -984,6 +1515,16 @@ export const CardRoomApp = () => {
 
     tableRef.current = nextTable;
     setTable(nextTable);
+    setCalledClock((current) => {
+      if (!current) return current;
+      const clockStillApplies =
+        nextTable.handNumber === current.handNumber &&
+        nextTable.actionSerial === current.actionSerial &&
+        nextTable.activeSeatIndex === current.seatIndex &&
+        nextTable.street !== "waiting" &&
+        nextTable.street !== "handComplete";
+      return clockStillApplies ? current : null;
+    });
     if (nextTable.players.length > 0) {
       setStacks((current) => ({
         ...current,
@@ -1059,6 +1600,7 @@ export const CardRoomApp = () => {
 
     setFreeRoamEnabled(false);
     setUserVictoryEffect(null);
+    setCalledClock(null);
     playersSeatedReadyRef.current = false;
     setPlayersSeatedReady(false);
     actionCuesRef.current = {};
@@ -1309,25 +1851,42 @@ export const CardRoomApp = () => {
 
   const applyUserAction = (
     type: "fold" | "check" | "call" | "bet" | "raise" | "all-in",
+    targetRoundBet?: number,
   ) => {
     const activePlayer =
       table.activeSeatIndex === null ? null : table.players[table.activeSeatIndex];
     if (!activePlayer?.isUser) return;
     if (!playersSeatedReadyRef.current) return;
     const legal = legalActionsForActivePlayer(table);
-    const maxRoundBet = activePlayer.roundBet + creditAvailable(activePlayer);
     const amount =
-      type === "bet"
-        ? Math.min(maxRoundBet, Math.max(table.bigBlind * 2, 40))
-        : type === "raise"
-          ? Math.min(maxRoundBet, legal.minRaiseTo)
-          : undefined;
+      type === "bet" || type === "raise"
+        ? clampWagerTarget(targetRoundBet ?? wagerTargetInput, legal)
+        : undefined;
     const action = { type, amount } as Parameters<typeof applyHoldemAction>[1];
     const stats = hostHandDarkStatsRef.current;
     if (stats && stats.handNumber === table.handNumber) {
       recordHandDarkAction(stats, table, activePlayer, action);
     }
     commitTable(applyHoldemAction(table, action));
+  };
+
+  const callClockForActivePlayer = () => {
+    const activePlayer =
+      table.activeSeatIndex === null ? null : table.players[table.activeSeatIndex];
+    if (!activePlayer || activePlayer.isUser) return;
+    if (!playersSeatedReadyRef.current) return;
+    if (table.street === "waiting" || table.street === "handComplete") return;
+    const now = performance.now();
+    setClockNow(now);
+    setCalledClock({
+      handNumber: table.handNumber,
+      actionSerial: table.actionSerial,
+      seatIndex: activePlayer.seatIndex,
+      avatarName: activePlayer.avatarName,
+      startedAt: now,
+      deadlineAt: now + CARD_ROOM_CLOCK_TOTAL_MS,
+    });
+    setStatusMessage(ui("cardRoom.clockCalledStatus", { name: activePlayer.avatarName }));
   };
 
   useEffect(() => {
@@ -1351,6 +1910,57 @@ export const CardRoomApp = () => {
     }, aiMove.delayMs);
     return () => window.clearTimeout(timer);
   }, [playersSeatedReady, table.actionSerial, table.activeSeatIndex, table.street]);
+
+  useEffect(() => {
+    if (!calledClock) return undefined;
+    const timer = window.setInterval(() => {
+      setClockNow(performance.now());
+    }, CARD_ROOM_CLOCK_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [calledClock?.deadlineAt]);
+
+  useEffect(() => {
+    if (!calledClock) return;
+    const clockStillApplies =
+      table.handNumber === calledClock.handNumber &&
+      table.actionSerial === calledClock.actionSerial &&
+      table.activeSeatIndex === calledClock.seatIndex &&
+      table.street !== "waiting" &&
+      table.street !== "handComplete";
+    if (!clockStillApplies) setCalledClock(null);
+  }, [
+    calledClock,
+    table.actionSerial,
+    table.activeSeatIndex,
+    table.handNumber,
+    table.street,
+  ]);
+
+  useEffect(() => {
+    if (!calledClock) return undefined;
+    const remainingMs = Math.max(0, calledClock.deadlineAt - performance.now());
+    const timer = window.setTimeout(() => {
+      const currentTable = tableRef.current;
+      const clockStillApplies =
+        currentTable.handNumber === calledClock.handNumber &&
+        currentTable.actionSerial === calledClock.actionSerial &&
+        currentTable.activeSeatIndex === calledClock.seatIndex &&
+        currentTable.street !== "waiting" &&
+        currentTable.street !== "handComplete";
+      if (!clockStillApplies) {
+        setCalledClock(null);
+        return;
+      }
+      commitTable(applyHoldemAction(currentTable, { type: "timeout" }));
+      setCalledClock(null);
+    }, remainingMs);
+    return () => window.clearTimeout(timer);
+  }, [
+    calledClock?.actionSerial,
+    calledClock?.deadlineAt,
+    calledClock?.handNumber,
+    calledClock?.seatIndex,
+  ]);
 
   useEffect(() => {
     if (table.street !== "handComplete") return;
@@ -1383,20 +1993,47 @@ export const CardRoomApp = () => {
   const userTurn = Boolean(activePlayer?.isUser);
   const canActNow = userTurn && playersSeatedReady;
   const userPlayer = table.players.find((player) => player.isUser);
+  const activeActionLabel = activePlayer
+    ? `${activePlayer.avatarName} ${stackLabel(activePlayer.stack)}`
+    : "-";
   const handInProgress =
     table.street !== "waiting" && table.street !== "handComplete" && table.players.length > 0;
+  const activeCalledClock =
+    calledClock &&
+    calledClock.handNumber === table.handNumber &&
+    calledClock.actionSerial === table.actionSerial &&
+    calledClock.seatIndex === table.activeSeatIndex &&
+    handInProgress
+      ? calledClock
+      : null;
+  const clockRemainingMs = activeCalledClock
+    ? Math.max(0, activeCalledClock.deadlineAt - clockNow)
+    : 0;
+  const clockSecondsRemaining = Math.max(0, Math.ceil(clockRemainingMs / 1000));
+  const clockMainSecondsRemaining = Math.max(
+    0,
+    Math.ceil((clockRemainingMs - CARD_ROOM_CLOCK_COUNTDOWN_MS) / 1000),
+  );
+  const clockCountdownActive =
+    activeCalledClock !== null && clockRemainingMs <= CARD_ROOM_CLOCK_COUNTDOWN_MS;
+  const activeClockStatusText = activeCalledClock
+    ? clockCountdownActive
+      ? ui("cardRoom.clockCountdownStatus", {
+          name: activeCalledClock.avatarName,
+          seconds: clockSecondsRemaining,
+        })
+      : ui("cardRoom.clockRunningStatus", {
+          name: activeCalledClock.avatarName,
+          seconds: clockMainSecondsRemaining,
+        })
+    : null;
   const canStartHand =
     seatedCharacters.length >= 2 &&
     (table.street === "waiting" || table.street === "handComplete");
   const communityCardsLabel = table.communityCards.length
     ? compactCards(table.communityCards)
     : "--";
-  const userCards = userPlayer?.holeCards ?? [];
-  const userStack =
-    userPlayer?.stack ??
-    (hostDisplayCharacter
-      ? stacks[hostDisplayCharacter.avatarId] ?? normalizePokerChips(hostDisplayCharacter.pokerChips)
-      : null);
+  const userCards = userHandCardsReady ? userPlayer?.holeCards ?? [] : [];
   const tablePlayers = table.players.length > 0 ? table.players : [];
   const chipShopCharacters = hostDisplayCharacter
     ? [hostDisplayCharacter, ...availableCompanions]
@@ -1406,8 +2043,14 @@ export const CardRoomApp = () => {
   );
   const canReleaseCompanions =
     !handInProgress && seatedCharacters.length >= 2 && !freeRoamEnabled;
+  const canCallClock =
+    handInProgress &&
+    playersSeatedReady &&
+    Boolean(activePlayer && !activePlayer.isUser) &&
+    !activeCalledClock;
   const statusText =
-    handInProgress && !playersSeatedReady
+    activeClockStatusText ??
+    (handInProgress && !playersSeatedReady
       ? ui("cardRoom.takingSeats")
       : table.message ||
         (!handInProgress
@@ -1416,7 +2059,7 @@ export const CardRoomApp = () => {
             : ui("cardRoom.readyHint")
           : userTurn
             ? ui("cardRoom.yourTurn")
-            : ui("cardRoom.waitingFor", { name: activePlayer?.avatarName ?? "-" }));
+            : ui("cardRoom.waitingFor", { name: activePlayer?.avatarName ?? "-" })));
   const roundResultLabel =
     table.winners.length > 0
       ? table.winners
@@ -1426,45 +2069,119 @@ export const CardRoomApp = () => {
           })
           .join(", ")
       : "-";
+  const selectedWagerTarget = clampWagerTarget(wagerTargetInput, legal);
+  const canTargetWager =
+    canActNow &&
+    (legal.canBet || legal.canRaise) &&
+    legal.maxRaiseTo >= legal.minRaiseTo;
+
+  useEffect(() => {
+    if (!activePlayer?.isUser || !(legal.canBet || legal.canRaise)) {
+      setWagerTargetInput("");
+      return;
+    }
+    setWagerTargetInput(String(recommendedWagerTarget(legal)));
+  }, [
+    activePlayer?.avatarId,
+    activePlayer?.isUser,
+    legal.canBet,
+    legal.canRaise,
+    legal.maxRaiseTo,
+    legal.minRaiseTo,
+    table.actionSerial,
+    table.handNumber,
+    table.street,
+  ]);
+
   const actionButtons = (
-    <div className="card-room-actions">
-      <button
-        type="button"
-        className="pixel-button"
-        disabled={!canActNow || !legal.canFold}
-        onClick={() => applyUserAction("fold")}
-      >
-        {ui("cardRoom.fold")}
-      </button>
-      <button
-        type="button"
-        className="pixel-button"
-        disabled={!canActNow || !(legal.canCheck || legal.canCall)}
-        onClick={() => applyUserAction(legal.canCheck ? "check" : "call")}
-      >
-        {legal.canCheck
-          ? ui("cardRoom.check")
-          : ui("cardRoom.call", { value: legal.toCall })}
-      </button>
-      <button
-        type="button"
-        className="pixel-button"
-        disabled={!canActNow || !(legal.canBet || legal.canRaise)}
-        onClick={() => applyUserAction(legal.canBet ? "bet" : "raise")}
-      >
-        {legal.canBet
-          ? ui("cardRoom.bet")
-          : ui("cardRoom.raise", { value: legal.minRaiseTo })}
-      </button>
-      <button
-        type="button"
-        className="pixel-button danger-button"
-        disabled={!canActNow || !legal.canAllIn}
-        onClick={() => applyUserAction("all-in")}
-      >
-        {ui("cardRoom.allIn")}
-      </button>
-    </div>
+    <>
+      {userTurn && (legal.canBet || legal.canRaise) ? (
+        <div className="card-room-wager-control">
+          <label>
+            <span>
+              {ui("cardRoom.wagerTarget")}
+              <small>
+                {ui("cardRoom.wagerRange", {
+                  min: legal.minRaiseTo,
+                  max: legal.maxRaiseTo,
+                })}
+              </small>
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={legal.minRaiseTo || MIN_WAGER_TARGET}
+              max={legal.maxRaiseTo || MIN_WAGER_TARGET}
+              step={1}
+              value={wagerTargetInput}
+              disabled={!canTargetWager}
+              onChange={(event) => setWagerTargetInput(event.currentTarget.value)}
+            />
+          </label>
+        </div>
+      ) : null}
+      {!userTurn && activePlayer && handInProgress ? (
+        <div className={`card-room-clock-control${activeCalledClock ? " active" : ""}`}>
+          <span>{ui("cardRoom.clockRule")}</span>
+          {activeCalledClock ? (
+            <strong>
+              {clockCountdownActive
+                ? ui("cardRoom.clockCountdown", { seconds: clockSecondsRemaining })
+                : ui("cardRoom.clockRunning", { seconds: clockMainSecondsRemaining })}
+            </strong>
+          ) : (
+            <button
+              type="button"
+              className="pixel-button"
+              disabled={!canCallClock}
+              onClick={callClockForActivePlayer}
+            >
+              {ui("cardRoom.callClock")}
+            </button>
+          )}
+        </div>
+      ) : null}
+      <div className="card-room-actions">
+        <button
+          type="button"
+          className="pixel-button"
+          disabled={!canActNow || !legal.canFold}
+          onClick={() => applyUserAction("fold")}
+        >
+          {ui("cardRoom.fold")}
+        </button>
+        <button
+          type="button"
+          className="pixel-button"
+          disabled={!canActNow || !(legal.canCheck || legal.canCall)}
+          onClick={() => applyUserAction(legal.canCheck ? "check" : "call")}
+        >
+          {legal.canCheck
+            ? ui("cardRoom.check")
+            : ui("cardRoom.call", { value: legal.toCall })}
+        </button>
+        <button
+          type="button"
+          className="pixel-button"
+          disabled={!canTargetWager}
+          onClick={() =>
+            applyUserAction(legal.canBet ? "bet" : "raise", selectedWagerTarget)
+          }
+        >
+          {legal.canBet
+            ? ui("cardRoom.betTo", { value: selectedWagerTarget })
+            : ui("cardRoom.raise", { value: selectedWagerTarget })}
+        </button>
+        <button
+          type="button"
+          className="pixel-button danger-button"
+          disabled={!canActNow || !legal.canAllIn}
+          onClick={() => applyUserAction("all-in")}
+        >
+          {ui("cardRoom.allIn")}
+        </button>
+      </div>
+    </>
   );
 
   return (
@@ -1532,24 +2249,15 @@ export const CardRoomApp = () => {
           </div>
 
           <section className="card-room-hud card-room-hud-bottom" aria-label="Card room player state">
-            <div className="card-room-player-summary">
-              <span>{playerDisplayName || ui("cardRoom.host")}</span>
-              <strong>{userStack === null ? "--" : stackLabel(userStack)}</strong>
-            </div>
             <div className="card-room-user-hand">
               <span>{ui("cardRoom.yourHand")}</span>
               <div className="card-room-hand-cards" aria-label={ui("cardRoom.yourHand")}>
                 {userCards.length > 0 ? (
                   userCards.map((card) => (
-                    <span
+                    <CardRoomHandCard
                       key={`${card.rank}${card.suit}`}
-                      className={`card-room-hand-card ${cardTone(card)}`}
-                    >
-                      <span className="card-room-card-corner card-room-card-corner-top">
-                        <span>{cardRankText(card)}</span>
-                      </span>
-                      <span className="card-room-card-suit">{cardSuitSymbol(card)}</span>
-                    </span>
+                      card={card}
+                    />
                   ))
                 ) : (
                   <strong>--</strong>
@@ -1559,7 +2267,7 @@ export const CardRoomApp = () => {
             <div className="card-room-hand-action-panel">
               <div className="card-room-action-heading">
                 <span>{ui("cardRoom.action")}</span>
-                <strong>{activePlayer?.avatarName ?? "-"}</strong>
+                <strong>{activeActionLabel}</strong>
               </div>
               {actionButtons}
             </div>
@@ -1567,15 +2275,6 @@ export const CardRoomApp = () => {
               <span>Status</span>
               <strong>{statusText}</strong>
             </div>
-            {tablePlayers.length > 0 ? (
-              <div className="card-room-seat-strip">
-                {tablePlayers.map((player) => (
-                  <span key={player.avatarId}>
-                    {player.avatarName}: {stackLabel(player.stack)}
-                  </span>
-                ))}
-              </div>
-            ) : null}
           </section>
         </div>
 

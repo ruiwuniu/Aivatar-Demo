@@ -1376,7 +1376,7 @@ meter {
   bottom: 0;
   left: 0;
   right: 0;
-  grid-template-columns: minmax(120px, 0.8fr) minmax(170px, auto) minmax(170px, 0.9fr) minmax(220px, 1.2fr);
+  grid-template-columns: minmax(170px, auto) minmax(360px, 1.35fr) minmax(220px, 1fr);
   min-height: 132px;
   align-items: center;
   border: 0;
@@ -1398,8 +1398,7 @@ meter {
   min-width: 0;
 }
 
-.card-room-hud-block span,
-.card-room-seat-strip span {
+.card-room-hud-block span {
   color: #c6ad7a;
   font-size: 11px;
   line-height: 1.2;
@@ -1450,14 +1449,10 @@ meter {
   justify-items: center;
   gap: 4px;
   min-width: 0;
-  border: 1px solid rgba(197, 155, 67, 0.28);
-  padding: 6px 8px 4px;
-  background:
-    linear-gradient(180deg, rgba(255, 239, 188, 0.07), transparent 52%),
-    rgba(23, 8, 6, 0.48);
-  box-shadow:
-    inset 0 0 0 1px rgba(0, 0, 0, 0.32),
-    inset 0 -7px 12px rgba(0, 0, 0, 0.2);
+  border: 0;
+  padding: 2px 8px 0;
+  background: transparent;
+  box-shadow: none;
   transform: translateY(-4px);
 }
 
@@ -1471,54 +1466,24 @@ meter {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 70px;
-  padding: 0 16px;
-  border: 1px solid rgba(242, 211, 122, 0.22);
-  background:
-    linear-gradient(90deg, rgba(0, 0, 0, 0.28), transparent 20%, transparent 80%, rgba(0, 0, 0, 0.28)),
-    rgba(5, 2, 1, 0.22);
+  min-height: 82px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
 }
 
 .card-room-hand-card {
-  position: relative;
   display: block;
-  width: 50px;
-  height: 68px;
-  border: 3px solid #020617;
-  color: #111827;
-  line-height: 1;
-  background:
-    linear-gradient(135deg, #fffdf7 0 42%, #fff7ed 42% 100%);
-  box-shadow:
-    inset 0 0 0 2px #ffffff,
-    inset 0 0 0 4px #e9dcc5,
-    3px 4px 0 rgba(2, 6, 23, 0.45);
-}
-
-.card-room-card-corner {
-  position: absolute;
-  display: block;
-  font-size: 23px;
-  font-weight: 900;
-  line-height: 1;
-}
-
-.card-room-card-corner-top {
-  top: 7px;
-  left: 7px;
-}
-
-.card-room-card-suit {
-  position: absolute;
-  right: 9px;
-  bottom: 9px;
-  font-size: 24px;
-  font-weight: 900;
-  line-height: 1;
+  flex: 0 0 auto;
+  width: 57px;
+  height: 77px;
+  border: 0;
+  background: transparent;
+  image-rendering: pixelated;
 }
 
 .card-room-hand-card + .card-room-hand-card {
-  margin-left: -6px;
+  margin-left: -9px;
 }
 
 .card-room-hand-card:nth-child(1) {
@@ -1527,14 +1492,6 @@ meter {
 
 .card-room-hand-card:nth-child(2) {
   transform: rotate(4deg);
-}
-
-.card-room-hand-card.red {
-  color: #c72336;
-}
-
-.card-room-hand-card.black {
-  color: #111827;
 }
 
 .card-room-hud-wide strong,
@@ -1582,27 +1539,99 @@ meter {
 .card-room-action-heading strong {
   overflow: hidden;
   color: var(--casino-brass-light);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.2;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.card-room-seat-strip {
-  display: flex;
-  grid-column: 1 / -1;
-  gap: 8px;
-  min-width: 0;
-  overflow-x: auto;
-  border-top: 1px solid rgba(197, 155, 67, 0.28);
-  padding-top: 7px;
+.card-room-wager-control {
+  display: grid;
+  gap: 3px;
 }
 
-.card-room-seat-strip span {
-  flex: 0 0 auto;
-  color: #e6d0a2;
+.card-room-wager-control label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-room-wager-control span {
+  color: #c6ad7a;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.card-room-wager-control small {
+  margin-left: 8px;
+  color: #c6ad7a;
+  font-size: 10px;
+  line-height: 1.2;
   white-space: nowrap;
+}
+
+.card-room-wager-control input {
+  width: 96px;
+  min-width: 0;
+  border: 1px solid rgba(242, 211, 122, 0.5);
+  padding: 4px 6px;
+  color: #fff7d6;
+  font: 800 12px "Antonio", monospace;
+  background: rgba(2, 6, 23, 0.82);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 1px 0 rgba(255, 239, 188, 0.08);
+}
+
+.card-room-wager-control input:disabled {
+  color: #8d7b5b;
+  border-color: rgba(198, 173, 122, 0.22);
+  background: rgba(2, 6, 23, 0.42);
+}
+
+.card-room-clock-control {
+  display: grid;
+  grid-template-columns: minmax(50px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.card-room-clock-control span {
+  color: #c6ad7a;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.card-room-clock-control strong {
+  overflow: hidden;
+  border: 1px solid rgba(242, 211, 122, 0.48);
+  padding: 4px 6px;
+  color: #fff1a6;
+  font: 900 11px/1.15 "Antonio", monospace;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background:
+    linear-gradient(180deg, rgba(255, 239, 188, 0.14), transparent 62%),
+    rgba(44, 19, 6, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.36);
+}
+
+.card-room-clock-control.active strong {
+  color: #ffe38b;
+  border-color: rgba(255, 211, 90, 0.75);
+  background:
+    linear-gradient(180deg, rgba(255, 239, 188, 0.18), transparent 58%),
+    rgba(95, 37, 10, 0.86);
+}
+
+.card-room-clock-control .pixel-button {
+  min-width: 0;
+  margin-top: 0;
+  padding-inline: 5px;
+  font-size: 10px;
 }
 
 .card-room-stage {
@@ -1793,6 +1822,12 @@ meter {
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.card-room-roster button.active small {
+  color: #2b1208;
+  font-weight: 700;
+  text-shadow: 0 1px 0 rgba(255, 246, 214, 0.5);
 }
 
 .card-room-chip-shop-list {
@@ -2075,7 +2110,7 @@ meter {
 
 .card-room-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
 

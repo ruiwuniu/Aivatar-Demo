@@ -540,9 +540,12 @@ export type AivatarVisitPhase =
   | "ended"
   | "cancelled";
 
+export type AivatarVisitKind = "room-visit" | "card-room";
+
 export interface AivatarVisitSession {
   type?: "aivatar.room.visit";
   visitId: string;
+  visitKind?: AivatarVisitKind;
   phase: AivatarVisitPhase;
   host: AivatarRoomPresence;
   guest: AivatarRoomPresence;

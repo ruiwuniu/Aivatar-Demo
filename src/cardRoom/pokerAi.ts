@@ -3,6 +3,7 @@ import type { AivatarDarkTraits, AivatarGrowthTraits } from "../types";
 import {
   cardToSolverCode,
   creditAvailable,
+  legalActionsForActivePlayer,
   type HoldemAction,
   type HoldemPlayer,
   type HoldemTableState,
@@ -110,6 +111,7 @@ export const choosePokerAiAction = (
   const availableCredit = creditAvailable(player);
   const strength = madeHandStrength(player, table.communityCards);
   const style = styleFromTraits(player.traits, player.darkTraits);
+  const legal = legalActionsForActivePlayer(table);
   const noise = (Math.random() - 0.5) * (0.12 + style.confusion * 0.2);
   const confidence = clamp(
     strength + style.risk * 0.12 + style.pressure * 0.1 - style.caution * 0.12 + noise,
@@ -119,13 +121,13 @@ export const choosePokerAiAction = (
   const targetRaise =
     table.currentBet === 0
       ? table.bigBlind * (2 + Math.round(style.pressure * 3))
-      : table.currentBet + Math.max(table.minimumRaise, table.bigBlind) * (1 + Math.round(style.pressure * 2));
+      : legal.minRaiseTo + table.minimumRaise * Math.round(style.pressure * 2);
 
   if (availableCredit <= 0) return { type: "check" };
 
   if (toCall === 0) {
     const betThreshold = 0.58 - style.pressure * 0.18 - style.risk * 0.1;
-    if (confidence > betThreshold && availableCredit > table.bigBlind) {
+    if (confidence > betThreshold && (legal.canBet || legal.canRaise)) {
       if (confidence > 0.88 && style.risk > 0.55) return { type: "all-in" };
       return {
         type: table.currentBet === 0 ? "bet" : "raise",
@@ -140,7 +142,7 @@ export const choosePokerAiAction = (
   const pressureRaiseThreshold = 0.72 - style.pressure * 0.18 - style.risk * 0.08;
 
   if (confidence + style.confusion * 0.14 < callThreshold) return { type: "fold" };
-  if (confidence > pressureRaiseThreshold && availableCredit > toCall + table.minimumRaise) {
+  if (legal.canRaise && confidence > pressureRaiseThreshold) {
     if (confidence > 0.92 && style.risk > 0.54) return { type: "all-in" };
     return {
       type: "raise",

@@ -38,6 +38,7 @@ export type HoldemStreet =
 
 export type HoldemAction =
   | { type: "fold" | "check" | "call" }
+  | { type: "timeout" }
   | { type: "bet" | "raise" | "all-in"; amount?: number };
 
 export interface CardRoomCharacter {
@@ -80,6 +81,7 @@ export interface HoldemTableState {
   handNumber: number;
   players: HoldemPlayer[];
   deck: PlayingCard[];
+  burnedCards: PlayingCard[];
   communityCards: PlayingCard[];
   buttonIndex: number;
   smallBlind: number;
@@ -92,6 +94,7 @@ export interface HoldemTableState {
   message: string;
   log: string[];
   winners: HoldemWinner[];
+  showdownOrderSeatIndexes: number[];
   actionSerial: number;
 }
 
@@ -138,6 +141,31 @@ const canAct = (player: HoldemPlayer, currentBet: number) =>
   creditAvailable(player) > 0 &&
   (player.roundBet < currentBet || !player.acted);
 
+const minimumFullRaiseTo = (state: HoldemTableState) => {
+  if (state.currentBet === 0) return state.bigBlind;
+  if (state.currentBet < state.bigBlind) return state.bigBlind;
+  return state.currentBet + state.minimumRaise;
+};
+
+const canOpenOrRaise = (
+  state: HoldemTableState,
+  player: HoldemPlayer,
+  toCall: number,
+) => {
+  const hasCallableOpponent = state.players.some(
+    (candidate) =>
+      candidate.seatIndex !== player.seatIndex &&
+      !candidate.folded &&
+      !candidate.allIn &&
+      creditAvailable(candidate) > 0,
+  );
+  if (!hasCallableOpponent) return false;
+  if (state.currentBet === 0) return toCall === 0 && creditAvailable(player) > 0;
+  if (creditAvailable(player) <= toCall) return false;
+  if (!player.acted) return true;
+  return toCall >= state.minimumRaise;
+};
+
 const potSize = (players: HoldemPlayer[]) =>
   players.reduce((total, player) => total + player.committed, 0);
 
@@ -155,6 +183,8 @@ const drawCard = (deck: PlayingCard[]) => {
   };
 };
 
+const burnCard = (deck: PlayingCard[]) => drawCard(deck);
+
 export const creditAvailable = (player: Pick<HoldemPlayer, "stack">) =>
   Math.max(0, Math.round(player.stack));
 
@@ -171,6 +201,51 @@ const payChips = (player: HoldemPlayer, amount: number) => {
       allIn: payment >= availableCredit,
     },
   };
+};
+
+const returnUncalledBets = (state: HoldemTableState) => {
+  const committedLevels = Array.from(
+    new Set(state.players.map((player) => player.committed).filter((value) => value > 0)),
+  ).sort((left, right) => right - left);
+  const highestCommitted = committedLevels[0] ?? 0;
+  const secondHighestCommitted = committedLevels[1] ?? 0;
+  const highestPlayers = state.players.filter(
+    (player) => player.committed === highestCommitted,
+  );
+  if (
+    highestCommitted <= 0 ||
+    highestPlayers.length !== 1 ||
+    highestCommitted <= secondHighestCommitted
+  ) {
+    return state;
+  }
+
+  const refund = highestCommitted - secondHighestCommitted;
+  const refundedPlayer = highestPlayers[0];
+  const players = state.players.map((player) => {
+    if (player.seatIndex !== refundedPlayer.seatIndex) return player;
+    const roundRefund = Math.min(refund, player.roundBet);
+    return {
+      ...player,
+      stack: player.stack + refund,
+      roundBet: player.roundBet - roundRefund,
+      committed: player.committed - refund,
+    };
+  });
+  const currentBet = Math.min(
+    state.currentBet,
+    Math.max(0, ...players.map((player) => player.roundBet)),
+  );
+
+  return pushLog(
+    {
+      ...state,
+      players,
+      currentBet,
+      pot: potSize(players),
+    },
+    `${refundedPlayer.avatarName} gets ${refund} uncalled chips back.`,
+  );
 };
 
 const dealHoleCards = (
@@ -205,7 +280,8 @@ const revealCommunityCards = (
   street: Exclude<HoldemStreet, "waiting" | "preflop" | "showdown" | "handComplete">,
 ) => {
   const cardCount = street === "flop" ? 3 : 1;
-  let deck = state.deck;
+  const burned = burnCard(state.deck);
+  let deck = burned.deck;
   const nextCards = [...state.communityCards];
   for (let index = 0; index < cardCount; index += 1) {
     const drawn = drawCard(deck);
@@ -216,6 +292,7 @@ const revealCommunityCards = (
     ...state,
     street,
     deck,
+    burnedCards: [...state.burnedCards, burned.card],
     communityCards: nextCards,
     currentBet: 0,
     minimumRaise: state.bigBlind,
@@ -249,7 +326,14 @@ const bettingRoundComplete = (state: HoldemTableState) => {
 
 const allRemainingAllIn = (state: HoldemTableState) => {
   const livePlayers = state.players.filter((player) => !player.folded);
-  return livePlayers.length > 1 && livePlayers.every((player) => player.allIn || creditAvailable(player) <= 0);
+  const actionablePlayers = livePlayers.filter(
+    (player) => !player.allIn && creditAvailable(player) > 0,
+  );
+  if (livePlayers.length <= 1) return false;
+  if (actionablePlayers.length === 0) return true;
+  if (actionablePlayers.length > 1) return false;
+  const highestLiveRoundBet = Math.max(...livePlayers.map((player) => player.roundBet));
+  return actionablePlayers[0].roundBet >= highestLiveRoundBet;
 };
 
 const solvePlayerHand = (
@@ -259,10 +343,11 @@ const solvePlayerHand = (
   Hand.solve([...player.holeCards, ...communityCards].map(cardToSolverCode));
 
 const awardSingleRemainingPlayer = (state: HoldemTableState) => {
-  const winner = state.players.find((player) => !player.folded);
-  if (!winner) return state;
-  const pot = potSize(state.players);
-  const players = state.players.map((player) =>
+  const settledState = returnUncalledBets(state);
+  const winner = settledState.players.find((player) => !player.folded);
+  if (!winner) return settledState;
+  const pot = potSize(settledState.players);
+  const players = settledState.players.map((player) =>
     player.seatIndex === winner.seatIndex
       ? { ...player, stack: player.stack + pot }
       : player,
@@ -270,7 +355,7 @@ const awardSingleRemainingPlayer = (state: HoldemTableState) => {
 
   return pushLog(
     {
-      ...state,
+      ...settledState,
       street: "handComplete",
       players,
       pot: 0,
@@ -282,8 +367,9 @@ const awardSingleRemainingPlayer = (state: HoldemTableState) => {
           amount: pot,
         },
       ],
+      showdownOrderSeatIndexes: [],
       message: `${winner.avatarName} wins ${pot} chips.`,
-      actionSerial: state.actionSerial + 1,
+      actionSerial: settledState.actionSerial + 1,
     },
     `${winner.avatarName} wins the pot uncontested.`,
   );
@@ -310,19 +396,78 @@ const buildSidePots = (players: HoldemPlayer[]) => {
     .filter((pot) => pot.amount > 0 && pot.eligibleSeatIndexes.length > 0);
 };
 
+const oddChipOrder = (
+  seatIndexes: number[],
+  buttonIndex: number,
+  playerCount: number,
+) =>
+  [...seatIndexes].sort((left, right) => {
+    const leftDistance = (left - buttonIndex + playerCount) % playerCount || playerCount;
+    const rightDistance = (right - buttonIndex + playerCount) % playerCount || playerCount;
+    return leftDistance - rightDistance;
+  });
+
+const baseShowdownOrderSeatIndexes = (state: HoldemTableState) => {
+  const liveSeatIndexes = state.players
+    .filter((player) => !player.folded)
+    .map((player) => player.seatIndex);
+  const startSeatIndex =
+    typeof state.lastAggressorSeatIndex === "number" &&
+    liveSeatIndexes.includes(state.lastAggressorSeatIndex)
+      ? state.lastAggressorSeatIndex
+      : null;
+  if (startSeatIndex === null) {
+    return oddChipOrder(liveSeatIndexes, state.buttonIndex, state.players.length);
+  }
+  return [...liveSeatIndexes].sort((left, right) => {
+    const leftDistance = (left - startSeatIndex + state.players.length) % state.players.length;
+    const rightDistance = (right - startSeatIndex + state.players.length) % state.players.length;
+    return leftDistance - rightDistance;
+  });
+};
+
+const showdownOrderSeatIndexes = (state: HoldemTableState) => {
+  const baseOrder = baseShowdownOrderSeatIndexes(state);
+  const sidePots = buildSidePots(state.players).slice(1);
+  if (sidePots.length === 0) return baseOrder;
+
+  const prioritizedSidePotSeats: number[] = [];
+  const prioritizedSidePotSeatSet = new Set<number>();
+  sidePots
+    .slice()
+    .reverse()
+    .forEach((sidePot) => {
+      baseOrder.forEach((seatIndex) => {
+        if (
+          sidePot.eligibleSeatIndexes.includes(seatIndex) &&
+          !prioritizedSidePotSeatSet.has(seatIndex)
+        ) {
+          prioritizedSidePotSeats.push(seatIndex);
+          prioritizedSidePotSeatSet.add(seatIndex);
+        }
+      });
+    });
+
+  return [
+    ...prioritizedSidePotSeats,
+    ...baseOrder.filter((seatIndex) => !prioritizedSidePotSeatSet.has(seatIndex)),
+  ];
+};
+
 const settleShowdown = (state: HoldemTableState) => {
-  const livePlayers = state.players.filter((player) => !player.folded);
-  if (livePlayers.length <= 1) return awardSingleRemainingPlayer(state);
+  const settledState = returnUncalledBets(state);
+  const livePlayers = settledState.players.filter((player) => !player.folded);
+  if (livePlayers.length <= 1) return awardSingleRemainingPlayer(settledState);
 
   const solvedHands = new Map<number, SolvedPokerHand>();
   livePlayers.forEach((player) => {
-    solvedHands.set(player.seatIndex, solvePlayerHand(player, state.communityCards));
+    solvedHands.set(player.seatIndex, solvePlayerHand(player, settledState.communityCards));
   });
 
-  let players = state.players;
+  let players = settledState.players;
   const winners: HoldemWinner[] = [];
 
-  buildSidePots(players).forEach((sidePot) => {
+  buildSidePots(players).reverse().forEach((sidePot) => {
     const candidates = sidePot.eligibleSeatIndexes
       .map((seatIndex) => ({
         seatIndex,
@@ -337,11 +482,16 @@ const settleShowdown = (state: HoldemTableState) => {
       .map((candidate) => candidate.seatIndex);
     const share = Math.floor(sidePot.amount / winningSeatIndexes.length);
     let remainder = sidePot.amount - share * winningSeatIndexes.length;
+    const payouts = new Map(winningSeatIndexes.map((seatIndex) => [seatIndex, share]));
+    oddChipOrder(winningSeatIndexes, state.buttonIndex, players.length).forEach((seatIndex) => {
+      if (remainder <= 0) return;
+      payouts.set(seatIndex, (payouts.get(seatIndex) ?? 0) + 1);
+      remainder -= 1;
+    });
 
     players = players.map((player) => {
-      if (!winningSeatIndexes.includes(player.seatIndex)) return player;
-      const bonus = share + (remainder > 0 ? 1 : 0);
-      remainder = Math.max(0, remainder - 1);
+      const bonus = payouts.get(player.seatIndex) ?? 0;
+      if (bonus <= 0) return player;
       return {
         ...player,
         stack: player.stack + bonus,
@@ -355,7 +505,7 @@ const settleShowdown = (state: HoldemTableState) => {
       winners.push({
         seatIndex,
         avatarName: player.avatarName,
-        amount: share,
+        amount: payouts.get(seatIndex) ?? share,
         handName: hand.name,
         handDescription: hand.descr,
       });
@@ -365,53 +515,65 @@ const settleShowdown = (state: HoldemTableState) => {
   const summary = winners
     .map((winner) => `${winner.avatarName} wins ${winner.amount}`)
     .join(", ");
-  const best = winners[0];
+  const bestHand = Hand.winners(Array.from(solvedHands.values()))[0];
+  const showdownOrder = showdownOrderSeatIndexes(settledState);
+  const showdownOrderNames = showdownOrder
+    .map((seatIndex) => settledState.players[seatIndex]?.avatarName)
+    .filter((name): name is string => Boolean(name));
+  const showdownLog = [
+    showdownOrderNames.length > 0
+      ? `Showdown order: ${showdownOrderNames.join(", ")}.`
+      : "Showdown.",
+    bestHand?.descr ? `Best hand: ${bestHand.descr}.` : "Settled.",
+  ].join(" ");
   return pushLog(
     {
-      ...state,
+      ...settledState,
       street: "handComplete",
       players,
       pot: 0,
       activeSeatIndex: null,
       winners,
-      message: best?.handDescription
-        ? `${summary}. Best hand: ${best.handDescription}.`
+      showdownOrderSeatIndexes: showdownOrder,
+      message: bestHand?.descr
+        ? `${summary}. Best hand: ${bestHand.descr}.`
         : summary,
-      actionSerial: state.actionSerial + 1,
+      actionSerial: settledState.actionSerial + 1,
     },
-    best?.handDescription ? `Showdown: ${best.handDescription}.` : "Showdown settled.",
+    showdownLog,
   );
 };
 
 const advanceStreet = (state: HoldemTableState): HoldemTableState => {
-  if (countContenders(state.players) <= 1) return awardSingleRemainingPlayer(state);
+  const settledState = returnUncalledBets(state);
+  if (countContenders(settledState.players) <= 1) return awardSingleRemainingPlayer(settledState);
 
-  if (allRemainingAllIn(state)) {
-    let next = state;
+  if (allRemainingAllIn(settledState)) {
+    let next = settledState;
     if (next.communityCards.length < 3) next = revealCommunityCards(next, "flop");
     if (next.communityCards.length < 4) next = revealCommunityCards(next, "turn");
     if (next.communityCards.length < 5) next = revealCommunityCards(next, "river");
     return settleShowdown({ ...next, street: "showdown" });
   }
 
-  if (state.street === "preflop") {
-    const next = revealCommunityCards(state, "flop");
+  if (settledState.street === "preflop") {
+    const next = revealCommunityCards(settledState, "flop");
     return {
       ...pushLog(next, "The dealer reveals the flop."),
       activeSeatIndex: firstPostflopSeat(next.players, next.buttonIndex),
       message: "Flop betting round.",
     };
   }
-  if (state.street === "flop") {
-    const next = revealCommunityCards(state, "turn");
+  if (settledState.street === "flop") {
+    const next = revealCommunityCards(settledState, "turn");
     return {
       ...pushLog(next, "The dealer reveals the turn."),
       activeSeatIndex: firstPostflopSeat(next.players, next.buttonIndex),
       message: "Turn betting round.",
     };
   }
-  if (state.street === "turn") {
-    const next = revealCommunityCards(state, "river");
+  if (settledState.street === "turn") {
+    const next = revealCommunityCards(settledState, "river");
     return {
       ...pushLog(next, "The dealer reveals the river."),
       activeSeatIndex: firstPostflopSeat(next.players, next.buttonIndex),
@@ -419,7 +581,7 @@ const advanceStreet = (state: HoldemTableState): HoldemTableState => {
     };
   }
 
-  return settleShowdown({ ...state, street: "showdown" });
+  return settleShowdown({ ...settledState, street: "showdown" });
 };
 
 const proceedAfterAction = (
@@ -448,6 +610,7 @@ export const emptyHoldemTable = (): HoldemTableState => ({
   handNumber: 0,
   players: [],
   deck: [],
+  burnedCards: [],
   communityCards: [],
   buttonIndex: 0,
   smallBlind: 10,
@@ -459,6 +622,7 @@ export const emptyHoldemTable = (): HoldemTableState => ({
   message: "Summon at least one companion to start a hand.",
   log: [],
   winners: [],
+  showdownOrderSeatIndexes: [],
   actionSerial: 0,
 });
 
@@ -562,6 +726,7 @@ export const startHoldemHand = (
     handNumber: previousState.handNumber + 1,
     players: nextPlayers,
     deck: deckAfterDeal,
+    burnedCards: [],
     communityCards: [],
     buttonIndex,
     smallBlind: previousState.smallBlind,
@@ -577,6 +742,7 @@ export const startHoldemHand = (
       `Hand ${previousState.handNumber + 1} begins.`,
     ],
     winners: [],
+    showdownOrderSeatIndexes: [],
     actionSerial: previousState.actionSerial + 1,
   };
 
@@ -597,24 +763,29 @@ export const legalActionsForActivePlayer = (state: HoldemTableState) => {
       canAllIn: false,
       toCall: 0,
       minRaiseTo: 0,
+      maxRaiseTo: 0,
     };
   }
 
   const toCall = Math.max(0, state.currentBet - activePlayer.roundBet);
-  const minRaiseTo =
-    state.currentBet === 0
-      ? state.bigBlind
-      : state.currentBet + Math.max(state.minimumRaise, state.bigBlind);
+  const minRaiseTo = minimumFullRaiseTo(state);
+  const maxRaiseTo = activePlayer.roundBet + creditAvailable(activePlayer);
+  const canOpenOrRaiseAction = canOpenOrRaise(state, activePlayer, toCall);
+  const canAllIn =
+    creditAvailable(activePlayer) > 0 &&
+    ((toCall > 0 && creditAvailable(activePlayer) <= toCall) ||
+      canOpenOrRaiseAction);
 
   return {
     canFold: toCall > 0,
     canCheck: toCall === 0,
     canCall: toCall > 0 && creditAvailable(activePlayer) > 0,
-    canBet: toCall === 0 && state.currentBet === 0 && creditAvailable(activePlayer) > 0,
-    canRaise: state.currentBet > 0 && creditAvailable(activePlayer) > toCall,
-    canAllIn: creditAvailable(activePlayer) > 0,
+    canBet: state.currentBet === 0 && canOpenOrRaiseAction,
+    canRaise: state.currentBet > 0 && canOpenOrRaiseAction,
+    canAllIn,
     toCall,
     minRaiseTo,
+    maxRaiseTo,
   };
 };
 
@@ -673,6 +844,49 @@ export const applyHoldemAction = (
     );
   }
 
+  if (action.type === "timeout") {
+    if (legal.canCheck) {
+      updateActive({
+        ...activePlayer,
+        acted: true,
+        lastAction: "timeout check",
+      });
+      return proceedAfterAction(
+        pushLog(
+          {
+            ...state,
+            players,
+            message: `${activePlayer.avatarName} times out and checks.`,
+          },
+          `${activePlayer.avatarName} times out and checks.`,
+        ),
+        activePlayer.seatIndex,
+      );
+    }
+
+    if (legal.canFold) {
+      updateActive({
+        ...activePlayer,
+        folded: true,
+        acted: true,
+        lastAction: "timeout fold",
+      });
+      return proceedAfterAction(
+        pushLog(
+          {
+            ...state,
+            players,
+            message: `${activePlayer.avatarName} times out. Hand is dead.`,
+          },
+          `${activePlayer.avatarName} times out. Hand is dead.`,
+        ),
+        activePlayer.seatIndex,
+      );
+    }
+
+    return state;
+  }
+
   if (action.type === "call" && legal.canCall) {
     const paid = payChips(activePlayer, legal.toCall);
     updateActive({
@@ -694,10 +908,14 @@ export const applyHoldemAction = (
   }
 
   if (action.type === "bet" || action.type === "raise") {
+    if (action.type === "bet" && !legal.canBet) return state;
+    if (action.type === "raise" && !legal.canRaise) return state;
+
     const oldCurrentBet = state.currentBet;
+    const defaultRoundBet = action.type === "bet" ? state.bigBlind : legal.minRaiseTo;
     const desiredRoundBet = Math.max(
-      action.type === "bet" ? state.bigBlind : legal.minRaiseTo,
-      Math.round(action.amount ?? legal.minRaiseTo),
+      defaultRoundBet,
+      Math.round(action.amount ?? defaultRoundBet),
     );
     const cappedRoundBet = Math.min(
       activePlayer.roundBet + creditAvailable(activePlayer),
@@ -706,7 +924,16 @@ export const applyHoldemAction = (
     const paymentNeeded = Math.max(0, cappedRoundBet - activePlayer.roundBet);
     const paid = payChips(activePlayer, paymentNeeded);
     const raisedTo = paid.player.roundBet;
-    if (raisedTo <= oldCurrentBet && !paid.player.allIn) return state;
+    if (raisedTo <= oldCurrentBet) return state;
+
+    const raiseAmount = oldCurrentBet === 0 ? raisedTo : raisedTo - oldCurrentBet;
+    const requiredFullRaiseTo = oldCurrentBet < state.bigBlind
+      ? state.bigBlind
+      : oldCurrentBet + state.minimumRaise;
+    const isFullRaise = raisedTo >= requiredFullRaiseTo;
+    if (!isFullRaise && !paid.player.allIn) return state;
+    const nextMinimumRaise =
+      oldCurrentBet < state.bigBlind ? state.bigBlind : raiseAmount;
 
     players = players.map((candidate) => {
       if (candidate.seatIndex === activePlayer.seatIndex) {
@@ -720,21 +947,17 @@ export const applyHoldemAction = (
         };
       }
       if (candidate.folded || candidate.allIn) return candidate;
-      return {
-        ...candidate,
-        acted: false,
-      };
+      return isFullRaise ? { ...candidate, acted: false } : candidate;
     });
 
     const nextCurrentBet = Math.max(oldCurrentBet, raisedTo);
-    const raiseSize = Math.max(state.minimumRaise, nextCurrentBet - oldCurrentBet);
     return proceedAfterAction(
       pushLog(
         {
           ...state,
           players,
           currentBet: nextCurrentBet,
-          minimumRaise: raiseSize,
+          minimumRaise: isFullRaise ? nextMinimumRaise : state.minimumRaise,
           lastAggressorSeatIndex: activePlayer.seatIndex,
           message: `${activePlayer.avatarName} ${oldCurrentBet === 0 ? "bets" : "raises to"} ${raisedTo}.`,
         },
@@ -778,4 +1001,9 @@ export const applyHoldemAction = (
 export const visibleHoleCardsForPlayer = (
   table: HoldemTableState,
   player: HoldemPlayer,
-) => player.isUser || table.street === "handComplete" ? player.holeCards : [];
+) =>
+  player.isUser ||
+  (table.street === "handComplete" &&
+    table.showdownOrderSeatIndexes.includes(player.seatIndex))
+    ? player.holeCards
+    : [];
