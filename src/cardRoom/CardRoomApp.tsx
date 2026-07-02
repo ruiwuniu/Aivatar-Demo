@@ -117,6 +117,43 @@ const CARD_ROOM_HAND_DEAL_INITIAL_DELAY_MS = 480;
 const CARD_ROOM_HAND_DEAL_STAGGER_MS = 90;
 const CARD_ROOM_HAND_DEAL_TRAVEL_MS = 360;
 const CARD_ROOM_HAND_DEAL_FACE_REVEAL_PROGRESS = 0.82;
+const CARD_ROOM_AUDIO_VOLUME_KEY = "aivatar.audioVolume.v1";
+const CARD_ROOM_DEFAULT_AUDIO_VOLUME = 0.45;
+const CARD_ROOM_DEAL_CARD_AUDIO_SRC = "/audio/card-room-card-deal.mp3";
+const CARD_ROOM_DEAL_CARD_AUDIO_POOL_SIZE = 8;
+const CARD_ROOM_DEAL_CARD_AUDIO_VOLUME_MULTIPLIER = 0.55;
+const CARD_ROOM_DEAL_CARD_AUDIO_LATE_WINDOW_MS = 260;
+const CARD_ROOM_CHIP_BET_AUDIO_SRCS = [
+  "/audio/card-room-chip-bet-1.mp3",
+  "/audio/card-room-chip-bet-2.mp3",
+  "/audio/card-room-chip-bet-3.mp3",
+] as const;
+const CARD_ROOM_CHIP_BET_AUDIO_POOL_SIZE = 9;
+const CARD_ROOM_CHIP_BET_AUDIO_VOLUME_MULTIPLIER = 0.5;
+const CARD_ROOM_CHIP_ALL_IN_AUDIO_SRC = "/audio/card-room-chip-all-in.mp3";
+const CARD_ROOM_CHIP_ALL_IN_AUDIO_POOL_SIZE = 3;
+const CARD_ROOM_CHIP_ALL_IN_AUDIO_VOLUME_MULTIPLIER = 0.68;
+const CARD_ROOM_CHIP_PAYOUT_AUDIO_SRC = "/audio/card-room-chip-payout.mp3";
+const CARD_ROOM_CHIP_PAYOUT_AUDIO_POOL_SIZE = 4;
+const CARD_ROOM_CHIP_PAYOUT_AUDIO_VOLUME_MULTIPLIER = 0.62;
+const CARD_ROOM_CHIP_AUDIO_LATE_WINDOW_MS = 320;
+const CARD_ROOM_CHIP_SETTLEMENT_AUDIO_LATE_WINDOW_MS = 500;
+const CARD_ROOM_USER_WIN_AUDIO_SRC = "/audio/card-room-user-win.mp3";
+const CARD_ROOM_USER_WIN_AUDIO_POOL_SIZE = 2;
+const CARD_ROOM_USER_WIN_AUDIO_VOLUME_MULTIPLIER = 0.72;
+const CARD_ROOM_USER_WIN_AUDIO_LATE_WINDOW_MS = 900;
+const CARD_ROOM_CHARACTER_WIN_AUDIO_SRCS = [
+  "/audio/card-room-character-win-1.mp3",
+  "/audio/card-room-character-win-2.mp3",
+  "/audio/card-room-character-win-3.mp3",
+] as const;
+const CARD_ROOM_CHARACTER_WIN_AUDIO_VOLUME_MULTIPLIER = 0.56;
+const CARD_ROOM_CHARACTER_WIN_AUDIO_LATE_WINDOW_MS = 900;
+const CARD_ROOM_COMMUNITY_CARD_REVEAL_STAGGER_MS = 130;
+
+type CardRoomChipActionType = NonNullable<
+  CardRoomTableMotion["chipFlights"][number]["actionType"]
+>;
 
 type CardRoomHandDarkStats = {
   handNumber: number;
@@ -322,6 +359,23 @@ const winnerAvatarIdsForTable = (table: HoldemTableState) =>
 const userWonTable = (table: HoldemTableState) =>
   table.winners.some((winner) => Boolean(table.players[winner.seatIndex]?.isUser));
 
+const characterWonTable = (table: HoldemTableState) =>
+  table.winners.some((winner) => {
+    const player = table.players[winner.seatIndex];
+    return Boolean(player && !player.isUser);
+  });
+
+const chipFlightActionTypeFromLastAction = (
+  lastAction: string | undefined,
+): CardRoomChipActionType | undefined => {
+  const normalized = lastAction?.toLowerCase() ?? "";
+  if (normalized.includes("all-in")) return "all-in";
+  if (normalized.includes("raise")) return "raise";
+  if (normalized.includes("call")) return "call";
+  if (normalized.includes("bet")) return "bet";
+  return undefined;
+};
+
 const chipFlightsForTableTransition = (
   previousTable: HoldemTableState,
   nextTable: HoldemTableState,
@@ -341,6 +395,7 @@ const chipFlightsForTableTransition = (
         avatarId: player.avatarId,
         handNumber: nextTable.handNumber,
         actionSerial: nextTable.actionSerial,
+        actionType: chipFlightActionTypeFromLastAction(player.lastAction),
         amount,
         fromCommitted,
         toCommitted,
@@ -462,6 +517,35 @@ const handHudCardsReadyForPlayer = (
     lastDealIndex * CARD_ROOM_HAND_DEAL_STAGGER_MS +
     CARD_ROOM_HAND_DEAL_TRAVEL_MS * CARD_ROOM_HAND_DEAL_FACE_REVEAL_PROGRESS;
   return now >= revealAt;
+};
+
+const normalizeCardRoomAudioVolume = (value: number) =>
+  Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : CARD_ROOM_DEFAULT_AUDIO_VOLUME;
+
+const readCardRoomAudioVolume = () => {
+  try {
+    const saved = localStorage.getItem(CARD_ROOM_AUDIO_VOLUME_KEY);
+    return saved === null
+      ? CARD_ROOM_DEFAULT_AUDIO_VOLUME
+      : normalizeCardRoomAudioVolume(Number(saved));
+  } catch {
+    return CARD_ROOM_DEFAULT_AUDIO_VOLUME;
+  }
+};
+
+const createCardRoomAudioPool = (sources: readonly string[], poolSize: number) => {
+  if (sources.length === 0 || poolSize <= 0) return [];
+  return Array.from({ length: poolSize }, (_, index) => {
+    const audio = new Audio(sources[index % sources.length]);
+    audio.preload = "auto";
+    return audio;
+  });
+};
+
+const pauseCardRoomAudioPool = (pool: HTMLAudioElement[]) => {
+  pool.forEach((audio) => {
+    audio.pause();
+  });
 };
 
 const mergeDefaultStacks = (
@@ -949,6 +1033,7 @@ export const CardRoomApp = () => {
     handNumber: number;
     startedAt: number;
   } | null>(null);
+  const userVictoryEffectRef = useRef(userVictoryEffect);
   const tableRef = useRef(table);
   const tableMotionRef = useRef<CardRoomTableMotion>(createInitialCardRoomMotion());
   const playerWalletRef = useRef(playerWallet);
@@ -972,10 +1057,328 @@ export const CardRoomApp = () => {
   const previousHostHandNetRef = useRef(0);
   const processedDarkTraitHandRef = useRef<number | null>(null);
   const victoryDemoPlayedRef = useRef(false);
+  const cardRoomAudioUnlockedRef = useRef(false);
+  const dealCardAudioPoolRef = useRef<HTMLAudioElement[]>([]);
+  const dealCardAudioPoolIndexRef = useRef(0);
+  const chipBetAudioPoolRef = useRef<HTMLAudioElement[]>([]);
+  const chipBetAudioPoolIndexRef = useRef(0);
+  const chipAllInAudioPoolRef = useRef<HTMLAudioElement[]>([]);
+  const chipAllInAudioPoolIndexRef = useRef(0);
+  const chipPayoutAudioPoolRef = useRef<HTMLAudioElement[]>([]);
+  const chipPayoutAudioPoolIndexRef = useRef(0);
+  const userWinAudioPoolRef = useRef<HTMLAudioElement[]>([]);
+  const userWinAudioPoolIndexRef = useRef(0);
+  const characterWinAudioPoolRef = useRef<HTMLAudioElement[]>([]);
+  const cardRoomAudioVolumeRef = useRef(readCardRoomAudioVolume());
+  const dealCardAudioHandNumberRef = useRef<number | null>(null);
+  const playedDealCardAudioKeysRef = useRef<Set<string>>(new Set());
+  const chipAudioHandNumberRef = useRef<number | null>(null);
+  const playedChipAudioKeysRef = useRef<Set<string>>(new Set());
+  const playedUserWinAudioKeysRef = useRef<Set<string>>(new Set());
+  const playedCharacterWinAudioKeysRef = useRef<Set<string>>(new Set());
   const roomKey = hostSlotId ?? "preview";
 
   const currentCardRoomPresence = () =>
     createCardRoomPresence(cardRoomInstanceIdRef.current, hostSlotId);
+
+  const applyCardRoomAudioPoolVolume = (
+    pool: HTMLAudioElement[],
+    volumeMultiplier: number,
+    volume = cardRoomAudioVolumeRef.current,
+  ) => {
+    pool.forEach((audio) => {
+      audio.volume = Math.min(1, Math.max(0, volume * volumeMultiplier));
+    });
+  };
+
+  const applyCardRoomAudioVolume = (volume = cardRoomAudioVolumeRef.current) => {
+    applyCardRoomAudioPoolVolume(
+      dealCardAudioPoolRef.current,
+      CARD_ROOM_DEAL_CARD_AUDIO_VOLUME_MULTIPLIER,
+      volume,
+    );
+    applyCardRoomAudioPoolVolume(
+      chipBetAudioPoolRef.current,
+      CARD_ROOM_CHIP_BET_AUDIO_VOLUME_MULTIPLIER,
+      volume,
+    );
+    applyCardRoomAudioPoolVolume(
+      chipAllInAudioPoolRef.current,
+      CARD_ROOM_CHIP_ALL_IN_AUDIO_VOLUME_MULTIPLIER,
+      volume,
+    );
+    applyCardRoomAudioPoolVolume(
+      chipPayoutAudioPoolRef.current,
+      CARD_ROOM_CHIP_PAYOUT_AUDIO_VOLUME_MULTIPLIER,
+      volume,
+    );
+    applyCardRoomAudioPoolVolume(
+      userWinAudioPoolRef.current,
+      CARD_ROOM_USER_WIN_AUDIO_VOLUME_MULTIPLIER,
+      volume,
+    );
+    applyCardRoomAudioPoolVolume(
+      characterWinAudioPoolRef.current,
+      CARD_ROOM_CHARACTER_WIN_AUDIO_VOLUME_MULTIPLIER,
+      volume,
+    );
+  };
+
+  const playCardRoomAudioFromPool = (
+    pool: HTMLAudioElement[],
+    poolIndexRef: { current: number },
+    volumeMultiplier: number,
+  ) => {
+    if (
+      !cardRoomAudioUnlockedRef.current ||
+      cardRoomAudioVolumeRef.current <= 0 ||
+      pool.length === 0
+    ) {
+      return;
+    }
+
+    const audio = pool[poolIndexRef.current % pool.length];
+    poolIndexRef.current += 1;
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = Math.min(1, Math.max(0, cardRoomAudioVolumeRef.current * volumeMultiplier));
+    void audio.play().catch(() => undefined);
+  };
+
+  const playRandomCardRoomAudioFromPool = (
+    pool: HTMLAudioElement[],
+    volumeMultiplier: number,
+  ) => {
+    if (
+      !cardRoomAudioUnlockedRef.current ||
+      cardRoomAudioVolumeRef.current <= 0 ||
+      pool.length === 0
+    ) {
+      return;
+    }
+
+    const audio = pool[Math.floor(Math.random() * pool.length)];
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = Math.min(1, Math.max(0, cardRoomAudioVolumeRef.current * volumeMultiplier));
+    void audio.play().catch(() => undefined);
+  };
+
+  const playDealCardAudio = () => {
+    playCardRoomAudioFromPool(
+      dealCardAudioPoolRef.current,
+      dealCardAudioPoolIndexRef,
+      CARD_ROOM_DEAL_CARD_AUDIO_VOLUME_MULTIPLIER,
+    );
+  };
+
+  const playChipBetAudio = () => {
+    playCardRoomAudioFromPool(
+      chipBetAudioPoolRef.current,
+      chipBetAudioPoolIndexRef,
+      CARD_ROOM_CHIP_BET_AUDIO_VOLUME_MULTIPLIER,
+    );
+  };
+
+  const playChipAllInAudio = () => {
+    playCardRoomAudioFromPool(
+      chipAllInAudioPoolRef.current,
+      chipAllInAudioPoolIndexRef,
+      CARD_ROOM_CHIP_ALL_IN_AUDIO_VOLUME_MULTIPLIER,
+    );
+  };
+
+  const playChipPayoutAudio = () => {
+    playCardRoomAudioFromPool(
+      chipPayoutAudioPoolRef.current,
+      chipPayoutAudioPoolIndexRef,
+      CARD_ROOM_CHIP_PAYOUT_AUDIO_VOLUME_MULTIPLIER,
+    );
+  };
+
+  const playUserWinAudio = () => {
+    playCardRoomAudioFromPool(
+      userWinAudioPoolRef.current,
+      userWinAudioPoolIndexRef,
+      CARD_ROOM_USER_WIN_AUDIO_VOLUME_MULTIPLIER,
+    );
+  };
+
+  const playCharacterWinAudio = () => {
+    playRandomCardRoomAudioFromPool(
+      characterWinAudioPoolRef.current,
+      CARD_ROOM_CHARACTER_WIN_AUDIO_VOLUME_MULTIPLIER,
+    );
+  };
+
+  const playTimedCardRoomAudioIfDue = (
+    playedKeys: Set<string>,
+    key: string,
+    playAt: number,
+    now: number,
+    playAudio: () => void,
+    lateWindowMs: number,
+  ) => {
+    if (!Number.isFinite(playAt) || now < playAt) return;
+    if (playedKeys.has(key)) return;
+    playedKeys.add(key);
+    if (now - playAt <= lateWindowMs) {
+      playAudio();
+    }
+  };
+
+  const playDealCardAudioForFrame = (
+    currentTable: HoldemTableState,
+    motion: CardRoomTableMotion,
+    now: number,
+  ) => {
+    if (motion.handNumber !== currentTable.handNumber) return;
+    if (dealCardAudioHandNumberRef.current !== currentTable.handNumber) {
+      dealCardAudioHandNumberRef.current = currentTable.handNumber;
+      playedDealCardAudioKeysRef.current.clear();
+    }
+
+    if (currentTable.street !== "waiting" && Number.isFinite(motion.handStartedAt)) {
+      const playerCount = Math.max(1, currentTable.players.length);
+      const dealStartSeatIndex = dealStartingSeatIndexForTable(currentTable);
+      currentTable.players.forEach((player) => {
+        const seatDealOffset =
+          (player.seatIndex - dealStartSeatIndex + playerCount) % playerCount;
+        player.holeCards.slice(0, 2).forEach((_, cardIndex) => {
+          const dealIndex = cardIndex * playerCount + seatDealOffset;
+          const dealAt =
+            motion.handStartedAt +
+            CARD_ROOM_HAND_DEAL_INITIAL_DELAY_MS +
+            dealIndex * CARD_ROOM_HAND_DEAL_STAGGER_MS;
+          playTimedCardRoomAudioIfDue(
+            playedDealCardAudioKeysRef.current,
+            `hand:${currentTable.handNumber}:${player.seatIndex}:${cardIndex}`,
+            dealAt,
+            now,
+            playDealCardAudio,
+            CARD_ROOM_DEAL_CARD_AUDIO_LATE_WINDOW_MS,
+          );
+        });
+      });
+    }
+
+    if (motion.communityRevealCount > 0 && Number.isFinite(motion.communityRevealStartedAt)) {
+      const revealEnd = motion.communityRevealFrom + motion.communityRevealCount;
+      for (let index = motion.communityRevealFrom; index < revealEnd; index += 1) {
+        if (!currentTable.communityCards[index]) continue;
+        const dealAt =
+          motion.communityRevealStartedAt +
+          (index - motion.communityRevealFrom) * CARD_ROOM_COMMUNITY_CARD_REVEAL_STAGGER_MS;
+        playTimedCardRoomAudioIfDue(
+          playedDealCardAudioKeysRef.current,
+          `community:${currentTable.handNumber}:${index}`,
+          dealAt,
+          now,
+          playDealCardAudio,
+          CARD_ROOM_DEAL_CARD_AUDIO_LATE_WINDOW_MS,
+        );
+      }
+    }
+  };
+
+  const playChipAudioForFrame = (
+    currentTable: HoldemTableState,
+    motion: CardRoomTableMotion,
+    now: number,
+  ) => {
+    if (motion.handNumber !== currentTable.handNumber) return;
+    if (chipAudioHandNumberRef.current !== currentTable.handNumber) {
+      chipAudioHandNumberRef.current = currentTable.handNumber;
+      playedChipAudioKeysRef.current.clear();
+    }
+
+    motion.chipFlights.forEach((flight) => {
+      const playAudio =
+        flight.actionType === "all-in" ? playChipAllInAudio : playChipBetAudio;
+      playTimedCardRoomAudioIfDue(
+        playedChipAudioKeysRef.current,
+        `chip:${flight.handNumber}:${flight.actionSerial}:${flight.avatarId}:${flight.fromCommitted}:${flight.toCommitted}`,
+        flight.startedAt,
+        now,
+        playAudio,
+        CARD_ROOM_CHIP_AUDIO_LATE_WINDOW_MS,
+      );
+    });
+
+    let collectionStartedAt = Number.POSITIVE_INFINITY;
+    let collectionActionSerial = motion.actionSerial;
+    motion.potCollectionFlights.forEach((flight) => {
+      if (flight.startedAt < collectionStartedAt) {
+        collectionStartedAt = flight.startedAt;
+        collectionActionSerial = flight.actionSerial;
+      }
+    });
+    playTimedCardRoomAudioIfDue(
+      playedChipAudioKeysRef.current,
+      `collect:${motion.handNumber}:${collectionActionSerial}`,
+      collectionStartedAt,
+      now,
+      playChipPayoutAudio,
+      CARD_ROOM_CHIP_SETTLEMENT_AUDIO_LATE_WINDOW_MS,
+    );
+
+    let payoutStartedAt = Number.POSITIVE_INFINITY;
+    let payoutActionSerial = motion.actionSerial;
+    motion.payoutFlights.forEach((flight) => {
+      if (flight.startedAt < payoutStartedAt) {
+        payoutStartedAt = flight.startedAt;
+        payoutActionSerial = flight.actionSerial;
+      }
+    });
+    playTimedCardRoomAudioIfDue(
+      playedChipAudioKeysRef.current,
+      `payout:${motion.handNumber}:${payoutActionSerial}`,
+      payoutStartedAt,
+      now,
+      playChipPayoutAudio,
+      CARD_ROOM_CHIP_SETTLEMENT_AUDIO_LATE_WINDOW_MS,
+    );
+  };
+
+  const playUserWinAudioForFrame = (
+    effect: { handNumber: number; startedAt: number } | null,
+    now: number,
+  ) => {
+    if (!effect) return;
+    playTimedCardRoomAudioIfDue(
+      playedUserWinAudioKeysRef.current,
+      `user-win:${effect.handNumber}:${Math.round(effect.startedAt)}`,
+      effect.startedAt,
+      now,
+      playUserWinAudio,
+      CARD_ROOM_USER_WIN_AUDIO_LATE_WINDOW_MS,
+    );
+  };
+
+  const playCharacterWinAudioForFrame = (
+    currentTable: HoldemTableState,
+    motion: CardRoomTableMotion,
+    now: number,
+  ) => {
+    if (motion.handNumber !== currentTable.handNumber) return;
+    if (currentTable.street !== "handComplete") return;
+    if (currentTable.winners.length === 0) return;
+    if (userWonTable(currentTable) || !characterWonTable(currentTable)) return;
+
+    const winAt = motion.completionStartedAt ?? motion.streetStartedAt;
+    const winnerSeatKey = currentTable.winners
+      .map((winner) => winner.seatIndex)
+      .sort((left, right) => left - right)
+      .join("-");
+    playTimedCardRoomAudioIfDue(
+      playedCharacterWinAudioKeysRef.current,
+      `character-win:${currentTable.handNumber}:${winnerSeatKey}`,
+      winAt,
+      now,
+      playCharacterWinAudio,
+      CARD_ROOM_CHARACTER_WIN_AUDIO_LATE_WINDOW_MS,
+    );
+  };
 
   const endCardRoomVisit = (slotId: string, keepalive = false) => {
     const visit = activeCardRoomVisitsRef.current.get(slotId);
@@ -1158,6 +1561,10 @@ export const CardRoomApp = () => {
   }, [table]);
 
   useEffect(() => {
+    userVictoryEffectRef.current = userVictoryEffect;
+  }, [userVictoryEffect]);
+
+  useEffect(() => {
     if (!userVictoryEffect) return undefined;
     const timer = window.setTimeout(() => {
       setUserVictoryEffect(null);
@@ -1172,6 +1579,89 @@ export const CardRoomApp = () => {
       handNumber: -1,
       startedAt: performance.now(),
     });
+  }, []);
+
+  useEffect(() => {
+    const dealAudioPool = createCardRoomAudioPool(
+      [CARD_ROOM_DEAL_CARD_AUDIO_SRC],
+      CARD_ROOM_DEAL_CARD_AUDIO_POOL_SIZE,
+    );
+    const chipBetAudioPool = createCardRoomAudioPool(
+      CARD_ROOM_CHIP_BET_AUDIO_SRCS,
+      CARD_ROOM_CHIP_BET_AUDIO_POOL_SIZE,
+    );
+    const chipAllInAudioPool = createCardRoomAudioPool(
+      [CARD_ROOM_CHIP_ALL_IN_AUDIO_SRC],
+      CARD_ROOM_CHIP_ALL_IN_AUDIO_POOL_SIZE,
+    );
+    const chipPayoutAudioPool = createCardRoomAudioPool(
+      [CARD_ROOM_CHIP_PAYOUT_AUDIO_SRC],
+      CARD_ROOM_CHIP_PAYOUT_AUDIO_POOL_SIZE,
+    );
+    const userWinAudioPool = createCardRoomAudioPool(
+      [CARD_ROOM_USER_WIN_AUDIO_SRC],
+      CARD_ROOM_USER_WIN_AUDIO_POOL_SIZE,
+    );
+    const characterWinAudioPool = createCardRoomAudioPool(
+      CARD_ROOM_CHARACTER_WIN_AUDIO_SRCS,
+      CARD_ROOM_CHARACTER_WIN_AUDIO_SRCS.length,
+    );
+    dealCardAudioPoolRef.current = dealAudioPool;
+    chipBetAudioPoolRef.current = chipBetAudioPool;
+    chipAllInAudioPoolRef.current = chipAllInAudioPool;
+    chipPayoutAudioPoolRef.current = chipPayoutAudioPool;
+    userWinAudioPoolRef.current = userWinAudioPool;
+    characterWinAudioPoolRef.current = characterWinAudioPool;
+    applyCardRoomAudioVolume();
+
+    return () => {
+      pauseCardRoomAudioPool(dealAudioPool);
+      pauseCardRoomAudioPool(chipBetAudioPool);
+      pauseCardRoomAudioPool(chipAllInAudioPool);
+      pauseCardRoomAudioPool(chipPayoutAudioPool);
+      pauseCardRoomAudioPool(userWinAudioPool);
+      pauseCardRoomAudioPool(characterWinAudioPool);
+      dealCardAudioPoolRef.current = [];
+      chipBetAudioPoolRef.current = [];
+      chipAllInAudioPoolRef.current = [];
+      chipPayoutAudioPoolRef.current = [];
+      userWinAudioPoolRef.current = [];
+      characterWinAudioPoolRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
+    const unlockCardRoomAudio = () => {
+      cardRoomAudioUnlockedRef.current = true;
+    };
+
+    window.addEventListener("pointerdown", unlockCardRoomAudio);
+    window.addEventListener("keydown", unlockCardRoomAudio);
+    window.addEventListener("touchstart", unlockCardRoomAudio);
+    return () => {
+      window.removeEventListener("pointerdown", unlockCardRoomAudio);
+      window.removeEventListener("keydown", unlockCardRoomAudio);
+      window.removeEventListener("touchstart", unlockCardRoomAudio);
+    };
+  }, []);
+
+  useEffect(() => {
+    const refreshCardRoomAudioVolume = () => {
+      cardRoomAudioVolumeRef.current = readCardRoomAudioVolume();
+      applyCardRoomAudioVolume();
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === CARD_ROOM_AUDIO_VOLUME_KEY) {
+        refreshCardRoomAudioVolume();
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("focus", refreshCardRoomAudioVolume);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", refreshCardRoomAudioVolume);
+    };
   }, []);
 
   useEffect(() => {
@@ -1356,6 +1846,10 @@ export const CardRoomApp = () => {
           userHandCardsReadyRef.current = nextUserHandCardsReady;
           setUserHandCardsReady(nextUserHandCardsReady);
         }
+        playDealCardAudioForFrame(currentTable, tableMotionRef.current, now);
+        playChipAudioForFrame(currentTable, tableMotionRef.current, now);
+        playUserWinAudioForFrame(userVictoryEffectRef.current, now);
+        playCharacterWinAudioForFrame(currentTable, tableMotionRef.current, now);
         renderCardRoom(canvasRef.current, {
           content,
           table: currentTable,

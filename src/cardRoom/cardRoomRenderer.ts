@@ -99,6 +99,7 @@ export interface CardRoomChipFlight {
   avatarId: string;
   handNumber: number;
   actionSerial: number;
+  actionType?: "call" | "bet" | "raise" | "all-in";
   amount: number;
   fromCommitted: number;
   toCommitted: number;

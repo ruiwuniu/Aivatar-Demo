@@ -45,6 +45,94 @@ closing phase.
 Aivatar uses this as a one-shot success sound when a reward-eligible agent
 session reaches `complete`.
 
+## card-room-card-deal.mp3
+
+- Source: Placing playing card
+- Author: OxidVideos
+- URL: https://pixabay.com/sound-effects/film-special-effects-placing-playing-card-522514/
+- License: Pixabay Content License
+- Original file: downloaded MP3 from the Pixabay sound effect page
+
+Aivatar uses this as a short Card Room one-shot each time a hand or community
+card is dealt.
+
+## card-room-chip-bet-1.mp3, card-room-chip-bet-2.mp3, and card-room-chip-bet-3.mp3
+
+- Source: Placing poker chips
+- Author: OxidVideos
+- URLs:
+  - https://pixabay.com/sound-effects/film-special-effects-placing-poker-chips-522521/
+  - https://pixabay.com/sound-effects/film-special-effects-placing-poker-chips-522515/
+  - https://pixabay.com/sound-effects/film-special-effects-placing-poker-chips-522523/
+- License: Pixabay Content License
+- Original file: downloaded MP3s from the Pixabay sound effect pages
+
+Aivatar randomly chooses from these short chip placement sounds for Card Room
+bet, call, raise, and blind chip animations.
+
+## card-room-chip-all-in.mp3
+
+- Source: AllInPushChips
+- Author: joeyed (Freesound)
+- URL: https://pixabay.com/sound-effects/film-special-effects-allinpushchips-96121/
+- License: Pixabay Content License
+- Original file: downloaded MP3 from the Pixabay sound effect page
+
+Aivatar uses this as the Card Room one-shot when an all-in chip animation
+starts.
+
+## card-room-chip-payout.mp3
+
+- Source: Handfull of Poker Chips
+- Author: Za-Games (Freesound)
+- URL: https://pixabay.com/sound-effects/film-special-effects-handfull-of-poker-chips-95810/
+- License: Pixabay Content License
+- Original file: downloaded MP3 from the Pixabay sound effect page
+
+Aivatar uses this as the Card Room settlement one-shot when chips are collected
+to the pot or paid out to winner stacks.
+
+## card-room-user-win.mp3
+
+- Source: Level Up Bonus Sequence 2
+- Author: floraphonic
+- URL: https://pixabay.com/sound-effects/film-special-effects-level-up-bonus-sequence-2-186891/
+- License: Pixabay Content License
+- Original file: `floraphonic-level-up-bonus-sequence-2-186891.mp3`
+
+Aivatar uses this as a short Card Room one-shot when the user wins a hand and
+the user victory overlay starts.
+
+## card-room-character-win-1.mp3, card-room-character-win-2.mp3, and card-room-character-win-3.mp3
+
+Aivatar randomly chooses from these shorter Card Room one-shots when one or
+more non-user characters win a hand. They intentionally play softer than the
+user victory sound.
+
+### card-room-character-win-1.mp3
+
+- Source: Game Bonus 02
+- Author: Universfield
+- URL: https://pixabay.com/sound-effects/film-special-effects-game-bonus-02-294436/
+- License: Pixabay Content License
+- Original file: `universfield-game-bonus-02-294436.mp3`
+
+### card-room-character-win-2.mp3
+
+- Source: Video Game - Bonus
+- Author: Universfield
+- URL: https://pixabay.com/sound-effects/film-special-effects-video-game-bonus-323603/
+- License: Pixabay Content License
+- Original file: `universfield-video-game-bonus-323603.mp3`
+
+### card-room-character-win-3.mp3
+
+- Source: Cute Level Up 3
+- Author: floraphonic
+- URL: https://pixabay.com/sound-effects/cute-level-up-3-189853/
+- License: Pixabay Content License
+- Original file: `floraphonic-cute-level-up-3-189853.mp3`
+
 ## cola-can-open.mp3
 
 - Source: Can Opening fizzy drink soda pop high quality
