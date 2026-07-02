@@ -1214,6 +1214,47 @@ fn claude_idle_bubbles(input: &Value) -> Option<Value> {
     }
 }
 
+fn display_text_value(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(text.to_string());
+    }
+    if let Some(items) = value.as_array() {
+        let text = items
+            .iter()
+            .filter_map(display_text_value)
+            .collect::<Vec<_>>()
+            .join(" ");
+        return (!text.trim().is_empty()).then_some(text);
+    }
+    if value.is_object() {
+        for key in ["text", "delta", "message", "summary", "content"] {
+            if let Some(text) = value.get(key).and_then(display_text_value) {
+                return Some(text);
+            }
+        }
+    }
+    None
+}
+
+fn claude_message_display_text(input: &Value) -> Option<String> {
+    for key in [
+        "delta",
+        "message",
+        "text",
+        "content",
+        "last_assistant_message",
+        "assistant_message",
+    ] {
+        if let Some(text) = input.get(key).and_then(display_text_value) {
+            let compact = compact_hook_text(&text, 180);
+            if !compact.is_empty() {
+                return Some(compact);
+            }
+        }
+    }
+    None
+}
+
 fn native_learning_for_status(status: &Value, input: &Value) -> Option<Value> {
     let status_name = status.get("status").and_then(Value::as_str)?;
     if status_name != "complete" && status_name != "error" {
@@ -1278,7 +1319,9 @@ fn normalize_claude_hook_status(input: Value, status_line: bool) -> Result<Value
     let message = match event.as_str() {
         "UserPromptSubmit" => format!("{label} is thinking"),
         "UserPromptExpansion" => format!("{label} is expanding the prompt"),
-        "MessageDisplay" => format!("{label} is responding"),
+        "MessageDisplay" => {
+            claude_message_display_text(&input).unwrap_or_else(|| format!("{label} is responding"))
+        }
         "PreToolUse" => tool
             .map(|tool| format!("{label} is using {tool}"))
             .unwrap_or_else(|| format!("{label} is using a tool")),

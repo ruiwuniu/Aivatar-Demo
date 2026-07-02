@@ -37,6 +37,10 @@ await opencodePlugin.event({
     title: "Building feature",
   },
 });
+await opencodePlugin["experimental.text.complete"](
+  { sessionID: "ses_aivatar" },
+  { text: "I found the live shape." },
+);
 await opencodePlugin.event({
   event: {
     type: "permission.asked",
@@ -55,19 +59,21 @@ await opencodePlugin.event({
 const statusPosts = posted.filter((entry) =>
   entry.url.endsWith("/agent-status"),
 );
-assert.equal(statusPosts.length, 4);
+assert.equal(statusPosts.length, 5);
 assert.deepEqual(
-  statusPosts.slice(0, 3).map((entry) => entry.body.status),
-  ["executing", "waiting_for_user", "complete"],
+  statusPosts.slice(0, 4).map((entry) => entry.body.status),
+  ["executing", "thinking", "waiting_for_user", "complete"],
 );
 assert.deepEqual(
-  statusPosts.slice(0, 3).map((entry) => entry.body.agent),
-  ["opencode", "opencode", "opencode"],
+  statusPosts.slice(0, 4).map((entry) => entry.body.agent),
+  ["opencode", "opencode", "opencode", "opencode"],
 );
-assert.equal(statusPosts[1].body.severity, "warning");
-assert.equal(statusPosts[3].body.phase, "session-learning");
-assert.equal(statusPosts[3].body.learning.source, "heuristic");
-assert.ok(statusPosts[3].body.learning.idleBubbleCandidates.length > 0);
+assert.equal(statusPosts[1].body.phase, "message-display");
+assert.match(statusPosts[1].body.summary, /I found the live shape/);
+assert.equal(statusPosts[2].body.severity, "warning");
+assert.equal(statusPosts[4].body.phase, "session-learning");
+assert.equal(statusPosts[4].body.learning.source, "heuristic");
+assert.ok(statusPosts[4].body.learning.idleBubbleCandidates.length > 0);
 assert.ok(posted.some((entry) => entry.url.endsWith("/agent-presence")));
 assert.ok(posted.some((entry) => entry.url.endsWith("/agent-active")));
 assert.equal(logs[0]?.body?.message, "Aivatar opencode plugin initialized");
@@ -408,8 +414,9 @@ try {
     (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
   );
   assert.ok(claudeSession);
-  assert.equal(claudeSession.status, "executing");
+  assert.equal(claudeSession.status, "thinking");
   assert.equal(claudeSession.phase, "message-display");
+  assert.match(claudeSession.summary, /Desktop Agents card/);
   await postHook({
     hook_event_name: "PostToolUse",
     session_id: "claude_native_smoke",
@@ -537,6 +544,7 @@ try {
   );
   assert.ok(desktopHookSession);
   assert.equal(desktopHookSession.status, "thinking");
+  assert.match(desktopHookSession.summary, /command fail/);
   runNodeHook({
     hook_event_name: "Stop",
     session_id: desktopHookSessionId,

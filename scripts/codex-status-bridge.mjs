@@ -1217,6 +1217,40 @@ const sanitizedDigestText = (value, limit = 520) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const hookDisplayTextFromValue = (value) => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) =>
+        hookDisplayTextFromValue(
+          entry?.text ?? entry?.content ?? entry?.message ?? entry,
+        ),
+      )
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (!value || typeof value !== "object") return "";
+  for (const key of ["text", "delta", "message", "summary", "content"]) {
+    const text = hookDisplayTextFromValue(value[key]);
+    if (text.trim()) return text;
+  }
+  return "";
+};
+
+const claudeMessageDisplayText = (input) => {
+  const text = [
+    input?.delta,
+    input?.message,
+    input?.text,
+    input?.content,
+    input?.last_assistant_message,
+    input?.assistant_message,
+  ]
+    .map(hookDisplayTextFromValue)
+    .find((value) => typeof value === "string" && value.trim());
+  return text ? compactHookText(text, 180) : undefined;
+};
+
 const safeSessionName = (value) =>
   String(value || "session").replace(/[^a-zA-Z0-9_.-]/g, "_") || "session";
 
@@ -1696,7 +1730,7 @@ const normalizeClaudeHookStatus = (input, statusLine) => {
       : event === "UserPromptExpansion"
         ? `${label} is expanding the prompt`
       : event === "MessageDisplay"
-        ? `${label} is responding`
+        ? claudeMessageDisplayText(input) ?? `${label} is responding`
       : event === "PreToolUse"
         ? tool
           ? `${label} is using ${tool}`

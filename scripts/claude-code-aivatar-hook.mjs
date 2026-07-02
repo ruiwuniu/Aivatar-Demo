@@ -316,6 +316,33 @@ const notificationNeedsUser = (input) => {
   );
 };
 
+const displayTextFromValue = (value) => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) =>
+        displayTextFromValue(
+          entry?.text ?? entry?.content ?? entry?.message ?? entry,
+        ),
+      )
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (!value || typeof value !== "object") return "";
+  for (const key of ["text", "delta", "message", "summary", "content"]) {
+    const text = displayTextFromValue(value[key]);
+    if (text.trim()) return text;
+  }
+  return "";
+};
+
+const displayTextFromInput = (...values) => {
+  const text = values
+    .map(displayTextFromValue)
+    .find((value) => typeof value === "string" && value.trim());
+  return text ? compactLearningText(text, 180) : undefined;
+};
+
 const statusForEvent = (input) => {
   const event = hookEventName(input);
   const lowerEvent = event.toLowerCase();
@@ -384,9 +411,17 @@ const statusForEvent = (input) => {
       };
     case "MessageDisplay":
       return {
-        status: "executing",
+        status: "thinking",
         phase: "message-display",
-        message: `${label} is responding`,
+        message:
+          displayTextFromInput(
+            input?.delta,
+            input?.message,
+            input?.text,
+            input?.content,
+            input?.last_assistant_message,
+            input?.assistant_message,
+          ) ?? `${label} is responding`,
       };
     case "PostToolBatch":
       return {

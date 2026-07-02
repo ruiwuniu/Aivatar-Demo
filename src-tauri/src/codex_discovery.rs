@@ -1348,6 +1348,23 @@ fn status_from_record(
                 event_timestamp(record),
             ))
         }
+        (Some("event_msg"), Some("agent_message"), "commentary") => {
+            session.terminal_turn_ended = false;
+            let text =
+                text_from_payload(payload).unwrap_or_else(|| "Codex is thinking aloud".to_string());
+            remember_digest(session, "assistant", &text);
+            Some(build_status(
+                session_id,
+                "thinking",
+                "commentary",
+                text,
+                70,
+                &session.cwd,
+                None,
+                None,
+                event_timestamp(record),
+            ))
+        }
         (Some("event_msg"), Some("agent_message"), "final" | "final_answer") => {
             let final_text =
                 text_from_payload(payload).unwrap_or_else(|| "Task finished".to_string());
