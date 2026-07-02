@@ -195,7 +195,7 @@ The Agent Sessions panel displays these two commands as the recommended manual c
 
 The local session plugin can also read Codex Desktop token usage from the current session's local rollout JSONL. For Codex Desktop sessions, `thinking` creates or resets a token baseline, `executing` and `waiting_for_user` preserve or create the baseline, `complete` and `error` send token delta usage and clear the baseline, and `idle` or `--clear-active` clears the baseline without reward usage. Baselines expire after `AIVATAR_USAGE_BASELINE_TTL_MS`, defaulting to six hours.
 
-The plugin now separates presence from turn state. The heartbeat keeps sessions connected through presence without repeatedly stealing active/follow state, while the rollout watcher tails the current Codex Desktop JSONL from the connect-time end of file and streams ordinary turn activity into Aivatar. Multiple Codex worktree/Desktop sessions can remain connected at the same time; the single followed/active session is changed by an explicit connect/Follow action rather than by every heartbeat tick.
+The plugin now separates presence from turn state. The heartbeat keeps sessions connected through presence without repeatedly stealing active/follow state, while the rollout watcher tails the current Codex Desktop JSONL from the connect-time end of file and streams ordinary turn activity into Aivatar. Codex `agent_message` records with `phase: "commentary"` are streamed as live `thinking` / `commentary` updates so the avatar thinking bubble can show Codex Desktop or CLI commentary before the final answer. Multiple Codex worktree/Desktop sessions can remain connected at the same time; the single followed/active session is changed by an explicit connect/Follow action rather than by every heartbeat tick.
 
 Connect a CLI-launched session through the repo-local Aivatar CLI connector:
 
@@ -326,10 +326,14 @@ Code's exec-form command configuration (`command: node.exe`, `args:
 uses a generated PowerShell wrapper under the same temp settings directory,
 which forwards stdin JSON to the Node hook in `--status-line` mode and avoids
 Git Bash hangs. The hook script maps Claude Code events such as
-`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop`,
-`StopFailure`, and `SessionEnd` into Aivatar statuses, while statusLine updates
-context-window usage and can fall back to a terminal `complete` event when output
-tokens appear but a `Stop` hook was not observed. Launcher-started Claude Code
+`UserPromptSubmit`, `MessageDisplay`, `PreToolUse`, `PostToolUse`,
+`PermissionRequest`, `Stop`, `StopFailure`, and `SessionEnd` into Aivatar
+statuses, while statusLine updates context-window usage and can fall back to a
+terminal `complete` event when output tokens appear but a `Stop` hook was not
+observed. For `MessageDisplay`, the hook prefers visible assistant
+`delta`/`message`/`text`/`content` fields, compacting and sanitizing them into
+`thinking` / `message-display` summaries for the avatar bubble instead of only
+showing a generic responding label. Launcher-started Claude Code
 sessions connect with an initial `idle` status; real prompt/tool events drive
 later `thinking`, `executing`, `waiting_for_user`, `complete`, or `error` states.
 For launcher/Task Cabinet sessions, the hook prefers the injected
@@ -344,7 +348,11 @@ For opencode, the connected wrapper starts with an `idle` placeholder and does
 not attach the Codex rollout watcher. Real desktop/TUI turn state is expected
 from `scripts/aivatar-opencode-plugin.mjs`, which maps opencode plugin events
 such as `session.status`, `permission.asked`, and `session.idle` into the same
-Aivatar statuses used by Codex and Claude Code.
+Aivatar statuses used by Codex and Claude Code. The plugin also forwards
+`experimental.text.complete` assistant text as live `thinking` /
+`message-display` updates, so opencode Desktop/TUI and CLI sessions can surface
+streamed assistant copy in the avatar bubble while still keeping only bounded
+sanitized digest text for learning.
 
 Connected launcher sessions now also enable Aivatar session learning by default:
 `scripts/aivatar-connected-run.mjs` injects `AIVATAR_LEARNING_ENABLED=1` unless
@@ -384,9 +392,13 @@ to generic `claude-code` statuses and context-window usage without requiring the
 Node hook script. StatusLine updates are treated as context-only usage/presence
 updates when a Claude session row already exists, so they do not downgrade an
 in-progress or terminal turn state to `idle`. The JS `status:bridge` mirrors
-these endpoints for web-only development. Native Claude desktop hooks keep a
-bounded sanitized digest from `UserPromptSubmit.prompt`, `MessageDisplay.delta`,
-and low-detail tool/event summaries. On `Stop`, `TaskCompleted`, or
+these endpoints for web-only development. Both the native bridge and JS bridge
+extract Claude `MessageDisplay` assistant text from `delta`, `message`, `text`,
+`content`, and related fields, compacting it into live `thinking` /
+`message-display` summaries for the avatar bubble. Native Claude desktop hooks
+keep a bounded sanitized digest from `UserPromptSubmit.prompt`,
+`MessageDisplay.delta`, and low-detail tool/event summaries. On `Stop`,
+`TaskCompleted`, or
 `StopFailure`, the native bridge starts `scripts/aivatar-learning-worker.mjs`
 with provider `claude-code` when the bundled worker path is available, and falls
 back to a heuristic `phase: "session-learning"` payload if the worker cannot be
@@ -731,7 +743,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Draws Codex-session notification bubbles over the Terminal and rounded thinking bubbles over the avatar. Session bubbles wrap by measured pixel width, can use two lines where needed, and use a small pixel-font renderer for ASCII text so English status/tool text stays sharp inside the scaled canvas. Bubble width measurement and pixel-text drawing now use the same width model to reduce text overflow.
   - Canvas avatar/interaction bubbles, rounded thinking bubbles, and built-in Terminal/Codex status bubbles accept the current UI theme from `App.tsx`. Classic now uses a Windows 98-like tooltip/status palette with pale yellow bubbles, black borders, navy text/progress, and a gray raised status-light panel; Terminal uses black-green bubble fills, neon green borders, green text, and green progress bars; Arcade Cabinet uses a black/cyan/magenta/amber arcade palette; Starship uses black/apricot/lavender/pale-cyan console colors so bubbles match the shell instead of looking like the generic Terminal skin.
   - CJK fallback text in avatar and Terminal bubbles uses a clearer Chinese-oriented canvas font stack (`Noto Sans TC`, `Noto Sans SC`, `Noto Sans HK`, then Microsoft JhengHei/YaHei fallbacks), while ASCII text still uses the custom pixel font.
-  - Terminal bubbles show notifications for agents marked `terminalBubble: true` in `src/agentRegistry.ts` (`codex`, `claude-code`, and `opencode`); `thinking` is shown over the avatar instead of over the Terminal.
+  - Terminal bubbles show notifications for agents marked `terminalBubble: true` in `src/agentRegistry.ts` (`codex`, `claude-code`, and `opencode`); `thinking` is shown over the avatar instead of over the Terminal. Codex `commentary` and Claude/opencode `message-display` live text intentionally use `thinking` so the avatar bubble, not the Terminal bubble, can show the current assistant wording.
   - Renders the placed Terminal monitor with a keyboard; during coding/thinking proximity, the screen, cursor, scanline, status lights, and keyboard animate on top of the static matrix using the skin-matched `terminalMonitorAnimationPalette`.
   - Renders dedicated consumable poses for Coffee, Cola, Bento, and Cookie through shared pose helpers. Appearance renderers can reuse those helpers or adapt them with their own body shape, as `mood-slime` does by growing temporary soft pseudopods rather than permanent hands/feet.
   - Coffee uses a cup/steam sip pose, Cola uses a red can with straw and fizz pixels, Bento uses a lunch box with food pixels, and Cookie uses a bitten cookie with chocolate-chip pixels, holding appendages, crumbs, and a small chewing motion.
@@ -917,6 +929,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - `aivatar-connect` now stops only the same session's previous heartbeat/watcher rather than stopping all Aivatar session background processes.
   - `aivatar-heartbeat` defaults to presence-only updates; it does not repeatedly post active/follow state unless explicitly launched with `--active`.
   - `aivatar-watch` falls back to context-window usage for `complete`/`error` events when token-delta usage is unavailable, so worktree sessions can continue showing context after final answers. It also reads Codex JSONL `rate_limits.primary/secondary` windows (`300` and `10080` minutes) into Aivatar token-limit usage percentages for the collapsed HUD.
+  - `aivatar-watch` streams Codex rollout `agent_message` records with `phase: "commentary"` as live `thinking` / `commentary` statuses, preserving the token baseline and keeping the turn in progress so Codex Desktop and CLI commentary can appear in the avatar bubble before `final` / `final_answer`.
   - `aivatar-watch` now keeps a bounded sanitized Codex conversation digest from rollout `user_message` and final/final_answer `agent_message` events, writes `%TEMP%\aivatar-learning-context\codex-*.txt`, and spawns the repo `scripts/aivatar-learning-worker.mjs` on terminal completion when learning is enabled. It passes the avatar state snapshot path so Codex-derived learning bubbles can use current trait-aware tone.
 
 - `src-tauri/src/lib.rs`
@@ -977,10 +990,11 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - opencode Desktop/TUI plugin adapter plus dry-run/apply installer helper.
   - The dry-run installer prints the user plugin target under `%USERPROFILE%\.config\opencode\plugins`; passing `install --apply` copies the plugin there. Restart opencode after installing so it can load the plugin.
   - Maps low-detail opencode plugin events into generic Aivatar statuses without reading or uploading full transcript content: `session.status` / `message.updated` become work states, `permission.asked` becomes `waiting_for_user`, `session.idle` becomes `complete`, and `session.deleted` disconnects the session.
+  - Posts opencode `experimental.text.complete` assistant text as live `thinking` / `message-display` status so current assistant wording can appear in the avatar bubble during Desktop/TUI and CLI sessions.
   - Collects a bounded sanitized digest from opencode `chat.message`, `experimental.text.complete`, and event summaries. On `complete`/`error`, it spawns `scripts/aivatar-learning-worker.mjs` with provider `opencode` when an app-installed plugin has embedded worker/node paths; otherwise it posts a heuristic `phase: "session-learning"` payload so Growth bubble recommendations still update.
 
 - `scripts/aivatar-desktop-agent-adapters-smoke.mjs`
-  - Local smoke test for the desktop-agent adapter layer. It mocks `fetch`, exercises the opencode plugin event mapping, verifies Claude Desktop settings generation/merge behavior, and starts a temporary JS bridge to verify Claude native hook `UserPromptSubmit` / `MessageDisplay` / `Stop` events produce a `phase: "session-learning"` fallback payload when the worker path is unavailable. It also verifies Claude statusLine context updates do not downgrade an active `thinking` turn to `idle`, repeated `Stop` events preserve the existing learning id rather than creating duplicate learning, and Claude Desktop `local_*`/CLI UUID rows with the same `desktopSessionId` merge into one terminal session.
+  - Local smoke test for the desktop-agent adapter layer. It mocks `fetch`, exercises the opencode plugin event mapping including `experimental.text.complete` live `thinking` / `message-display` posts, verifies Claude Desktop settings generation/merge behavior, and starts a temporary JS bridge to verify Claude native hook `UserPromptSubmit` / `MessageDisplay` / `Stop` events produce a `phase: "session-learning"` fallback payload when the worker path is unavailable. It also verifies Claude `MessageDisplay` summaries carry the visible assistant text, Claude statusLine context updates do not downgrade an active `thinking` turn to `idle`, repeated `Stop` events preserve the existing learning id rather than creating duplicate learning, and Claude Desktop `local_*`/CLI UUID rows with the same `desktopSessionId` merge into one terminal session.
 
 - `scripts/aivatar-learning-worker.mjs`
   - Session-learning worker that can be run manually or spawned by Claude Code hooks and Codex rollout watchers. It accepts provider, agent, session, status, summary, optional `--context-file`, and optional `--avatar-state-file`, creates a sanitized digest prompt, calls a provider, normalizes the result, and posts a `phase: "session-learning"` status containing `learning`.
@@ -1007,7 +1021,8 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 - `scripts/claude-code-aivatar-hook.mjs`
   - Claude Code hook/statusLine bridge used by `claude:connected` and launcher-started Claude Code sessions.
   - Reads Claude Code hook JSON from stdin and posts generic `claude-code` status updates to the Aivatar bridge.
-  - Maps Claude lifecycle/setup events such as `SessionStart`, `Setup`, `InstructionsLoaded`, `ConfigChange`, and `CwdChanged` to `idle` without stealing current work. `UserPromptSubmit`, `UserPromptExpansion`, compacting, and elicitation result events map to `thinking`; `MessageDisplay` maps to `executing` so streaming responses are visible on the Terminal; `PreToolUse`, `SubagentStart`, and task creation map to `executing`; `PostToolUse`, `PostToolBatch`, `SubagentStop`, and `TaskCompleted` map back to `thinking` because they are intermediate result-review signals rather than full turn completion. Permission and elicitation prompts map to `waiting_for_user`; `Stop` and `TeammateIdle` are terminal `complete`; `StopFailure`, denied permissions, and failed tools are `error`; `SessionEnd` stays `idle` unless a prior `complete`/`error` should be preserved.
+  - Maps Claude lifecycle/setup events such as `SessionStart`, `Setup`, `InstructionsLoaded`, `ConfigChange`, and `CwdChanged` to `idle` without stealing current work. `UserPromptSubmit`, `UserPromptExpansion`, compacting, elicitation result events, and `MessageDisplay` map to `thinking`; `PreToolUse`, `SubagentStart`, and task creation map to `executing`; `PostToolUse`, `PostToolBatch`, `PostToolUseFailure`, `SubagentStop`, and `TaskCompleted` map back to `thinking` because they are intermediate result-review signals rather than full turn completion. Permission and elicitation prompts map to `waiting_for_user`; `Stop` and `TeammateIdle` are terminal `complete`; `StopFailure` and denied permissions are `error`; `SessionEnd` stays `idle` unless a prior `complete`/`error` should be preserved.
+  - For `MessageDisplay` / response display events, prefers visible assistant `delta`, `message`, `text`, `content`, `last_assistant_message`, or `assistant_message` values, compacting and sanitizing them into the posted `thinking` / `message-display` summary for the avatar bubble. Recoverable tool failures use `thinking` / `tool-result-failed` summaries so a failed Bash/tool command does not force the whole Claude turn into terminal `error` while Claude can still continue.
   - Prefers `AIVATAR_SESSION_ID` over Claude's native `input.session_id`, which keeps Task Cabinet and launcher status mapped to the session id Aivatar created. After a session reaches `complete` or `error`, late non-terminal hook/statusLine events preserve the terminal status until a new `UserPromptSubmit` begins another turn.
   - Reads statusLine `context_window` payloads to populate `usage.contextTokens`, `usage.modelContextWindow`, token totals, and reward/context scope. When statusLine sees output tokens after an active turn but no terminal hook has been observed, it emits a fallback `complete` status so the avatar does not stay stuck in `thinking`.
   - When `AIVATAR_LEARNING_ENABLED=1`, terminal `complete`/`error` statuses spawn `scripts/aivatar-learning-worker.mjs` in the background after the ordinary bridge status/presence/active updates. The hook writes sanitized digest files under `%TEMP%\aivatar-learning-context\` from the current hook payload plus recent Claude transcript `user`/`assistant` snippets, and records `lastLearningKey` in session state so repeated terminal/statusLine observations of the same turn do not repeatedly trigger learning. Preserved terminal statuses from late `Notification`, statusLine, or `SessionEnd` updates do not retrigger learning; a new `UserPromptSubmit` clears the prior learning key for the next turn.
@@ -1046,6 +1061,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Token usage integration reads the current Codex Desktop rollout JSONL through the local `CODEX_THREAD_ID`/session id path. `thinking` resets the reward baseline, `executing` and `waiting_for_user` preserve it, `complete` and `error` calculate usage delta and clear it, and `idle` or `--clear-active` clear it without usage reward.
   - Context window integration reads `model_context_window` and `last_token_usage.total_tokens` from Codex Desktop `token_count` events, sends `usage.contextTokens` and `usage.modelContextWindow`, and can send context-only usage with `scope: "context-window"` even when reward delta is zero.
   - `aivatar-watch.mjs` handles Codex Desktop `custom_tool_call` and `custom_tool_call_output` events as well as the older `function_call` and `function_call_output` shapes. Tool use sends `executing`; tool output sends `thinking` with `phase: "tool-result"` and message `Reading tool results`, so the avatar does not remain stuck in `executing` after a completed tool call.
+  - `aivatar-watch.mjs` maps Codex `agent_message` records with `phase: "commentary"` to live `thinking` / `commentary` status, preserves the token baseline, and does not trigger completion. This is the path that lets the avatar bubble show Codex Desktop and CLI commentary while a turn is still running.
   - `aivatar-status-hook.mjs` is now treated as a PostToolUse fallback and sends `thinking`/`tool-result` activity rather than forcing `executing` after the tool already completed.
   - `aivatar-watch.mjs` also generates local-rule idle bubble phrase candidates from current-session user messages and final agent messages. Rather than mainly slicing transcript text, it detects session themes and emits session-inspired pet thoughts from a bilingual template library, while still allowing a small number of natural conversational snippets. It filters URLs, commands, paths, code/log-like text, keeps short 2-28 character phrases, and sends up to 12 recent candidates through `idleBubbleCandidates` without storing full conversation text.
   - `aivatar-watch.mjs` keeps a bounded sanitized Codex conversation digest from rollout `user_message` and final/final_answer `agent_message` events, writes `%TEMP%\aivatar-learning-context\codex-*.txt`, and spawns the repo `scripts/aivatar-learning-worker.mjs` on terminal completion when `AIVATAR_LEARNING_ENABLED=1`. It passes the avatar state snapshot file so Codex-derived learning bubbles can use current trait-aware tone.
@@ -1067,8 +1083,8 @@ Watcher event mapping:
 - `event_msg` with `payload.type === "user_message"` -> `thinking`, reset token baseline.
 - `response_item` with `payload.type === "function_call"` or `"custom_tool_call"` -> `executing`, preserve or create token baseline.
 - `response_item` with `payload.type === "function_call_output"` or `"custom_tool_call_output"` -> `thinking` with `phase: "tool-result"`, preserve token baseline, and keep context usage visible when available.
+- `event_msg` with `payload.type === "agent_message"` and `phase === "commentary"` -> `thinking` with `phase: "commentary"`, preserve the token baseline, and keep the turn in progress so the avatar bubble can show live Codex commentary.
 - `event_msg` with `payload.type === "agent_message"` and `phase === "final"` or `phase === "final_answer"` -> `complete`, send token delta usage and clear baseline.
-- `event_msg` with `payload.type === "agent_message"` and `phase === "commentary"` does not trigger `complete`, because commentary updates happen while a turn is still in progress.
 - `event_msg` with `payload.type === "token_count"` can update the latest live state with context window usage derived from `last_token_usage.total_tokens / model_context_window`; after `complete`, `error`, or `idle`, the watcher clears the live-state cache so token-count events do not overwrite terminal states.
 
 The PostToolUse hook remains as a fallback activity signal, but the watcher is now the preferred real-time path for ordinary Codex Desktop chat turns.
