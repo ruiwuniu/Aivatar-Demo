@@ -1488,14 +1488,15 @@ const claudeStatusForEvent = (event, statusLine, hasUsage) => {
     case "TaskCompleted":
       return ["thinking", "tool-result"];
     case "MessageDisplay":
-      return ["executing", "message-display"];
+      return ["thinking", "message-display"];
     case "PermissionRequest":
     case "Elicitation":
       return ["waiting_for_user", "permission"];
     case "PermissionDenied":
     case "StopFailure":
-    case "PostToolUseFailure":
       return ["error", "error"];
+    case "PostToolUseFailure":
+      return ["thinking", "tool-result-failed"];
     case "Stop":
     case "TeammateIdle":
       return ["complete", "turn-complete"];
@@ -1716,7 +1717,11 @@ const normalizeClaudeHookStatus = (input, statusLine) => {
         ? `${label} needs input`
       : event === "Stop" || event === "TeammateIdle"
         ? `${label} turn complete`
-      : event === "StopFailure" || event === "PostToolUseFailure"
+      : event === "PostToolUseFailure"
+        ? tool
+          ? `${label} is reading ${tool} failure`
+          : `${label} is reading failed tool results`
+      : event === "StopFailure"
         ? `${label} turn failed`
       : event === "SessionEnd"
         ? `${label} session ended`

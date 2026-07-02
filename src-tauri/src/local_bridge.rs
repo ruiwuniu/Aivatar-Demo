@@ -1154,9 +1154,10 @@ fn claude_status_for_event(
         "PostToolUse" | "PostToolBatch" | "SubagentStop" | "TaskCompleted" => {
             ("thinking", "tool-result")
         }
-        "MessageDisplay" => ("executing", "message-display"),
+        "MessageDisplay" => ("thinking", "message-display"),
         "PermissionRequest" | "Elicitation" => ("waiting_for_user", "permission"),
-        "PermissionDenied" | "StopFailure" | "PostToolUseFailure" => ("error", "error"),
+        "PermissionDenied" | "StopFailure" => ("error", "error"),
+        "PostToolUseFailure" => ("thinking", "tool-result-failed"),
         "Stop" | "TeammateIdle" => ("complete", "turn-complete"),
         "SessionEnd" => ("idle", "session-end"),
         "Notification" => ("thinking", "notification"),
@@ -1289,7 +1290,12 @@ fn normalize_claude_hook_status(input: Value, status_line: bool) -> Result<Value
         "PermissionRequest" => format!("{label} needs approval"),
         "Elicitation" => format!("{label} needs input"),
         "Stop" | "TeammateIdle" => format!("{label} turn complete"),
-        "StopFailure" | "PostToolUseFailure" => format!("{label} turn failed"),
+        "PostToolUseFailure" => input
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .map(|tool| format!("{label} is reading {tool} failure"))
+            .unwrap_or_else(|| format!("{label} is reading failed tool results")),
+        "StopFailure" => format!("{label} turn failed"),
         "SessionEnd" => format!("{label} session ended"),
         _ => format!("{label} {event}"),
     };

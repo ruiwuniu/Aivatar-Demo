@@ -376,6 +376,28 @@ try {
   assert.equal(claudeSession.usage.contextTokens, 1300);
 
   await postHook({
+    hook_event_name: "PreToolUse",
+    session_id: "claude_native_smoke",
+    turn_id: "turn-smoke-1",
+    tool_name: "Bash",
+    tool_input: { description: "Read a missing file" },
+  });
+  await postHook({
+    hook_event_name: "PostToolUseFailure",
+    session_id: "claude_native_smoke",
+    turn_id: "turn-smoke-1",
+    tool_name: "Bash",
+    error: "exit code 1",
+  });
+  snapshot = await readSnapshot();
+  claudeSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
+  );
+  assert.ok(claudeSession);
+  assert.equal(claudeSession.status, "thinking");
+  assert.equal(claudeSession.phase, "tool-result-failed");
+
+  await postHook({
     hook_event_name: "MessageDisplay",
     session_id: "claude_native_smoke",
     turn_id: "turn-smoke-1",
@@ -488,6 +510,34 @@ try {
     prompt: "Track this desktop Chat session.",
   });
   runNodeHook({
+    hook_event_name: "PreToolUse",
+    session_id: desktopHookSessionId,
+    mode: "chat",
+    tool_name: "Bash",
+    tool_input: { description: "Read a missing file" },
+  });
+  runNodeHook({
+    hook_event_name: "PostToolUseFailure",
+    session_id: desktopHookSessionId,
+    mode: "chat",
+    tool_name: "Bash",
+    error: "exit code 1",
+  });
+  runNodeHook({
+    hook_event_name: "MessageDisplay",
+    session_id: desktopHookSessionId,
+    mode: "chat",
+    delta: "I saw the command fail and will recover.",
+  });
+  snapshot = await readSnapshot();
+  let desktopHookSession = snapshot.sessions.find(
+    (session) =>
+      session.agent === "claude-code" &&
+      session.sessionId === desktopHookSessionId,
+  );
+  assert.ok(desktopHookSession);
+  assert.equal(desktopHookSession.status, "thinking");
+  runNodeHook({
     hook_event_name: "Stop",
     session_id: desktopHookSessionId,
     mode: "chat",
@@ -500,7 +550,7 @@ try {
     reason: "closed",
   });
   snapshot = await readSnapshot();
-  const desktopHookSession = snapshot.sessions.find(
+  desktopHookSession = snapshot.sessions.find(
     (session) =>
       session.agent === "claude-code" &&
       session.sessionId === desktopHookSessionId,

@@ -455,9 +455,11 @@ const statusForEvent = (input) => {
     case "PostToolUseFailure": {
       const name = toolName(input);
       return {
-        status: "error",
-        phase: name ? `tool-failed:${name}` : "tool-failed",
-        message: name ? `${label} tool failed: ${name}` : `${label} tool failed`,
+        status: "thinking",
+        phase: name ? `tool-result-failed:${name}` : "tool-result-failed",
+        message: name
+          ? `${label} is reading ${name} failure`
+          : `${label} is reading failed tool results`,
       };
     }
     case "Notification": {
@@ -528,6 +530,13 @@ const statusForEvent = (input) => {
 const preserveTerminalStatusAfterTurnEnd = (input, status, previousState) => {
   const event = hookEventName(input);
   if (previousState.status !== "complete" && previousState.status !== "error") return status;
+  if (
+    previousState.status === "error" &&
+    typeof previousState.phase === "string" &&
+    previousState.phase.startsWith("tool-failed")
+  ) {
+    return status;
+  }
   if (event === "UserPromptSubmit") return status;
   if (status.status === "complete" || status.status === "error") return status;
   return {
