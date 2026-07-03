@@ -2019,6 +2019,7 @@ const roomVisitHostSocialTarget = (
   visitor: AivatarRoomVisitor,
   content: AivatarContent,
   hostRuntime: AvatarRuntime,
+  activeRecordPlayerId?: string | null,
 ): RoomVisitHostSocialTarget | null => {
   const behavior = roomVisitBehaviorForVisitor(visitor);
   if (!ROOM_VISIT_SOCIAL_BEHAVIORS.has(behavior)) return null;
@@ -2115,8 +2116,9 @@ const roomVisitHostSocialTarget = (
         x: fallbackTarget.targetX,
         y: fallbackTarget.targetY,
       });
+      const hostBehavior = activeRecordPlayerId === recordPlayer.id ? "interact" : behavior;
       return {
-        behavior,
+        behavior: hostBehavior,
         targetX: point.x,
         targetY: point.y,
         alternates: standpoints,
@@ -4372,6 +4374,7 @@ export const App = () => {
       visitor,
       currentContent,
       runtimeRef.current,
+      activeRecordPlayerIdRef.current,
     );
     const canSync =
       visitor.phase === "socializing" &&
