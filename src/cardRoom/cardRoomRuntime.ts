@@ -38,7 +38,9 @@ const COLLISION_EDGE_EPSILON = 0.5;
 const AVATAR_FOOTPRINT_HALF_WIDTH = 6;
 const AVATAR_FOOTPRINT_TOP_OFFSET = 6;
 const AVATAR_FOOTPRINT_HEIGHT = 8;
-const MIN_VISIBLE_MOVE_DISTANCE = 1.25;
+const MIN_VISIBLE_MOVE_DISTANCE = 0.2;
+const SEAT_ARRIVAL_DISTANCE = 4;
+const TARGET_FACING_DISTANCE = 0.5;
 const CARD_ROOM_ENTRY_POINT: Point = { x: WALK_MIN_X - 34, y: WALK_MAX_Y - 18 };
 const CARD_ROOM_ENTRY_TARGET: Point = { x: WALK_MIN_X + 58, y: WALK_MAX_Y - 28 };
 const CARD_ROOM_BUBBLE_DURATION_MS = 2600;
@@ -828,7 +830,7 @@ const moveRuntimeTowardNavigating = (
     targetX: finalTarget.x,
     targetY: finalTarget.y,
     facing:
-      !waypoint && distance({ x: movedX, y: movedY }, finalTarget) <= 4 && target.facing
+      !waypoint && distance({ x: movedX, y: movedY }, finalTarget) <= TARGET_FACING_DISTANCE && target.facing
         ? target.facing
         : nextFacing,
   };
@@ -1048,7 +1050,7 @@ export const advanceCardRoomRuntime = (
     options.opponentCount ?? 0,
   );
   const targetPoint = { x: target.targetX, y: target.targetY };
-  const seated = distance(runtime, targetPoint) <= 4;
+  const seated = distance(runtime, targetPoint) <= SEAT_ARRIVAL_DISTANCE;
   const expression = expressionForPokerPlayer(options.player);
   const next = moveRuntimeTowardNavigating(
     {
@@ -1063,11 +1065,20 @@ export const advanceCardRoomRuntime = (
     82,
     navigationKey,
   );
-  const arrived = distance(next, { x: next.targetX, y: next.targetY }) <= 4;
+  const arrived = distance(next, { x: next.targetX, y: next.targetY }) <= SEAT_ARRIVAL_DISTANCE;
+  const settledRuntime = arrived
+    ? {
+        ...next,
+        x: target.targetX,
+        y: target.targetY,
+        targetX: target.targetX,
+        targetY: target.targetY,
+        facing: target.facing,
+      }
+    : next;
 
   return {
-    ...next,
-    facing: arrived ? target.facing : next.facing,
+    ...settledRuntime,
     expression,
     behavior: arrived ? "idle" : "wander",
     behaviorTimer: 1,

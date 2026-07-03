@@ -2624,8 +2624,16 @@ export const CardRoomApp = () => {
   const chipShopCharacters = hostDisplayCharacter
     ? [hostDisplayCharacter, ...availableCompanions]
     : availableCompanions;
+  const visibleDecorCategories = cardRoomShopCategories.filter((category) =>
+    cardRoomShopItems.some((item) => item.cardRoomCategory === category.id),
+  );
+  const resolvedActiveDecorCategory = visibleDecorCategories.some(
+    (category) => category.id === activeDecorCategory,
+  )
+    ? activeDecorCategory
+    : visibleDecorCategories[0]?.id ?? activeDecorCategory;
   const decorShopItems = cardRoomShopItems.filter(
-    (item) => item.cardRoomCategory === activeDecorCategory,
+    (item) => item.cardRoomCategory === resolvedActiveDecorCategory,
   );
   const canReleaseCompanions =
     !handInProgress && seatedCharacters.length >= 2 && !freeRoamEnabled;
@@ -3044,11 +3052,11 @@ export const CardRoomApp = () => {
               </button>
             </div>
             <div className="card-room-decor-tabs" aria-label={ui("cardRoom.decorShop")}>
-              {cardRoomShopCategories.map((category) => (
+              {visibleDecorCategories.map((category) => (
                 <button
                   key={category.id}
                   type="button"
-                  className={activeDecorCategory === category.id ? "active" : ""}
+                  className={resolvedActiveDecorCategory === category.id ? "active" : ""}
                   onClick={() => setActiveDecorCategory(category.id)}
                 >
                   {ui(category.copyKey)}

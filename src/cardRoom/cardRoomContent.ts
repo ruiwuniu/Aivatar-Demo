@@ -344,46 +344,6 @@ export const cardRoomShopItems: CardRoomShopItem[] = [
     targetWindowId: "card-room-private-window",
     description: "A smaller private lounge window with warm glass.",
   },
-  {
-    id: "cr-furniture-chip-cabinet",
-    name: "Chip Cabinet",
-    kind: "furniture",
-    tags: ["furniture"],
-    price: 18,
-    cardRoomCategory: "furniture",
-    targetFurnitureId: "card-room-chip-cabinet",
-    description: "A left-side cabinet for chip trays and spare decks.",
-  },
-  {
-    id: "cr-furniture-card-shelf",
-    name: "Card Shelf",
-    kind: "furniture",
-    tags: ["furniture", "hanging"],
-    price: 14,
-    cardRoomCategory: "furniture",
-    targetFurnitureId: "card-room-card-shelf",
-    description: "A wall shelf showing boxed decks and table trophies.",
-  },
-  {
-    id: "cr-furniture-floor-lamp",
-    name: "Amber Floor Lamp",
-    kind: "furniture",
-    tags: ["furniture", "lamp"],
-    price: 8,
-    cardRoomCategory: "furniture",
-    targetFurnitureId: "card-room-floor-lamp",
-    description: "A warm lamp for the right side of the poker room.",
-  },
-  {
-    id: "cr-furniture-sideboard",
-    name: "Dealer Sideboard",
-    kind: "furniture",
-    tags: ["furniture"],
-    price: 16,
-    cardRoomCategory: "furniture",
-    targetFurnitureId: "card-room-sideboard",
-    description: "A sideboard for dealer tools and sealed card boxes.",
-  },
 ];
 
 export const cardRoomShopCategories: Array<{
@@ -399,6 +359,13 @@ export const cardRoomShopCategories: Array<{
 export const cardRoomShopItemById = (itemId: string) =>
   cardRoomShopItems.find((item) => item.id === itemId);
 
+const activeCardRoomShopItemIds = new Set(cardRoomShopItems.map((item) => item.id));
+const activeCardRoomFurnitureShopItemIds = new Set(
+  cardRoomShopItems
+    .filter((item) => item.cardRoomCategory === "furniture")
+    .map((item) => item.id),
+);
+
 const normalizeStringArray = (value: unknown) =>
   Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
@@ -410,11 +377,15 @@ export const normalizeCardRoomDecorState = (
   const purchasedItemIds = Array.from(
     new Set([
       ...cardRoomDefaultDecorState.purchasedItemIds,
-      ...normalizeStringArray(value?.purchasedItemIds),
+      ...normalizeStringArray(value?.purchasedItemIds).filter((itemId) =>
+        activeCardRoomShopItemIds.has(itemId),
+      ),
     ]),
   );
   const furnitureItemIds = normalizeStringArray(value?.furnitureItemIds).filter(
-    (itemId) => Boolean(cardRoomFurnitureByShopItemId[itemId]),
+    (itemId) =>
+      activeCardRoomFurnitureShopItemIds.has(itemId) &&
+      Boolean(cardRoomFurnitureByShopItemId[itemId]),
   );
   const wallSurfaceId = cardRoomWallSurfaces.some(
     (surface) => surface.id === value?.wallSurfaceId,
