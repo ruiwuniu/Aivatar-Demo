@@ -56,6 +56,29 @@ session reaches `complete`.
 Aivatar uses this as a short Card Room one-shot each time a hand or community
 card is dealt.
 
+## card-room-fold.mp3
+
+- Source: Taking playing card
+- Author: OxidVideos
+- URL: https://pixabay.com/sound-effects/film-special-effects-taking-playing-card-522520/
+- License: Pixabay Content License
+- Original file: `oxidvideos-taking-playing-card-522520.mp3`
+
+Aivatar uses this as a short Card Room one-shot when a player folds or times
+out into a fold.
+
+## card-room-check.wav
+
+- Source: Knock knock
+- Author: DanaGarcia (Freesound)
+- URL: https://pixabay.com/sound-effects/household-knock-knock-36805/
+- License: Pixabay Content License
+- Original file: `freesound_community-knock-knock-36805.mp3`
+
+Aivatar uses this as the Card Room check one-shot when a player checks or
+times out into a check. This file is a 0.52-second two-knock crop from the
+source MP3 with a short fade-in and fade-out.
+
 ## card-room-chip-bet-1.mp3, card-room-chip-bet-2.mp3, and card-room-chip-bet-3.mp3
 
 - Source: Placing poker chips

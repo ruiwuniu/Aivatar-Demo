@@ -123,6 +123,12 @@ const CARD_ROOM_DEAL_CARD_AUDIO_SRC = "/audio/card-room-card-deal.mp3";
 const CARD_ROOM_DEAL_CARD_AUDIO_POOL_SIZE = 8;
 const CARD_ROOM_DEAL_CARD_AUDIO_VOLUME_MULTIPLIER = 0.55;
 const CARD_ROOM_DEAL_CARD_AUDIO_LATE_WINDOW_MS = 260;
+const CARD_ROOM_FOLD_AUDIO_SRC = "/audio/card-room-fold.mp3";
+const CARD_ROOM_FOLD_AUDIO_POOL_SIZE = 4;
+const CARD_ROOM_FOLD_AUDIO_VOLUME_MULTIPLIER = 0.5;
+const CARD_ROOM_CHECK_AUDIO_SRC = "/audio/card-room-check.wav";
+const CARD_ROOM_CHECK_AUDIO_POOL_SIZE = 4;
+const CARD_ROOM_CHECK_AUDIO_VOLUME_MULTIPLIER = 0.42;
 const CARD_ROOM_CHIP_BET_AUDIO_SRCS = [
   "/audio/card-room-chip-bet-1.mp3",
   "/audio/card-room-chip-bet-2.mp3",
@@ -1060,6 +1066,10 @@ export const CardRoomApp = () => {
   const cardRoomAudioUnlockedRef = useRef(false);
   const dealCardAudioPoolRef = useRef<HTMLAudioElement[]>([]);
   const dealCardAudioPoolIndexRef = useRef(0);
+  const foldAudioPoolRef = useRef<HTMLAudioElement[]>([]);
+  const foldAudioPoolIndexRef = useRef(0);
+  const checkAudioPoolRef = useRef<HTMLAudioElement[]>([]);
+  const checkAudioPoolIndexRef = useRef(0);
   const chipBetAudioPoolRef = useRef<HTMLAudioElement[]>([]);
   const chipBetAudioPoolIndexRef = useRef(0);
   const chipAllInAudioPoolRef = useRef<HTMLAudioElement[]>([]);
@@ -1072,6 +1082,10 @@ export const CardRoomApp = () => {
   const cardRoomAudioVolumeRef = useRef(readCardRoomAudioVolume());
   const dealCardAudioHandNumberRef = useRef<number | null>(null);
   const playedDealCardAudioKeysRef = useRef<Set<string>>(new Set());
+  const foldAudioHandNumberRef = useRef<number | null>(null);
+  const playedFoldAudioKeysRef = useRef<Set<string>>(new Set());
+  const checkAudioHandNumberRef = useRef<number | null>(null);
+  const playedCheckAudioKeysRef = useRef<Set<string>>(new Set());
   const chipAudioHandNumberRef = useRef<number | null>(null);
   const playedChipAudioKeysRef = useRef<Set<string>>(new Set());
   const playedUserWinAudioKeysRef = useRef<Set<string>>(new Set());
@@ -1095,6 +1109,16 @@ export const CardRoomApp = () => {
     applyCardRoomAudioPoolVolume(
       dealCardAudioPoolRef.current,
       CARD_ROOM_DEAL_CARD_AUDIO_VOLUME_MULTIPLIER,
+      volume,
+    );
+    applyCardRoomAudioPoolVolume(
+      foldAudioPoolRef.current,
+      CARD_ROOM_FOLD_AUDIO_VOLUME_MULTIPLIER,
+      volume,
+    );
+    applyCardRoomAudioPoolVolume(
+      checkAudioPoolRef.current,
+      CARD_ROOM_CHECK_AUDIO_VOLUME_MULTIPLIER,
       volume,
     );
     applyCardRoomAudioPoolVolume(
@@ -1169,6 +1193,22 @@ export const CardRoomApp = () => {
       dealCardAudioPoolRef.current,
       dealCardAudioPoolIndexRef,
       CARD_ROOM_DEAL_CARD_AUDIO_VOLUME_MULTIPLIER,
+    );
+  };
+
+  const playFoldAudio = () => {
+    playCardRoomAudioFromPool(
+      foldAudioPoolRef.current,
+      foldAudioPoolIndexRef,
+      CARD_ROOM_FOLD_AUDIO_VOLUME_MULTIPLIER,
+    );
+  };
+
+  const playCheckAudio = () => {
+    playCardRoomAudioFromPool(
+      checkAudioPoolRef.current,
+      checkAudioPoolIndexRef,
+      CARD_ROOM_CHECK_AUDIO_VOLUME_MULTIPLIER,
     );
   };
 
@@ -1279,6 +1319,40 @@ export const CardRoomApp = () => {
         );
       }
     }
+  };
+
+  const playFoldAudioForAction = (
+    currentTable: HoldemTableState,
+    player: HoldemPlayer,
+    snapshot: string,
+  ) => {
+    if (!player.lastAction?.includes("fold")) return;
+    if (foldAudioHandNumberRef.current !== currentTable.handNumber) {
+      foldAudioHandNumberRef.current = currentTable.handNumber;
+      playedFoldAudioKeysRef.current.clear();
+    }
+
+    const key = `fold:${currentTable.handNumber}:${player.avatarId}:${snapshot}`;
+    if (playedFoldAudioKeysRef.current.has(key)) return;
+    playedFoldAudioKeysRef.current.add(key);
+    playFoldAudio();
+  };
+
+  const playCheckAudioForAction = (
+    currentTable: HoldemTableState,
+    player: HoldemPlayer,
+    snapshot: string,
+  ) => {
+    if (!player.lastAction?.includes("check")) return;
+    if (checkAudioHandNumberRef.current !== currentTable.handNumber) {
+      checkAudioHandNumberRef.current = currentTable.handNumber;
+      playedCheckAudioKeysRef.current.clear();
+    }
+
+    const key = `check:${currentTable.handNumber}:${player.avatarId}:${snapshot}`;
+    if (playedCheckAudioKeysRef.current.has(key)) return;
+    playedCheckAudioKeysRef.current.add(key);
+    playCheckAudio();
   };
 
   const playChipAudioForFrame = (
@@ -1586,6 +1660,14 @@ export const CardRoomApp = () => {
       [CARD_ROOM_DEAL_CARD_AUDIO_SRC],
       CARD_ROOM_DEAL_CARD_AUDIO_POOL_SIZE,
     );
+    const foldAudioPool = createCardRoomAudioPool(
+      [CARD_ROOM_FOLD_AUDIO_SRC],
+      CARD_ROOM_FOLD_AUDIO_POOL_SIZE,
+    );
+    const checkAudioPool = createCardRoomAudioPool(
+      [CARD_ROOM_CHECK_AUDIO_SRC],
+      CARD_ROOM_CHECK_AUDIO_POOL_SIZE,
+    );
     const chipBetAudioPool = createCardRoomAudioPool(
       CARD_ROOM_CHIP_BET_AUDIO_SRCS,
       CARD_ROOM_CHIP_BET_AUDIO_POOL_SIZE,
@@ -1607,6 +1689,8 @@ export const CardRoomApp = () => {
       CARD_ROOM_CHARACTER_WIN_AUDIO_SRCS.length,
     );
     dealCardAudioPoolRef.current = dealAudioPool;
+    foldAudioPoolRef.current = foldAudioPool;
+    checkAudioPoolRef.current = checkAudioPool;
     chipBetAudioPoolRef.current = chipBetAudioPool;
     chipAllInAudioPoolRef.current = chipAllInAudioPool;
     chipPayoutAudioPoolRef.current = chipPayoutAudioPool;
@@ -1616,12 +1700,16 @@ export const CardRoomApp = () => {
 
     return () => {
       pauseCardRoomAudioPool(dealAudioPool);
+      pauseCardRoomAudioPool(foldAudioPool);
+      pauseCardRoomAudioPool(checkAudioPool);
       pauseCardRoomAudioPool(chipBetAudioPool);
       pauseCardRoomAudioPool(chipAllInAudioPool);
       pauseCardRoomAudioPool(chipPayoutAudioPool);
       pauseCardRoomAudioPool(userWinAudioPool);
       pauseCardRoomAudioPool(characterWinAudioPool);
       dealCardAudioPoolRef.current = [];
+      foldAudioPoolRef.current = [];
+      checkAudioPoolRef.current = [];
       chipBetAudioPoolRef.current = [];
       chipAllInAudioPoolRef.current = [];
       chipPayoutAudioPoolRef.current = [];
@@ -1769,6 +1857,10 @@ export const CardRoomApp = () => {
           if (player.lastAction && previousSnapshots[player.avatarId] !== snapshot) {
             const cue = actionCueFromLastAction(player.lastAction, now);
             if (cue) nextActionCues[player.avatarId] = cue;
+            if (previousSnapshots[player.avatarId] !== undefined) {
+              playFoldAudioForAction(currentTable, player, snapshot);
+              playCheckAudioForAction(currentTable, player, snapshot);
+            }
           }
         });
         playerActionSnapshotsRef.current = nextSnapshots;
