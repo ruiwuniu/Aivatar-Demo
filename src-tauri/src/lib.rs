@@ -1390,9 +1390,9 @@ async fn open_card_room_window(
         tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
     )
     .title("Aivatar - Card Room")
-    .inner_size(1040.0, 760.0)
-    .min_inner_size(960.0, 700.0)
-    .resizable(true)
+    .inner_size(1180.0, 900.0)
+    .min_inner_size(1180.0, 900.0)
+    .resizable(false)
     .always_on_top(false)
     .decorations(true)
     .focused(true)
