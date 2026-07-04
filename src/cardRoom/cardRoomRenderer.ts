@@ -11,6 +11,10 @@ import {
   CARD_ROOM_WALNUT_FLOOR_SPRITE,
   type CardRoomFloorSpriteDefinition,
 } from "./cardRoomFloorSprites";
+import { CARD_ROOM_BLACK_MARBLE_CHECKER_FLOOR_SPRITE } from "./cardRoomBlackMarbleCheckerFloorSprites";
+import { CARD_ROOM_EMERALD_POKER_CARPET_FLOOR_SPRITE } from "./cardRoomEmeraldPokerCarpetFloorSprites";
+import { CARD_ROOM_BURGUNDY_VELVET_WALL_SPRITE } from "./cardRoomBurgundyVelvetWallSprites";
+import { CARD_ROOM_GREEN_FELT_WALL_SPRITE } from "./cardRoomGreenFeltWallSprites";
 import { CARD_ROOM_DEFAULT_WALL_SPRITE } from "./cardRoomWallSprites";
 import { CARD_ROOM_POKER_TABLE_SPRITE } from "./cardRoomTableSprites";
 import {
@@ -1227,6 +1231,8 @@ const drawRoomShell = (
   const roomRight = roomWidth - 20;
   const roomInnerRight = roomWidth - 28;
   const usesDefaultWallSprite = (content.room.wallSurfaceId ?? "card-room-wall") === "card-room-wall";
+  const usesGreenFeltWallSprite = content.room.wallSurfaceId === "card-room-green-felt-wall";
+  const usesBurgundyVelvetWallSprite = content.room.wallSurfaceId === "card-room-burgundy-wall";
   const wallPalette = surfacePalette(
     content.room.wallSurfaces,
     content.room.wallSurfaceId,
@@ -1261,6 +1267,20 @@ const drawRoomShell = (
       roomWidth - 56,
       floorY - 20,
     );
+  } else if (usesGreenFeltWallSprite) {
+    drawCardRoomMatrixSprite(
+      ctx,
+      CARD_ROOM_GREEN_FELT_WALL_SPRITE,
+      28,
+      20,
+    );
+  } else if (usesBurgundyVelvetWallSprite) {
+    drawCardRoomMatrixSprite(
+      ctx,
+      CARD_ROOM_BURGUNDY_VELVET_WALL_SPRITE,
+      28,
+      20,
+    );
   } else {
     drawPixelRect(ctx, 28, 20, roomWidth - 56, floorY - 20, wallBase);
     drawPixelRect(ctx, 28, 20, roomWidth - 56, 10, wallPanelAlt);
@@ -1284,16 +1304,19 @@ const drawRoomShell = (
   }
   drawPixelRect(ctx, 28, floorY, roomWidth - 56, floorBottom - floorY, floorBase);
   if (content.room.floorSurfaceId === "card-room-checker-floor") {
-    const tile = 32;
-    for (let y = floorY; y < floorBottom; y += tile) {
-      for (let x = 28; x < roomWidth - 28; x += tile) {
-        const checker = (Math.floor((x - 28) / tile) + Math.floor((y - floorY) / tile)) % 2;
-        drawPixelRect(ctx, x, y, tile, tile, checker ? floorPanelAlt : floorPanel);
-        drawPixelRect(ctx, x, y, tile, 2, floorSeam);
-        drawPixelRect(ctx, x, y, 2, tile, floorSeam);
-        if (!checker) drawPixelRect(ctx, x + 7, y + 9, 18, 1, floorHighlight);
-      }
-    }
+    drawCardRoomMatrixSprite(
+      ctx,
+      CARD_ROOM_BLACK_MARBLE_CHECKER_FLOOR_SPRITE,
+      28,
+      floorY,
+    );
+  } else if (content.room.floorSurfaceId === "card-room-emerald-carpet-floor") {
+    drawCardRoomMatrixSprite(
+      ctx,
+      CARD_ROOM_EMERALD_POKER_CARPET_FLOOR_SPRITE,
+      28,
+      floorY,
+    );
   } else if (content.room.floorSurfaceId === "card-room-floor") {
     drawCardRoomMatrixSprite(
       ctx,

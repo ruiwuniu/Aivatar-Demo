@@ -5,6 +5,8 @@ import type {
 } from "../types";
 import type { CardRoomCharacter } from "./holdemEngine";
 import {
+  CARD_ROOM_CHIP_BUNDLE_CHIPS,
+  cashOutPokerChipsForBits,
   canExchangePokerChips,
   canRedeemPokerChipsForBits,
   exchangePokerChips,
@@ -322,6 +324,79 @@ export const redeemCardRoomSaveSlotPokerChipsForBits = (
       pokerChips: nextPokerChips,
       redeemedBits,
     };
+  } catch {
+    return null;
+  }
+};
+
+export const giftCardRoomSaveSlotPokerChips = (
+  slotId: string | null,
+  pokerChipsOverride?: number,
+  chips = CARD_ROOM_CHIP_BUNDLE_CHIPS,
+) => {
+  if (!slotId) return null;
+  const giftChips = Math.max(0, Math.round(chips));
+  if (giftChips <= 0) return null;
+  const save = readJson(`${SAVE_SLOT_KEY_PREFIX}${slotId}`);
+  if (!isRecord(save)) return null;
+
+  const wallet = isRecord(save.wallet) ? save.wallet : {};
+  const nextBits = normalizeWalletBits(wallet.bits);
+  const nextPokerChips =
+    normalizePokerChips(pokerChipsOverride ?? wallet.pokerChips) + giftChips;
+
+  try {
+    localStorage.setItem(
+      `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
+      JSON.stringify({
+        ...save,
+        wallet: {
+          ...wallet,
+          bits: nextBits,
+          pokerChips: nextPokerChips,
+        },
+      }),
+    );
+    return {
+      bits: nextBits,
+      pokerChips: nextPokerChips,
+      giftedChips: giftChips,
+    };
+  } catch {
+    return null;
+  }
+};
+
+export const cashOutCardRoomSaveSlotPokerChips = (
+  slotId: string | null,
+  pokerChipsOverride?: number,
+) => {
+  if (!slotId) return null;
+  const save = readJson(`${SAVE_SLOT_KEY_PREFIX}${slotId}`);
+  if (!isRecord(save)) return null;
+
+  const wallet = isRecord(save.wallet) ? save.wallet : {};
+  const currentWallet = {
+    ...wallet,
+    bits: normalizeWalletBits(wallet.bits),
+    pokerChips: normalizePokerChips(pokerChipsOverride ?? wallet.pokerChips),
+  };
+  const nextWallet = cashOutPokerChipsForBits(currentWallet);
+  if (nextWallet.redeemedBits <= 0 || nextWallet.cashedOutChips <= 0) return null;
+
+  try {
+    localStorage.setItem(
+      `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
+      JSON.stringify({
+        ...save,
+        wallet: {
+          ...wallet,
+          bits: nextWallet.bits,
+          pokerChips: nextWallet.pokerChips,
+        },
+      }),
+    );
+    return nextWallet;
   } catch {
     return null;
   }

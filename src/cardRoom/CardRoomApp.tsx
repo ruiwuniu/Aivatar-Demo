@@ -30,7 +30,9 @@ import {
 } from "./holdemEngine";
 import { choosePokerAiMove, describePokerTemperament } from "./pokerAi";
 import {
+  cashOutCardRoomSaveSlotPokerChips,
   exchangeCardRoomSaveSlotPokerChips,
+  giftCardRoomSaveSlotPokerChips,
   readActiveSaveSlotId,
   readCardRoomRoster,
   redeemCardRoomSaveSlotPokerChipsForBits,
@@ -39,6 +41,7 @@ import {
 } from "./saveRoster";
 import {
   CARD_ROOM_BITS_DEBT_LIMIT,
+  CARD_ROOM_AUTO_CASH_OUT_RATE,
   CARD_ROOM_CHIP_BUNDLE_BITS,
   CARD_ROOM_CHIP_BUNDLE_CHIPS,
   CARD_ROOM_DEFAULT_POKER_CHIPS,
@@ -54,6 +57,7 @@ import {
   normalizeOwnerBits,
   normalizePayoutDebtBits,
   normalizePokerChips,
+  settleHouseBankDebt,
   spendOwnerBits,
   withdrawHouseVaultBits,
   type CardRoomHouseBank,
@@ -370,6 +374,18 @@ const characterWonTable = (table: HoldemTableState) =>
     const player = table.players[winner.seatIndex];
     return Boolean(player && !player.isUser);
   });
+
+const wholeTableCharacterWinner = (table: HoldemTableState) => {
+  if (table.street !== "handComplete" || table.winners.length === 0) return null;
+  const playersWithChips = table.players.filter(
+    (player) => normalizePokerChips(player.stack) > 0,
+  );
+  if (playersWithChips.length !== 1) return null;
+  const winner = playersWithChips[0];
+  if (winner.isUser) return null;
+  const winnerSeatIndexes = new Set(table.winners.map((entry) => entry.seatIndex));
+  return winnerSeatIndexes.has(winner.seatIndex) ? winner : null;
+};
 
 const chipFlightActionTypeFromLastAction = (
   lastAction: string | undefined,
@@ -1062,6 +1078,7 @@ export const CardRoomApp = () => {
   const hostHandDarkStatsRef = useRef<CardRoomHandDarkStats | null>(null);
   const previousHostHandNetRef = useRef(0);
   const processedDarkTraitHandRef = useRef<number | null>(null);
+  const processedAutoCashOutHandRef = useRef<number | null>(null);
   const victoryDemoPlayedRef = useRef(false);
   const cardRoomAudioUnlockedRef = useRef(false);
   const dealCardAudioPoolRef = useRef<HTMLAudioElement[]>([]);
@@ -2228,6 +2245,82 @@ export const CardRoomApp = () => {
     setStatusMessage(ui("cardRoom.houseBankWithdrawn", { bits: available }));
   };
 
+  const settleHouseDebt = () => {
+    const currentBank = houseBankRef.current;
+    const payment = Math.min(
+      normalizeHouseBits(currentBank.vaultBits),
+      normalizePayoutDebtBits(currentBank.payoutDebtBits),
+    );
+    if (payment <= 0) {
+      setStatusMessage(ui("cardRoom.houseDebtNoSettlement"));
+      return;
+    }
+
+    const nextBank = updateHouseBank(settleHouseBankDebt);
+    setStatusMessage(
+      ui("cardRoom.houseDebtSettled", {
+        bits: payment,
+        vault: nextBank?.vaultBits ?? houseBankRef.current.vaultBits,
+        debt: nextBank?.payoutDebtBits ?? houseBankRef.current.payoutDebtBits,
+      }),
+    );
+  };
+
+  const giftCharacterChips = (character: CardRoomCharacter) => {
+    if (character.avatarId === USER_PLAYER_AVATAR_ID) return;
+    const handIsRunning = table.street !== "waiting" && table.street !== "handComplete";
+    if (handIsRunning) {
+      setStatusMessage(ui("cardRoom.chipShopLocked"));
+      return;
+    }
+    if (normalizeOwnerBits(houseBankRef.current.ownerBits) < CARD_ROOM_CHIP_BUNDLE_BITS) {
+      setStatusMessage(ui("cardRoom.giftChipsOwnerBitsInsufficient"));
+      return;
+    }
+
+    const currentPokerChips = stacks[character.avatarId] ?? character.pokerChips;
+    const nextWallet = giftCardRoomSaveSlotPokerChips(
+      character.slotId,
+      currentPokerChips,
+      CARD_ROOM_CHIP_BUNDLE_CHIPS,
+    );
+    if (!nextWallet) {
+      setStatusMessage(ui("cardRoom.giftChipsFailed", { name: character.avatarName }));
+      return;
+    }
+
+    const nextBank = updateHouseBank((current) =>
+      spendOwnerBits(current, CARD_ROOM_CHIP_BUNDLE_BITS),
+    );
+    if (!nextBank) {
+      setStatusMessage(ui("cardRoom.giftChipsOwnerBitsInsufficient"));
+      return;
+    }
+
+    setRoster((current) =>
+      current.map((candidate) =>
+        candidate.slotId === character.slotId
+          ? {
+              ...candidate,
+              walletBits: nextWallet.bits,
+              pokerChips: nextWallet.pokerChips,
+            }
+          : candidate,
+      ),
+    );
+    setStacks((current) => ({
+      ...current,
+      [character.avatarId]: nextWallet.pokerChips,
+    }));
+    setStatusMessage(
+      ui("cardRoom.giftChipsComplete", {
+        name: character.avatarName,
+        bits: CARD_ROOM_CHIP_BUNDLE_BITS,
+        chips: nextWallet.giftedChips,
+      }),
+    );
+  };
+
   const exchangeCharacterChips = (character: CardRoomCharacter) => {
     const handIsRunning = table.street !== "waiting" && table.street !== "handComplete";
     if (handIsRunning) {
@@ -2547,6 +2640,69 @@ export const CardRoomApp = () => {
     calledClock?.handNumber,
     calledClock?.seatIndex,
   ]);
+
+  useEffect(() => {
+    if (table.street !== "handComplete") return;
+    if (processedAutoCashOutHandRef.current === table.handNumber) return;
+    const winner = wholeTableCharacterWinner(table);
+    if (!winner) return;
+
+    const cashOut = cashOutCardRoomSaveSlotPokerChips(winner.slotId, winner.stack);
+    if (!cashOut) return;
+
+    processedAutoCashOutHandRef.current = table.handNumber;
+    const nextBank = updateHouseBank((current) =>
+      addHouseVaultBits(current, -cashOut.redeemedBits),
+    );
+    const nextTable: HoldemTableState = {
+      ...table,
+      players: table.players.map((player) =>
+        player.seatIndex === winner.seatIndex
+          ? {
+              ...player,
+              walletBits: cashOut.bits,
+              pokerChips: cashOut.pokerChips,
+              stack: cashOut.pokerChips,
+            }
+          : player,
+      ),
+      log: [
+        ...table.log,
+        ui("cardRoom.autoCashOutLog", {
+          name: winner.avatarName,
+          chips: cashOut.cashedOutChips,
+          bits: cashOut.redeemedBits,
+        }),
+      ],
+    };
+    tableRef.current = nextTable;
+    setTable(nextTable);
+    setRoster((current) =>
+      current.map((character) =>
+        character.slotId === winner.slotId
+          ? {
+              ...character,
+              walletBits: cashOut.bits,
+              pokerChips: cashOut.pokerChips,
+            }
+          : character,
+      ),
+    );
+    setStacks((current) => ({
+      ...current,
+      [winner.avatarId]: cashOut.pokerChips,
+    }));
+    setStatusMessage(
+      ui("cardRoom.autoCashOutComplete", {
+        name: winner.avatarName,
+        chips: cashOut.cashedOutChips,
+        bits: cashOut.redeemedBits,
+        rate: Math.round(CARD_ROOM_AUTO_CASH_OUT_RATE * 100),
+        vault: nextBank?.vaultBits ?? houseBankRef.current.vaultBits,
+        debt: nextBank?.payoutDebtBits ?? houseBankRef.current.payoutDebtBits,
+      }),
+    );
+  }, [table.actionSerial, table.handNumber, table.players, table.street]);
 
   useEffect(() => {
     if (table.street !== "handComplete") return;
@@ -2947,6 +3103,17 @@ export const CardRoomApp = () => {
                 <span>{ui("cardRoom.ownerPocket")}</span>
                 <strong>{normalizeOwnerBits(houseBank.ownerBits)} bits</strong>
               </div>
+              <button
+                type="button"
+                className="pixel-button"
+                disabled={
+                  normalizeHouseBits(houseBank.vaultBits) <= 0 ||
+                  normalizePayoutDebtBits(houseBank.payoutDebtBits) <= 0
+                }
+                onClick={settleHouseDebt}
+              >
+                {ui("cardRoom.settleHouseDebt")}
+              </button>
             </div>
             <div className="card-room-chip-shop-list">
               {chipShopCharacters.map((character) => {
@@ -2954,6 +3121,8 @@ export const CardRoomApp = () => {
                 const chips = stacks[character.avatarId] ?? character.pokerChips;
                 const ownerCanExchangeChips =
                   isUser && normalizeOwnerBits(houseBank.ownerBits) >= CARD_ROOM_CHIP_BUNDLE_BITS;
+                const ownerCanGiftChips =
+                  !isUser && normalizeOwnerBits(houseBank.ownerBits) >= CARD_ROOM_CHIP_BUNDLE_BITS;
                 const exchangeEnabled =
                   !handInProgress &&
                   (isUser
@@ -3004,6 +3173,18 @@ export const CardRoomApp = () => {
                         <button
                           type="button"
                           className="pixel-button"
+                          disabled={!ownerCanGiftChips || handInProgress}
+                          onClick={() => giftCharacterChips(character)}
+                        >
+                          {ui("cardRoom.giftChips", {
+                            chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
+                          })}
+                        </button>
+                      ) : null}
+                      {!isUser ? (
+                        <button
+                          type="button"
+                          className="pixel-button"
                           disabled={!redeemEnabled}
                           onClick={() => redeemCharacterBits(character)}
                         >
@@ -3049,6 +3230,17 @@ export const CardRoomApp = () => {
                 onClick={withdrawHouseBits}
               >
                 {ui("cardRoom.withdrawHouseBits")}
+              </button>
+              <button
+                type="button"
+                className="pixel-button"
+                disabled={
+                  normalizeHouseBits(houseBank.vaultBits) <= 0 ||
+                  normalizePayoutDebtBits(houseBank.payoutDebtBits) <= 0
+                }
+                onClick={settleHouseDebt}
+              >
+                {ui("cardRoom.settleHouseDebt")}
               </button>
             </div>
             <div className="card-room-decor-tabs" aria-label={ui("cardRoom.decorShop")}>

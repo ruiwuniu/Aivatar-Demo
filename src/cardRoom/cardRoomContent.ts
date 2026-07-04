@@ -253,7 +253,9 @@ const cardRoomFurnitureByShopItemId: Record<string, FurnitureDefinition> = {
   },
 };
 
-export const cardRoomShopItems: CardRoomShopItem[] = [
+const hiddenCardRoomShopItemIds = new Set(["cr-window-neon", "cr-window-private"]);
+
+const allCardRoomShopItems: CardRoomShopItem[] = [
   {
     id: "cr-wall-default",
     name: "Panel Wall",
@@ -345,6 +347,10 @@ export const cardRoomShopItems: CardRoomShopItem[] = [
     description: "A smaller private lounge window with warm glass.",
   },
 ];
+
+export const cardRoomShopItems: CardRoomShopItem[] = allCardRoomShopItems.filter(
+  (item) => !hiddenCardRoomShopItemIds.has(item.id),
+);
 
 export const cardRoomShopCategories: Array<{
   id: CardRoomDecorCategory;

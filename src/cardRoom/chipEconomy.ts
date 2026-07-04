@@ -1,5 +1,8 @@
 export const CARD_ROOM_CHIP_BUNDLE_BITS = 20;
 export const CARD_ROOM_CHIP_BUNDLE_CHIPS = 1000;
+export const CARD_ROOM_CHIPS_PER_BIT =
+  CARD_ROOM_CHIP_BUNDLE_CHIPS / CARD_ROOM_CHIP_BUNDLE_BITS;
+export const CARD_ROOM_AUTO_CASH_OUT_RATE = 0.8;
 export const CARD_ROOM_BITS_DEBT_LIMIT = 500;
 export const CARD_ROOM_PLAYER_CHIP_DEBT_LIMIT = 5000;
 export const CARD_ROOM_DEFAULT_POKER_CHIPS = 0;
@@ -18,6 +21,13 @@ export type CardRoomHouseBank = {
   vaultBits: number;
   ownerBits: number;
   payoutDebtBits: number;
+};
+
+export type PokerChipCashOut = {
+  bits: number;
+  pokerChips: number;
+  redeemedBits: number;
+  cashedOutChips: number;
 };
 
 const roundFinite = (value: unknown, fallback = 0) =>
@@ -125,6 +135,16 @@ export const withdrawHouseVaultBits = (bank: CardRoomHouseBank): CardRoomHouseBa
   };
 };
 
+export const settleHouseBankDebt = (bank: CardRoomHouseBank): CardRoomHouseBank => {
+  const current = normalizeHouseBank(bank);
+  const payment = Math.min(current.vaultBits, current.payoutDebtBits);
+  return {
+    vaultBits: current.vaultBits - payment,
+    ownerBits: current.ownerBits,
+    payoutDebtBits: current.payoutDebtBits - payment,
+  };
+};
+
 export const spendOwnerBits = (
   bank: CardRoomHouseBank,
   bits: number,
@@ -136,6 +156,26 @@ export const spendOwnerBits = (
     vaultBits: current.vaultBits,
     ownerBits: current.ownerBits - cost,
     payoutDebtBits: current.payoutDebtBits,
+  };
+};
+
+export const cashOutPokerChipsForBits = (
+  wallet: PokerChipWallet,
+  rate = CARD_ROOM_AUTO_CASH_OUT_RATE,
+): PokerChipCashOut => {
+  const currentPokerChips = normalizePokerChips(wallet.pokerChips);
+  const cashOutRate =
+    typeof rate === "number" && Number.isFinite(rate)
+      ? Math.max(0, Math.min(1, rate))
+      : CARD_ROOM_AUTO_CASH_OUT_RATE;
+  const targetChips = Math.floor(currentPokerChips * cashOutRate);
+  const redeemedBits = Math.floor(targetChips / CARD_ROOM_CHIPS_PER_BIT);
+  const cashedOutChips = redeemedBits * CARD_ROOM_CHIPS_PER_BIT;
+  return {
+    bits: normalizeWalletBits(wallet.bits) + redeemedBits,
+    pokerChips: currentPokerChips - cashedOutChips,
+    redeemedBits,
+    cashedOutChips,
   };
 };
 
