@@ -304,6 +304,45 @@ const usageFromClaudeTranscript = async (input, scope = "context-window") => {
 const toolName = (input) =>
   firstString(input?.tool_name, input?.tool?.name, input?.tool_use?.name);
 
+const notificationNeedsUser = (input) => {
+  const text = firstString(
+    input?.message,
+    input?.reason,
+    input?.notification?.message,
+    input?.notification_type,
+  );
+  return /permission|approval|approve|confirm|input|required|waiting|elicitation/i.test(
+    text ?? "",
+  );
+};
+
+const displayTextFromValue = (value) => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) =>
+        displayTextFromValue(
+          entry?.text ?? entry?.content ?? entry?.message ?? entry,
+        ),
+      )
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (!value || typeof value !== "object") return "";
+  for (const key of ["text", "delta", "message", "summary", "content"]) {
+    const text = displayTextFromValue(value[key]);
+    if (text.trim()) return text;
+  }
+  return "";
+};
+
+const displayTextFromInput = (...values) => {
+  const text = values
+    .map(displayTextFromValue)
+    .find((value) => typeof value === "string" && value.trim());
+  return text ? compactLearningText(text, 180) : undefined;
+};
+
 const statusForEvent = (input) => {
   const event = hookEventName(input);
   const lowerEvent = event.toLowerCase();
@@ -316,17 +355,73 @@ const statusForEvent = (input) => {
         phase: "session-start",
         message: `${label} session connected`,
       };
+    case "Setup":
+      return {
+        status: "idle",
+        phase: "setup",
+        message: `${label} setup loaded`,
+      };
+    case "InstructionsLoaded":
+      return {
+        status: "idle",
+        phase: "instructions-loaded",
+        message: `${label} instructions loaded`,
+      };
+    case "ConfigChange":
+      return {
+        status: "idle",
+        phase: "config-change",
+        message: `${label} configuration changed`,
+      };
+    case "CwdChanged":
+      return {
+        status: "idle",
+        phase: "cwd-changed",
+        message: `${label} workspace changed`,
+      };
     case "UserPromptSubmit":
       return {
         status: "thinking",
         phase: "user-prompt",
         message: `${label} is thinking`,
       };
+    case "UserPromptExpansion":
+      return {
+        status: "thinking",
+        phase: "user-prompt-expansion",
+        message: `${label} is expanding the prompt`,
+      };
+    case "PreCompact":
+      return {
+        status: "thinking",
+        phase: "pre-compact",
+        message: `${label} is preparing context compaction`,
+      };
+    case "PostCompact":
+      return {
+        status: "thinking",
+        phase: "post-compact",
+        message: `${label} is reviewing compacted context`,
+      };
+    case "ElicitationResult":
+      return {
+        status: "thinking",
+        phase: "elicitation-result",
+        message: `${label} received your response`,
+      };
     case "MessageDisplay":
       return {
         status: "thinking",
         phase: "message-display",
-        message: `${label} is responding`,
+        message:
+          displayTextFromInput(
+            input?.delta,
+            input?.message,
+            input?.text,
+            input?.content,
+            input?.last_assistant_message,
+            input?.assistant_message,
+          ) ?? `${label} is responding`,
       };
     case "PostToolBatch":
       return {
@@ -350,11 +445,41 @@ const statusForEvent = (input) => {
         message: name ? `${label} is using ${name}` : `${label} is using a tool`,
       };
     }
+    case "SubagentStart":
+      return {
+        status: "executing",
+        phase: "subagent-start",
+        message: `${label} started a subagent`,
+      };
+    case "TaskCreated":
+      return {
+        status: "executing",
+        phase: "task-created",
+        message: `${label} created a task`,
+      };
+    case "SubagentStop":
+      return {
+        status: "thinking",
+        phase: "subagent-result",
+        message: `${label} is reviewing subagent results`,
+      };
+    case "TaskCompleted":
+      return {
+        status: "thinking",
+        phase: "task-result",
+        message: `${label} is reviewing task results`,
+      };
     case "PermissionRequest":
       return {
         status: "waiting_for_user",
         phase: "permission",
         message: `${label} is waiting for permission`,
+      };
+    case "Elicitation":
+      return {
+        status: "waiting_for_user",
+        phase: "elicitation",
+        message: `${label} is waiting for input`,
       };
     case "PermissionDenied":
       return {
@@ -365,14 +490,16 @@ const statusForEvent = (input) => {
     case "PostToolUseFailure": {
       const name = toolName(input);
       return {
-        status: "error",
-        phase: name ? `tool-failed:${name}` : "tool-failed",
-        message: name ? `${label} tool failed: ${name}` : `${label} tool failed`,
+        status: "thinking",
+        phase: name ? `tool-result-failed:${name}` : "tool-result-failed",
+        message: name
+          ? `${label} is reading ${name} failure`
+          : `${label} is reading failed tool results`,
       };
     }
     case "Notification": {
       const message = firstString(input?.message, input?.notification?.message);
-      const waiting = /permission|input|waiting|idle/i.test(message ?? "");
+      const waiting = notificationNeedsUser(input);
       return {
         status: waiting ? "waiting_for_user" : "thinking",
         phase: "notification",
@@ -380,9 +507,7 @@ const statusForEvent = (input) => {
       };
     }
     case "Stop":
-    case "SubagentStop":
     case "TeammateIdle":
-    case "TaskCompleted":
       return {
         status: "complete",
         phase: event,
@@ -401,7 +526,7 @@ const statusForEvent = (input) => {
         message: `${label} session ended`,
       };
     default:
-      if (/permission|approval|waiting|input_required/u.test(lowerEvent)) {
+      if (/permission|approval|waiting|input_required|elicitation/u.test(lowerEvent)) {
         return {
           status: "waiting_for_user",
           phase: event,
@@ -422,7 +547,7 @@ const statusForEvent = (input) => {
           message: `${label} turn complete`,
         };
       }
-      if (/tool|command|execute|executing|running/u.test(lowerEvent)) {
+      if (/tool|command|execute|executing|running|task|subagent/u.test(lowerEvent)) {
         return {
           status: "executing",
           phase: event,
@@ -440,6 +565,13 @@ const statusForEvent = (input) => {
 const preserveTerminalStatusAfterTurnEnd = (input, status, previousState) => {
   const event = hookEventName(input);
   if (previousState.status !== "complete" && previousState.status !== "error") return status;
+  if (
+    previousState.status === "error" &&
+    typeof previousState.phase === "string" &&
+    previousState.phase.startsWith("tool-failed")
+  ) {
+    return status;
+  }
   if (event === "UserPromptSubmit") return status;
   if (status.status === "complete" || status.status === "error") return status;
   return {
@@ -453,7 +585,14 @@ const preserveTerminalStatusAfterTurnEnd = (input, status, previousState) => {
 const isTerminalStatusName = (status) => status === "complete" || status === "error";
 
 const isLifecycleOnlyEvent = (event) =>
-  event === "SessionStart" || event === "SessionEnd";
+  [
+    "SessionStart",
+    "Setup",
+    "InstructionsLoaded",
+    "ConfigChange",
+    "CwdChanged",
+    "SessionEnd",
+  ].includes(event);
 
 const shouldStatusLineComplete = (previousState, usage) => {
   if (!usage?.outputTokens || usage.outputTokens <= 0) return false;

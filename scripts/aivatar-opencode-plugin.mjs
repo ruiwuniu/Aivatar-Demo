@@ -398,6 +398,23 @@ const payloadForEvent = (event, context) => {
   };
 };
 
+const payloadForAssistantText = (sessionId, text) => {
+  const summary = safeText(text, 120);
+  if (!summary) return null;
+  return {
+    agent: AGENT,
+    sessionId,
+    status: "thinking",
+    phase: "message-display",
+    task: summary,
+    summary,
+    progress: 70,
+    message: summary,
+    severity: "info",
+    timestamp: new Date().toISOString(),
+  };
+};
+
 const sendPayload = async (payload, config) => {
   await postJson(config.status, payload);
   if (payload.status === "idle" && payload.phase === "session.deleted") {
@@ -448,6 +465,23 @@ export const AivatarOpencodePlugin = async (context) => {
     "experimental.text.complete": async (input, output) => {
       const sessionId = input?.sessionID ?? sessionIdForEvent({}, context);
       addDigestEntry(digests, sessionId, digestEntryFromTextComplete(input, output));
+      const payload = payloadForAssistantText(sessionId, output?.text);
+      if (!payload) return;
+      try {
+        await sendPayload(payload, config);
+      } catch (error) {
+        await context?.client?.app?.log?.({
+          body: {
+            service: "aivatar-opencode",
+            level: "warn",
+            message: error instanceof Error ? error.message : String(error),
+            extra: {
+              event: payload.phase,
+              sessionId: payload.sessionId,
+            },
+          },
+        });
+      }
     },
     event: async ({ event }) => {
       const payload = payloadForEvent(event, context);

@@ -9,7 +9,12 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
-use tungstenite::{accept, Message};
+use tungstenite::{
+    accept_hdr,
+    handshake::server::{Request, Response},
+    http::StatusCode,
+    Message,
+};
 
 const WS_PORT: u16 = 38987;
 const HTTP_PORT: u16 = 38988;
@@ -220,7 +225,15 @@ fn is_claude_lifecycle_only_idle_status(status: &Value) -> bool {
         && string_field(status, "status").as_deref() == Some("idle")
         && matches!(
             string_field(status, "phase").as_deref(),
-            Some("session-start" | "session-end" | "other")
+            Some(
+                "session-start"
+                    | "setup"
+                    | "instructions-loaded"
+                    | "config-change"
+                    | "cwd-changed"
+                    | "session-end"
+                    | "other",
+            )
         )
         && status.get("usage").is_none()
         && status.get("learning").is_none()
@@ -875,7 +888,10 @@ fn claude_digest_entry(input: &Value) -> Option<String> {
             &["message", "reason", "notification_type"],
         )
         .map(|text| format!("{event}: {}", sanitized_digest_text(&text, 220))),
-        "Stop" | "TaskCompleted" => Some("turn: Claude Code completed the turn".to_string()),
+        "Stop" | "TeammateIdle" => Some("turn: Claude Code completed the turn".to_string()),
+        "TaskCompleted" | "SubagentStop" => {
+            Some("turn: Claude Code completed delegated work".to_string())
+        }
         "StopFailure" => Some("turn: Claude Code reported an error".to_string()),
         _ => {
             let detail = first_string(
@@ -1096,26 +1112,62 @@ fn claude_usage_from_input(input: &Value, terminal: bool) -> Option<Value> {
     }))
 }
 
-fn claude_status_for_event(event: &str, status_line: bool, _has_usage: bool) -> (&'static str, &'static str) {
+fn claude_notification_needs_user(input: &Value) -> bool {
+    let text = first_string(input, &["message", "reason", "notification_type"])
+        .or_else(|| {
+            input
+                .get("notification")
+                .and_then(|value| first_string(value, &["message", "type"]))
+        })
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    text.contains("permission")
+        || text.contains("approval")
+        || text.contains("approve")
+        || text.contains("confirm")
+        || text.contains("input")
+        || text.contains("required")
+        || text.contains("waiting")
+        || text.contains("elicitation")
+}
+
+fn claude_status_for_event(
+    event: &str,
+    status_line: bool,
+    _has_usage: bool,
+) -> (&'static str, &'static str) {
     if status_line {
         return ("idle", "context-window");
     }
     match event {
         "SessionStart" => ("idle", "session-start"),
+        "Setup" => ("idle", "setup"),
+        "InstructionsLoaded" => ("idle", "instructions-loaded"),
+        "ConfigChange" => ("idle", "config-change"),
+        "CwdChanged" => ("idle", "cwd-changed"),
         "UserPromptSubmit" => ("thinking", "user-prompt"),
-        "PreToolUse" | "PostToolUse" | "PostToolBatch" => ("executing", "tool-use"),
+        "UserPromptExpansion" => ("thinking", "user-prompt-expansion"),
+        "PreCompact" => ("thinking", "pre-compact"),
+        "PostCompact" => ("thinking", "post-compact"),
+        "ElicitationResult" => ("thinking", "elicitation-result"),
+        "PreToolUse" | "SubagentStart" | "TaskCreated" => ("executing", "tool-use"),
+        "PostToolUse" | "PostToolBatch" | "SubagentStop" | "TaskCompleted" => {
+            ("thinking", "tool-result")
+        }
         "MessageDisplay" => ("thinking", "message-display"),
-        "PermissionRequest" => ("waiting_for_user", "permission"),
-        "PermissionDenied" | "StopFailure" | "PostToolUseFailure" => ("error", "error"),
-        "Stop" | "SubagentStop" | "TeammateIdle" | "TaskCompleted" => ("complete", "turn-complete"),
+        "PermissionRequest" | "Elicitation" => ("waiting_for_user", "permission"),
+        "PermissionDenied" | "StopFailure" => ("error", "error"),
+        "PostToolUseFailure" => ("thinking", "tool-result-failed"),
+        "Stop" | "TeammateIdle" => ("complete", "turn-complete"),
         "SessionEnd" => ("idle", "session-end"),
-        "Notification" => ("waiting_for_user", "notification"),
+        "Notification" => ("thinking", "notification"),
         _ => {
             let lower = event.to_ascii_lowercase();
             if lower.contains("permission")
                 || lower.contains("approval")
                 || lower.contains("waiting")
                 || lower.contains("input_required")
+                || lower.contains("elicitation")
             {
                 ("waiting_for_user", "permission")
             } else if lower.contains("fail")
@@ -1133,6 +1185,8 @@ fn claude_status_for_event(event: &str, status_line: bool, _has_usage: bool) -> 
                 || lower.contains("command")
                 || lower.contains("execute")
                 || lower.contains("running")
+                || lower.contains("task")
+                || lower.contains("subagent")
             {
                 ("executing", "tool-use")
             } else {
@@ -1158,6 +1212,47 @@ fn claude_idle_bubbles(input: &Value) -> Option<Value> {
     } else {
         Some(json!(values))
     }
+}
+
+fn display_text_value(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(text.to_string());
+    }
+    if let Some(items) = value.as_array() {
+        let text = items
+            .iter()
+            .filter_map(display_text_value)
+            .collect::<Vec<_>>()
+            .join(" ");
+        return (!text.trim().is_empty()).then_some(text);
+    }
+    if value.is_object() {
+        for key in ["text", "delta", "message", "summary", "content"] {
+            if let Some(text) = value.get(key).and_then(display_text_value) {
+                return Some(text);
+            }
+        }
+    }
+    None
+}
+
+fn claude_message_display_text(input: &Value) -> Option<String> {
+    for key in [
+        "delta",
+        "message",
+        "text",
+        "content",
+        "last_assistant_message",
+        "assistant_message",
+    ] {
+        if let Some(text) = input.get(key).and_then(display_text_value) {
+            let compact = compact_hook_text(&text, 180);
+            if !compact.is_empty() {
+                return Some(compact);
+            }
+        }
+    }
+    None
 }
 
 fn native_learning_for_status(status: &Value, input: &Value) -> Option<Value> {
@@ -1211,27 +1306,39 @@ fn normalize_claude_hook_status(input: Value, status_line: bool) -> Result<Value
     let event = claude_event_name(&input, status_line);
     let usage = claude_usage_from_input(
         &input,
-        matches!(
-            event.as_str(),
-            "Stop" | "SubagentStop" | "TeammateIdle" | "TaskCompleted"
-        ),
+        matches!(event.as_str(), "Stop" | "TeammateIdle" | "StopFailure"),
     );
-    let (status, phase) = claude_status_for_event(&event, status_line, usage.is_some());
+    let (mut status, mut phase) = claude_status_for_event(&event, status_line, usage.is_some());
+    if event == "Notification" && claude_notification_needs_user(&input) {
+        status = "waiting_for_user";
+        phase = "notification";
+    }
     let session_id = claude_session_id(&input);
     let label = claude_surface_label(&input);
+    let tool = input.get("tool_name").and_then(Value::as_str);
     let message = match event.as_str() {
         "UserPromptSubmit" => format!("{label} is thinking"),
-        "MessageDisplay" => format!("{label} is responding"),
-        "PreToolUse" | "PostToolUse" | "PostToolBatch" => input
+        "UserPromptExpansion" => format!("{label} is expanding the prompt"),
+        "MessageDisplay" => {
+            claude_message_display_text(&input).unwrap_or_else(|| format!("{label} is responding"))
+        }
+        "PreToolUse" => tool
+            .map(|tool| format!("{label} is using {tool}"))
+            .unwrap_or_else(|| format!("{label} is using a tool")),
+        "PostToolUse" | "PostToolBatch" => format!("{label} is reviewing tool results"),
+        "SubagentStart" => format!("{label} started a subagent"),
+        "SubagentStop" => format!("{label} is reviewing subagent results"),
+        "TaskCreated" => format!("{label} created a task"),
+        "TaskCompleted" => format!("{label} is reviewing task results"),
+        "PermissionRequest" => format!("{label} needs approval"),
+        "Elicitation" => format!("{label} needs input"),
+        "Stop" | "TeammateIdle" => format!("{label} turn complete"),
+        "PostToolUseFailure" => input
             .get("tool_name")
             .and_then(Value::as_str)
-            .map(|tool| format!("{label} used {tool}"))
-            .unwrap_or_else(|| format!("{label} is using a tool")),
-        "PermissionRequest" => format!("{label} needs approval"),
-        "Stop" | "SubagentStop" | "TeammateIdle" | "TaskCompleted" => {
-            format!("{label} turn complete")
-        }
-        "StopFailure" | "PostToolUseFailure" => format!("{label} turn failed"),
+            .map(|tool| format!("{label} is reading {tool} failure"))
+            .unwrap_or_else(|| format!("{label} is reading failed tool results")),
+        "StopFailure" => format!("{label} turn failed"),
         "SessionEnd" => format!("{label} session ended"),
         _ => format!("{label} {event}"),
     };
@@ -2062,7 +2169,28 @@ fn run_social_dialogue_worker(payload: Value) -> Result<Value, String> {
 }
 
 fn handle_websocket(stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
-    let Ok(mut websocket) = accept(stream) else {
+    let callback = |request: &Request, response: Response| {
+        let path = request.uri().path();
+        if path != AGENT_WS_PATH && path != LEGACY_WS_PATH {
+            return Err(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Some("Not found".to_string()))
+                .unwrap());
+        }
+        if request
+            .headers()
+            .get("origin")
+            .and_then(|header| header.to_str().ok())
+            .is_some_and(|origin| !cors_origin_allowed(origin))
+        {
+            return Err(Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Some("Origin not allowed".to_string()))
+                .unwrap());
+        }
+        Ok(response)
+    };
+    let Ok(mut websocket) = accept_hdr(stream, callback) else {
         return;
     };
     let (sender, receiver) = mpsc::channel::<String>();
@@ -2082,6 +2210,7 @@ fn handle_websocket(stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
 struct HttpRequest {
     method: String,
     path: String,
+    origin: Option<String>,
     body: String,
 }
 
@@ -2119,11 +2248,19 @@ fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
         .next()
         .unwrap_or("/")
         .to_string();
-    let content_length = lines
+    let header_lines: Vec<&str> = lines.collect();
+    let content_length = header_lines
+        .iter()
         .filter_map(|line| line.split_once(':'))
         .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
         .and_then(|(_, value)| value.trim().parse::<usize>().ok())
         .unwrap_or(0);
+    let origin = header_lines
+        .iter()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("origin"))
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     let mut body = buffer[header_end..].to_vec();
     while body.len() < content_length {
@@ -2141,16 +2278,55 @@ fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
     Ok(HttpRequest {
         method,
         path,
+        origin,
         body: String::from_utf8_lossy(&body).to_string(),
     })
 }
 
-fn send_json(stream: &mut TcpStream, status: u16, payload: Value) {
+fn cors_origin_allowed(origin: &str) -> bool {
+    if origin
+        .chars()
+        .any(|character| character.is_ascii_control())
+    {
+        return false;
+    }
+    let lower = origin.to_ascii_lowercase();
+    if lower == "tauri://localhost" {
+        return true;
+    }
+
+    for prefix in ["http://", "https://"] {
+        if let Some(rest) = lower.strip_prefix(prefix) {
+            if rest.is_empty()
+                || rest.contains('/')
+                || rest.contains('?')
+                || rest.contains('#')
+                || rest.contains('@')
+            {
+                return false;
+            }
+            let (host, port) = rest
+                .split_once(':')
+                .map_or((rest, None), |(host, port)| (host, Some(port)));
+            if host != "localhost" && host != "127.0.0.1" && host != "tauri.localhost" {
+                return false;
+            }
+            return port.is_none_or(|port| {
+                !port.is_empty() && port.chars().all(|character| character.is_ascii_digit())
+            });
+        }
+    }
+
+    false
+}
+
+fn send_json(stream: &mut TcpStream, status: u16, payload: Value, origin: Option<&str>) {
     let reason = match status {
         200 => "OK",
         202 => "Accepted",
         204 => "No Content",
         400 => "Bad Request",
+        403 => "Forbidden",
         404 => "Not Found",
         _ => "OK",
     };
@@ -2159,8 +2335,14 @@ fn send_json(stream: &mut TcpStream, status: u16, payload: Value) {
     } else {
         payload.to_string()
     };
+    let cors_headers = origin
+        .filter(|candidate| cors_origin_allowed(candidate))
+        .map(|allowed_origin| {
+            format!("access-control-allow-origin: {allowed_origin}\r\nvary: Origin\r\n")
+        })
+        .unwrap_or_default();
     let response = format!(
-        "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json; charset=utf-8\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET,POST,DELETE,OPTIONS\r\naccess-control-allow-headers: content-type\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json; charset=utf-8\r\n{cors_headers}access-control-allow-methods: GET,POST,DELETE,OPTIONS\r\naccess-control-allow-headers: content-type\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
         body.len()
     );
     let _ = stream.write_all(response.as_bytes());
@@ -2177,13 +2359,29 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
     let request = match read_http_request(&mut stream) {
         Ok(request) => request,
         Err(error) => {
-            send_json(&mut stream, 400, json!({ "error": error }));
+            send_json(&mut stream, 400, json!({ "error": error }), None);
             return;
         }
     };
+    if request
+        .origin
+        .as_deref()
+        .is_some_and(|origin| !cors_origin_allowed(origin))
+    {
+        send_json(
+            &mut stream,
+            403,
+            json!({ "error": "Origin not allowed" }),
+            None,
+        );
+        return;
+    }
+    let mut respond = |status: u16, payload: Value| {
+        send_json(&mut stream, status, payload, request.origin.as_deref());
+    };
 
     if request.method == "OPTIONS" {
-        send_json(&mut stream, 204, json!({}));
+        respond(204, json!({}));
         return;
     }
 
@@ -2191,9 +2389,7 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
         ("GET", HEALTH_PATH) => {
             let mut guard = state.lock().expect("bridge state poisoned");
             prune_rooms_and_visits(&mut guard);
-            send_json(
-                &mut stream,
-                200,
+            respond(200,
                 json!({
                     "ok": true,
                     "native": true,
@@ -2228,15 +2424,13 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
         ("GET", ROOMS_PATH) => {
             let mut guard = state.lock().expect("bridge state poisoned");
             prune_rooms_and_visits(&mut guard);
-            send_json(&mut stream, 200, room_snapshot_value(&guard));
+            respond(200, room_snapshot_value(&guard));
         }
         ("POST", ROOMS_PATH) => match parse_body(&request.body) {
             Ok(mut payload) => {
                 let room_instance_id = string_field(&payload, "roomInstanceId").unwrap_or_default();
                 if room_instance_id.is_empty() {
-                    send_json(
-                        &mut stream,
-                        400,
+                    respond(400,
                         json!({ "error": "Room payload requires roomInstanceId" }),
                     );
                     return;
@@ -2250,17 +2444,15 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                 let mut guard = state.lock().expect("bridge state poisoned");
                 guard.rooms.insert(room_instance_id, payload);
                 prune_rooms_and_visits(&mut guard);
-                send_json(&mut stream, 202, room_snapshot_value(&guard));
+                respond(202, room_snapshot_value(&guard));
             }
-            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+            Err(error) => respond(400, json!({ "error": error })),
         },
         ("POST", VISIT_INVITE_PATH) => match parse_body(&request.body) {
             Ok(mut payload) => {
                 let visit_id = string_field(&payload, "visitId").unwrap_or_default();
                 if visit_id.is_empty() {
-                    send_json(
-                        &mut stream,
-                        400,
+                    respond(400,
                         json!({ "error": "Visit payload requires visitId" }),
                     );
                     return;
@@ -2275,17 +2467,15 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                 let mut guard = state.lock().expect("bridge state poisoned");
                 guard.visits.insert(visit_id, payload);
                 prune_rooms_and_visits(&mut guard);
-                send_json(&mut stream, 202, room_snapshot_value(&guard));
+                respond(202, room_snapshot_value(&guard));
             }
-            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+            Err(error) => respond(400, json!({ "error": error })),
         },
         ("POST", VISIT_STATE_PATH) => match parse_body(&request.body) {
             Ok(payload) => {
                 let visit_id = string_field(&payload, "visitId").unwrap_or_default();
                 if visit_id.is_empty() {
-                    send_json(
-                        &mut stream,
-                        400,
+                    respond(400,
                         json!({ "error": "Visit payload requires visitId" }),
                     );
                     return;
@@ -2307,17 +2497,15 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                 }
                 guard.visits.insert(visit_id, merged);
                 prune_rooms_and_visits(&mut guard);
-                send_json(&mut stream, 202, room_snapshot_value(&guard));
+                respond(202, room_snapshot_value(&guard));
             }
-            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+            Err(error) => respond(400, json!({ "error": error })),
         },
         ("POST", VISIT_END_PATH) => match parse_body(&request.body) {
             Ok(payload) => {
                 let visit_id = string_field(&payload, "visitId").unwrap_or_default();
                 if visit_id.is_empty() {
-                    send_json(
-                        &mut stream,
-                        400,
+                    respond(400,
                         json!({ "error": "Visit payload requires visitId" }),
                     );
                     return;
@@ -2348,19 +2536,17 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                 }
                 guard.visits.insert(visit_id, merged);
                 prune_rooms_and_visits(&mut guard);
-                send_json(&mut stream, 202, room_snapshot_value(&guard));
+                respond(202, room_snapshot_value(&guard));
             }
-            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+            Err(error) => respond(400, json!({ "error": error })),
         },
         ("GET", AGENT_STATUS_PATH) | ("GET", LEGACY_STATUS_PATH) => {
             let guard = state.lock().expect("bridge state poisoned");
-            send_json(&mut stream, 200, snapshot(&guard));
+            respond(200, snapshot(&guard));
         }
         ("GET", ACTIVE_SESSION_PATH) => {
             let guard = state.lock().expect("bridge state poisoned");
-            send_json(
-                &mut stream,
-                200,
+            respond(200,
                 json!({
                     "activeSessionKey": guard.active_session_key,
                     "connectedSessionKey": connected_session_key(&guard),
@@ -2377,9 +2563,7 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                     let agent = string_field(&payload, "agent").unwrap_or_default();
                     let session_id = string_field(&payload, "sessionId").unwrap_or_default();
                     if agent.is_empty() || session_id.is_empty() {
-                        send_json(
-                            &mut stream,
-                            400,
+                        respond(400,
                             json!({ "error": "Active session payload requires agent and sessionId" }),
                         );
                         return;
@@ -2391,9 +2575,9 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                 let response = snapshot(&guard);
                 drop(guard);
                 broadcast(&state);
-                send_json(&mut stream, 202, response);
+                respond(202, response);
             }
-            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+            Err(error) => respond(400, json!({ "error": error })),
         },
         ("DELETE", STALE_SESSIONS_PATH) => {
             let mut guard = state.lock().expect("bridge state poisoned");
@@ -2404,16 +2588,14 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
             }
             drop(guard);
             broadcast(&state);
-            send_json(&mut stream, 202, response);
+            respond(202, response);
         }
         ("POST", DISCONNECT_SESSION_PATH) => match parse_body(&request.body) {
             Ok(payload) => {
                 let agent = string_field(&payload, "agent").unwrap_or_default();
                 let session_id = string_field(&payload, "sessionId").unwrap_or_default();
                 if agent.is_empty() || session_id.is_empty() {
-                    send_json(
-                        &mut stream,
-                        400,
+                    respond(400,
                         json!({ "error": "Disconnect session payload requires agent and sessionId" }),
                     );
                     return;
@@ -2432,9 +2614,9 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                 }
                 drop(guard);
                 broadcast(&state);
-                send_json(&mut stream, 202, response);
+                respond(202, response);
             }
-            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+            Err(error) => respond(400, json!({ "error": error })),
         },
         ("POST", PRESENCE_PATH) => match parse_body(&request.body).and_then(normalize_presence) {
             Ok(presence) => {
@@ -2446,7 +2628,7 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                         object.insert("ignored".to_string(), json!(true));
                         object.insert("disconnectedSessionKey".to_string(), json!(key));
                     }
-                    send_json(&mut stream, 202, response);
+                    respond(202, response);
                     return;
                 }
                 let timestamp = string_field(&presence, "timestamp").unwrap_or_else(iso_now);
@@ -2473,9 +2655,9 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                 let response = snapshot(&guard);
                 drop(guard);
                 broadcast(&state);
-                send_json(&mut stream, 202, response);
+                respond(202, response);
             }
-            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+            Err(error) => respond(400, json!({ "error": error })),
         },
         ("POST", CLAUDE_HOOK_PATH) | ("POST", CLAUDE_STATUS_LINE_HOOK_PATH) => {
             let status_line = request.path == CLAUDE_STATUS_LINE_HOOK_PATH;
@@ -2525,20 +2707,20 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                                         object.insert("label".to_string(), json!(status_line_label(&status)));
                                     }
                                 }
-                                send_json(&mut stream, 200, response);
+                                respond(200, response);
                             }
-                            Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+                            Err(error) => respond(400, json!({ "error": error })),
                         }
                     }
-                    Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+                    Err(error) => respond(400, json!({ "error": error })),
                 },
-                Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+                Err(error) => respond(400, json!({ "error": error })),
             }
         }
         ("POST", AGENT_STATUS_PATH) | ("POST", LEGACY_STATUS_PATH) => {
             match parse_body(&request.body).and_then(submit_status) {
-                Ok(response) => send_json(&mut stream, 202, response),
-                Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+                Ok(response) => respond(202, response),
+                Err(error) => respond(400, json!({ "error": error })),
             }
         }
         ("POST", PAINTING_PLAN_PATH) => {
@@ -2546,15 +2728,13 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                 .and_then(normalize_painting_plan_payload)
                 .and_then(run_painting_worker)
             {
-                Ok(painting_plan) => send_json(
-                    &mut stream,
-                    200,
+                Ok(painting_plan) => respond(200,
                     json!({
                         "ok": true,
                         "paintingPlan": painting_plan,
                     }),
                 ),
-                Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+                Err(error) => respond(400, json!({ "error": error })),
             }
         }
         ("POST", SOCIAL_DIALOGUE_PATH) => {
@@ -2562,15 +2742,13 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                 .and_then(normalize_social_dialogue_payload)
                 .and_then(run_social_dialogue_worker)
             {
-                Ok(dialogue) => send_json(
-                    &mut stream,
-                    200,
+                Ok(dialogue) => respond(200,
                     json!({
                         "ok": true,
                         "dialogue": dialogue,
                     }),
                 ),
-                Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+                Err(error) => respond(400, json!({ "error": error })),
             }
         }
         ("POST", AVATAR_STATE_PATH) => {
@@ -2580,18 +2758,16 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                     write_avatar_state(&state)?;
                     Ok(state)
                 }) {
-                Ok(state) => send_json(
-                    &mut stream,
-                    202,
+                Ok(state) => respond(202,
                     json!({
                         "ok": true,
                         "avatarStateFile": avatar_state_file(),
                         "updatedAt": state.get("updatedAt")
                     }),
                 ),
-                Err(error) => send_json(&mut stream, 400, json!({ "error": error })),
+                Err(error) => respond(400, json!({ "error": error })),
             }
         }
-        _ => send_json(&mut stream, 404, json!({ "error": "Not found" })),
+        _ => respond(404, json!({ "error": "Not found" })),
     }
 }

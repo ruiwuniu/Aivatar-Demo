@@ -60,6 +60,9 @@ import {
   hostLayoutFingerprint,
   isPointInRoomDoor,
   normalizeRoomPresence,
+  normalizeSocialBubble,
+  normalizeSocialBubbleCandidate,
+  normalizeSocialBubbleSet,
   normalizeSocialRelationship,
   normalizeSocialRoomMemory,
   normalizeVisitSession,
@@ -70,7 +73,11 @@ import {
   roomVisitorNavigationScopeKey,
   roomVisitExpiresAt,
   roomVisitNowIso,
+  selectSocialBubbleExchange,
   shouldAttemptAutonomousVisit,
+  socialBubbleLanguageForPreference,
+  socialBubbleSignature,
+  socialVisitRolePair,
   socialRoomMemoryStorageKey,
   socialRelationshipStorageKey,
   socialWillingnessScore,
@@ -105,6 +112,22 @@ import {
   t,
   type Locale,
 } from "./i18n";
+import {
+  SHOP_BULK_PURCHASE_QUANTITY,
+  SHOP_LONG_PRESS_CLICK_SUPPRESSION_MS,
+  SHOP_LONG_PRESS_MS,
+  SHOP_PURCHASE_COOLDOWN_MS,
+  affordableShopPurchaseQuantity as affordableShopPurchaseQuantityBase,
+  getShopItemUnlockLevel as getShopItemUnlockLevelBase,
+  isBulkPurchasableShopItem as isBulkPurchasableShopItemBase,
+  isFloorSurfaceItem,
+  isFurnitureSkinItem,
+  isSurfaceItem,
+  isUniqueShopItemOwned as isUniqueShopItemOwnedBase,
+  isWallSurfaceItem,
+  isWindowItem,
+  reserveShopPurchaseSlot as reserveShopPurchaseSlotBase,
+} from "./shopPurchase";
 import type {
   AivatarContent,
   AivatarDarkTraits,
@@ -119,10 +142,12 @@ import type {
   AivatarRoomsSnapshot,
   AivatarRoomVisitor,
   AivatarSaveState,
-  AivatarSocialDialogue,
-  AivatarSocialDialogueLine,
+  AivatarSocialBubble,
+  AivatarSocialBubbleCandidate,
+  AivatarSocialBubbleSet,
   AivatarSocialRelationship,
   AivatarSocialRoomMemory,
+  AivatarVisitRole,
   AivatarVisitSession,
   AvatarAppearanceId,
   AvatarRuntime,
@@ -187,7 +212,6 @@ const AUTO_MUSIC_KEY = "aivatar.autoMusic.v1";
 const ALWAYS_ON_TOP_KEY = "aivatar.alwaysOnTop.v1";
 const AVATAR_STATE_URL = "http://127.0.0.1:38988/avatar-state";
 const PAINTING_PLAN_URL = "http://127.0.0.1:38988/painting-plan";
-const SOCIAL_DIALOGUE_URL = "http://127.0.0.1:38988/social-dialogue";
 const ROOMS_URL = "http://127.0.0.1:38988/rooms";
 const VISIT_INVITE_URL = "http://127.0.0.1:38988/visits/invite";
 const VISIT_STATE_URL = "http://127.0.0.1:38988/visits/state";
@@ -314,6 +338,8 @@ const IDLE_BUBBLE_PHRASE_MAX_LENGTH = 28;
 const IDLE_BUBBLE_CANDIDATE_LIMIT = 6;
 const IDLE_BUBBLE_MEMORY_CANDIDATE_TARGET = 3;
 const IDLE_BUBBLE_SESSION_CANDIDATE_TARGET = 3;
+const SOCIAL_BUBBLE_CANDIDATE_LIMIT = 6;
+const SOCIAL_BUBBLE_SLOT_BASE = 4;
 const IDLE_BUBBLE_LANGUAGE_OPTIONS: IdleBubbleLanguagePreference[] = [
   "auto",
   "zh",
@@ -648,20 +674,6 @@ const SHOP_CATEGORIES: Array<{ id: ShopCategoryId; copyKey: string }> = [
   { id: "hangings", copyKey: "shop.hangings" },
 ];
 
-const isWallSurfaceItem = (item: ItemDefinition) =>
-  item.tags?.includes("wall-surface") ?? false;
-
-const isFloorSurfaceItem = (item: ItemDefinition) =>
-  item.tags?.includes("floor-surface") ?? false;
-
-const isSurfaceItem = (item: ItemDefinition) =>
-  isWallSurfaceItem(item) || isFloorSurfaceItem(item);
-
-const isWindowItem = (item: ItemDefinition) => item.kind === "window";
-
-const isFurnitureSkinItem = (item: ItemDefinition) =>
-  item.tags?.includes("furniture-skin") ?? false;
-
 const getShopCategoryId = (item: ItemDefinition): ShopCategoryId => {
   if (item.kind === "window") return "windows";
   if (isFurnitureSkinItem(item)) return "furniture-skins";
@@ -674,20 +686,39 @@ const getShopCategoryId = (item: ItemDefinition): ShopCategoryId => {
   return "furniture";
 };
 
+const UNIQUE_SHOP_ITEM_IDS = new Set<string>([TASK_CABINET_FURNITURE_ID]);
+const SPECIAL_SHOP_UNLOCK_LEVELS: Readonly<Record<string, number>> = {
+  [TASK_CABINET_FURNITURE_ID]: TASK_CABINET_UNLOCK_LEVEL,
+};
+
 const getShopItemUnlockLevel = (item: ItemDefinition) =>
-  item.unlockLevel ??
-  (item.id === TASK_CABINET_FURNITURE_ID ? TASK_CABINET_UNLOCK_LEVEL : 0);
+  getShopItemUnlockLevelBase(item, {
+    unlockLevelsByItemId: SPECIAL_SHOP_UNLOCK_LEVELS,
+  });
 
 const isTaskCabinetPlaced = (content: AivatarContent) =>
   content.room.furniture.some((item) => item.id === TASK_CABINET_FURNITURE_ID);
 
 const isUniqueShopItemOwned = (save: AivatarSaveState, item: ItemDefinition) =>
-  item.id === TASK_CABINET_FURNITURE_ID
-    ? save.inventory.some((entry) => entry.itemId === item.id && entry.quantity > 0) ||
-      save.placedItems.some((placedItem) => placedItem.itemId === item.id)
-    : item.tags?.includes("one-time")
-      ? save.purchasedItemIds.includes(item.id)
-    : false;
+  isUniqueShopItemOwnedBase(save, item, {
+    uniqueItemIds: UNIQUE_SHOP_ITEM_IDS,
+  });
+
+const isBulkPurchasableShopItem = (item: ItemDefinition) =>
+  isBulkPurchasableShopItemBase(item, {
+    uniqueItemIds: UNIQUE_SHOP_ITEM_IDS,
+  });
+
+const affordableShopPurchaseQuantity = (
+  save: AivatarSaveState,
+  item: ItemDefinition,
+  requestedQuantity: number,
+) =>
+  affordableShopPurchaseQuantityBase(save, item, requestedQuantity, {
+    growthLevel: normalizeMemory(save.memory).growth.level,
+    uniqueItemIds: UNIQUE_SHOP_ITEM_IDS,
+    unlockLevelsByItemId: SPECIAL_SHOP_UNLOCK_LEVELS,
+  });
 
 const clampQuantity = (entry: InventoryEntry): InventoryEntry => ({
   ...entry,
@@ -874,6 +905,11 @@ const defaultMemory = (): AivatarMemory => ({
   darkTraits: defaultDarkTraits(),
   preferences: {
     idleBubbleLanguage: "auto",
+    socialBubbles: {
+      active: [],
+      responses: [],
+      disabledIds: [],
+    },
     socialWillingness: 50,
     activityWeights: {},
     itemAffinities: {},
@@ -1042,6 +1078,7 @@ const normalizeMemory = (memory?: Partial<AivatarMemory>): AivatarMemory => {
             .filter(Boolean)
             .slice(0, Math.max(1, growth?.level ?? fallback.growth.level))
         : fallback.preferences.idleBubblePhrases,
+      socialBubbles: normalizeSocialBubbleSet(memory?.preferences?.socialBubbles),
       socialWillingness: clampSocialWillingness(
         memory?.preferences?.socialWillingness,
         fallback.preferences.socialWillingness,
@@ -1903,10 +1940,17 @@ type RoomVisitHostSocialTarget = {
   bubbleText: string;
 };
 
-type RoomVisitDialoguePlayback = {
-  visitId: string;
-  dialogue: AivatarSocialDialogue;
+type RoomVisitSocialLine = {
+  speaker: AivatarVisitRole;
+  bubble: AivatarSocialBubble;
   startedAt: number;
+  endsAt: number;
+};
+
+type RoomVisitSocialExchangePlayback = {
+  visitId: string;
+  active: RoomVisitSocialLine;
+  response: RoomVisitSocialLine;
   appliedLineIndex: number;
   completed: boolean;
 };
@@ -1914,8 +1958,10 @@ type RoomVisitDialoguePlayback = {
 const ROOM_VISIT_SOCIAL_SPACING = 44;
 const ROOM_VISIT_TOO_CLOSE_DISTANCE = 18;
 const ROOM_VISIT_HOST_REPLY_DELAY_MS = 2200;
-const ROOM_VISIT_DIALOGUE_START_DELAY_MS = 500;
-const ROOM_VISIT_DIALOGUE_LINE_GAP_MS = 260;
+const ROOM_VISIT_EXCHANGE_START_DELAY_MS = 700;
+const ROOM_VISIT_EXCHANGE_LINE_DURATION_MS = 2600;
+const ROOM_VISIT_EXCHANGE_LINE_GAP_MS = 360;
+const ROOM_VISIT_EXCHANGE_COOLDOWN_MS = 2400;
 
 const localizeRoomVisitBubbleText = (
   bubbleText: string | undefined,
@@ -1944,83 +1990,6 @@ const localizedRoomVisitors = (
     const bubbleText = localizeRoomVisitBubbleText(visitor.bubbleText, locale);
     return bubbleText === visitor.bubbleText ? visitor : { ...visitor, bubbleText };
   });
-
-const AVATAR_EXPRESSIONS = new Set<AvatarRuntime["expression"]>([
-  "calm",
-  "focused",
-  "happy",
-  "sleepy",
-  "worried",
-]);
-
-const compactSocialDialogueText = (value: unknown, maxLength: number) =>
-  String(value ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, maxLength);
-
-const normalizeSocialDialogueLineValue = (
-  value: unknown,
-  index: number,
-): AivatarSocialDialogueLine | null => {
-  const raw = value && typeof value === "object" ? value as {
-    speaker?: unknown;
-    text?: unknown;
-    expression?: unknown;
-    durationMs?: unknown;
-  } : {};
-  const text = compactSocialDialogueText(raw.text, 56);
-  if (!text) return null;
-  const durationMs = Math.round(Number(raw.durationMs));
-  return {
-    speaker:
-      raw.speaker === "host" || raw.speaker === "guest"
-        ? raw.speaker
-        : index % 2 === 0
-          ? "guest"
-          : "host",
-    text,
-    expression: AVATAR_EXPRESSIONS.has(raw.expression as AvatarRuntime["expression"])
-      ? raw.expression as AvatarRuntime["expression"]
-      : "happy",
-    durationMs:
-      Number.isFinite(durationMs) && durationMs >= 1600 && durationMs <= 3200
-        ? durationMs
-        : 2300,
-  };
-};
-
-const normalizeSocialDialogueValue = (value: unknown): AivatarSocialDialogue | null => {
-  const raw = value && typeof value === "object" ? value as {
-    dialogue?: unknown;
-    lines?: unknown;
-    summary?: unknown;
-    relationshipDelta?: unknown;
-    source?: unknown;
-    generatedAt?: unknown;
-  } : {};
-  const source = raw.dialogue && typeof raw.dialogue === "object"
-    ? raw.dialogue as typeof raw
-    : raw;
-  const lines = Array.isArray(source.lines)
-    ? source.lines
-        .map(normalizeSocialDialogueLineValue)
-        .filter((line): line is AivatarSocialDialogueLine => Boolean(line))
-        .slice(0, 6)
-    : [];
-  if (lines.length < 2) return null;
-  const relationshipDelta = Math.round(Number(source.relationshipDelta));
-  return {
-    lines,
-    summary: compactSocialDialogueText(source.summary, 160) || undefined,
-    relationshipDelta:
-      Number.isFinite(relationshipDelta)
-        ? Math.max(0, Math.min(6, relationshipDelta))
-        : undefined,
-    source: source.source === "heuristic" ? "heuristic" : "llm",
-    generatedAt: compactSocialDialogueText(source.generatedAt, 80) || undefined,
-  };
-};
 
 const ROOM_VISIT_SOCIAL_BEHAVIORS = new Set<BehaviorName>([
   "play",
@@ -2081,6 +2050,7 @@ const roomVisitHostSocialTarget = (
   visitor: AivatarRoomVisitor,
   content: AivatarContent,
   hostRuntime: AvatarRuntime,
+  activeRecordPlayerId?: string | null,
 ): RoomVisitHostSocialTarget | null => {
   const behavior = roomVisitBehaviorForVisitor(visitor);
   if (!ROOM_VISIT_SOCIAL_BEHAVIORS.has(behavior)) return null;
@@ -2177,8 +2147,9 @@ const roomVisitHostSocialTarget = (
         x: fallbackTarget.targetX,
         y: fallbackTarget.targetY,
       });
+      const hostBehavior = activeRecordPlayerId === recordPlayer.id ? "interact" : behavior;
       return {
-        behavior,
+        behavior: hostBehavior,
         targetX: point.x,
         targetY: point.y,
         alternates: standpoints,
@@ -3339,6 +3310,32 @@ const persistTaskCabinetEntries = (entries: TaskCabinetEntry[]) => {
   }
 };
 
+const taskCabinetSceneCounts = (entries: TaskCabinetEntry[]) => {
+  let activeFileCount = 0;
+  let failedFileCount = 0;
+  let readyCount = 0;
+  let runningCount = 0;
+
+  entries.forEach((entry) => {
+    if (entry.status === "ready") {
+      activeFileCount += 1;
+      readyCount += 1;
+    } else if (entry.status === "failed") {
+      activeFileCount += 1;
+      failedFileCount += 1;
+    } else if (entry.status === "running") {
+      runningCount += 1;
+    }
+  });
+
+  return {
+    activeFileCount,
+    failedFileCount,
+    readyCount,
+    runningCount,
+  };
+};
+
 const taskCabinetFileName = (path: string) =>
   path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
@@ -3605,6 +3602,10 @@ export const App = () => {
   } | null>(null);
   const agentCompleteAudioRef = useRef<HTMLAudioElement | null>(null);
   const bitsSpendAudioRef = useRef<HTMLAudioElement | null>(null);
+  const shopPurchaseCooldownUntilRef = useRef<Record<string, number>>({});
+  const shopLongPressTimerRef = useRef<number | null>(null);
+  const shopLongPressTriggeredRef = useRef(false);
+  const shopLongPressTriggeredItemIdRef = useRef<string | null>(null);
   const gameConsoleAudioRef = useRef<HTMLAudioElement | null>(null);
   const gameConsoleAudioSourceRef = useRef(GAME_CONSOLE_AUDIO_SOURCES[0]);
   const gameConsoleAnimatingRef = useRef(false);
@@ -3651,6 +3652,10 @@ export const App = () => {
   const [taskCabinetEntries, setTaskCabinetEntries] = useState<TaskCabinetEntry[]>(
     () => loadTaskCabinetEntries(),
   );
+  const taskCabinetCounts = useMemo(
+    () => taskCabinetSceneCounts(taskCabinetEntries),
+    [taskCabinetEntries],
+  );
   const [taskCabinetPathInput, setTaskCabinetPathInput] = useState("");
   const [taskCabinetMessage, setTaskCabinetMessage] = useState("");
   const [launcherDirectory, setLauncherDirectory] = useState("");
@@ -3665,6 +3670,7 @@ export const App = () => {
   const effectiveSource = debugStatus ? "debug" : source;
   const statusRef = useRef({ status: effectiveStatus, source: effectiveSource, endpoint });
   const taskCabinetEntriesRef = useRef(taskCabinetEntries);
+  const taskCabinetSceneCountsRef = useRef(taskCabinetCounts);
   const taskCabinetLaunchingRef = useRef(false);
   const taskCabinetTerminalStatusRef = useRef(
     new Map<string, "complete" | "error">(),
@@ -3698,8 +3704,9 @@ export const App = () => {
   const visitStatePostedAtRef = useRef(0);
   const visitHostStartedAtRef = useRef(0);
   const autonomousRoomVisitCooldownUntilRef = useRef(0);
-  const roomVisitDialogueRef = useRef<RoomVisitDialoguePlayback | null>(null);
-  const roomVisitDialogueRequestRef = useRef<string | null>(null);
+  const roomVisitSocialExchangeRef = useRef<RoomVisitSocialExchangePlayback | null>(null);
+  const roomVisitNextExchangeAtRef = useRef(0);
+  const roomVisitRecentIntentIdsRef = useRef<string[]>([]);
   const roomSnapshotFailuresRef = useRef(0);
 
   const content = useMemo(
@@ -4060,167 +4067,137 @@ export const App = () => {
     }
   };
 
-  const roomFeaturesForSocialDialogue = (currentContent: AivatarContent) => {
-    const features = new Set<string>();
-    if (currentContent.room.furniture.some((item) => item.id === "bed")) {
-      features.add("bed");
-    }
-    if (currentContent.room.furniture.some((item) => item.id === TABLE_FURNITURE_ID)) {
-      features.add("table");
-    }
-    for (const item of currentContent.placedItems ?? []) {
-      if (item.itemId === RECORD_PLAYER_ITEM_ID) features.add("record-player");
-      if (item.itemId === "game-console") features.add("game-console");
-      if (item.itemId === COFFEE_MACHINE_ITEM_ID) features.add("coffee-machine");
-      if (item.itemId === COFFEE_CUP_ITEM_ID) features.add("coffee-cup");
-    }
-    return [...features].slice(0, 10);
-  };
-
-  const socialDialogueCharacterPayload = (presence: AivatarRoomPresence) => ({
-    id: presence.avatarId,
-    name: presence.avatarName,
-    growthLevel: presence.growthLevel,
-    traits: presence.traits,
-    petStats: presence.petStats,
-    idleBubblePhrases: presence.idleBubblePhrases ?? [],
-  });
-
-  const socialDialoguePayloadForVisit = (
+  const startRoomVisitSocialExchange = (
     visit: AivatarVisitSession,
     visitor: AivatarRoomVisitor,
-    currentContent: AivatarContent,
-  ) => {
-    const behavior = roomVisitBehaviorForVisitor(visitor);
-    const relationship = activeVisitRelationshipRef.current ?? relationshipForVisit(visit);
-    return {
-      visitId: visit.visitId,
-      locale: localeRef.current,
-      activity: behavior,
-      activityLabel: visitor.runtime.activityLabel ?? behavior,
-      host: socialDialogueCharacterPayload(visit.host),
-      guest: socialDialogueCharacterPayload(visit.guest),
-      relationship: {
-        affinity: relationship.affinity,
-        visits: relationship.visits,
-        unlockedActivities: relationship.unlockedActivities ?? [],
-        lastDialogueSummary: relationship.lastDialogueSummary,
-      },
-      roomFeatures: roomFeaturesForSocialDialogue(currentContent),
-      maxTurns: 4,
-      seedHint: [
-        visit.host.avatarId,
-        visit.guest.avatarId,
-        behavior,
-        relationship.visits,
-      ].join(":"),
-    };
-  };
-
-  const requestSocialDialogueForVisit = (
-    visit: AivatarVisitSession,
-    visitor: AivatarRoomVisitor,
-    currentContent: AivatarContent,
-  ) => {
-    if (roomVisitDialogueRef.current?.visitId === visit.visitId) return;
-    if (roomVisitDialogueRequestRef.current === visit.visitId) return;
-    roomVisitDialogueRequestRef.current = visit.visitId;
-    const payload = socialDialoguePayloadForVisit(visit, visitor, currentContent);
-
-    void postRoomJson(SOCIAL_DIALOGUE_URL, payload)
-      .then((value) => {
-        const dialogue = normalizeSocialDialogueValue(value);
-        if (!dialogue) return;
-        if (
-          activeVisitRef.current?.visitId !== visit.visitId ||
-          roomVisitorRef.current?.visitId !== visitor.visitId
-        ) {
-          return;
-        }
-        roomVisitDialogueRef.current = {
-          visitId: visit.visitId,
-          dialogue,
-          startedAt: performance.now() + ROOM_VISIT_DIALOGUE_START_DELAY_MS,
-          appliedLineIndex: -1,
-          completed: false,
-        };
-      })
-      .catch(() => {
-        console.warn("Could not generate room visit social dialogue.");
-      });
-  };
-
-  const dialogueLineAtTime = (
-    dialogue: AivatarSocialDialogue,
-    startedAt: number,
     now: number,
   ) => {
-    let cursor = startedAt;
-    for (let index = 0; index < dialogue.lines.length; index += 1) {
-      const line = dialogue.lines[index];
-      const durationMs = line.durationMs ?? 2300;
-      const lineStartedAt = cursor;
-      const lineEndedAt = cursor + durationMs;
-      if (now >= lineStartedAt && now < lineEndedAt) {
-        return { index, line, lineStartedAt, lineEndedAt };
-      }
-      cursor = lineEndedAt + ROOM_VISIT_DIALOGUE_LINE_GAP_MS;
-    }
-    return now >= cursor ? { completed: true as const } : null;
+    const current = roomVisitSocialExchangeRef.current;
+    if (current?.visitId === visit.visitId && !current.completed) return;
+    if (now < roomVisitNextExchangeAtRef.current) return;
+
+    const behavior = roomVisitBehaviorForVisitor(visitor);
+    const speakerRole: AivatarVisitRole =
+      behavior === "admire" || behavior === "wander"
+        ? "guest"
+        : Math.random() < 0.6
+          ? "guest"
+          : "host";
+    const exchange = selectSocialBubbleExchange({
+      hostBubbles: visit.host.socialBubbles,
+      guestBubbles: visit.guest.socialBubbles,
+      speakerRole,
+      activity: behavior,
+      idleBubbleLanguage: normalizeIdleBubbleLanguage(
+        saveRef.current.memory?.preferences?.idleBubbleLanguage,
+      ),
+      uiLocale: localeRef.current,
+      recentIntentIds: roomVisitRecentIntentIdsRef.current,
+    });
+    if (!exchange) return;
+
+    const startedAt = now + ROOM_VISIT_EXCHANGE_START_DELAY_MS;
+    const activeEndsAt = startedAt + ROOM_VISIT_EXCHANGE_LINE_DURATION_MS;
+    const responseStartedAt = activeEndsAt + ROOM_VISIT_EXCHANGE_LINE_GAP_MS;
+    const responseEndsAt = responseStartedAt + ROOM_VISIT_EXCHANGE_LINE_DURATION_MS;
+    roomVisitSocialExchangeRef.current = {
+      visitId: visit.visitId,
+      active: {
+        speaker: speakerRole,
+        bubble: exchange.active,
+        startedAt,
+        endsAt: activeEndsAt,
+      },
+      response: {
+        speaker: socialVisitRolePair(speakerRole),
+        bubble: exchange.response,
+        startedAt: responseStartedAt,
+        endsAt: responseEndsAt,
+      },
+      appliedLineIndex: -1,
+      completed: false,
+    };
+    roomVisitRecentIntentIdsRef.current = [
+      exchange.active.intentId,
+      ...roomVisitRecentIntentIdsRef.current.filter(
+        (intentId) => intentId !== exchange.active.intentId,
+      ),
+    ].slice(0, 4);
   };
 
-  const applyRoomVisitDialoguePlayback = (
+  const applyRoomVisitSocialExchangePlayback = (
     visitor: AivatarRoomVisitor,
     now: number,
   ): AivatarRoomVisitor => {
-    const playback = roomVisitDialogueRef.current;
+    const playback = roomVisitSocialExchangeRef.current;
     if (!playback || playback.visitId !== visitor.visitId || playback.completed) {
       return visitor;
     }
-    const current = dialogueLineAtTime(playback.dialogue, playback.startedAt, now);
-    if (!current) return visitor;
-    if ("completed" in current) {
-      playback.completed = true;
-      if (
-        activeInteractionRef.current?.furnitureId === "room-visit-dialogue" ||
-        activeInteractionRef.current?.furnitureId === "room-visit-social"
-      ) {
-        updateActiveInteraction(null);
+
+    const line =
+      now >= playback.active.startedAt && now < playback.active.endsAt
+        ? { index: 0, ...playback.active }
+        : now >= playback.response.startedAt && now < playback.response.endsAt
+          ? { index: 1, ...playback.response }
+          : null;
+
+    if (!line) {
+      if (now >= playback.response.endsAt) {
+        playback.completed = true;
+        roomVisitNextExchangeAtRef.current = now + ROOM_VISIT_EXCHANGE_COOLDOWN_MS;
+        roomVisitSocialExchangeRef.current = null;
+        if (
+          activeInteractionRef.current?.furnitureId === "room-visit-dialogue" ||
+          activeInteractionRef.current?.furnitureId === "room-visit-social"
+        ) {
+          updateActiveInteraction(null);
+        }
       }
-      return visitor;
+      return {
+        ...visitor,
+        bubbleText: undefined,
+        bubbleStartedAt: undefined,
+        bubbleEndsAt: undefined,
+      };
     }
 
-    if (current.line.speaker === "host") {
-      if (playback.appliedLineIndex !== current.index) {
-        playback.appliedLineIndex = current.index;
+    if (line.speaker === "host") {
+      if (playback.appliedLineIndex !== line.index) {
+        playback.appliedLineIndex = line.index;
         updateActiveInteraction({
           kind: "none",
           furnitureId: "room-visit-dialogue",
           furnitureName: ui("roomVisit.title"),
-          message: current.line.text,
-          startedAt: current.lineStartedAt,
-          endsAt: current.lineEndedAt,
-          bubbleText: current.line.text,
+          message: line.bubble.text,
+          startedAt: line.startedAt,
+          endsAt: line.endsAt,
+          bubbleText: line.bubble.text,
         });
       }
-      return { ...visitor, bubbleText: undefined };
+      return {
+        ...visitor,
+        bubbleText: undefined,
+        bubbleStartedAt: undefined,
+        bubbleEndsAt: undefined,
+      };
     }
 
     if (
-      playback.appliedLineIndex !== current.index &&
+      playback.appliedLineIndex !== line.index &&
       (activeInteractionRef.current?.furnitureId === "room-visit-dialogue" ||
         activeInteractionRef.current?.furnitureId === "room-visit-social")
     ) {
       updateActiveInteraction(null);
     }
-    playback.appliedLineIndex = current.index;
+    playback.appliedLineIndex = line.index;
     return {
       ...visitor,
-      bubbleText: current.line.text,
-      bubbleStartedAt: current.lineStartedAt,
+      bubbleText: line.bubble.text,
+      bubbleStartedAt: line.startedAt,
+      bubbleEndsAt: line.endsAt,
       runtime: {
         ...visitor.runtime,
-        expression: current.line.expression ?? visitor.runtime.expression,
+        expression: "happy",
       },
     };
   };
@@ -4240,8 +4217,9 @@ export const App = () => {
     socialRoomMemoryRef.current = null;
     activeVisitRelationshipRef.current = null;
     roomVisitHostActivityRef.current = null;
-    roomVisitDialogueRef.current = null;
-    roomVisitDialogueRequestRef.current = null;
+    roomVisitSocialExchangeRef.current = null;
+    roomVisitNextExchangeAtRef.current = 0;
+    roomVisitRecentIntentIdsRef.current = [];
     visitHostStartedAtRef.current = 0;
     visitStatePostedAtRef.current = 0;
 
@@ -4282,34 +4260,13 @@ export const App = () => {
     const partnerName = role === "host" ? visit.guest.avatarName : visit.host.avatarName;
     const behavior = visit.activity ?? "interact";
     const relationship = relationshipForVisit(visit);
-    const completedDialogue =
-      roomVisitDialogueRef.current?.visitId === visit.visitId
-        ? roomVisitDialogueRef.current.dialogue
-        : null;
-    const completedRelationship = completeSocialRelationship(
+    const nextRelationship = completeSocialRelationship(
       relationship,
       visit.visitId,
       visit.host.traits,
       visit.guest.traits,
       behavior,
     );
-    const dialogueRelationshipDelta = Math.max(
-      0,
-      Math.min(6, Math.round(completedDialogue?.relationshipDelta ?? 0)),
-    );
-    const nextRelationship = completedDialogue
-      ? {
-          ...completedRelationship,
-          affinity: Math.min(
-            999,
-            completedRelationship.affinity + dialogueRelationshipDelta,
-          ),
-          lastDialogueSummary:
-            completedDialogue.summary ?? completedRelationship.lastDialogueSummary,
-          lastDialogueSource:
-            completedDialogue.source ?? completedRelationship.lastDialogueSource,
-        }
-      : completedRelationship;
     activeVisitRelationshipRef.current = nextRelationship;
     writeSocialRelationship(nextRelationship);
 
@@ -4461,6 +4418,7 @@ export const App = () => {
       visitor,
       currentContent,
       runtimeRef.current,
+      activeRecordPlayerIdRef.current,
     );
     const canSync =
       visitor.phase === "socializing" &&
@@ -5958,7 +5916,8 @@ export const App = () => {
   useEffect(() => {
     persistTaskCabinetEntries(taskCabinetEntries);
     taskCabinetEntriesRef.current = taskCabinetEntries;
-  }, [taskCabinetEntries]);
+    taskCabinetSceneCountsRef.current = taskCabinetCounts;
+  }, [taskCabinetEntries, taskCabinetCounts]);
 
   const getWindowTimeMs = (frame: number) => {
     const previewHour = windowPreviewHourRef.current;
@@ -6004,10 +5963,8 @@ export const App = () => {
         tableCoffeeStorage.quantity,
         save.memory,
         getWindowTimeMs(0),
-        taskCabinetEntries.filter(
-          (entry) => entry.status === "ready" || entry.status === "failed",
-        ).length,
-        taskCabinetEntries.filter((entry) => entry.status === "failed").length,
+        taskCabinetCounts.activeFileCount,
+        taskCabinetCounts.failedFileCount,
         uiThemeForScene(uiTheme),
         navDebugOverlay,
         save.paintingGallery,
@@ -6036,7 +5993,7 @@ export const App = () => {
     save.avatarAppearanceId,
     save.memory,
     save.paintingGallery,
-    taskCabinetEntries,
+    taskCabinetCounts,
     uiTheme,
     locale,
     navDebugOverlay,
@@ -6445,6 +6402,7 @@ export const App = () => {
       fridgeDoorCloseAudio.pause();
       agentCompleteAudio.pause();
       bitsSpendAudio.pause();
+      clearShopLongPressTimer();
       colaCanOpenAudio.pause();
       colaDrinkAudio.pause();
       coffeeDrinkAudio.pause();
@@ -6755,6 +6713,10 @@ export const App = () => {
       statAccumulator += elapsedSeconds;
       uiAccumulator += elapsedSeconds;
       const currentContent = contentRef.current;
+      const currentTableCoffeeQuantity = getTableCoffeeQuantity(
+        saveRef.current.furnitureStorage,
+        currentContent.placedItems,
+      );
       const navLayoutFingerprint = navigationLayoutFingerprint(currentContent);
       const currentStatus = statusRef.current.status;
       const currentInteraction = activeInteractionRef.current;
@@ -6816,15 +6778,11 @@ export const App = () => {
             selectedWindowRef.current?.id,
             null,
             null,
-            tableCoffeeStorage.quantity,
+            currentTableCoffeeQuantity,
             saveRef.current.memory,
             getWindowTimeMs(frame),
-            taskCabinetEntriesRef.current.filter(
-              (entry) => entry.status === "ready" || entry.status === "failed",
-            ).length,
-            taskCabinetEntriesRef.current.filter(
-              (entry) => entry.status === "failed",
-            ).length,
+            taskCabinetSceneCountsRef.current.activeFileCount,
+            taskCabinetSceneCountsRef.current.failedFileCount,
             uiThemeForScene(uiThemeRef.current),
             navDebugOverlayRef.current,
             saveRef.current.paintingGallery,
@@ -7072,7 +7030,7 @@ export const App = () => {
           nextVisitor.phase === "socializing" ? "active" : activeRoomVisit.phase;
 
         if (nextVisitor.phase === "socializing") {
-          requestSocialDialogueForVisit(activeRoomVisit, nextVisitor, currentContent);
+          startRoomVisitSocialExchange(activeRoomVisit, nextVisitor, now);
         }
 
         if (
@@ -7107,7 +7065,7 @@ export const App = () => {
             busyRecoveryActive,
             taskCabinetVisualFlowActive,
           });
-          nextVisitor = applyRoomVisitDialoguePlayback(nextVisitor, now);
+          nextVisitor = applyRoomVisitSocialExchangePlayback(nextVisitor, now);
         }
 
         roomVisitorRef.current = nextVisitor;
@@ -8268,15 +8226,11 @@ export const App = () => {
                   ...furniturePlacementPreviewRef.current,
                 }
               : null,
-            tableCoffeeStorage.quantity,
+            currentTableCoffeeQuantity,
             saveRef.current.memory,
             getWindowTimeMs(frame),
-            taskCabinetEntriesRef.current.filter(
-              (entry) => entry.status === "ready" || entry.status === "failed",
-            ).length,
-            taskCabinetEntriesRef.current.filter(
-              (entry) => entry.status === "failed",
-            ).length,
+            taskCabinetSceneCountsRef.current.activeFileCount,
+            taskCabinetSceneCountsRef.current.failedFileCount,
             uiThemeForScene(uiThemeRef.current),
             navDebugOverlayRef.current,
             saveRef.current.paintingGallery,
@@ -9271,6 +9225,86 @@ export const App = () => {
           preferences: {
             ...currentMemory.preferences,
             idleBubblePhrases: phrases.filter((candidate) => candidate !== phrase),
+          },
+        },
+      };
+    });
+  };
+
+  const addSocialBubbleCandidate = (
+    candidate: AivatarSocialBubbleCandidate & {
+      agent?: string;
+      sessionId?: string;
+    },
+  ) => {
+    setSave((current) => {
+      const currentMemory = normalizeMemory(current.memory);
+      const currentSet = normalizeSocialBubbleSet(
+        currentMemory.preferences.socialBubbles,
+      );
+      const saved = [...currentSet.active, ...currentSet.responses];
+      const slotCount =
+        SOCIAL_BUBBLE_SLOT_BASE + Math.max(0, currentMemory.growth.level - 1) * 2;
+      if (saved.length >= slotCount) return current;
+      const bubble = normalizeSocialBubble(
+        {
+          ...candidate,
+          source: "session",
+        },
+        {
+          source: "session",
+          learnedFromAgent: candidate.agent,
+          learnedFromSessionId: candidate.sessionId,
+          learnedAt: new Date().toISOString(),
+        },
+      );
+      if (!bubble) return current;
+      const signature = socialBubbleSignature(bubble);
+      if (saved.some((item) => socialBubbleSignature(item) === signature)) {
+        return current;
+      }
+
+      const nextSet: AivatarSocialBubbleSet =
+        bubble.kind === "response"
+          ? {
+              ...currentSet,
+              responses: [...currentSet.responses, bubble].slice(0, slotCount),
+            }
+          : {
+              ...currentSet,
+              active: [...currentSet.active, bubble].slice(0, slotCount),
+            };
+
+      return {
+        ...current,
+        memory: {
+          ...currentMemory,
+          preferences: {
+            ...currentMemory.preferences,
+            socialBubbles: nextSet,
+          },
+        },
+      };
+    });
+  };
+
+  const removeSocialBubble = (bubbleId: string) => {
+    setSave((current) => {
+      const currentMemory = normalizeMemory(current.memory);
+      const currentSet = normalizeSocialBubbleSet(
+        currentMemory.preferences.socialBubbles,
+      );
+      return {
+        ...current,
+        memory: {
+          ...currentMemory,
+          preferences: {
+            ...currentMemory.preferences,
+            socialBubbles: {
+              ...currentSet,
+              active: currentSet.active.filter((bubble) => bubble.id !== bubbleId),
+              responses: currentSet.responses.filter((bubble) => bubble.id !== bubbleId),
+            },
           },
         },
       };
@@ -10771,30 +10805,63 @@ export const App = () => {
     });
   };
 
-  const buyItem = (item: ItemDefinition) => {
+  const clearShopLongPressTimer = () => {
+    if (shopLongPressTimerRef.current === null) return;
+    window.clearTimeout(shopLongPressTimerRef.current);
+    shopLongPressTimerRef.current = null;
+  };
+
+  const clearShopLongPressTrigger = () => {
+    shopLongPressTriggeredRef.current = false;
+    shopLongPressTriggeredItemIdRef.current = null;
+  };
+
+  const reserveShopPurchaseSlot = (
+    itemId: string,
+    cooldownMs = SHOP_PURCHASE_COOLDOWN_MS,
+  ) => {
+    const result = reserveShopPurchaseSlotBase(
+      shopPurchaseCooldownUntilRef.current,
+      itemId,
+      performance.now(),
+      cooldownMs,
+    );
+    shopPurchaseCooldownUntilRef.current = result.cooldowns;
+    return result.reserved;
+  };
+
+  const buyItem = (
+    item: ItemDefinition,
+    requestedQuantity = 1,
+    options: { bypassCooldown?: boolean } = {},
+  ) => {
     const currentSave = saveRef.current;
-    if (isUniqueShopItemOwned(currentSave, item)) return;
-    if (normalizeMemory(currentSave.memory).growth.level < getShopItemUnlockLevel(item)) {
-      return;
-    }
-    if (currentSave.wallet.bits < item.price) return;
+    const optimisticQuantity = isSurfaceItem(item)
+      ? Math.min(1, affordableShopPurchaseQuantity(currentSave, item, 1))
+      : affordableShopPurchaseQuantity(currentSave, item, requestedQuantity);
+    if (optimisticQuantity <= 0) return false;
+    if (!options.bypassCooldown && !reserveShopPurchaseSlot(item.id)) return false;
 
     setSave((current) => {
-      if (isUniqueShopItemOwned(current, item)) return current;
-      if (normalizeMemory(current.memory).growth.level < getShopItemUnlockLevel(item)) {
-        return current;
-      }
-      if (current.wallet.bits < item.price) return current;
+      const purchaseQuantity = isSurfaceItem(item)
+        ? Math.min(1, affordableShopPurchaseQuantity(current, item, 1))
+        : affordableShopPurchaseQuantity(current, item, requestedQuantity);
+      if (purchaseQuantity <= 0) return current;
+      const purchaseCost = Math.max(0, item.price * purchaseQuantity);
+      const memorySummary =
+        purchaseQuantity > 1
+          ? `Bought ${purchaseQuantity} ${item.name}`
+          : `Bought ${item.name}`;
       if (isSurfaceItem(item)) {
         return {
           ...current,
-          wallet: { ...current.wallet, bits: current.wallet.bits - item.price },
+          wallet: { bits: current.wallet.bits - purchaseCost },
           purchasedItemIds: Array.from(new Set([...current.purchasedItemIds, item.id])),
           memory: recordLifeMemory(
             current.memory,
             {
               type: "item_bought",
-              summary: `Bought ${item.name}`,
+              summary: memorySummary,
               itemId: item.id,
             },
             traitChangesForPurchase(item),
@@ -10806,21 +10873,21 @@ export const App = () => {
       const inventory = existing
         ? current.inventory.map((entry) =>
             entry.itemId === item.id
-              ? { ...entry, quantity: entry.quantity + 1 }
+              ? { ...entry, quantity: entry.quantity + purchaseQuantity }
               : entry,
           )
-        : [...current.inventory, { itemId: item.id, quantity: 1 }];
+        : [...current.inventory, { itemId: item.id, quantity: purchaseQuantity }];
 
       return {
         ...current,
-        wallet: { ...current.wallet, bits: current.wallet.bits - item.price },
+        wallet: { bits: current.wallet.bits - purchaseCost },
         inventory,
         purchasedItemIds: Array.from(new Set([...current.purchasedItemIds, item.id])),
         memory: recordLifeMemory(
           current.memory,
           {
             type: "item_bought",
-            summary: `Bought ${item.name}`,
+            summary: memorySummary,
             itemId: item.id,
           },
           traitChangesForPurchase(item),
@@ -10828,6 +10895,52 @@ export const App = () => {
       };
     });
     playBitsSpendSound();
+    return true;
+  };
+
+  const startShopBulkPurchasePress = (
+    event: React.PointerEvent<HTMLButtonElement>,
+    item: ItemDefinition,
+  ) => {
+    unlockAppAudio();
+    if (event.button !== 0 || !isBulkPurchasableShopItem(item)) return;
+    clearShopLongPressTimer();
+    clearShopLongPressTrigger();
+    shopLongPressTimerRef.current = window.setTimeout(() => {
+      shopLongPressTimerRef.current = null;
+      const bought = buyItem(item, SHOP_BULK_PURCHASE_QUANTITY, { bypassCooldown: true });
+      if (!bought) return;
+      shopLongPressTriggeredRef.current = true;
+      shopLongPressTriggeredItemIdRef.current = item.id;
+      reserveShopPurchaseSlot(item.id, SHOP_PURCHASE_COOLDOWN_MS * 2);
+    }, SHOP_LONG_PRESS_MS);
+  };
+
+  const cancelShopBulkPurchasePress = () => {
+    clearShopLongPressTimer();
+    const triggeredItemId = shopLongPressTriggeredItemIdRef.current;
+    if (!shopLongPressTriggeredRef.current || triggeredItemId === null) return;
+    window.setTimeout(() => {
+      if (shopLongPressTriggeredItemIdRef.current === triggeredItemId) {
+        clearShopLongPressTrigger();
+      }
+    }, SHOP_LONG_PRESS_CLICK_SUPPRESSION_MS);
+  };
+
+  const clickShopItem = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    item: ItemDefinition,
+  ) => {
+    if (
+      shopLongPressTriggeredRef.current &&
+      shopLongPressTriggeredItemIdRef.current === item.id
+    ) {
+      clearShopLongPressTrigger();
+      event.preventDefault();
+      return;
+    }
+    if (shopLongPressTriggeredRef.current) clearShopLongPressTrigger();
+    buyItem(item);
   };
 
   const buyOrApplyWindow = (item: ItemDefinition) => {
@@ -11107,12 +11220,8 @@ export const App = () => {
   const paintingGallery = normalizePaintingGallery(save.paintingGallery);
   const growth = memory.growth;
   const canDispatchTasks = isTaskCabinetPlaced(content);
-  const taskCabinetReadyCount = taskCabinetEntries.filter(
-    (entry) => entry.status === "ready",
-  ).length;
-  const taskCabinetRunningCount = taskCabinetEntries.filter(
-    (entry) => entry.status === "running",
-  ).length;
+  const taskCabinetReadyCount = taskCabinetCounts.readyCount;
+  const taskCabinetRunningCount = taskCabinetCounts.runningCount;
   const xpToNextLevel = xpNeededForLevel(growth.level);
   const traitRows: Array<keyof AivatarGrowthTraits> = [
     "focus",
@@ -11126,6 +11235,18 @@ export const App = () => {
   const idleBubblePhrases = memory.preferences.idleBubblePhrases ?? [];
   const idleBubbleLanguage = normalizeIdleBubbleLanguage(
     memory.preferences.idleBubbleLanguage,
+  );
+  const socialBubbleSet = normalizeSocialBubbleSet(memory.preferences.socialBubbles);
+  const savedSocialBubbles = [
+    ...socialBubbleSet.active,
+    ...socialBubbleSet.responses,
+  ];
+  const savedSocialBubbleSignatures = new Set(
+    savedSocialBubbles.map(socialBubbleSignature),
+  );
+  const preferredSocialBubbleLocale = socialBubbleLanguageForPreference(
+    idleBubbleLanguage,
+    locale,
   );
   const onlineVisitRooms = (roomSnapshot?.rooms ?? []).filter((room) => {
     if (room.roomInstanceId === roomInstanceIdRef.current) return false;
@@ -11249,6 +11370,79 @@ export const App = () => {
     ...memoryCandidateOptions,
     ...sessionCandidateOptions,
   ]).slice(0, IDLE_BUBBLE_CANDIDATE_LIMIT);
+  type SocialBubbleCandidateSource = "session" | "llm";
+  type SocialBubbleCandidateOption = AivatarSocialBubbleCandidate & {
+    source: SocialBubbleCandidateSource;
+    agent?: string;
+    sessionId?: string;
+  };
+  const socialBubbleSlotCount = SOCIAL_BUBBLE_SLOT_BASE + Math.max(0, growth.level - 1) * 2;
+  const socialBubbleSlotsAvailable = savedSocialBubbles.length < socialBubbleSlotCount;
+  const socialBubbleCandidateOptions = (
+    options: SocialBubbleCandidateOption[],
+  ): SocialBubbleCandidateOption[] => {
+    const priority: Record<SocialBubbleCandidateSource, number> = {
+      session: 1,
+      llm: 2,
+    };
+    const bySignature = new Map<string, SocialBubbleCandidateOption>();
+    const normalizedOptions: SocialBubbleCandidateOption[] = [];
+    options.forEach((option) => {
+      const normalized = normalizeSocialBubbleCandidate(option);
+      if (!normalized) return;
+      normalizedOptions.push({
+        ...normalized,
+        source: option.source,
+        agent: option.agent,
+        sessionId: option.sessionId,
+      });
+    });
+    normalizedOptions
+      .filter((option) =>
+        preferredSocialBubbleLocale === "mixed" ||
+        option.locale === "mixed" ||
+        option.locale === preferredSocialBubbleLocale
+      )
+      .filter((option) => !savedSocialBubbleSignatures.has(socialBubbleSignature(option)))
+      .forEach((option) => {
+        const signature = socialBubbleSignature(option);
+        const existing = bySignature.get(signature);
+        if (!existing || priority[option.source] > priority[existing.source]) {
+          bySignature.set(signature, option);
+        }
+      });
+    return [...bySignature.values()].slice(0, SOCIAL_BUBBLE_CANDIDATE_LIMIT);
+  };
+  const socialBubbleCandidateBadge = (candidate: SocialBubbleCandidateOption) => {
+    if (candidate.source === "llm") return "LLM";
+    return agentSourceBadge(candidate.agent);
+  };
+  const socialBubbleCandidateBadgeClass = (candidate: SocialBubbleCandidateOption) => {
+    if (candidate.source === "llm") return "llm";
+    return agentSourceClassName(candidate.agent);
+  };
+  const socialBubbleCandidates = socialBubbleCandidateOptions([
+    ...(effectiveStatus.learning?.socialBubbleCandidates ?? []).map((candidate) => ({
+      ...candidate,
+      source:
+        effectiveStatus.learning?.source === "llm"
+          ? ("llm" as const)
+          : ("session" as const),
+      agent: effectiveStatus.agent,
+      sessionId: effectiveStatus.sessionId,
+    })),
+    ...sessions.flatMap((session) =>
+      (session.learning?.socialBubbleCandidates ?? []).map((candidate) => ({
+        ...candidate,
+        source:
+          session.learning?.source === "llm"
+            ? ("llm" as const)
+            : ("session" as const),
+        agent: session.agent,
+        sessionId: session.sessionId,
+      })),
+    ),
+  ]);
   const dominantTrait = traitRows.reduce(
     (best, trait) => (growth.traits[trait] > growth.traits[best] ? trait : best),
     traitRows[0],
@@ -13001,6 +13195,82 @@ export const App = () => {
                   <p className="idle-bubble-empty">{ui("idleBubble.noSuggestions")}</p>
                 )}
               </div>
+              <div className="idle-bubble-editor social-bubble-editor">
+                <div className="idle-bubble-heading">
+                  <span>{ui("socialBubble.title")}</span>
+                  <b>
+                    {savedSocialBubbles.length}/{socialBubbleSlotCount}
+                  </b>
+                </div>
+                {savedSocialBubbles.length > 0 ? (
+                  <div className="idle-bubble-list social-bubble-list">
+                    {savedSocialBubbles.map((bubble) => (
+                      <button
+                        key={bubble.id}
+                        type="button"
+                        className="idle-bubble-pill social-bubble-pill"
+                        onClick={() => removeSocialBubble(bubble.id)}
+                        title={ui("action.remove")}
+                      >
+                        <span>{bubble.text}</span>
+                        <b>
+                          {ui(`socialBubble.kind.${bubble.kind}`)}
+                        </b>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="idle-bubble-empty">{ui("socialBubble.empty")}</p>
+                )}
+                <div className="idle-bubble-heading">
+                  <span>{ui("socialBubble.suggested")}</span>
+                  <b>{ui("idleBubble.limit", { value: socialBubbleSlotCount })}</b>
+                </div>
+                {socialBubbleCandidates.length > 0 ? (
+                  <div className="idle-bubble-candidates social-bubble-candidates">
+                    {socialBubbleCandidates.map((candidate) => {
+                      const badge = socialBubbleCandidateBadge(candidate);
+                      const badgeClass = socialBubbleCandidateBadgeClass(candidate);
+                      const roleLabel = (candidate.allowedVisitRoles ?? [])
+                        .map((role) => ui(`socialBubble.role.${role}`))
+                        .join("/");
+                      const meta = [
+                        ui(`socialBubble.kind.${candidate.kind}`),
+                        roleLabel,
+                        candidate.activity
+                          ? behaviorLabel(locale, candidate.activity)
+                          : "",
+                      ].filter(Boolean).join(" · ");
+                      return (
+                        <button
+                          key={`${candidate.source}:${candidate.agent ?? "local"}:${socialBubbleSignature(candidate)}`}
+                          type="button"
+                          className={`pixel-button idle-bubble-candidate social-bubble-candidate${
+                            candidate.source === "llm" ? " llm" : ""
+                          }${candidate.agent ? ` ${badgeClass}` : ""}`}
+                          disabled={!socialBubbleSlotsAvailable}
+                          onClick={() => addSocialBubbleCandidate(candidate)}
+                          title={badge ? `${badge} suggested` : undefined}
+                        >
+                          <span>
+                            {candidate.text}
+                            <small>{meta}</small>
+                          </span>
+                          {badge ? (
+                            <b className={`idle-bubble-source ${badgeClass}`}>
+                              {badge}
+                            </b>
+                          ) : (
+                            <b>{ui("action.add")}</b>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="idle-bubble-empty">{ui("socialBubble.noSuggestions")}</p>
+                )}
+              </div>
             </div>
           ) : null}
         </section>
@@ -14339,6 +14609,10 @@ export const App = () => {
                       : uniqueShopItemOwned
                         ? `${item.name} ${ui("state.owned")}`
                       : `${item.name} ${item.price}`;
+              const buttonLabel =
+                isBulkPurchasableShopItem(item) && !levelLocked && !uniqueShopItemOwned
+                  ? `${label} (hold to buy up to ${SHOP_BULK_PURCHASE_QUANTITY})`
+                  : label;
 
               return (
                 <button
@@ -14351,16 +14625,21 @@ export const App = () => {
                     uniqueShopItemOwned ||
                     (!purchasedFurnitureSkin && save.wallet.bits < item.price)
                   }
-                  aria-label={label}
-                  title={label}
-                  onClick={() =>
+                  aria-label={buttonLabel}
+                  title={buttonLabel}
+                  onPointerDown={(event) => startShopBulkPurchasePress(event, item)}
+                  onPointerUp={cancelShopBulkPurchasePress}
+                  onPointerLeave={cancelShopBulkPurchasePress}
+                  onPointerCancel={cancelShopBulkPurchasePress}
+                  onBlur={cancelShopBulkPurchasePress}
+                  onClick={(event) =>
                     isWindowItem(item)
                       ? buyOrApplyWindow(item)
                       : isFurnitureSkinItem(item)
                         ? appliedFurnitureSkin
                           ? clearAppliedFurnitureSkin(item)
                           : buyOrApplyFurnitureSkin(item)
-                        : buyItem(item)
+                        : clickShopItem(event, item)
                   }
                 >
                   <span className="item-button-content">

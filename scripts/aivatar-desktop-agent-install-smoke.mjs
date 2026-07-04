@@ -67,8 +67,14 @@ try {
   assert.equal(claudeSettings.env.AIVATAR_LEARNING_ENABLED, "1");
   assert.equal(claudeSettings.env.AIVATAR_LEARNING_PROVIDER, "claude-code");
   assert.ok(claudeSettings.hooks.UserPromptSubmit);
+  assert.ok(claudeSettings.hooks.UserPromptExpansion);
   assert.ok(claudeSettings.hooks.MessageDisplay);
+  assert.ok(claudeSettings.hooks.SubagentStart);
   assert.ok(claudeSettings.hooks.SubagentStop);
+  assert.ok(claudeSettings.hooks.TaskCreated);
+  assert.ok(claudeSettings.hooks.TaskCompleted);
+  assert.ok(claudeSettings.hooks.Elicitation);
+  assert.ok(claudeSettings.hooks.ElicitationResult);
   assert.ok(claudeSettings.hooks.TeammateIdle);
   assert.ok(claudeSettings.hooks.Stop);
   assert.equal(claudeSettings.statusLine.type, "command");

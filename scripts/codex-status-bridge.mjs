@@ -447,6 +447,74 @@ const normalizeIdleBubbleCandidates = (value) => {
   return candidates.length > 0 ? candidates : undefined;
 };
 
+const socialBubbleKinds = new Set(["active", "response"]);
+const socialBubbleLocales = new Set(["zh", "en", "mixed"]);
+const socialBubbleRoles = new Set(["host", "guest"]);
+const socialBubbleActivities = new Set([
+  "interact",
+  "coffee",
+  "play",
+  "music",
+  "relax",
+  "admire",
+  "wander",
+]);
+
+const compactSocialBubbleText = (value, limit) =>
+  String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+
+const normalizeSocialBubbleIntent = (value, fallbackText) => {
+  const intent = compactSocialBubbleText(value, 40)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return intent || `session-${safeSessionName(fallbackText || "bubble").slice(0, 16)}`;
+};
+
+const normalizeSocialBubbleCandidates = (value) => {
+  if (!Array.isArray(value)) return undefined;
+  const seen = new Set();
+  const candidates = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const text = compactSocialBubbleText(entry.text, 56);
+    const length = Array.from(text).length;
+    if (length < 2 || length > 56) continue;
+    const kind = socialBubbleKinds.has(entry.kind) ? entry.kind : "active";
+    const locale = socialBubbleLocales.has(entry.locale) ? entry.locale : undefined;
+    const intentId = normalizeSocialBubbleIntent(entry.intentId, text);
+    const signature = `${kind}:${intentId}:${text.toLowerCase()}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    const replyToIntentIds = Array.isArray(entry.replyToIntentIds)
+      ? [...new Set(entry.replyToIntentIds.map((item) => normalizeSocialBubbleIntent(item, text)))]
+          .slice(0, 4)
+      : [];
+    const allowedVisitRoles = Array.isArray(entry.allowedVisitRoles)
+      ? [...new Set(entry.allowedVisitRoles.filter((role) => socialBubbleRoles.has(role)))]
+      : [];
+    const tags = Array.isArray(entry.tags)
+      ? [...new Set(entry.tags.map((tag) => compactSocialBubbleText(tag, 18)).filter(Boolean))]
+          .slice(0, 4)
+      : [];
+    candidates.push({
+      kind,
+      text,
+      locale,
+      intentId,
+      replyToIntentIds: kind === "response" ? replyToIntentIds : [],
+      allowedVisitRoles: allowedVisitRoles.length ? allowedVisitRoles : ["host", "guest"],
+      activity: socialBubbleActivities.has(entry.activity) ? entry.activity : undefined,
+      tags,
+    });
+    if (candidates.length >= 12) break;
+  }
+  return candidates.length > 0 ? candidates : undefined;
+};
+
 const normalizeTraitChanges = (value) => {
   if (!value || typeof value !== "object") return undefined;
   const traitNames = [
@@ -491,6 +559,9 @@ const normalizeLearning = (value) => {
     summary: summary.length > 180 ? `${summary.slice(0, 177)}...` : summary,
     idleBubbleCandidates: normalizeIdleBubbleCandidates(
       value.idleBubbleCandidates,
+    ),
+    socialBubbleCandidates: normalizeSocialBubbleCandidates(
+      value.socialBubbleCandidates,
     ),
     traitChanges: normalizeTraitChanges(value.traitChanges),
     xp: Number.isFinite(xp) && xp > 0 ? Math.min(12, Math.round(xp)) : undefined,
@@ -1146,6 +1217,40 @@ const sanitizedDigestText = (value, limit = 520) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const hookDisplayTextFromValue = (value) => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) =>
+        hookDisplayTextFromValue(
+          entry?.text ?? entry?.content ?? entry?.message ?? entry,
+        ),
+      )
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (!value || typeof value !== "object") return "";
+  for (const key of ["text", "delta", "message", "summary", "content"]) {
+    const text = hookDisplayTextFromValue(value[key]);
+    if (text.trim()) return text;
+  }
+  return "";
+};
+
+const claudeMessageDisplayText = (input) => {
+  const text = [
+    input?.delta,
+    input?.message,
+    input?.text,
+    input?.content,
+    input?.last_assistant_message,
+    input?.assistant_message,
+  ]
+    .map(hookDisplayTextFromValue)
+    .find((value) => typeof value === "string" && value.trim());
+  return text ? compactHookText(text, 180) : undefined;
+};
+
 const safeSessionName = (value) =>
   String(value || "session").replace(/[^a-zA-Z0-9_.-]/g, "_") || "session";
 
@@ -1228,8 +1333,11 @@ const claudeDigestEntry = (input) => {
     ]);
     return detail ? `${event}: ${sanitizedDigestText(detail, 220)}` : undefined;
   }
-  if (event === "Stop" || event === "TaskCompleted") {
+  if (event === "Stop" || event === "TeammateIdle") {
     return "turn: Claude Code completed the turn";
+  }
+  if (event === "TaskCompleted" || event === "SubagentStop") {
+    return "turn: Claude Code completed delegated work";
   }
   if (event === "StopFailure") return "turn: Claude Code reported an error";
   return undefined;
@@ -1370,6 +1478,15 @@ const claudeUsageFromInput = (input, terminal) => {
   };
 };
 
+const claudeNotificationNeedsUser = (input) => {
+  const text =
+    firstObjectString(input, ["message", "reason", "notification_type"]) ??
+    firstObjectString(input?.notification, ["message", "type"]);
+  return /permission|approval|approve|confirm|input|required|waiting|elicitation/u.test(
+    String(text ?? "").toLowerCase(),
+  );
+};
+
 const claudeStatusForEvent = (event, statusLine, hasUsage) => {
   if (statusLine) {
     return ["idle", "context-window"];
@@ -1377,31 +1494,52 @@ const claudeStatusForEvent = (event, statusLine, hasUsage) => {
   switch (event) {
     case "SessionStart":
       return ["idle", "session-start"];
+    case "Setup":
+      return ["idle", "setup"];
+    case "InstructionsLoaded":
+      return ["idle", "instructions-loaded"];
+    case "ConfigChange":
+      return ["idle", "config-change"];
+    case "CwdChanged":
+      return ["idle", "cwd-changed"];
     case "UserPromptSubmit":
       return ["thinking", "user-prompt"];
+    case "UserPromptExpansion":
+      return ["thinking", "user-prompt-expansion"];
+    case "PreCompact":
+      return ["thinking", "pre-compact"];
+    case "PostCompact":
+      return ["thinking", "post-compact"];
+    case "ElicitationResult":
+      return ["thinking", "elicitation-result"];
     case "PreToolUse":
+    case "SubagentStart":
+    case "TaskCreated":
+      return ["executing", "tool-use"];
     case "PostToolUse":
     case "PostToolBatch":
-      return ["executing", "tool-use"];
+    case "SubagentStop":
+    case "TaskCompleted":
+      return ["thinking", "tool-result"];
     case "MessageDisplay":
       return ["thinking", "message-display"];
     case "PermissionRequest":
+    case "Elicitation":
       return ["waiting_for_user", "permission"];
     case "PermissionDenied":
     case "StopFailure":
-    case "PostToolUseFailure":
       return ["error", "error"];
+    case "PostToolUseFailure":
+      return ["thinking", "tool-result-failed"];
     case "Stop":
-    case "SubagentStop":
     case "TeammateIdle":
-    case "TaskCompleted":
       return ["complete", "turn-complete"];
     case "SessionEnd":
       return ["idle", "session-end"];
     case "Notification":
-      return ["waiting_for_user", "notification"];
+      return ["thinking", "notification"];
     default:
-      if (/permission|approval|waiting|input_required/u.test(event.toLowerCase())) {
+      if (/permission|approval|waiting|input_required|elicitation/u.test(event.toLowerCase())) {
         return ["waiting_for_user", event];
       }
       if (/fail|failed|error|exception/u.test(event.toLowerCase())) {
@@ -1410,7 +1548,7 @@ const claudeStatusForEvent = (event, statusLine, hasUsage) => {
       if (/stop|complete|completed|done|idle/u.test(event.toLowerCase())) {
         return ["complete", event];
       }
-      if (/tool|command|execute|executing|running/u.test(event.toLowerCase())) {
+      if (/tool|command|execute|executing|running|task|subagent/u.test(event.toLowerCase())) {
         return ["executing", event];
       }
       return ["thinking", "hook"];
@@ -1463,7 +1601,15 @@ const isTerminalSessionStatus = (status) =>
 const isClaudeLifecycleOnlyIdleStatus = (status) =>
   status?.agent === "claude-code" &&
   status?.status === "idle" &&
-  ["session-start", "session-end", "other"].includes(status?.phase) &&
+  [
+    "session-start",
+    "setup",
+    "instructions-loaded",
+    "config-change",
+    "cwd-changed",
+    "session-end",
+    "other",
+  ].includes(status?.phase) &&
   !status?.usage &&
   !status?.learning;
 
@@ -1568,34 +1714,52 @@ const normalizeClaudeHookStatus = (input, statusLine) => {
   const event = claudeEventName(input, statusLine);
   const usage = claudeUsageFromInput(
     input,
-    ["Stop", "SubagentStop", "TeammateIdle", "TaskCompleted"].includes(event),
+    ["Stop", "TeammateIdle", "StopFailure"].includes(event),
   );
-  const [status, phase] = claudeStatusForEvent(event, statusLine, Boolean(usage));
+  let [status, phase] = claudeStatusForEvent(event, statusLine, Boolean(usage));
+  if (event === "Notification" && claudeNotificationNeedsUser(input)) {
+    status = "waiting_for_user";
+    phase = "notification";
+  }
   const sessionId = claudeSessionId(input);
   const label = claudeSurfaceLabel(input);
+  const tool = firstObjectString(input, ["tool_name"]);
   const message =
     event === "UserPromptSubmit"
       ? `${label} is thinking`
+      : event === "UserPromptExpansion"
+        ? `${label} is expanding the prompt`
       : event === "MessageDisplay"
-        ? `${label} is responding`
-      : event === "PreToolUse" ||
-          event === "PostToolUse" ||
-          event === "PostToolBatch"
-        ? firstObjectString(input, ["tool_name"])
-          ? `${label} used ${firstObjectString(input, ["tool_name"])}`
+        ? claudeMessageDisplayText(input) ?? `${label} is responding`
+      : event === "PreToolUse"
+        ? tool
+          ? `${label} is using ${tool}`
           : `${label} is using a tool`
-        : event === "PermissionRequest"
-          ? `${label} needs approval`
-          : event === "Stop" ||
-              event === "SubagentStop" ||
-              event === "TeammateIdle" ||
-              event === "TaskCompleted"
-            ? `${label} turn complete`
-            : event === "StopFailure" || event === "PostToolUseFailure"
-              ? `${label} turn failed`
-              : event === "SessionEnd"
-                ? `${label} session ended`
-                : `${label} ${event}`;
+      : event === "PostToolUse" || event === "PostToolBatch"
+        ? `${label} is reviewing tool results`
+      : event === "SubagentStart"
+        ? `${label} started a subagent`
+      : event === "SubagentStop"
+        ? `${label} is reviewing subagent results`
+      : event === "TaskCreated"
+        ? `${label} created a task`
+      : event === "TaskCompleted"
+        ? `${label} is reviewing task results`
+      : event === "PermissionRequest"
+        ? `${label} needs approval`
+      : event === "Elicitation"
+        ? `${label} needs input`
+      : event === "Stop" || event === "TeammateIdle"
+        ? `${label} turn complete`
+      : event === "PostToolUseFailure"
+        ? tool
+          ? `${label} is reading ${tool} failure`
+          : `${label} is reading failed tool results`
+      : event === "StopFailure"
+        ? `${label} turn failed`
+      : event === "SessionEnd"
+        ? `${label} session ended`
+      : `${label} ${event}`;
   const payload = {
     agent: "claude-code",
     sessionId,
@@ -1639,14 +1803,47 @@ const readBody = (request) =>
     request.on("error", reject);
   });
 
+const allowedCorsOrigin = (origin) => {
+  if (typeof origin !== "string" || !origin.trim()) return "";
+  try {
+    const parsed = new URL(origin);
+    const hasOriginOnlyPath =
+      (parsed.pathname === "" || parsed.pathname === "/") &&
+      parsed.search === "" &&
+      parsed.hash === "";
+    if (parsed.protocol === "tauri:" && parsed.hostname === "localhost" && hasOriginOnlyPath) {
+      return "tauri://localhost";
+    }
+    if (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      hasOriginOnlyPath &&
+      (parsed.hostname === "localhost" ||
+        parsed.hostname === "127.0.0.1" ||
+        parsed.hostname === "tauri.localhost")
+    ) {
+      return parsed.origin;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+};
+
 const sendJson = (response, statusCode, payload) => {
+  const corsOrigin = response.aivatarCorsOrigin;
+  const corsHeaders = corsOrigin
+    ? {
+        "access-control-allow-origin": corsOrigin,
+        vary: "Origin",
+      }
+    : {};
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
-    "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
     "access-control-allow-headers": "content-type",
+    ...corsHeaders,
   });
-  response.end(JSON.stringify(payload));
+  response.end(statusCode === 204 ? "" : JSON.stringify(payload));
 };
 
 const roomTimestampMs = (value) => {
@@ -1855,6 +2052,12 @@ wsHttpServer.on("upgrade", (request, socket, head) => {
     socket.destroy();
     return;
   }
+  const requestOrigin = request.headers.origin;
+  if (requestOrigin && !allowedCorsOrigin(requestOrigin)) {
+    socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+    socket.destroy();
+    return;
+  }
 
   wsServer.handleUpgrade(request, socket, head, (websocket) => {
     wsServer.emit("connection", websocket, request);
@@ -1862,6 +2065,14 @@ wsHttpServer.on("upgrade", (request, socket, head) => {
 });
 
 const httpServer = http.createServer(async (request, response) => {
+  const requestOrigin = request.headers.origin;
+  const corsOrigin = allowedCorsOrigin(requestOrigin);
+  response.aivatarCorsOrigin = corsOrigin;
+  if (requestOrigin && !corsOrigin) {
+    sendJson(response, 403, { error: "Origin not allowed" });
+    return;
+  }
+
   if (request.method === "OPTIONS") {
     sendJson(response, 204, {});
     return;

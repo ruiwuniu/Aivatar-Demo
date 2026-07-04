@@ -390,15 +390,26 @@ fn json_contains_aivatar(value: &serde_json::Value) -> bool {
 
 const CLAUDE_REQUIRED_ORDINARY_EVENTS: &[&str] = &[
     "SessionStart",
+    "Setup",
+    "InstructionsLoaded",
     "UserPromptSubmit",
+    "UserPromptExpansion",
     "MessageDisplay",
     "Notification",
     "PostToolBatch",
-    "Stop",
+    "SubagentStart",
     "SubagentStop",
+    "TaskCreated",
+    "TaskCompleted",
+    "PreCompact",
+    "PostCompact",
+    "Elicitation",
+    "ElicitationResult",
+    "ConfigChange",
+    "CwdChanged",
+    "Stop",
     "TeammateIdle",
     "StopFailure",
-    "TaskCompleted",
     "SessionEnd",
 ];
 
@@ -615,15 +626,26 @@ fn enable_claude_code_integration() -> Result<(), String> {
     });
     for event in [
         "SessionStart",
+        "Setup",
+        "InstructionsLoaded",
         "UserPromptSubmit",
+        "UserPromptExpansion",
         "MessageDisplay",
         "Notification",
         "PostToolBatch",
-        "Stop",
+        "SubagentStart",
         "SubagentStop",
+        "TaskCreated",
+        "TaskCompleted",
+        "PreCompact",
+        "PostCompact",
+        "Elicitation",
+        "ElicitationResult",
+        "ConfigChange",
+        "CwdChanged",
+        "Stop",
         "TeammateIdle",
         "StopFailure",
-        "TaskCompleted",
         "SessionEnd",
     ] {
         upsert_claude_hook(&mut settings, event, ordinary.clone())?;
@@ -1451,6 +1473,13 @@ fn write_social_room_memory(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .invoke_handler(tauri::generate_handler![
             start_status_bridge,
             pick_markdown_task_file,

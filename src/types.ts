@@ -29,6 +29,7 @@ export interface AivatarLearningResult {
   source: "llm" | "heuristic";
   summary: string;
   idleBubbleCandidates?: string[];
+  socialBubbleCandidates?: AivatarSocialBubbleCandidate[];
   traitChanges?: Partial<AivatarGrowthTraits>;
   xp?: number;
   confidence?: number;
@@ -109,6 +110,41 @@ export type BehaviorName =
   | "waiting"
   | "error"
   | "success";
+
+export type AivatarSocialBubbleKind = "active" | "response";
+export type AivatarSocialBubbleLocale = "zh" | "en" | "mixed";
+export type AivatarVisitRole = "host" | "guest";
+export type AivatarSocialBubbleSource = "initial" | "learned" | "session";
+
+export interface AivatarSocialBubbleCandidate {
+  kind: AivatarSocialBubbleKind;
+  text: string;
+  locale?: AivatarSocialBubbleLocale;
+  intentId: string;
+  replyToIntentIds?: string[];
+  allowedVisitRoles?: AivatarVisitRole[];
+  activity?: BehaviorName;
+  tags?: string[];
+}
+
+export interface AivatarSocialBubble extends AivatarSocialBubbleCandidate {
+  id: string;
+  locale: AivatarSocialBubbleLocale;
+  allowedVisitRoles: AivatarVisitRole[];
+  tags: string[];
+  weight: number;
+  source: AivatarSocialBubbleSource;
+  learnedFromAgent?: string;
+  learnedFromSessionId?: string;
+  learnedFromAvatarId?: string;
+  learnedAt?: string;
+}
+
+export interface AivatarSocialBubbleSet {
+  active: AivatarSocialBubble[];
+  responses: AivatarSocialBubble[];
+  disabledIds?: string[];
+}
 
 export interface PetStats {
   energy: number;
@@ -198,6 +234,7 @@ export interface AivatarPreferences {
   favoriteActivity?: BehaviorName;
   idleBubbleLanguage?: IdleBubbleLanguagePreference;
   idleBubblePhrases?: string[];
+  socialBubbles?: AivatarSocialBubbleSet;
   socialWillingness?: number;
   activityWeights: Partial<Record<BehaviorName, number>>;
   itemAffinities: Record<string, number>;
@@ -529,6 +566,7 @@ export interface AivatarRoomPresence {
   growthLevel: number;
   traits: AivatarGrowthTraits;
   idleBubblePhrases?: string[];
+  socialBubbles?: AivatarSocialBubbleSet;
   petStats: PetStats;
 }
 
@@ -621,6 +659,7 @@ export interface AivatarRoomVisitor {
   memory?: AivatarMemory;
   bubbleText?: string;
   bubbleStartedAt?: number;
+  bubbleEndsAt?: number;
   phase?: "entering" | "socializing" | "leaving";
 }
 

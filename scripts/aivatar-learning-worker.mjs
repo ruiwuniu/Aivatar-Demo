@@ -33,6 +33,18 @@ const traitNames = [
   "creativity",
   "warmth",
 ];
+const socialBubbleKinds = ["active", "response"];
+const socialBubbleLocales = ["zh", "en", "mixed"];
+const socialBubbleRoles = ["host", "guest"];
+const socialBubbleActivities = [
+  "interact",
+  "coffee",
+  "play",
+  "music",
+  "relax",
+  "admire",
+  "wander",
+];
 
 const learningSchema = {
   type: "object",
@@ -43,6 +55,47 @@ const learningSchema = {
       type: "array",
       items: { type: "string" },
       maxItems: 6,
+    },
+    socialBubbleCandidates: {
+      type: "array",
+      maxItems: 6,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          kind: { enum: socialBubbleKinds },
+          text: { type: "string", minLength: 1, maxLength: 56 },
+          locale: { enum: socialBubbleLocales },
+          intentId: { type: "string", minLength: 1, maxLength: 40 },
+          replyToIntentIds: {
+            type: "array",
+            items: { type: "string", minLength: 1, maxLength: 40 },
+            maxItems: 4,
+          },
+          allowedVisitRoles: {
+            type: "array",
+            items: { enum: socialBubbleRoles },
+            minItems: 1,
+            maxItems: 2,
+          },
+          activity: { enum: socialBubbleActivities },
+          tags: {
+            type: "array",
+            items: { type: "string", minLength: 1, maxLength: 18 },
+            maxItems: 4,
+          },
+        },
+        required: [
+          "kind",
+          "text",
+          "locale",
+          "intentId",
+          "replyToIntentIds",
+          "allowedVisitRoles",
+          "activity",
+          "tags",
+        ],
+      },
     },
     traitChanges: {
       type: "object",
@@ -62,6 +115,7 @@ const learningSchema = {
   required: [
     "summary",
     "idleBubbleCandidates",
+    "socialBubbleCandidates",
     "traitChanges",
     "xp",
     "confidence",
@@ -239,6 +293,64 @@ const safePhrase = (value) => {
   return phrase;
 };
 
+const safeSocialBubbleText = (value) => {
+  const text = compactText(value, 56)
+    .replace(/['â€™]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const length = Array.from(text).length;
+  if (length < 2 || length > 56) return null;
+  if (/\[(?:url|path|email|secret)\]/i.test(text)) return null;
+  return text;
+};
+
+const normalizeIntentId = (value, fallbackText) => {
+  const intent = compactText(value, 40)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (intent) return intent;
+  return `session-${createHash("sha256")
+    .update(String(fallbackText ?? "bubble"))
+    .digest("hex")
+    .slice(0, 8)}`;
+};
+
+const normalizeSocialBubbleCandidate = (value, language) => {
+  if (!value || typeof value !== "object") return null;
+  const text = safeSocialBubbleText(value.text);
+  if (!text) return null;
+  const kind = value.kind === "response" ? "response" : "active";
+  const locale = socialBubbleLocales.includes(value.locale)
+    ? value.locale
+    : language;
+  const intentId = normalizeIntentId(value.intentId, text);
+  const replyToIntentIds = Array.isArray(value.replyToIntentIds)
+    ? [...new Set(value.replyToIntentIds.map((item) => normalizeIntentId(item, text)))]
+        .slice(0, 4)
+    : [];
+  const allowedVisitRoles = Array.isArray(value.allowedVisitRoles)
+    ? [...new Set(value.allowedVisitRoles.filter((role) => socialBubbleRoles.includes(role)))]
+    : [];
+  const activity = socialBubbleActivities.includes(value.activity)
+    ? value.activity
+    : "interact";
+  const tags = Array.isArray(value.tags)
+    ? [...new Set(value.tags.map((tag) => compactText(tag, 18)).filter(Boolean))]
+        .slice(0, 4)
+    : [];
+  return {
+    kind,
+    text,
+    locale,
+    intentId,
+    replyToIntentIds: kind === "response" ? replyToIntentIds : [],
+    allowedVisitRoles: allowedVisitRoles.length ? allowedVisitRoles : ["host", "guest"],
+    activity,
+    tags,
+  };
+};
+
 const detectSessionLanguage = (options, digest) => {
   const text = `${options.summary} ${digest}`;
   if (hasHanText(text)) return "zh";
@@ -260,6 +372,13 @@ const normalizeLearning = (raw, options, digest) => {
   const candidates = Array.isArray(raw?.idleBubbleCandidates)
     ? raw.idleBubbleCandidates.map(safePhrase).filter(Boolean).slice(0, 6)
     : [];
+  const language = detectSessionLanguage(options, digest);
+  const socialBubbleCandidates = Array.isArray(raw?.socialBubbleCandidates)
+    ? raw.socialBubbleCandidates
+        .map((candidate) => normalizeSocialBubbleCandidate(candidate, language))
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
   const xp = Number(raw?.xp);
   const confidence = Number(raw?.confidence);
   const privacyRisk =
@@ -280,6 +399,7 @@ const normalizeLearning = (raw, options, digest) => {
     source: options.provider === "none" ? "heuristic" : "llm",
     summary,
     idleBubbleCandidates: candidates,
+    socialBubbleCandidates,
     traitChanges,
     xp: Number.isFinite(xp) ? Math.max(1, Math.min(8, Math.round(xp))) : 3,
     confidence:
@@ -359,15 +479,15 @@ const traitToneGuidance = (avatarState) => {
     `Current trait points: ${traitList}.`,
     `Dominant voice: ${avatarState.dominantTrait} (${toneByTrait[avatarState.dominantTrait]}).`,
     `Secondary color: ${avatarState.secondaryTrait} (${toneByTrait[avatarState.secondaryTrait]}).`,
-    "Blend the dominant and secondary traits into idleBubbleCandidates while keeping every bubble natural, brief, and pet-like.",
+    "Blend the dominant and secondary traits into idleBubbleCandidates and socialBubbleCandidates while keeping every bubble natural, brief, and pet-like.",
     "Do not mention trait names, point totals, levels, or this instruction inside the bubbles.",
   ].join("\n");
 };
 
 const languageInstruction = (language) =>
   language === "zh"
-    ? "The session language is Chinese. All idleBubbleCandidates must be natural Simplified Chinese, unless a short quoted phrase from the digest is already English."
-    : "The session language is English. Keep idleBubbleCandidates in natural English unless the digest clearly asks for another language.";
+    ? "The session language is Chinese. All idleBubbleCandidates and socialBubbleCandidates must be natural Simplified Chinese, unless a short quoted phrase from the digest is already English."
+    : "The session language is English. Keep idleBubbleCandidates and socialBubbleCandidates in natural English unless the digest clearly asks for another language.";
 
 const learningPrompt = (options, digest, avatarState) => `You are Aivatar's personality learning module.
 
@@ -382,6 +502,10 @@ Rules:
 - Emoji and tiny decorative symbols are allowed when they feel natural and pet-like.
 - Avoid comma-heavy or period-heavy prose, markdown, file paths, commands, logs, and technical wording in idleBubbleCandidates.
 - Make idleBubbleCandidates sound like something a real gentle human companion might say in one breath.
+- For socialBubbleCandidates, create short role-play lines for room visits, not direct task summaries.
+- Prefer active/response pairs that share a logical intent: an active line gets intentId "x", a response line uses replyToIntentIds ["x"].
+- Respect room roles: guest lines may ask to look around; host lines should invite, offer, welcome, or answer from their own room.
+- Keep socialBubbleCandidates in the session language and do not mix languages inside a pair.
 - ${languageInstruction(detectSessionLanguage(options, digest))}
 - Match the bubble voice to Aivatar's current trait snapshot when available.
 - Trait changes must be tiny integers from -3 to 3.
@@ -794,6 +918,72 @@ const heuristicSummary = (options, digest, language) => {
   );
 };
 
+const heuristicSocialBubbleCandidates = (text, language) => {
+  const zh = language === "zh";
+  const activity = /coffee|drink|\u5496\u5561/.test(text)
+    ? "coffee"
+    : /game|play|\u6e38\u620f/.test(text)
+      ? "play"
+      : /design|paint|visual|room|decor|\u8bbe\u8ba1|\u623f\u95f4/.test(text)
+        ? "admire"
+        : "interact";
+  const intentId = activity === "admire" ? "tiny_polish" : "session_chat";
+  if (zh) {
+    return [
+      {
+        kind: "active",
+        text: activity === "admire"
+          ? "\u8fd9\u4e2a\u89d2\u843d\u8981\u4e0d\u8981\u518d\u8c03\u4e00\u70b9"
+          : "\u4eca\u5929\u4e5f\u6162\u6162\u628a\u601d\u8def\u7406\u987a",
+        locale: "zh",
+        intentId,
+        replyToIntentIds: [],
+        allowedVisitRoles: ["host", "guest"],
+        activity,
+        tags: ["\u4e3b\u52a8", "\u5b66\u5230"],
+      },
+      {
+        kind: "response",
+        text: activity === "admire"
+          ? "\u55ef\uff0c\u7ec6\u4e00\u70b9\u4f1a\u66f4\u8212\u670d"
+          : "\u597d\uff0c\u4e00\u5c0f\u6b65\u4e00\u5c0f\u6b65\u6765",
+        locale: "zh",
+        intentId: `${intentId}_reply`,
+        replyToIntentIds: [intentId],
+        allowedVisitRoles: ["host", "guest"],
+        activity,
+        tags: ["\u5e94\u7b54", "\u5b66\u5230"],
+      },
+    ];
+  }
+  return [
+    {
+      kind: "active",
+      text: activity === "admire"
+        ? "Should this corner be tuned a little"
+        : "We can sort the thought slowly today",
+      locale: "en",
+      intentId,
+      replyToIntentIds: [],
+      allowedVisitRoles: ["host", "guest"],
+      activity,
+      tags: ["active", "learned"],
+    },
+    {
+      kind: "response",
+      text: activity === "admire"
+        ? "Yes, a tiny polish would feel nice"
+        : "Good, one small step at a time",
+      locale: "en",
+      intentId: `${intentId}_reply`,
+      replyToIntentIds: [intentId],
+      allowedVisitRoles: ["host", "guest"],
+      activity,
+      tags: ["response", "learned"],
+    },
+  ];
+};
+
 const heuristicLearning = (options, digest) => {
   const text = `${options.summary} ${digest}`.toLowerCase();
   const language = detectSessionLanguage(options, digest);
@@ -820,6 +1010,7 @@ const heuristicLearning = (options, digest) => {
   return {
     summary: heuristicSummary(options, digest, language),
     idleBubbleCandidates: heuristicBubbleCandidates(options, digest, language),
+    socialBubbleCandidates: heuristicSocialBubbleCandidates(text, language),
     traitChanges,
     xp: 2,
     confidence: 0.35,

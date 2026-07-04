@@ -813,6 +813,24 @@ const handleRecord = async (record) => {
   if (
     record.type === "event_msg" &&
     payload.type === "agent_message" &&
+    payload.phase === "commentary"
+  ) {
+    const text = textFromPayload(payload);
+    if (!text) return;
+    rememberIdleBubbleCandidates(text);
+    rememberConversationDigest("assistant", text);
+    await emitStatus("thinking", shortText(text, "Codex is thinking aloud"), {
+      phase: "commentary",
+      progress: 70,
+      preserveBaseline: true,
+      force: true,
+    });
+    return;
+  }
+
+  if (
+    record.type === "event_msg" &&
+    payload.type === "agent_message" &&
     isFinalPhase(payload.phase)
   ) {
     const text = textFromPayload(payload);

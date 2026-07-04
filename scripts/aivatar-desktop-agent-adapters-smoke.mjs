@@ -37,6 +37,10 @@ await opencodePlugin.event({
     title: "Building feature",
   },
 });
+await opencodePlugin["experimental.text.complete"](
+  { sessionID: "ses_aivatar" },
+  { text: "I found the live shape." },
+);
 await opencodePlugin.event({
   event: {
     type: "permission.asked",
@@ -55,19 +59,21 @@ await opencodePlugin.event({
 const statusPosts = posted.filter((entry) =>
   entry.url.endsWith("/agent-status"),
 );
-assert.equal(statusPosts.length, 4);
+assert.equal(statusPosts.length, 5);
 assert.deepEqual(
-  statusPosts.slice(0, 3).map((entry) => entry.body.status),
-  ["executing", "waiting_for_user", "complete"],
+  statusPosts.slice(0, 4).map((entry) => entry.body.status),
+  ["executing", "thinking", "waiting_for_user", "complete"],
 );
 assert.deepEqual(
-  statusPosts.slice(0, 3).map((entry) => entry.body.agent),
-  ["opencode", "opencode", "opencode"],
+  statusPosts.slice(0, 4).map((entry) => entry.body.agent),
+  ["opencode", "opencode", "opencode", "opencode"],
 );
-assert.equal(statusPosts[1].body.severity, "warning");
-assert.equal(statusPosts[3].body.phase, "session-learning");
-assert.equal(statusPosts[3].body.learning.source, "heuristic");
-assert.ok(statusPosts[3].body.learning.idleBubbleCandidates.length > 0);
+assert.equal(statusPosts[1].body.phase, "message-display");
+assert.match(statusPosts[1].body.summary, /I found the live shape/);
+assert.equal(statusPosts[2].body.severity, "warning");
+assert.equal(statusPosts[4].body.phase, "session-learning");
+assert.equal(statusPosts[4].body.learning.source, "heuristic");
+assert.ok(statusPosts[4].body.learning.idleBubbleCandidates.length > 0);
 assert.ok(posted.some((entry) => entry.url.endsWith("/agent-presence")));
 assert.ok(posted.some((entry) => entry.url.endsWith("/agent-active")));
 assert.equal(logs[0]?.body?.message, "Aivatar opencode plugin initialized");
@@ -77,8 +83,15 @@ assert.equal(fragment.env.AIVATAR_LEARNING_ENABLED, "1");
 assert.equal(fragment.env.AIVATAR_LEARNING_PROVIDER, "claude-code");
 assert.equal(fragment.statusLine.type, "command");
 assert.ok(fragment.hooks.SessionStart);
+assert.ok(fragment.hooks.Setup);
+assert.ok(fragment.hooks.InstructionsLoaded);
 assert.ok(fragment.hooks.UserPromptSubmit);
+assert.ok(fragment.hooks.UserPromptExpansion);
 assert.ok(fragment.hooks.PreToolUse[0].matcher);
+assert.ok(fragment.hooks.SubagentStart);
+assert.ok(fragment.hooks.TaskCreated);
+assert.ok(fragment.hooks.TaskCompleted);
+assert.ok(fragment.hooks.Elicitation);
 
 const merged = claudeModule.mergeClaudeDesktopSettings(
   {
@@ -369,11 +382,65 @@ try {
   assert.equal(claudeSession.usage.contextTokens, 1300);
 
   await postHook({
+    hook_event_name: "PreToolUse",
+    session_id: "claude_native_smoke",
+    turn_id: "turn-smoke-1",
+    tool_name: "Bash",
+    tool_input: { description: "Read a missing file" },
+  });
+  await postHook({
+    hook_event_name: "PostToolUseFailure",
+    session_id: "claude_native_smoke",
+    turn_id: "turn-smoke-1",
+    tool_name: "Bash",
+    error: "exit code 1",
+  });
+  snapshot = await readSnapshot();
+  claudeSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
+  );
+  assert.ok(claudeSession);
+  assert.equal(claudeSession.status, "thinking");
+  assert.equal(claudeSession.phase, "tool-result-failed");
+
+  await postHook({
     hook_event_name: "MessageDisplay",
     session_id: "claude_native_smoke",
     turn_id: "turn-smoke-1",
     delta: "The Desktop Agents card now feels more consistent.",
   });
+  snapshot = await readSnapshot();
+  claudeSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
+  );
+  assert.ok(claudeSession);
+  assert.equal(claudeSession.status, "thinking");
+  assert.equal(claudeSession.phase, "message-display");
+  assert.match(claudeSession.summary, /Desktop Agents card/);
+  await postHook({
+    hook_event_name: "PostToolUse",
+    session_id: "claude_native_smoke",
+    turn_id: "turn-smoke-1",
+    tool_name: "Read",
+  });
+  snapshot = await readSnapshot();
+  claudeSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
+  );
+  assert.ok(claudeSession);
+  assert.equal(claudeSession.status, "thinking");
+  assert.equal(claudeSession.phase, "tool-result");
+  await postHook({
+    hook_event_name: "TaskCompleted",
+    session_id: "claude_native_smoke",
+    turn_id: "turn-smoke-1",
+  });
+  snapshot = await readSnapshot();
+  claudeSession = snapshot.sessions.find(
+    (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
+  );
+  assert.ok(claudeSession);
+  assert.equal(claudeSession.status, "thinking");
   await postHook({
     hook_event_name: "Stop",
     session_id: "claude_native_smoke",
@@ -450,6 +517,35 @@ try {
     prompt: "Track this desktop Chat session.",
   });
   runNodeHook({
+    hook_event_name: "PreToolUse",
+    session_id: desktopHookSessionId,
+    mode: "chat",
+    tool_name: "Bash",
+    tool_input: { description: "Read a missing file" },
+  });
+  runNodeHook({
+    hook_event_name: "PostToolUseFailure",
+    session_id: desktopHookSessionId,
+    mode: "chat",
+    tool_name: "Bash",
+    error: "exit code 1",
+  });
+  runNodeHook({
+    hook_event_name: "MessageDisplay",
+    session_id: desktopHookSessionId,
+    mode: "chat",
+    delta: "I saw the command fail and will recover.",
+  });
+  snapshot = await readSnapshot();
+  let desktopHookSession = snapshot.sessions.find(
+    (session) =>
+      session.agent === "claude-code" &&
+      session.sessionId === desktopHookSessionId,
+  );
+  assert.ok(desktopHookSession);
+  assert.equal(desktopHookSession.status, "thinking");
+  assert.match(desktopHookSession.summary, /command fail/);
+  runNodeHook({
     hook_event_name: "Stop",
     session_id: desktopHookSessionId,
     mode: "chat",
@@ -462,7 +558,7 @@ try {
     reason: "closed",
   });
   snapshot = await readSnapshot();
-  const desktopHookSession = snapshot.sessions.find(
+  desktopHookSession = snapshot.sessions.find(
     (session) =>
       session.agent === "claude-code" &&
       session.sessionId === desktopHookSessionId,

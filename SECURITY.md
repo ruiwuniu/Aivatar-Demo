@@ -8,9 +8,13 @@ For now, report security concerns privately to the project maintainer. Add a pri
 
 ## Local Data Boundaries
 
-Aivatar is designed as a local desktop companion. Its status bridge binds to `127.0.0.1` by default and is intended for same-machine integrations only.
+Aivatar is designed as a local desktop companion. Its status bridge binds to `127.0.0.1` by default and is intended for same-machine integrations only. Browser-origin HTTP and WebSocket bridge requests should be limited to the Tauri app and localhost/127.0.0.1 development origins; no-Origin CLI/script requests are still allowed for local tools.
 
 Agent integrations can read local status/session metadata from tools such as Codex Desktop or Claude Code. Treat those local files as sensitive. Do not attach raw rollout JSONL files, Claude transcripts, save files, or temporary learning-context files to public issues.
+
+## Dependency Audit Notes
+
+Keep Tauri and frontend build tooling current before release. Target-specific Rust OSV scans may report `unic-*` unmaintained advisories through Tauri's transitive `urlpattern` dependency; revisit this when upstream Tauri can remove or replace that dependency.
 
 ## Temporary Files
 
