@@ -7,18 +7,38 @@
 **中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。它把 Codex、Claude Code、opencode 或自定义本地 agent 桥接映射成像素房间里的小伙伴行为：思考、编码、等待、报错、完成任务，并通过多角色形象、升级后的房间材质、`bits`、成长、背包、商店和房间装修形成一个可互动的工作陪伴系统。
 
 <p align="center">
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.3/Aivatar_0.2.3_universal.dmg"><strong>Download macOS DMG</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.0/Aivatar_0.3.0_universal.dmg"><strong>Download macOS DMG</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.3/Aivatar_0.2.3_x64-setup.exe"><strong>Download Windows EXE</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.3/Aivatar_0.2.3_x64-setup.exe"><strong>Download Windows EXE 0.2.3</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.3/Aivatar_0.2.3_x64_en-US.msi"><strong>Download Windows MSI</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.3/Aivatar_0.2.3_x64_en-US.msi"><strong>Download Windows MSI 0.2.3</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.2.3">Release 0.2.3</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.3.0">Release 0.3.0</a>
 </p>
 
 <p align="center">
   <img src="docs/assets/aivatar-readme-0.2-agent-room.gif" width="760" alt="Aivatar 0.2 room with a new character, upgraded materials, agent sessions, desktop agents, task cabinet, and CLI launcher" />
 </p>
+
+## 0.3.0 Major Highlights / 0.3.0 大版本亮点
+
+**EN**
+
+- 0.3.0 introduces Card Room, a standalone poker side room with a fixed desktop window size, a casino-style table scene, companion seating, hand controls, and room-specific save/economy state.
+- Hold'em play is now backed by stricter rule handling, including blinds, betting rounds, all-in side pots, showdown reveal order, timeout flow, and focused smoke coverage for Card Room rule paths.
+- The Card Room economy adds player and companion chip balances, house-bank accounting, debt settlement, owner gifts, chip exchange, and a dedicated Chip Shop.
+- Card Room decor is now a real content surface: upgraded wall materials, floor materials, window assets, poker furniture, and shop filtering let the side room visually evolve independently from the main room.
+- Desktop rendering is hardened for the heavier poker scene with cached static room layers and WebAudio-based deal-card sounds to avoid WKWebView short-audio stutter during deal animations.
+- This release publishes a new universal macOS DMG for 0.3.0. Windows installers remain on the previous 0.2.3 tester build until the Windows package is refreshed.
+
+**中文**
+
+- 0.3.0 新增纸牌屋 Card Room：一个独立的扑克侧房间，拥有固定桌面窗口比例、赌场风格牌桌场景、小伙伴入座、手牌操作和独立的房间存档/经济状态。
+- 德州扑克流程更接近正式规则：包含盲注、下注轮、all-in 边池、摊牌顺序、叫钟/超时流程，并加入针对纸牌屋规则路径的烟测。
+- 纸牌屋经济系统加入玩家与小伙伴筹码余额、房主银行、债务结算、老板赠送、筹码兑换和专用 Chip Shop。
+- 纸牌屋装修成为独立内容面：升级墙纸、地板、窗户、扑克家具与商店筛选，使侧房间可以独立于主房间演进视觉风格。
+- 为更重的扑克场景加固桌面渲染：缓存静态房间层，并把发牌短音效改为 WebAudio 播放，避免 macOS WKWebView 在发牌动画中因短音频连续触发而卡顿。
+- 本版本发布新的 0.3.0 macOS universal DMG。Windows 安装包仍保留上一版 0.2.3 测试构建，待后续刷新。
 
 ## 0.2.3 Patch Highlights / 0.2.3 补丁亮点
 
@@ -54,7 +74,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.2.3 preview installers are available for macOS and Windows through GitHub Releases. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
+> Current status / 当前状态: 0.3.0 is available as a universal macOS DMG through GitHub Releases. Windows preview installers remain available from 0.2.3. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
 
 ## Contents / 目录
 

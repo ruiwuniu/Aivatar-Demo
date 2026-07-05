@@ -124,7 +124,6 @@ const CARD_ROOM_HAND_DEAL_FACE_REVEAL_PROGRESS = 0.82;
 const CARD_ROOM_AUDIO_VOLUME_KEY = "aivatar.audioVolume.v1";
 const CARD_ROOM_DEFAULT_AUDIO_VOLUME = 0.45;
 const CARD_ROOM_DEAL_CARD_AUDIO_SRC = "/audio/card-room-card-deal.mp3";
-const CARD_ROOM_DEAL_CARD_AUDIO_POOL_SIZE = 8;
 const CARD_ROOM_DEAL_CARD_AUDIO_VOLUME_MULTIPLIER = 0.55;
 const CARD_ROOM_DEAL_CARD_AUDIO_LATE_WINDOW_MS = 260;
 const CARD_ROOM_FOLD_AUDIO_SRC = "/audio/card-room-fold.mp3";
@@ -554,6 +553,10 @@ const readCardRoomAudioVolume = () => {
     return CARD_ROOM_DEFAULT_AUDIO_VOLUME;
   }
 };
+
+const cardRoomAudioContextConstructor = () =>
+  window.AudioContext ??
+  (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
 
 const createCardRoomAudioPool = (sources: readonly string[], poolSize: number) => {
   if (sources.length === 0 || poolSize <= 0) return [];
@@ -1081,8 +1084,9 @@ export const CardRoomApp = () => {
   const processedAutoCashOutHandRef = useRef<number | null>(null);
   const victoryDemoPlayedRef = useRef(false);
   const cardRoomAudioUnlockedRef = useRef(false);
-  const dealCardAudioPoolRef = useRef<HTMLAudioElement[]>([]);
-  const dealCardAudioPoolIndexRef = useRef(0);
+  const dealCardAudioContextRef = useRef<AudioContext | null>(null);
+  const dealCardAudioBufferRef = useRef<AudioBuffer | null>(null);
+  const dealCardAudioBufferLoadingRef = useRef<Promise<AudioBuffer | null> | null>(null);
   const foldAudioPoolRef = useRef<HTMLAudioElement[]>([]);
   const foldAudioPoolIndexRef = useRef(0);
   const checkAudioPoolRef = useRef<HTMLAudioElement[]>([]);
@@ -1123,11 +1127,6 @@ export const CardRoomApp = () => {
   };
 
   const applyCardRoomAudioVolume = (volume = cardRoomAudioVolumeRef.current) => {
-    applyCardRoomAudioPoolVolume(
-      dealCardAudioPoolRef.current,
-      CARD_ROOM_DEAL_CARD_AUDIO_VOLUME_MULTIPLIER,
-      volume,
-    );
     applyCardRoomAudioPoolVolume(
       foldAudioPoolRef.current,
       CARD_ROOM_FOLD_AUDIO_VOLUME_MULTIPLIER,
@@ -1205,12 +1204,68 @@ export const CardRoomApp = () => {
     void audio.play().catch(() => undefined);
   };
 
+  const ensureDealCardAudioContext = () => {
+    if (dealCardAudioContextRef.current) return dealCardAudioContextRef.current;
+    const AudioContextConstructor = cardRoomAudioContextConstructor();
+    if (!AudioContextConstructor) return null;
+    const context = new AudioContextConstructor();
+    dealCardAudioContextRef.current = context;
+    return context;
+  };
+
+  const loadDealCardAudioBuffer = () => {
+    if (dealCardAudioBufferRef.current) {
+      return Promise.resolve(dealCardAudioBufferRef.current);
+    }
+    if (dealCardAudioBufferLoadingRef.current) {
+      return dealCardAudioBufferLoadingRef.current;
+    }
+    const context = ensureDealCardAudioContext();
+    if (!context) return Promise.resolve(null);
+
+    const loading = fetch(CARD_ROOM_DEAL_CARD_AUDIO_SRC)
+      .then((response) => (response.ok ? response.arrayBuffer() : Promise.reject()))
+      .then((audioData) => context.decodeAudioData(audioData))
+      .then((buffer) => {
+        dealCardAudioBufferRef.current = buffer;
+        return buffer;
+      })
+      .catch(() => {
+        dealCardAudioBufferLoadingRef.current = null;
+        return null;
+      });
+    dealCardAudioBufferLoadingRef.current = loading;
+    return loading;
+  };
+
   const playDealCardAudio = () => {
-    playCardRoomAudioFromPool(
-      dealCardAudioPoolRef.current,
-      dealCardAudioPoolIndexRef,
-      CARD_ROOM_DEAL_CARD_AUDIO_VOLUME_MULTIPLIER,
+    if (!cardRoomAudioUnlockedRef.current || cardRoomAudioVolumeRef.current <= 0) return;
+    const context = ensureDealCardAudioContext();
+    const buffer = dealCardAudioBufferRef.current;
+    if (!context || !buffer) {
+      void loadDealCardAudioBuffer();
+      return;
+    }
+    if (context.state === "suspended") {
+      void context.resume().catch(() => undefined);
+      return;
+    }
+    if (context.state === "closed") return;
+
+    const source = context.createBufferSource();
+    const gain = context.createGain();
+    source.buffer = buffer;
+    gain.gain.value = Math.min(
+      1,
+      Math.max(0, cardRoomAudioVolumeRef.current * CARD_ROOM_DEAL_CARD_AUDIO_VOLUME_MULTIPLIER),
     );
+    source.connect(gain);
+    gain.connect(context.destination);
+    source.onended = () => {
+      source.disconnect();
+      gain.disconnect();
+    };
+    source.start();
   };
 
   const playFoldAudio = () => {
@@ -1673,10 +1728,6 @@ export const CardRoomApp = () => {
   }, []);
 
   useEffect(() => {
-    const dealAudioPool = createCardRoomAudioPool(
-      [CARD_ROOM_DEAL_CARD_AUDIO_SRC],
-      CARD_ROOM_DEAL_CARD_AUDIO_POOL_SIZE,
-    );
     const foldAudioPool = createCardRoomAudioPool(
       [CARD_ROOM_FOLD_AUDIO_SRC],
       CARD_ROOM_FOLD_AUDIO_POOL_SIZE,
@@ -1705,7 +1756,6 @@ export const CardRoomApp = () => {
       CARD_ROOM_CHARACTER_WIN_AUDIO_SRCS,
       CARD_ROOM_CHARACTER_WIN_AUDIO_SRCS.length,
     );
-    dealCardAudioPoolRef.current = dealAudioPool;
     foldAudioPoolRef.current = foldAudioPool;
     checkAudioPoolRef.current = checkAudioPool;
     chipBetAudioPoolRef.current = chipBetAudioPool;
@@ -1716,7 +1766,6 @@ export const CardRoomApp = () => {
     applyCardRoomAudioVolume();
 
     return () => {
-      pauseCardRoomAudioPool(dealAudioPool);
       pauseCardRoomAudioPool(foldAudioPool);
       pauseCardRoomAudioPool(checkAudioPool);
       pauseCardRoomAudioPool(chipBetAudioPool);
@@ -1724,7 +1773,13 @@ export const CardRoomApp = () => {
       pauseCardRoomAudioPool(chipPayoutAudioPool);
       pauseCardRoomAudioPool(userWinAudioPool);
       pauseCardRoomAudioPool(characterWinAudioPool);
-      dealCardAudioPoolRef.current = [];
+      const dealAudioContext = dealCardAudioContextRef.current;
+      if (dealAudioContext && dealAudioContext.state !== "closed") {
+        void dealAudioContext.close().catch(() => undefined);
+      }
+      dealCardAudioContextRef.current = null;
+      dealCardAudioBufferRef.current = null;
+      dealCardAudioBufferLoadingRef.current = null;
       foldAudioPoolRef.current = [];
       checkAudioPoolRef.current = [];
       chipBetAudioPoolRef.current = [];
@@ -1738,6 +1793,11 @@ export const CardRoomApp = () => {
   useEffect(() => {
     const unlockCardRoomAudio = () => {
       cardRoomAudioUnlockedRef.current = true;
+      const context = ensureDealCardAudioContext();
+      if (context?.state === "suspended") {
+        void context.resume().catch(() => undefined);
+      }
+      void loadDealCardAudioBuffer();
     };
 
     window.addEventListener("pointerdown", unlockCardRoomAudio);

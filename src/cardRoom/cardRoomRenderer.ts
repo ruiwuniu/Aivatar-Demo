@@ -132,6 +132,11 @@ type CardRoomDepthRenderItem = {
   draw: () => void;
 };
 
+type CardRoomStaticLayerCache = {
+  key: string;
+  canvas: HTMLCanvasElement;
+};
+
 const CARD_ROOM_CITY_WINDOW_SPRITE_SRC = "/assets/card-room/city-window-wide.png?v=2";
 const CARD_ROOM_CITY_WINDOW_SPRITE_WIDTH = 480;
 const CARD_ROOM_CITY_WINDOW_SPRITE_HEIGHT = 154;
@@ -277,12 +282,10 @@ const drawCardRoomWallSconce = (
   );
 };
 
-const drawCardRoomCityWindow = (
+const drawCardRoomCityWindowFrame = (
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
-  frame: number,
-  variant: "default" | "neon" | "private",
 ) => {
   const outerX = x - 24;
   const outerY = y - 18;
@@ -297,6 +300,18 @@ const drawCardRoomCityWindow = (
     CARD_ROOM_CITY_WINDOW_SPRITE_WIDTH,
     CARD_ROOM_CITY_WINDOW_SPRITE_HEIGHT,
   );
+};
+
+const drawCardRoomCityWindowLights = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  frame: number,
+  variant: "default" | "neon" | "private",
+) => {
+  const outerX = x - 24;
+  const outerY = y - 18;
+  if (!getCardRoomCityWindowSprite(ctx)) return;
 
   ctx.save();
   ctx.beginPath();
@@ -1218,10 +1233,9 @@ const shiftFurniture = (
     : undefined,
 });
 
-const drawRoomShell = (
+const drawRoomStaticShell = (
   ctx: CanvasRenderingContext2D,
   content: AivatarContent,
-  frame: number,
   layout: CardRoomRenderLayout,
 ) => {
   const roomWidth = layout.width;
@@ -1354,7 +1368,24 @@ const drawRoomShell = (
   if (roomWindow) {
     const x = roomWindow.x + layout.originX;
     const y = roomWindow.y + layout.originY;
-    drawCardRoomCityWindow(
+    drawCardRoomCityWindowFrame(ctx, x, y);
+  }
+};
+
+const drawRoomAnimationOverlays = (
+  ctx: CanvasRenderingContext2D,
+  content: AivatarContent,
+  frame: number,
+  layout: CardRoomRenderLayout,
+) => {
+  const roomWidth = layout.width;
+  const roomHeight = layout.height;
+  const floorY = Math.max(156, Math.round(roomHeight * 0.3));
+  const roomWindow = content.room.windows?.find((item) => item.id === content.room.windowId);
+  if (roomWindow) {
+    const x = roomWindow.x + layout.originX;
+    const y = roomWindow.y + layout.originY;
+    drawCardRoomCityWindowLights(
       ctx,
       x,
       y,
@@ -1366,7 +1397,6 @@ const drawRoomShell = (
           : "default",
     );
   }
-
   const lampY = Math.max(102, floorY - 132);
   for (const lampX of [Math.round(roomWidth * 0.22), Math.round(roomWidth * 0.78)]) {
     drawCardRoomWallSconce(ctx, lampX, lampY, frame);
@@ -1441,6 +1471,119 @@ const drawCardRoomDecorFurniture = (
     drawPixelRect(ctx, x + 69, y + 19, 10, 12, "#facc15");
     drawPixelRect(ctx, x + 83, y + 24, 10, 7, "#facc15");
   }
+};
+
+const cardRoomStaticLayerCaches = new WeakMap<HTMLCanvasElement, CardRoomStaticLayerCache>();
+
+const isCardRoomDynamicDecorFurniture = (furniture: FurnitureDefinition) =>
+  furniture.id === "card-room-floor-lamp";
+
+const cardRoomPaletteKey = (palette: RoomSurfacePalette | undefined) =>
+  palette
+    ? [
+        palette.base,
+        palette.border,
+        palette.plankA,
+        palette.plankB,
+        palette.plankC,
+        palette.plankD,
+        palette.seam,
+        palette.highlight,
+        palette.grainDark,
+        palette.grainLight,
+      ].join(",")
+    : "";
+
+const cardRoomStaticFurnitureKey = (content: AivatarContent) =>
+  content.room.furniture
+    .filter((item) => item.id !== "poker-table" && !isCardRoomDynamicDecorFurniture(item))
+    .map((item) => `${item.id}:${item.x}:${item.y}:${item.width}:${item.height}`)
+    .join(";");
+
+const cardRoomStaticLayerKey = (
+  ctx: CanvasRenderingContext2D,
+  content: AivatarContent,
+  layout: CardRoomRenderLayout,
+  displayWidth: number,
+  displayHeight: number,
+  scale: number,
+) => {
+  const roomWindow = content.room.windows?.find((item) => item.id === content.room.windowId);
+  const windowSpriteReady = roomWindow ? (getCardRoomCityWindowSprite(ctx) ? "1" : "0") : "none";
+  const wallPalette = surfacePalette(
+    content.room.wallSurfaces,
+    content.room.wallSurfaceId,
+    "card-room-wall",
+  );
+  const floorPalette = surfacePalette(
+    content.room.floorSurfaces,
+    content.room.floorSurfaceId,
+    "card-room-floor",
+  );
+
+  return [
+    displayWidth,
+    displayHeight,
+    Math.round(scale * 1000),
+    Math.round(layout.width * 100),
+    Math.round(layout.height * 100),
+    Math.round(layout.originX * 100),
+    Math.round(layout.originY * 100),
+    content.room.wallSurfaceId ?? "card-room-wall",
+    cardRoomPaletteKey(wallPalette),
+    content.room.floorSurfaceId ?? "card-room-floor",
+    cardRoomPaletteKey(floorPalette),
+    roomWindow
+      ? `${roomWindow.id}:${roomWindow.x}:${roomWindow.y}:${roomWindow.width}:${roomWindow.height}:${windowSpriteReady}`
+      : "no-window",
+    cardRoomStaticFurnitureKey(content),
+  ].join("|");
+};
+
+const getCardRoomStaticLayer = (
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  content: AivatarContent,
+  layout: CardRoomRenderLayout,
+  displayWidth: number,
+  displayHeight: number,
+  scale: number,
+) => {
+  const key = cardRoomStaticLayerKey(ctx, content, layout, displayWidth, displayHeight, scale);
+  let cache = cardRoomStaticLayerCaches.get(canvas);
+  if (!cache) {
+    cache = {
+      key: "",
+      canvas: canvas.ownerDocument.createElement("canvas"),
+    };
+    cardRoomStaticLayerCaches.set(canvas, cache);
+  }
+
+  if (
+    cache.key !== key ||
+    cache.canvas.width !== displayWidth ||
+    cache.canvas.height !== displayHeight
+  ) {
+    cache.key = key;
+    cache.canvas.width = displayWidth;
+    cache.canvas.height = displayHeight;
+
+    const cacheCtx = cache.canvas.getContext("2d");
+    if (cacheCtx) {
+      cacheCtx.setTransform(1, 0, 0, 1, 0, 0);
+      cacheCtx.clearRect(0, 0, displayWidth, displayHeight);
+      cacheCtx.imageSmoothingEnabled = false;
+      cacheCtx.setTransform(scale, 0, 0, scale, 0, 0);
+      drawRoomStaticShell(cacheCtx, content, layout);
+      content.room.furniture
+        .filter((item) => item.id !== "poker-table" && !isCardRoomDynamicDecorFurniture(item))
+        .sort((left, right) => left.y - right.y)
+        .forEach((item) => drawCardRoomDecorFurniture(cacheCtx, item, 0, layout));
+      cacheCtx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+  }
+
+  return cache.canvas;
 };
 
 type SeatSide = "top" | "left" | "right" | "bottom";
@@ -2320,7 +2463,18 @@ export const renderCardRoom = (
     originX: (displayWidth / scale - cardRoomSceneSize.width) / 2,
     originY: (displayHeight / scale - cardRoomSceneSize.height) / 2,
   };
+  const staticLayer = getCardRoomStaticLayer(
+    canvas,
+    ctx,
+    content,
+    layout,
+    displayWidth,
+    displayHeight,
+    scale,
+  );
+  ctx.drawImage(staticLayer, 0, 0);
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.imageSmoothingEnabled = false;
 
   const pokerTable =
     content.room.furniture.find((item) => item.id === "poker-table") ?? null;
@@ -2352,9 +2506,9 @@ export const renderCardRoom = (
       : null;
   const activeFlights = indexActiveCardRoomFlights(motion, table, now);
 
-  drawRoomShell(ctx, content, frame, layout);
+  drawRoomAnimationOverlays(ctx, content, frame, layout);
   content.room.furniture
-    .filter((item) => item.id !== "poker-table")
+    .filter((item) => item.id !== "poker-table" && isCardRoomDynamicDecorFurniture(item))
     .sort((left, right) => left.y - right.y)
     .forEach((item) => drawCardRoomDecorFurniture(ctx, item, frame, layout));
 
