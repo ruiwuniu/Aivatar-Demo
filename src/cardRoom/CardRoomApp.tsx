@@ -1968,6 +1968,7 @@ export const CardRoomApp = () => {
           actionCues: nextActionCues,
           motion: tableMotionRef.current,
           frame: animationFrame,
+          now,
           userAvatarId: host?.avatarId,
         });
         animationFrame += elapsedSeconds * 30;
