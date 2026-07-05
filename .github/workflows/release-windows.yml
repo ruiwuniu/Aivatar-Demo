@@ -1,0 +1,108 @@
+name: Release Windows installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: GitHub release tag to upload Windows installers to.
+        required: true
+        default: v0.3.0
+      ref:
+        description: Git ref to build.
+        required: true
+        default: main
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build and upload Windows installers
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Windows installer tools
+        shell: pwsh
+        run: |
+          choco install nsis wixtoolset --yes --no-progress
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri Windows bundles
+        shell: pwsh
+        run: |
+          npm run tauri build -- --target x86_64-pc-windows-msvc
+
+      - name: List Windows bundles
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path src-tauri/target/x86_64-pc-windows-msvc/release/bundle -Recurse |
+            Select-Object FullName, Length |
+            Format-Table -AutoSize
+
+      - name: Write Windows checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bundleRoot = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
+          $assets = @()
+          $assets += Get-ChildItem -Path "$bundleRoot/nsis" -Filter "*.exe" -File -ErrorAction SilentlyContinue
+          $assets += Get-ChildItem -Path "$bundleRoot/msi" -Filter "*.msi" -File -ErrorAction SilentlyContinue
+          if ($assets.Count -eq 0) {
+            throw "No Windows installer assets found under $bundleRoot."
+          }
+          $assets |
+            ForEach-Object {
+              $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
+              [PSCustomObject]@{
+                name = $_.Name
+                size = $_.Length
+                sha256 = $hash.Hash.ToLowerInvariant()
+              }
+            } |
+            ConvertTo-Json |
+            Out-File -FilePath windows-release-checksums.json -Encoding utf8
+          Get-Content windows-release-checksums.json
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aivatar-windows-installers-${{ inputs.tag }}
+          path: |
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            windows-release-checksums.json
+
+      - name: Upload installers to GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bundleRoot = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
+          $assets = @()
+          $assets += Get-ChildItem -Path "$bundleRoot/nsis" -Filter "*.exe" -File -ErrorAction SilentlyContinue
+          $assets += Get-ChildItem -Path "$bundleRoot/msi" -Filter "*.msi" -File -ErrorAction SilentlyContinue
+          if ($assets.Count -eq 0) {
+            throw "No Windows installer assets found under $bundleRoot."
+          }
+          foreach ($asset in $assets) {
+            gh release upload $env:RELEASE_TAG $asset.FullName --repo $env:GITHUB_REPOSITORY --clobber
+          }
