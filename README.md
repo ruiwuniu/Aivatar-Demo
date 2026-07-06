@@ -9,9 +9,9 @@
 <p align="center">
   <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.0/Aivatar_0.3.0_universal.dmg"><strong>Download macOS DMG</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.3/Aivatar_0.2.3_x64-setup.exe"><strong>Download Windows EXE 0.2.3</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.0/Aivatar_0.3.0_x64-setup.exe"><strong>Download Windows EXE 0.3.0</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.2.3/Aivatar_0.2.3_x64_en-US.msi"><strong>Download Windows MSI 0.2.3</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.0/Aivatar_0.3.0_x64_en-US.msi"><strong>Download Windows MSI 0.3.0</strong></a>
   ·
   <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.3.0">Release 0.3.0</a>
 </p>
@@ -29,7 +29,7 @@
 - The Card Room economy adds player and companion chip balances, house-bank accounting, debt settlement, owner gifts, chip exchange, and a dedicated Chip Shop.
 - Card Room decor is now a real content surface: upgraded wall materials, floor materials, window assets, poker furniture, and shop filtering let the side room visually evolve independently from the main room.
 - Desktop rendering is hardened for the heavier poker scene with cached static room layers and WebAudio-based deal-card sounds to avoid WKWebView short-audio stutter during deal animations.
-- This release publishes a new universal macOS DMG for 0.3.0. Windows installers remain on the previous 0.2.3 tester build until the Windows package is refreshed.
+- This release publishes a new universal macOS DMG, Windows NSIS EXE, and Windows MSI installer for 0.3.0.
 
 **中文**
 
@@ -38,7 +38,7 @@
 - 纸牌屋经济系统加入玩家与小伙伴筹码余额、房主银行、债务结算、老板赠送、筹码兑换和专用 Chip Shop。
 - 纸牌屋装修成为独立内容面：升级墙纸、地板、窗户、扑克家具与商店筛选，使侧房间可以独立于主房间演进视觉风格。
 - 为更重的扑克场景加固桌面渲染：缓存静态房间层，并把发牌短音效改为 WebAudio 播放，避免 macOS WKWebView 在发牌动画中因短音频连续触发而卡顿。
-- 本版本发布新的 0.3.0 macOS universal DMG。Windows 安装包仍保留上一版 0.2.3 测试构建，待后续刷新。
+- 本版本发布新的 0.3.0 macOS universal DMG、Windows NSIS EXE 和 Windows MSI 安装包。
 
 ## 0.2.3 Patch Highlights / 0.2.3 补丁亮点
 
@@ -74,7 +74,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.3.0 is available as a universal macOS DMG through GitHub Releases. Windows preview installers remain available from 0.2.3. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
+> Current status / 当前状态: 0.3.0 is available as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer through GitHub Releases. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
 
 ## Contents / 目录
 
@@ -568,9 +568,9 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 Current release-prep notes:
 
-- The 0.2.3 preview release is available through GitHub Releases, with a macOS universal `.dmg`, Windows NSIS `.exe`, and Windows MSI installer.
+- The 0.3.0 preview release is available through GitHub Releases, with a macOS universal `.dmg`, Windows NSIS `.exe`, and Windows MSI installer.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
-- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, shop rapid-click protection, and long-press bulk buying are now part of the 0.2.3 preview surface.
+- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, shop rapid-click protection, long-press bulk buying, and Card Room are now part of the 0.3.0 preview surface.
 - Native bridge support exists for local status, Codex Desktop session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
 - A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
 - Linux packaging remains planned after the desktop integration path is stable.
@@ -579,9 +579,9 @@ Current release-prep notes:
 
 当前发布准备阶段说明：
 
-- 0.2.3 预览版已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包。
+- 0.3.0 预览版已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
-- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、商店快速点击保护与长按批量购买，已经纳入 0.2.3 预览体验。
+- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、商店快速点击保护、长按批量购买与纸牌屋 Card Room，已经纳入 0.3.0 预览体验。
 - 本地状态、Codex Desktop 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。
 - 完全 Rust-native 的 connected runner 和面向发布模式的 provider-backed learning 仍是后续加固工作。
 - Linux 打包计划会在桌面集成路径继续稳定后推进。
