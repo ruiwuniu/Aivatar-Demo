@@ -146,16 +146,77 @@
 
 **中文** | 以下 GIF 展示当前 0.3.0 体验：首先是新的纸牌屋，然后是主房间、小伙伴串门、实时状态，以及日常工作和生活场景。
 
-| Preview / 预览 | Description / 说明 |
-| --- | --- |
-| <img src="docs/assets/aivatar-readme-0.3-card-room.gif" width="760" alt="Aivatar Card Room with companions playing poker" /> | **Card Room / 纸牌屋**<br>EN: Companions sit down for Hold'em in the new side room with cards, chips, and room-specific controls.<br>中文：小伙伴们在新的侧房间里围桌打德州扑克，展示纸牌、筹码和独立的纸牌屋玩法。 |
-| <img src="docs/assets/aivatar-readme-0.3-room-routine.gif" width="520" alt="Aivatar main room companion routine" /> | **Main-room routine / 主房间日常**<br>EN: The companion keeps a cozy room routine while status and growth details update around the room.<br>中文：小伙伴在温暖的主房间里活动，状态和成长信息随着日常行为更新。 |
-| <img src="docs/assets/aivatar-readme-0.3-decorated-room.gif" width="520" alt="Aivatar decorated room with companion stats" /> | **Decor and stats / 装修与状态**<br>EN: Room materials, furniture, and companion stats make each save slot feel personal.<br>中文：房间材质、家具摆设和小伙伴状态让每个存档都有自己的生活感。 |
-| <img src="docs/assets/aivatar-readme-0.3-compact-room.gif" width="420" alt="Aivatar compact room preview" /> | **Compact room view / 紧凑房间视图**<br>EN: A focused room view keeps the companion scene readable in a smaller frame.<br>中文：紧凑视图让小伙伴房间在较小画面里依然清晰可读。 |
-| <img src="docs/assets/aivatar-readme-0.3-room-visit.gif" width="520" alt="Aivatar Room Visit social interaction" /> | **Room Visit / 串门互动**<br>EN: Companions can visit each other, chat, and share small social moments between rooms.<br>中文：小伙伴可以互相串门、聊天，并在不同房间之间产生轻量社交互动。 |
-| <img src="docs/assets/aivatar-readme-0.3-idle-room.gif" width="420" alt="Aivatar idle room status view" /> | **Idle room state / 房间待机状态**<br>EN: The room remains useful even while idle, with visible character state and save-slot context.<br>中文：即使处于待机状态，房间也会保留清晰的角色状态和存档上下文。 |
-| <img src="docs/assets/aivatar-readme-0.3-social-ghost.gif" width="420" alt="Aivatar ghost companion social moment" /> | **Social companion moments / 小伙伴社交瞬间**<br>EN: Guest and host companions can share short generated or fallback social lines.<br>中文：来访和主人小伙伴可以触发简短的生成式或回退式社交对白。 |
-| <img src="docs/assets/aivatar-readme-0.3-live-status.gif" width="520" alt="Aivatar live coding status and companion behavior" /> | **Live status / 实时工作状态**<br>EN: The companion reacts to coding status while the room stays usable as a desktop companion.<br>中文：小伙伴会跟随编程状态变化，同时房间仍可作为桌面陪伴空间使用。 |
+#### Card Room / 纸牌屋
+
+<p align="center">
+  <img src="docs/assets/aivatar-readme-0.3-card-room.gif" width="760" alt="Aivatar Card Room with companions playing poker" />
+</p>
+
+**EN:** Companions sit down for Hold'em in the new side room with cards, chips, and room-specific controls.<br>
+**中文：** 小伙伴们在新的侧房间里围桌打德州扑克，展示纸牌、筹码和独立的纸牌屋玩法。
+
+#### Main-Room Routine / 主房间日常
+
+<p align="center">
+  <img src="docs/assets/aivatar-readme-0.3-room-routine.gif" width="760" alt="Aivatar main room companion routine" />
+</p>
+
+**EN:** The companion keeps a cozy room routine while status and growth details update around the room.<br>
+**中文：** 小伙伴在温暖的主房间里活动，状态和成长信息随着日常行为更新。
+
+#### Decor And Stats / 装修与状态
+
+<p align="center">
+  <img src="docs/assets/aivatar-readme-0.3-decorated-room.gif" width="760" alt="Aivatar decorated room with companion stats" />
+</p>
+
+**EN:** Room materials, furniture, and companion stats make each save slot feel personal.<br>
+**中文：** 房间材质、家具摆设和小伙伴状态让每个存档都有自己的生活感。
+
+#### Compact Room View / 紧凑房间视图
+
+<p align="center">
+  <img src="docs/assets/aivatar-readme-0.3-compact-room.gif" width="520" alt="Aivatar compact room preview" />
+</p>
+
+**EN:** A focused room view keeps the companion scene readable in a smaller frame.<br>
+**中文：** 紧凑视图让小伙伴房间在较小画面里依然清晰可读。
+
+#### Room Visit / 串门互动
+
+<p align="center">
+  <img src="docs/assets/aivatar-readme-0.3-room-visit.gif" width="760" alt="Aivatar Room Visit social interaction" />
+</p>
+
+**EN:** Companions can visit each other, chat, and share small social moments between rooms.<br>
+**中文：** 小伙伴可以互相串门、聊天，并在不同房间之间产生轻量社交互动。
+
+#### Idle Room State / 房间待机状态
+
+<p align="center">
+  <img src="docs/assets/aivatar-readme-0.3-idle-room.gif" width="520" alt="Aivatar idle room status view" />
+</p>
+
+**EN:** The room remains useful even while idle, with visible character state and save-slot context.<br>
+**中文：** 即使处于待机状态，房间也会保留清晰的角色状态和存档上下文。
+
+#### Social Companion Moments / 小伙伴社交瞬间
+
+<p align="center">
+  <img src="docs/assets/aivatar-readme-0.3-social-ghost.gif" width="520" alt="Aivatar ghost companion social moment" />
+</p>
+
+**EN:** Guest and host companions can share short generated or fallback social lines.<br>
+**中文：** 来访和主人小伙伴可以触发简短的生成式或回退式社交对白。
+
+#### Live Status / 实时工作状态
+
+<p align="center">
+  <img src="docs/assets/aivatar-readme-0.3-live-status.gif" width="760" alt="Aivatar live coding status and companion behavior" />
+</p>
+
+**EN:** The companion reacts to coding status while the room stays usable as a desktop companion.<br>
+**中文：** 小伙伴会跟随编程状态变化，同时房间仍可作为桌面陪伴空间使用。
 
 ### Agent Integration / Agent 集成使用
 
