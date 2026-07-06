@@ -1,6 +1,6 @@
 # Aivatar
 
-![Aivatar 0.2 pixel room banner with selectable companions and AI agent panels](docs/assets/aivatar-readme-hero-0.2.png)
+![Aivatar 0.3 pixel companion life banner with daily work, social visits, and Card Room play](docs/assets/aivatar-readme-hero-0.3-card-room.png)
 
 **EN** | Aivatar is a local-first desktop companion for AI coding agents. It turns Codex, Claude Code, opencode, or a custom local agent bridge into a lively pixel-room companion with selectable characters, upgraded room materials, live status, growth, `bits`, and room customization.
 
@@ -14,10 +14,6 @@
   <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.0/Aivatar_0.3.0_x64_en-US.msi"><strong>Download Windows MSI 0.3.0</strong></a>
   ·
   <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.3.0">Release 0.3.0</a>
-</p>
-
-<p align="center">
-  <img src="docs/assets/aivatar-readme-0.2-agent-room.gif" width="760" alt="Aivatar 0.2 room with a new character, upgraded materials, agent sessions, desktop agents, task cabinet, and CLI launcher" />
 </p>
 
 ## 0.3.0 Major Highlights / 0.3.0 大版本亮点
@@ -146,17 +142,20 @@
 
 ### UI Showcase / UI 展示
 
-**EN** | These screenshots and GIFs show the actual app UI: selectable companions, upgraded pixel-room materials, live agent state, local settings, avatar stats, growth, Agent Sessions, Desktop Agents, Task Cabinet, and CLI Launcher panels.
+**EN** | These GIFs show the current 0.3.0 experience, starting with the new Card Room, then the main companion room, room visits, live status, and everyday work/life moments.
 
-**中文** | 以下截图和 GIF 展示真实应用界面：可选择的小伙伴角色、升级后的像素房间材质、实时 agent 状态、本地设置、角色状态、成长、Agent 会话、桌面 Agent、任务柜和 CLI 启动器面板。
+**中文** | 以下 GIF 展示当前 0.3.0 体验：首先是新的纸牌屋，然后是主房间、小伙伴串门、实时状态，以及日常工作和生活场景。
 
-| New character creation / 新角色创建 | Upgraded room materials / 房间材质升级 |
+| Preview / 预览 | Description / 说明 |
 | --- | --- |
-| ![Aivatar character picker with Rush Spark, Mood Slime, Red Crayfish, Cute Ghost, Cute Penguin, and Green Lizard](docs/assets/aivatar-readme-0.2-character-picker.png) | ![Aivatar room with upgraded wood floor, city window, furniture skins, and shop panels](docs/assets/aivatar-readme-0.2-material-room.png) |
-
-| Live multi-agent workspace / 实时多 Agent 工作区 | Growth and session summaries / 成长与会话总结 |
-| --- | --- |
-| ![Aivatar room showing Agent Sessions, Desktop Agents, Task Cabinet, and CLI Launcher](docs/assets/aivatar-readme-0.2-agent-room.gif) | ![Aivatar summarizes sessions into growth bubbles](docs/assets/aivatar-readme-agent-summary.gif) |
+| <img src="docs/assets/aivatar-readme-0.3-card-room.gif" width="760" alt="Aivatar Card Room with companions playing poker" /> | **Card Room / 纸牌屋**<br>EN: Companions sit down for Hold'em in the new side room with cards, chips, and room-specific controls.<br>中文：小伙伴们在新的侧房间里围桌打德州扑克，展示纸牌、筹码和独立的纸牌屋玩法。 |
+| <img src="docs/assets/aivatar-readme-0.3-room-routine.gif" width="520" alt="Aivatar main room companion routine" /> | **Main-room routine / 主房间日常**<br>EN: The companion keeps a cozy room routine while status and growth details update around the room.<br>中文：小伙伴在温暖的主房间里活动，状态和成长信息随着日常行为更新。 |
+| <img src="docs/assets/aivatar-readme-0.3-decorated-room.gif" width="520" alt="Aivatar decorated room with companion stats" /> | **Decor and stats / 装修与状态**<br>EN: Room materials, furniture, and companion stats make each save slot feel personal.<br>中文：房间材质、家具摆设和小伙伴状态让每个存档都有自己的生活感。 |
+| <img src="docs/assets/aivatar-readme-0.3-compact-room.gif" width="420" alt="Aivatar compact room preview" /> | **Compact room view / 紧凑房间视图**<br>EN: A focused room view keeps the companion scene readable in a smaller frame.<br>中文：紧凑视图让小伙伴房间在较小画面里依然清晰可读。 |
+| <img src="docs/assets/aivatar-readme-0.3-room-visit.gif" width="520" alt="Aivatar Room Visit social interaction" /> | **Room Visit / 串门互动**<br>EN: Companions can visit each other, chat, and share small social moments between rooms.<br>中文：小伙伴可以互相串门、聊天，并在不同房间之间产生轻量社交互动。 |
+| <img src="docs/assets/aivatar-readme-0.3-idle-room.gif" width="420" alt="Aivatar idle room status view" /> | **Idle room state / 房间待机状态**<br>EN: The room remains useful even while idle, with visible character state and save-slot context.<br>中文：即使处于待机状态，房间也会保留清晰的角色状态和存档上下文。 |
+| <img src="docs/assets/aivatar-readme-0.3-social-ghost.gif" width="420" alt="Aivatar ghost companion social moment" /> | **Social companion moments / 小伙伴社交瞬间**<br>EN: Guest and host companions can share short generated or fallback social lines.<br>中文：来访和主人小伙伴可以触发简短的生成式或回退式社交对白。 |
+| <img src="docs/assets/aivatar-readme-0.3-live-status.gif" width="520" alt="Aivatar live coding status and companion behavior" /> | **Live status / 实时工作状态**<br>EN: The companion reacts to coding status while the room stays usable as a desktop companion.<br>中文：小伙伴会跟随编程状态变化，同时房间仍可作为桌面陪伴空间使用。 |
 
 ### Agent Integration / Agent 集成使用
 
@@ -558,9 +557,9 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 ## Assets And Attribution / 资源与署名
 
-**EN** | Bundled asset provenance is tracked in [ATTRIBUTIONS.md](ATTRIBUTIONS.md), [public/audio/README.md](public/audio/README.md), and [public/assets/art/README.md](public/assets/art/README.md). The README banner was generated for this repository and saved at `docs/assets/aivatar-readme-hero.png`.
+**EN** | Bundled asset provenance is tracked in [ATTRIBUTIONS.md](ATTRIBUTIONS.md), [public/audio/README.md](public/audio/README.md), and [public/assets/art/README.md](public/assets/art/README.md). The README banner was generated for this repository and saved at `docs/assets/aivatar-readme-hero-0.3-card-room.png`.
 
-**中文** | 内置资源来源记录在 [ATTRIBUTIONS.md](ATTRIBUTIONS.md)、[public/audio/README.md](public/audio/README.md) 和 [public/assets/art/README.md](public/assets/art/README.md)。README 顶部宣传图是为本仓库生成的，保存于 `docs/assets/aivatar-readme-hero.png`。
+**中文** | 内置资源来源记录在 [ATTRIBUTIONS.md](ATTRIBUTIONS.md)、[public/audio/README.md](public/audio/README.md) 和 [public/assets/art/README.md](public/assets/art/README.md)。README 顶部宣传图是为本仓库生成的，保存于 `docs/assets/aivatar-readme-hero-0.3-card-room.png`。
 
 ## Roadmap Notes / 路线图说明
 
