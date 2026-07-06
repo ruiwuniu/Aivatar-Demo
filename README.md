@@ -23,6 +23,7 @@
 - 0.3.0 introduces Card Room, a standalone poker side room with a fixed desktop window size, a casino-style table scene, companion seating, hand controls, and room-specific save/economy state.
 - Hold'em play is now backed by stricter rule handling, including blinds, betting rounds, all-in side pots, showdown reveal order, timeout flow, and focused smoke coverage for Card Room rule paths.
 - The Card Room economy adds player and companion chip balances, house-bank accounting, debt settlement, owner gifts, chip exchange, and a dedicated Chip Shop.
+- Card Room also adds hidden dark-trait growth: greed, foolishness, recklessness, cowardice, arrogance, and coldness can evolve through poker play and shape companion betting behavior without replacing the main-room Growth personality.
 - Card Room decor is now a real content surface: upgraded wall materials, floor materials, window assets, poker furniture, and shop filtering let the side room visually evolve independently from the main room.
 - Desktop rendering is hardened for the heavier poker scene with cached static room layers and WebAudio-based deal-card sounds to avoid WKWebView short-audio stutter during deal animations.
 - This release publishes a new universal macOS DMG, Windows NSIS EXE, and Windows MSI installer for 0.3.0.
@@ -32,6 +33,7 @@
 - 0.3.0 新增纸牌屋 Card Room：一个独立的扑克侧房间，拥有固定桌面窗口比例、赌场风格牌桌场景、小伙伴入座、手牌操作和独立的房间存档/经济状态。
 - 德州扑克流程更接近正式规则：包含盲注、下注轮、all-in 边池、摊牌顺序、叫钟/超时流程，并加入针对纸牌屋规则路径的烟测。
 - 纸牌屋经济系统加入玩家与小伙伴筹码余额、房主银行、债务结算、老板赠送、筹码兑换和专用 Chip Shop。
+- 纸牌屋还加入隐藏的黑化人格成长：贪婪、愚钝、鲁莽、怯懦、傲慢和冷漠会随打牌过程变化，并影响小伙伴的下注风格，但不会取代主房间的普通 Growth 人格。
 - 纸牌屋装修成为独立内容面：升级墙纸、地板、窗户、扑克家具与商店筛选，使侧房间可以独立于主房间演进视觉风格。
 - 为更重的扑克场景加固桌面渲染：缓存静态房间层，并把发牌短音效改为 WebAudio 播放，避免 macOS WKWebView 在发牌动画中因短音频连续触发而卡顿。
 - 本版本发布新的 0.3.0 macOS universal DMG、Windows NSIS EXE 和 Windows MSI 安装包。
