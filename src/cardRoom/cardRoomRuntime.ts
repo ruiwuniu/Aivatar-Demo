@@ -19,6 +19,11 @@ type CardRoomRoamPlan = {
   facing?: AvatarRuntime["facing"];
 };
 
+export type CardRoomCopy = (
+  key: string,
+  params?: Record<string, string | number>,
+) => string;
+
 const WALK_MIN_X = 72;
 const WALK_MAX_X = 888;
 const WALK_MIN_Y = 272;
@@ -44,6 +49,44 @@ const TARGET_FACING_DISTANCE = 0.5;
 const CARD_ROOM_ENTRY_POINT: Point = { x: WALK_MIN_X - 34, y: WALK_MAX_Y - 18 };
 const CARD_ROOM_ENTRY_TARGET: Point = { x: WALK_MIN_X + 58, y: WALK_MAX_Y - 28 };
 const CARD_ROOM_BUBBLE_DURATION_MS = 2600;
+
+const cardRoomCopy = (
+  copy: CardRoomCopy | undefined,
+  key: string,
+  fallback: string,
+  params?: Record<string, string | number>,
+) => {
+  const value = copy?.(key, params);
+  return value && value !== key ? value : fallback;
+};
+
+const cardRoomActionActivityLabel = (
+  lastAction: string | undefined,
+  copy: CardRoomCopy | undefined,
+) => {
+  if (!lastAction) {
+    return cardRoomCopy(copy, "cardRoom.activity.atTable", "At table");
+  }
+  if (lastAction.includes("all-in")) {
+    return cardRoomCopy(copy, "cardRoom.actionCue.allIn", "All-in!");
+  }
+  if (lastAction.includes("raise")) {
+    return cardRoomCopy(copy, "cardRoom.actionCue.raise", "Raise.");
+  }
+  if (lastAction.includes("bet")) {
+    return cardRoomCopy(copy, "cardRoom.actionCue.bet", "Bet.");
+  }
+  if (lastAction.includes("call")) {
+    return cardRoomCopy(copy, "cardRoom.actionCue.call", "Call.");
+  }
+  if (lastAction.includes("check")) {
+    return cardRoomCopy(copy, "cardRoom.actionCue.check", "Check.");
+  }
+  if (lastAction.includes("fold")) {
+    return cardRoomCopy(copy, "cardRoom.actionCue.fold", "Fold.");
+  }
+  return lastAction;
+};
 
 export type CardRoomVisitorPhase = "entering" | "free" | "seating" | "seated";
 
@@ -544,6 +587,7 @@ const darkTraitValue = (
 
 const pickWeightedPlan = (
   choices: Array<CardRoomRoamPlan & { weight: number }>,
+  copy?: CardRoomCopy,
 ): CardRoomRoamPlan => {
   const viable = choices.filter((choice) => choice.weight > 0);
   const totalWeight = viable.reduce((total, choice) => total + choice.weight, 0);
@@ -553,8 +597,12 @@ const pickWeightedPlan = (
       behavior: "wander",
       timer: randomRange(4, 8),
       expression: "calm",
-      activityLabel: "Exploring card room",
-      bubbleText: "Just looking around.",
+      activityLabel: cardRoomCopy(copy, "cardRoom.activity.exploring", "Exploring card room"),
+      bubbleText: cardRoomCopy(
+        copy,
+        "cardRoom.bubble.justLookingAround",
+        "Just looking around.",
+      ),
     };
   }
 
@@ -638,6 +686,7 @@ const chooseFreeRoamPlan = (
   runtime: AvatarRuntime,
   content: AivatarContent,
   partners: Array<{ avatarId: string; avatarName: string; runtime: AvatarRuntime }>,
+  copy?: CardRoomCopy,
 ): CardRoomRoamPlan => {
   const social = socialRoamTarget(runtime, partners);
   const windowTarget = windowRoamTarget(content);
@@ -654,13 +703,21 @@ const chooseFreeRoamPlan = (
       behavior: "interact",
       timer: randomRange(5, 9),
       expression: greed + arrogance > 80 ? "focused" : "calm",
-      activityLabel: "Studying the poker table",
+      activityLabel: cardRoomCopy(
+        copy,
+        "cardRoom.activity.studyingTable",
+        "Studying the poker table",
+      ),
       bubbleText:
         greed + recklessness > 90
-          ? "Big pot soon."
+          ? cardRoomCopy(copy, "cardRoom.bubble.bigPotSoon", "Big pot soon.")
           : arrogance > 80
-            ? "This seat should be mine."
-            : "Good table.",
+            ? cardRoomCopy(
+                copy,
+                "cardRoom.bubble.seatMine",
+                "This seat should be mine.",
+              )
+            : cardRoomCopy(copy, "cardRoom.bubble.goodTable", "Good table."),
       weight: 7 + greed / 18 + arrogance / 24 + recklessness / 28,
     },
     {
@@ -668,8 +725,8 @@ const chooseFreeRoamPlan = (
       behavior: "admire",
       timer: randomRange(5, 10),
       expression: "calm",
-      activityLabel: "Watching the city",
-      bubbleText: "City lights.",
+      activityLabel: cardRoomCopy(copy, "cardRoom.activity.watchingCity", "Watching the city"),
+      bubbleText: cardRoomCopy(copy, "cardRoom.bubble.cityLights", "City lights."),
       weight: windowTarget ? 4 + character.traits.curiosity / 95 + cowardice / 45 : 0,
     },
     {
@@ -677,8 +734,8 @@ const chooseFreeRoamPlan = (
       behavior: "admire",
       timer: randomRange(5, 9),
       expression: "happy",
-      activityLabel: "Checking the room",
-      bubbleText: "What's this?",
+      activityLabel: cardRoomCopy(copy, "cardRoom.activity.checkingRoom", "Checking the room"),
+      bubbleText: cardRoomCopy(copy, "cardRoom.bubble.whatsThis", "What's this?"),
       weight: placedTarget ? 6 + character.traits.curiosity / 80 : 0,
     },
     {
@@ -686,12 +743,16 @@ const chooseFreeRoamPlan = (
       behavior: "interact",
       timer: randomRange(6, 10),
       expression: coldness > 80 ? "calm" : "happy",
-      activityLabel: social ? `Chatting with ${social.partnerName}` : "Chatting",
+      activityLabel: social
+        ? cardRoomCopy(copy, "cardRoom.activity.chattingWith", `Chatting with ${social.partnerName}`, {
+            name: social.partnerName,
+          })
+        : cardRoomCopy(copy, "cardRoom.activity.chatting", "Chatting"),
       bubbleText: social
         ? coldness > 80
-          ? "Watch the tells."
-          : "Ready for a hand?"
-        : "Anyone playing?",
+          ? cardRoomCopy(copy, "cardRoom.bubble.watchTells", "Watch the tells.")
+          : cardRoomCopy(copy, "cardRoom.bubble.readyForHand", "Ready for a hand?")
+        : cardRoomCopy(copy, "cardRoom.bubble.anyonePlaying", "Anyone playing?"),
       weight: social ? 6 + character.traits.warmth / 75 + Math.max(0, 100 - coldness) / 30 : 0,
     },
     {
@@ -699,13 +760,13 @@ const chooseFreeRoamPlan = (
       behavior: "wander",
       timer: randomRange(4, 8),
       expression: "calm",
-      activityLabel: "Exploring card room",
+      activityLabel: cardRoomCopy(copy, "cardRoom.activity.exploring", "Exploring card room"),
       bubbleText:
         cowardice > 90
-          ? "I'll keep distance."
+          ? cardRoomCopy(copy, "cardRoom.bubble.keepDistance", "I'll keep distance.")
           : darkTraitValue(character, "foolishness") > 90
-            ? "Which way?"
-            : "Looking around.",
+            ? cardRoomCopy(copy, "cardRoom.bubble.whichWay", "Which way?")
+            : cardRoomCopy(copy, "cardRoom.bubble.lookingAround", "Looking around."),
       weight: 8 + character.traits.curiosity / 90 + cowardice / 38,
     },
     {
@@ -716,11 +777,11 @@ const chooseFreeRoamPlan = (
       behavior: "relax",
       timer: randomRange(6, 12),
       expression: "calm",
-      activityLabel: "Keeping to the side",
-      bubbleText: "I'll watch first.",
+      activityLabel: cardRoomCopy(copy, "cardRoom.activity.keepSide", "Keeping to the side"),
+      bubbleText: cardRoomCopy(copy, "cardRoom.bubble.watchFirst", "I'll watch first."),
       weight: 2 + cowardice / 25 + coldness / 45,
     },
-  ]);
+  ], copy);
 };
 
 const facingForDelta = (dx: number, dy: number): AvatarRuntime["facing"] => {
@@ -852,6 +913,7 @@ export const createInitialCardRoomRuntime = (
   character: CardRoomCharacter,
   index: number,
   isUser: boolean,
+  copy?: CardRoomCopy,
 ): AvatarRuntime => {
   const base = initialAvatarRuntime();
   const x = isUser ? 480 : 132 + (index % 8) * 96;
@@ -867,7 +929,12 @@ export const createInitialCardRoomRuntime = (
     facing: isUser ? "back" : "front",
     behavior: "idle",
     expression: "calm",
-    activityLabel: `${character.avatarName} arrived`,
+    activityLabel: cardRoomCopy(
+      copy,
+      "cardRoom.activity.arrived",
+      `${character.avatarName} arrived`,
+      { name: character.avatarName },
+    ),
   };
 };
 
@@ -876,10 +943,11 @@ export const createInitialCardRoomVisitorState = (
   index: number,
   isUser: boolean,
   now = performance.now(),
+  copy?: CardRoomCopy,
 ): CardRoomVisitorState => {
   if (isUser) {
     return {
-      runtime: createInitialCardRoomRuntime(character, index, true),
+      runtime: createInitialCardRoomRuntime(character, index, true, copy),
       phase: "seated",
     };
   }
@@ -899,11 +967,16 @@ export const createInitialCardRoomVisitorState = (
       behavior: "wander",
       behaviorTimer: 1,
       expression: "happy",
-      activityLabel: `${character.avatarName} entering`,
+      activityLabel: cardRoomCopy(
+        copy,
+        "cardRoom.activity.entering",
+        `${character.avatarName} entering`,
+        { name: character.avatarName },
+      ),
       navigationFailure: undefined,
     },
     phase: "entering",
-    bubbleText: "I'm here.",
+    bubbleText: cardRoomCopy(copy, "cardRoom.bubble.imHere", "I'm here."),
     bubbleStartedAt: now,
   };
 };
@@ -1014,6 +1087,7 @@ export const advanceCardRoomRuntime = (
     opponentCount?: number;
     navigationKey?: string;
     table: HoldemTableState;
+    copy?: CardRoomCopy;
   },
 ): AvatarRuntime => {
   const tableActive = options.table.street !== "waiting" && options.table.players.length > 0;
@@ -1039,7 +1113,9 @@ export const advanceCardRoomRuntime = (
         ? 3.5 + Math.random() * 4
         : Math.max(0, runtime.behaviorTimer - elapsedSeconds),
       expression: "calm",
-      activityLabel: arrived ? "In card room" : "Exploring card room",
+      activityLabel: arrived
+        ? cardRoomCopy(options.copy, "cardRoom.activity.inRoom", "In card room")
+        : cardRoomCopy(options.copy, "cardRoom.activity.exploring", "Exploring card room"),
       navigationFailure: undefined,
     };
   }
@@ -1057,7 +1133,9 @@ export const advanceCardRoomRuntime = (
       ...runtime,
       behavior: seated ? "idle" : "wander",
       expression,
-      activityLabel: seated ? (options.player.lastAction ?? "At table") : "Taking seat",
+      activityLabel: seated
+        ? cardRoomActionActivityLabel(options.player.lastAction, options.copy)
+        : cardRoomCopy(options.copy, "cardRoom.activity.takingSeat", "Taking seat"),
       navigationFailure: undefined,
     },
     { x: target.targetX, y: target.targetY, facing: target.facing },
@@ -1082,7 +1160,9 @@ export const advanceCardRoomRuntime = (
     expression,
     behavior: arrived ? "idle" : "wander",
     behaviorTimer: 1,
-    activityLabel: arrived ? (options.player.lastAction ?? "At table") : "Taking seat",
+    activityLabel: arrived
+      ? cardRoomActionActivityLabel(options.player.lastAction, options.copy)
+      : cardRoomCopy(options.copy, "cardRoom.activity.takingSeat", "Taking seat"),
   };
 };
 
@@ -1103,6 +1183,7 @@ export const advanceCardRoomVisitorState = (
     navMemory?: CardRoomNavigationMemory;
     partners?: Array<{ avatarId: string; avatarName: string; runtime: AvatarRuntime }>;
     actionCue?: CardRoomActionCue;
+    copy?: CardRoomCopy;
   },
 ): CardRoomVisitorState => {
   useContentCollisionRects(options.content);
@@ -1124,8 +1205,9 @@ export const advanceCardRoomVisitorState = (
             opponentCount: options.opponentCount,
             navigationKey,
             table: options.table,
+            copy: options.copy,
           })
-        : createInitialCardRoomRuntime(options.character, 0, options.isUser);
+        : createInitialCardRoomRuntime(options.character, 0, options.isUser, options.copy);
     const target = options.player
       ? seatTargetForPlayer(
           options.player,
@@ -1191,7 +1273,11 @@ export const advanceCardRoomVisitorState = (
         targetY: target.y,
         behavior: "wander",
         expression: "happy",
-        activityLabel: "Entering card room",
+        activityLabel: cardRoomCopy(
+          options.copy,
+          "cardRoom.activity.enteringRoom",
+          "Entering card room",
+        ),
         navigationFailure: undefined,
       },
       target,
@@ -1205,7 +1291,7 @@ export const advanceCardRoomVisitorState = (
           ...moved,
           behavior: "idle" as const,
           behaviorTimer: 0,
-          activityLabel: "In card room",
+          activityLabel: cardRoomCopy(options.copy, "cardRoom.activity.inRoom", "In card room"),
         }
       : moved;
     recordCardRoomNavigationMemory(options.navMemory, runtime, options.content);
@@ -1216,7 +1302,11 @@ export const advanceCardRoomVisitorState = (
           runtime,
           phase: "free",
         },
-        "Ready to look around.",
+        cardRoomCopy(
+          options.copy,
+          "cardRoom.bubble.readyLookAround",
+          "Ready to look around.",
+        ),
       );
     }
     return withBubble(
@@ -1224,7 +1314,7 @@ export const advanceCardRoomVisitorState = (
         runtime,
         phase: "entering",
       },
-      currentBubble ?? "I'm here.",
+      currentBubble ?? cardRoomCopy(options.copy, "cardRoom.bubble.imHere", "I'm here."),
     );
   }
 
@@ -1235,10 +1325,16 @@ export const advanceCardRoomVisitorState = (
         behaviorTimer: 0,
         behavior: "wander" as const,
         expression: "calm" as const,
-        activityLabel: "Leaving the table",
+        activityLabel: cardRoomCopy(
+          options.copy,
+          "cardRoom.activity.leavingTable",
+          "Leaving the table",
+        ),
       }
     : state.runtime;
-  let bubbleText = justLeftSeat ? "Stretching my legs." : currentBubble;
+  let bubbleText = justLeftSeat
+    ? cardRoomCopy(options.copy, "cardRoom.bubble.stretchingLegs", "Stretching my legs.")
+    : currentBubble;
 
   const atTarget = distance(runtime, { x: runtime.targetX, y: runtime.targetY }) <= 4;
   if (runtime.behaviorTimer <= 0 || runtime.navigationFailure) {
@@ -1247,6 +1343,7 @@ export const advanceCardRoomVisitorState = (
       runtime,
       options.content,
       options.partners ?? [],
+      options.copy,
     );
     runtime = {
       ...runtime,
@@ -1282,7 +1379,13 @@ export const advanceCardRoomVisitorState = (
     behaviorTimer: arrived
       ? Math.max(0, runtime.behaviorTimer - elapsedSeconds)
       : runtime.behaviorTimer,
-    activityLabel: arrived ? runtime.activityLabel : "Moving through card room",
+    activityLabel: arrived
+      ? runtime.activityLabel
+      : cardRoomCopy(
+          options.copy,
+          "cardRoom.activity.movingThroughRoom",
+          "Moving through card room",
+        ),
   };
   if (arrived && !atTarget) {
     options.navMemory && (options.navMemory.successes += 1);

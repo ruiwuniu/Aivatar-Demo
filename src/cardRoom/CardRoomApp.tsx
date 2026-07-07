@@ -74,7 +74,7 @@ import {
   buildCardRoomContentWithDecor,
   cardRoomDefaultDecorState,
   cardRoomShopCategories,
-  cardRoomShopItems,
+  cardRoomShopItemsForLocale,
   normalizeCardRoomDecorState,
   type CardRoomDecorCategory,
   type CardRoomDecorState,
@@ -86,6 +86,7 @@ import {
   createCardRoomNavigationMemory,
   createInitialCardRoomVisitorState,
   type CardRoomActionCue,
+  type CardRoomCopy,
   type CardRoomVisitorState,
 } from "./cardRoomRuntime";
 
@@ -626,25 +627,43 @@ const fallbackRuntimeCharacter: CardRoomCharacter = {
   },
 };
 
-const stackLabel = (value: number) =>
-  value >= 0 ? `${value} chips` : `debt ${Math.abs(value)}`;
+const cardRoomCopy = (
+  copy: CardRoomCopy,
+  key: string,
+  fallback: string,
+  params?: Record<string, string | number>,
+) => {
+  const value = copy(key, params);
+  return value && value !== key ? value : fallback;
+};
 
-const actionCueText: Record<CardRoomActionCue["type"], string> = {
-  think: "Thinking...",
-  hesitate: "Hmm...",
-  pressure: "Push.",
-  snap: "Now.",
-  fold: "Fold.",
-  check: "Check.",
-  call: "Call.",
-  bet: "Bet.",
-  raise: "Raise.",
-  "all-in": "All-in!",
+const stackLabel = (value: number, copy: CardRoomCopy) =>
+  value >= 0
+    ? cardRoomCopy(copy, "cardRoom.stackChips", `${value} chips`, { value })
+    : cardRoomCopy(copy, "cardRoom.stackDebt", `debt ${Math.abs(value)}`, {
+        value: Math.abs(value),
+      });
+
+const actionCueCopy: Record<
+  CardRoomActionCue["type"],
+  { key: string; fallback: string }
+> = {
+  think: { key: "cardRoom.actionCue.think", fallback: "Thinking..." },
+  hesitate: { key: "cardRoom.actionCue.hesitate", fallback: "Hmm..." },
+  pressure: { key: "cardRoom.actionCue.pressure", fallback: "Push." },
+  snap: { key: "cardRoom.actionCue.snap", fallback: "Now." },
+  fold: { key: "cardRoom.actionCue.fold", fallback: "Fold." },
+  check: { key: "cardRoom.actionCue.check", fallback: "Check." },
+  call: { key: "cardRoom.actionCue.call", fallback: "Call." },
+  bet: { key: "cardRoom.actionCue.bet", fallback: "Bet." },
+  raise: { key: "cardRoom.actionCue.raise", fallback: "Raise." },
+  "all-in": { key: "cardRoom.actionCue.allIn", fallback: "All-in!" },
 };
 
 const actionCueFromLastAction = (
   lastAction: string | undefined,
   now: number,
+  copy: CardRoomCopy,
 ): CardRoomActionCue | undefined => {
   if (!lastAction) return undefined;
   const type: CardRoomActionCue["type"] = lastAction.includes("all-in")
@@ -662,7 +681,7 @@ const actionCueFromLastAction = (
               : "check";
   return {
     type,
-    text: actionCueText[type],
+    text: cardRoomCopy(copy, actionCueCopy[type].key, actionCueCopy[type].fallback),
     startedAt: now,
     durationMs:
       type === "all-in"
@@ -681,6 +700,252 @@ const actionCueFromLastAction = (
           ? "medium"
           : "small",
   };
+};
+
+const streetLabel = (street: string, copy: CardRoomCopy) =>
+  cardRoomCopy(copy, `cardRoom.street.${street}`, street);
+
+const pokerHandNameCopy: Record<string, { key: string; fallback: string }> = {
+  "High Card": { key: "cardRoom.hand.highCard", fallback: "High Card" },
+  Pair: { key: "cardRoom.hand.pair", fallback: "Pair" },
+  "Two Pair": { key: "cardRoom.hand.twoPair", fallback: "Two Pair" },
+  "Three of a Kind": { key: "cardRoom.hand.threeKind", fallback: "Three of a Kind" },
+  Straight: { key: "cardRoom.hand.straight", fallback: "Straight" },
+  Flush: { key: "cardRoom.hand.flush", fallback: "Flush" },
+  "Full House": { key: "cardRoom.hand.fullHouse", fallback: "Full House" },
+  "Four of a Kind": { key: "cardRoom.hand.fourKind", fallback: "Four of a Kind" },
+  "Straight Flush": { key: "cardRoom.hand.straightFlush", fallback: "Straight Flush" },
+  "Royal Flush": { key: "cardRoom.hand.royalFlush", fallback: "Royal Flush" },
+};
+
+const rankText = (value: string, copy: CardRoomCopy) => {
+  const normalized = value
+    .trim()
+    .replace(/'s\b/i, "")
+    .replace(/\s+High\b/i, "")
+    .replace(/[cdhs]$/i, "")
+    .trim();
+  const rank = normalized === "10" ? "T" : normalized.toUpperCase();
+  return cardRoomCopy(copy, `cardRoom.rank.${rank}`, normalized);
+};
+
+const localizePokerHandName = (handName: string | undefined, copy: CardRoomCopy) => {
+  if (!handName) return "";
+  const entry = pokerHandNameCopy[handName];
+  return entry ? cardRoomCopy(copy, entry.key, entry.fallback) : handName;
+};
+
+const localizePokerHandDescription = (
+  description: string | undefined,
+  handName: string | undefined,
+  copy: CardRoomCopy,
+) => {
+  if (!description) {
+    return handName
+      ? localizePokerHandName(handName, copy)
+      : cardRoomCopy(copy, "cardRoom.hand.uncontested", "uncontested");
+  }
+
+  let match = description.match(/^High Card, (.+)$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.handDescription.highCard", description, {
+      rank: rankText(match[1], copy),
+    });
+  }
+  match = description.match(/^Pair, (.+)$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.handDescription.pair", description, {
+      rank: rankText(match[1], copy),
+    });
+  }
+  match = description.match(/^Two Pair, (.+) & (.+)$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.handDescription.twoPair", description, {
+      high: rankText(match[1], copy),
+      low: rankText(match[2], copy),
+    });
+  }
+  match = description.match(/^Three of a Kind, (.+)$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.handDescription.threeKind", description, {
+      rank: rankText(match[1], copy),
+    });
+  }
+  match = description.match(/^Straight, (.+) High$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.handDescription.straightHigh", description, {
+      rank: rankText(match[1], copy),
+    });
+  }
+  match = description.match(/^Flush, (.+) High$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.handDescription.flushHigh", description, {
+      rank: rankText(match[1], copy),
+    });
+  }
+  match = description.match(/^Full House, (.+) over (.+)$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.handDescription.fullHouse", description, {
+      three: rankText(match[1], copy),
+      pair: rankText(match[2], copy),
+    });
+  }
+  match = description.match(/^Four of a Kind, (.+)$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.handDescription.fourKind", description, {
+      rank: rankText(match[1], copy),
+    });
+  }
+  match = description.match(/^Straight Flush, (.+) High$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.handDescription.straightFlushHigh", description, {
+      rank: rankText(match[1], copy),
+    });
+  }
+  if (description === "Royal Flush") {
+    return cardRoomCopy(copy, "cardRoom.hand.royalFlush", description);
+  }
+  return handName ? localizePokerHandName(handName, copy) : description;
+};
+
+const localizeWinnerSummary = (summary: string, copy: CardRoomCopy) =>
+  summary
+    .split(", ")
+    .map((entry) => {
+      const match = entry.match(/^(.+) wins (-?\d+)$/);
+      return match
+        ? cardRoomCopy(copy, "cardRoom.log.summaryWins", entry, {
+            name: match[1],
+            chips: Number(match[2]),
+          })
+        : entry;
+    })
+    .join(cardRoomCopy(copy, "cardRoom.log.listSeparator", ", "));
+
+const translateCardRoomTableText = (text: string, copy: CardRoomCopy) => {
+  if (!text) return text;
+  const exact: Record<string, string> = {
+    "Showdown.": "cardRoom.log.showdown",
+    "Settled.": "cardRoom.log.settled",
+    "The dealer reveals the flop.": "cardRoom.log.dealerFlop",
+    "The dealer reveals the turn.": "cardRoom.log.dealerTurn",
+    "The dealer reveals the river.": "cardRoom.log.dealerRiver",
+    "Flop betting round.": "cardRoom.log.flopRound",
+    "Turn betting round.": "cardRoom.log.turnRound",
+    "River betting round.": "cardRoom.log.riverRound",
+    "Preflop betting round.": "cardRoom.log.preflopRound",
+    "Summon at least one companion to start a hand.": "cardRoom.log.needCompanion",
+    "At least two players with chips are required.": "cardRoom.log.needChippedPlayers",
+  };
+  if (exact[text]) return cardRoomCopy(copy, exact[text], text);
+
+  let match = text.match(/^Showdown order: (.+)\. Best hand: (.+)\.$/);
+  if (match) {
+    const names = match[1].split(", ").join(cardRoomCopy(copy, "cardRoom.log.listSeparator", ", "));
+    const hand = localizePokerHandDescription(match[2], undefined, copy);
+    return `${cardRoomCopy(copy, "cardRoom.log.showdownOrder", `Showdown order: ${names}.`, {
+      names,
+    })} ${cardRoomCopy(copy, "cardRoom.log.bestHand", `Best hand: ${hand}.`, {
+      hand,
+    })}`;
+  }
+  match = text.match(/^Showdown\. Best hand: (.+)\.$/);
+  if (match) {
+    const hand = localizePokerHandDescription(match[1], undefined, copy);
+    return `${cardRoomCopy(copy, "cardRoom.log.showdown", "Showdown.")} ${cardRoomCopy(
+      copy,
+      "cardRoom.log.bestHand",
+      `Best hand: ${hand}.`,
+      { hand },
+    )}`;
+  }
+  match = text.match(/^Showdown order: (.+)\. Settled\.$/);
+  if (match) {
+    const names = match[1].split(", ").join(cardRoomCopy(copy, "cardRoom.log.listSeparator", ", "));
+    return `${cardRoomCopy(copy, "cardRoom.log.showdownOrder", `Showdown order: ${names}.`, {
+      names,
+    })} ${cardRoomCopy(copy, "cardRoom.log.settled", "Settled.")}`;
+  }
+  if (text === "Showdown. Settled.") {
+    return `${cardRoomCopy(copy, "cardRoom.log.showdown", "Showdown.")} ${cardRoomCopy(
+      copy,
+      "cardRoom.log.settled",
+      "Settled.",
+    )}`;
+  }
+  match = text.match(/^(.+)\. Best hand: (.+)\.$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.log.bestHandStatus", text, {
+      summary: localizeWinnerSummary(match[1], copy),
+      hand: localizePokerHandDescription(match[2], undefined, copy),
+    });
+  }
+  match = text.match(/^(.+) gets (-?\d+) uncalled chips back\.$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.log.uncalledBack", text, {
+      name: match[1],
+      chips: Number(match[2]),
+    });
+  }
+  match = text.match(/^(.+) wins (-?\d+) chips\.$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.log.winsChips", text, {
+      name: match[1],
+      chips: Number(match[2]),
+    });
+  }
+  match = text.match(/^(.+) wins the pot uncontested\.$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.log.winsUncontested", text, { name: match[1] });
+  }
+  match = text.match(/^(.+) posts (-?\d+)\.$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.log.posts", text, {
+      name: match[1],
+      chips: Number(match[2]),
+    });
+  }
+  match = text.match(/^Hand (\d+) begins\.$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.log.handBegins", text, { number: Number(match[1]) });
+  }
+  match = text.match(/^(.+) folds\.$/);
+  if (match) return cardRoomCopy(copy, "cardRoom.log.folds", text, { name: match[1] });
+  match = text.match(/^(.+) checks\.$/);
+  if (match) return cardRoomCopy(copy, "cardRoom.log.checks", text, { name: match[1] });
+  match = text.match(/^(.+) times out and checks\.$/);
+  if (match) return cardRoomCopy(copy, "cardRoom.log.timeoutChecks", text, { name: match[1] });
+  match = text.match(/^(.+) times out\. Hand is dead\.$/);
+  if (match) return cardRoomCopy(copy, "cardRoom.log.timeoutDead", text, { name: match[1] });
+  match = text.match(/^(.+) calls (-?\d+)\.$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.log.calls", text, {
+      name: match[1],
+      chips: Number(match[2]),
+    });
+  }
+  match = text.match(/^(.+) bets (-?\d+)\.$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.log.bets", text, {
+      name: match[1],
+      chips: Number(match[2]),
+    });
+  }
+  match = text.match(/^(.+) raises to (-?\d+)\.$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.log.raisesTo", text, {
+      name: match[1],
+      chips: Number(match[2]),
+    });
+  }
+  match = text.match(/^(.+) moves all-in for (-?\d+)\.$/);
+  if (match) {
+    return cardRoomCopy(copy, "cardRoom.log.allInFor", text, {
+      name: match[1],
+      chips: Number(match[2]),
+    });
+  }
+  return text;
 };
 
 const playerActionSnapshot = (player: HoldemPlayer) =>
@@ -987,6 +1252,8 @@ export const CardRoomApp = () => {
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
   const ui = (key: string, params?: Record<string, string | number>) =>
     t(locale, key, params);
+  const cardRoomCopyRef = useRef<CardRoomCopy>(ui);
+  cardRoomCopyRef.current = ui;
   const [roster, setRoster] = useState<CardRoomCharacter[]>(() => readCardRoomRoster());
   const [hostSlotId] = useState<string | null>(() => initialHostSlotId());
   const cardRoomInstanceIdRef = useRef(createCardRoomInstanceId());
@@ -1002,9 +1269,13 @@ export const CardRoomApp = () => {
   );
   const [activeDecorCategory, setActiveDecorCategory] =
     useState<CardRoomDecorCategory>("wall");
+  const localizedCardRoomShopItems = useMemo(
+    () => cardRoomShopItemsForLocale(locale),
+    [locale],
+  );
   const currentCardRoomContent = useMemo(
-    () => buildCardRoomContentWithDecor(cardRoomDecor),
-    [cardRoomDecor],
+    () => buildCardRoomContentWithDecor(cardRoomDecor, locale),
+    [cardRoomDecor, locale],
   );
   const [playerNameOverrides, setPlayerNameOverrides] = useState<Record<string, string>>({});
   const playerNameKey = USER_PLAYER_SLOT_ID;
@@ -1891,6 +2162,7 @@ export const CardRoomApp = () => {
       if (canvasRef.current) {
         const currentTable = tableRef.current;
         const content = currentCardRoomContentRef.current;
+        const copy = cardRoomCopyRef.current;
         const host = hostCharacterRef.current;
         const characters =
           seatedCharactersRef.current.length > 0
@@ -1932,7 +2204,7 @@ export const CardRoomApp = () => {
             nextActionCues[player.avatarId] = currentCue;
           }
           if (player.lastAction && previousSnapshots[player.avatarId] !== snapshot) {
-            const cue = actionCueFromLastAction(player.lastAction, now);
+            const cue = actionCueFromLastAction(player.lastAction, now, copy);
             if (cue) nextActionCues[player.avatarId] = cue;
             if (previousSnapshots[player.avatarId] !== undefined) {
               playFoldAudioForAction(currentTable, player, snapshot);
@@ -1951,7 +2223,7 @@ export const CardRoomApp = () => {
             : Math.max(0, index - 1);
           const state =
             visitorStateMap[character.avatarId] ??
-            createInitialCardRoomVisitorState(character, index, isUser, now);
+            createInitialCardRoomVisitorState(character, index, isUser, now, copy);
           const nextState = advanceCardRoomVisitorState(
             state,
             elapsedSeconds,
@@ -1969,6 +2241,7 @@ export const CardRoomApp = () => {
               navMemory: cardRoomNavMemoryRef.current,
               partners: previousPartners.filter((partner) => partner.avatarId !== character.avatarId),
               actionCue: nextActionCues[character.avatarId],
+              copy,
             },
           );
           nextVisitorStateMap[character.avatarId] = nextState;
@@ -2257,7 +2530,7 @@ export const CardRoomApp = () => {
       setStatusMessage(
         players.filter((player) => creditAvailable(player) > 0).length < 2
           ? ui("cardRoom.needChips")
-          : nextTable.message,
+          : translateCardRoomTableText(nextTable.message, ui),
       );
       return;
     }
@@ -2634,7 +2907,7 @@ export const CardRoomApp = () => {
       table.activeSeatIndex === null ? null : table.players[table.activeSeatIndex];
     if (!activePlayer || activePlayer.isUser || table.street === "handComplete") return;
     if (!playersSeatedReady) return;
-    const aiMove = choosePokerAiMove(table, activePlayer);
+    const aiMove = choosePokerAiMove(table, activePlayer, cardRoomCopyRef.current);
     actionCuesRef.current = {
       ...actionCuesRef.current,
       [activePlayer.avatarId]: {
@@ -2797,7 +3070,7 @@ export const CardRoomApp = () => {
   const canActNow = userTurn && playersSeatedReady;
   const userPlayer = table.players.find((player) => player.isUser);
   const activeActionLabel = activePlayer
-    ? `${activePlayer.avatarName} ${stackLabel(activePlayer.stack)}`
+    ? `${activePlayer.avatarName} ${stackLabel(activePlayer.stack, ui)}`
     : "-";
   const handInProgress =
     table.street !== "waiting" && table.street !== "handComplete" && table.players.length > 0;
@@ -2835,21 +3108,21 @@ export const CardRoomApp = () => {
     (table.street === "waiting" || table.street === "handComplete");
   const communityCardsLabel = table.communityCards.length
     ? compactCards(table.communityCards)
-    : "--";
+    : ui("cardRoom.noCommunity");
   const userCards = userHandCardsReady ? userPlayer?.holeCards ?? [] : [];
   const tablePlayers = table.players.length > 0 ? table.players : [];
   const chipShopCharacters = hostDisplayCharacter
     ? [hostDisplayCharacter, ...availableCompanions]
     : availableCompanions;
   const visibleDecorCategories = cardRoomShopCategories.filter((category) =>
-    cardRoomShopItems.some((item) => item.cardRoomCategory === category.id),
+    localizedCardRoomShopItems.some((item) => item.cardRoomCategory === category.id),
   );
   const resolvedActiveDecorCategory = visibleDecorCategories.some(
     (category) => category.id === activeDecorCategory,
   )
     ? activeDecorCategory
     : visibleDecorCategories[0]?.id ?? activeDecorCategory;
-  const decorShopItems = cardRoomShopItems.filter(
+  const decorShopItems = localizedCardRoomShopItems.filter(
     (item) => item.cardRoomCategory === resolvedActiveDecorCategory,
   );
   const canReleaseCompanions =
@@ -2863,7 +3136,7 @@ export const CardRoomApp = () => {
     activeClockStatusText ??
     (handInProgress && !playersSeatedReady
       ? ui("cardRoom.takingSeats")
-      : table.message ||
+      : translateCardRoomTableText(table.message, ui) ||
         (!handInProgress
           ? table.street === "handComplete"
             ? ui("cardRoom.handComplete")
@@ -2875,7 +3148,10 @@ export const CardRoomApp = () => {
     table.winners.length > 0
       ? table.winners
           .map((winner) => {
-            const hand = winner.handDescription ?? winner.handName ?? "uncontested";
+            const hand =
+              winner.handDescription || winner.handName
+                ? localizePokerHandDescription(winner.handDescription, winner.handName, ui)
+                : ui("cardRoom.resultUncontested");
             return `${winner.avatarName} +${winner.amount} / ${hand}`;
           })
           .join(", ")
@@ -3009,8 +3285,8 @@ export const CardRoomApp = () => {
           <div className="card-room-victory-spotlight" />
           <div className="card-room-victory-rings" />
           <div className="card-room-victory-medallion">
-            <span>JACKPOT</span>
-            <strong>WINNER</strong>
+            <span>{ui("cardRoom.victoryJackpot")}</span>
+            <strong>{ui("cardRoom.victoryWinner")}</strong>
           </div>
           <div className="card-room-victory-confetti" />
         </div>
@@ -3036,21 +3312,21 @@ export const CardRoomApp = () => {
 
       <section className="card-room-layout">
         <div className="card-room-play-area">
-          <section className="card-room-hud card-room-hud-top" aria-label="Card room table state">
+          <section className="card-room-hud card-room-hud-top" aria-label={ui("cardRoom.tableStateAria")}>
             <div className="card-room-hud-block">
-              <span>Street</span>
-              <strong>{table.street}</strong>
+              <span>{ui("cardRoom.street")}</span>
+              <strong>{streetLabel(table.street, ui)}</strong>
             </div>
             <div className="card-room-hud-block card-room-hud-wide">
-              <span>Community</span>
+              <span>{ui("cardRoom.community")}</span>
               <strong>{communityCardsLabel}</strong>
             </div>
             <div className="card-room-hud-block">
-              <span>Pot</span>
+              <span>{ui("cardRoom.pot")}</span>
               <strong>{table.pot}</strong>
             </div>
             <div className="card-room-hud-block card-room-hud-result">
-              <span>Result</span>
+              <span>{ui("cardRoom.result")}</span>
               <strong>{roundResultLabel}</strong>
             </div>
           </section>
@@ -3059,7 +3335,7 @@ export const CardRoomApp = () => {
             <canvas ref={canvasRef} className="card-room-canvas" />
           </div>
 
-          <section className="card-room-hud card-room-hud-bottom" aria-label="Card room player state">
+          <section className="card-room-hud card-room-hud-bottom" aria-label={ui("cardRoom.playerStateAria")}>
             <div className="card-room-user-hand">
               <span>{ui("cardRoom.yourHand")}</span>
               <div className="card-room-hand-cards" aria-label={ui("cardRoom.yourHand")}>
@@ -3083,7 +3359,7 @@ export const CardRoomApp = () => {
               {actionButtons}
             </div>
             <div className="card-room-hud-block card-room-hud-message">
-              <span>Status</span>
+              <span>{ui("cardRoom.status")}</span>
               <strong>{statusText}</strong>
             </div>
           </section>
@@ -3208,7 +3484,7 @@ export const CardRoomApp = () => {
                               debt: normalizeChipDebt(playerWallet.chipDebt),
                               chips,
                             })
-                          : `${character.walletBits} bits / ${stackLabel(chips)}`}
+                          : `${character.walletBits} bits / ${stackLabel(chips, ui)}`}
                       </span>
                     </div>
                     <div className="card-room-chip-shop-actions">
@@ -3380,9 +3656,9 @@ export const CardRoomApp = () => {
                     <span>{character.avatarName}</span>
                     <small>
                       {ui("growth.level", { value: character.growthLevel })} /{" "}
-                      {describePokerTemperament(character.traits, character.darkTraits)}
+                      {describePokerTemperament(character.traits, character.darkTraits, ui)}
                     </small>
-                    <small>{stackLabel(stacks[character.avatarId] ?? character.pokerChips)}</small>
+                    <small>{stackLabel(stacks[character.avatarId] ?? character.pokerChips, ui)}</small>
                   </button>
                 ))}
               </div>
@@ -3394,11 +3670,13 @@ export const CardRoomApp = () => {
           <section className="card-room-control-group">
             <div className="card-room-control-heading">
               <span>{ui("cardRoom.log")}</span>
-              <strong>{table.street}</strong>
+              <strong>{streetLabel(table.street, ui)}</strong>
             </div>
             <div className="card-room-log">
               {table.log.length > 0 ? (
-                table.log.map((entry, index) => <p key={`${entry}-${index}`}>{entry}</p>)
+                table.log.map((entry, index) => (
+                  <p key={`${entry}-${index}`}>{translateCardRoomTableText(entry, ui)}</p>
+                ))
               ) : (
                 <p>{ui("cardRoom.noLog")}</p>
               )}
@@ -3408,7 +3686,9 @@ export const CardRoomApp = () => {
                 {table.winners.map((winner, index) => (
                   <p key={`${winner.seatIndex}-${index}`}>
                     <strong>{winner.avatarName}</strong> +{winner.amount}
-                    {winner.handDescription ? ` / ${winner.handDescription}` : ""}
+                    {winner.handDescription || winner.handName
+                      ? ` / ${localizePokerHandDescription(winner.handDescription, winner.handName, ui)}`
+                      : ""}
                   </p>
                 ))}
               </div>

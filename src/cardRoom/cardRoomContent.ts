@@ -6,6 +6,7 @@ import type {
   RoomSurfaceDefinition,
   RoomWindowDefinition,
 } from "../types";
+import { t, type Locale } from "../i18n";
 
 export const cardRoomDefaultPetStats: PetStats = {
   energy: 86,
@@ -352,6 +353,55 @@ export const cardRoomShopItems: CardRoomShopItem[] = allCardRoomShopItems.filter
   (item) => !hiddenCardRoomShopItemIds.has(item.id),
 );
 
+const cardRoomText = (locale: Locale, key: string, fallback: string) => {
+  const value = t(locale, key);
+  return value === key ? fallback : value;
+};
+
+const localizeCardRoomSurface = (
+  locale: Locale,
+  surface: RoomSurfaceDefinition,
+): RoomSurfaceDefinition => ({
+  ...surface,
+  name: cardRoomText(locale, `cardRoom.content.surface.${surface.id}.name`, surface.name),
+});
+
+const localizeCardRoomWindow = (
+  locale: Locale,
+  windowDefinition: RoomWindowDefinition,
+): RoomWindowDefinition => ({
+  ...windowDefinition,
+  name: cardRoomText(
+    locale,
+    `cardRoom.content.window.${windowDefinition.id}.name`,
+    windowDefinition.name,
+  ),
+});
+
+const localizeCardRoomFurniture = (
+  locale: Locale,
+  furniture: FurnitureDefinition,
+): FurnitureDefinition => ({
+  ...furniture,
+  name: cardRoomText(locale, `cardRoom.content.furniture.${furniture.id}.name`, furniture.name),
+});
+
+const localizeCardRoomShopItem = (
+  locale: Locale,
+  item: CardRoomShopItem,
+): CardRoomShopItem => ({
+  ...item,
+  name: cardRoomText(locale, `cardRoom.content.shop.${item.id}.name`, item.name),
+  description: cardRoomText(
+    locale,
+    `cardRoom.content.shop.${item.id}.description`,
+    item.description,
+  ),
+});
+
+export const cardRoomShopItemsForLocale = (locale: Locale): CardRoomShopItem[] =>
+  cardRoomShopItems.map((item) => localizeCardRoomShopItem(locale, item));
+
 export const cardRoomShopCategories: Array<{
   id: CardRoomDecorCategory;
   copyKey: string;
@@ -418,25 +468,37 @@ export const normalizeCardRoomDecorState = (
 
 export const buildCardRoomContentWithDecor = (
   decor: CardRoomDecorState,
+  locale: Locale = "en",
 ): AivatarContent => {
   const normalizedDecor = normalizeCardRoomDecorState(decor);
+  const localizedShopItems = cardRoomShopItemsForLocale(locale);
   const furniture = [
-    pokerTableFurniture,
+    localizeCardRoomFurniture(locale, pokerTableFurniture),
     ...normalizedDecor.furnitureItemIds
       .map((itemId) => cardRoomFurnitureByShopItemId[itemId])
       .filter((item): item is FurnitureDefinition => Boolean(item)),
-  ];
+  ].map((item) => localizeCardRoomFurniture(locale, item));
 
   return {
     ...cardRoomContent,
+    avatar: {
+      ...cardRoomContent.avatar,
+      name: cardRoomText(locale, "cardRoom.content.avatar.host.name", cardRoomContent.avatar.name),
+    },
     room: {
       ...cardRoomContent.room,
       floorSurfaceId: normalizedDecor.floorSurfaceId,
       wallSurfaceId: normalizedDecor.wallSurfaceId,
       windowId: normalizedDecor.windowId,
-      floorSurfaces: cardRoomFloorSurfaces,
-      wallSurfaces: cardRoomWallSurfaces,
-      windows: cardRoomWindows,
+      floorSurfaces: cardRoomFloorSurfaces.map((surface) =>
+        localizeCardRoomSurface(locale, surface),
+      ),
+      wallSurfaces: cardRoomWallSurfaces.map((surface) =>
+        localizeCardRoomSurface(locale, surface),
+      ),
+      windows: cardRoomWindows.map((windowDefinition) =>
+        localizeCardRoomWindow(locale, windowDefinition),
+      ),
       furniture,
     },
     placedItems: normalizedDecor.furnitureItemIds.map((itemId) => {
@@ -448,10 +510,10 @@ export const buildCardRoomContentWithDecor = (
         y: furnitureItem.y,
       };
     }),
-    itemDefinitions: cardRoomShopItems,
+    itemDefinitions: localizedShopItems,
     shop: {
       currency: "chips",
-      items: cardRoomShopItems,
+      items: localizedShopItems,
     },
   };
 };

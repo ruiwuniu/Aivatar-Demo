@@ -9,7 +9,7 @@ import {
   type HoldemTableState,
   type PlayingCard,
 } from "./holdemEngine";
-import type { CardRoomActionType } from "./cardRoomRuntime";
+import type { CardRoomActionType, CardRoomCopy } from "./cardRoomRuntime";
 
 const rankValues: Record<string, number> = {
   "2": 2,
@@ -35,6 +35,15 @@ const traitScale = (value: number | undefined) =>
 
 const darkScale = (value: number | undefined) =>
   clamp(Math.max(0, value ?? 0) / 100);
+
+const cardRoomCopy = (
+  copy: CardRoomCopy | undefined,
+  key: string,
+  fallback: string,
+) => {
+  const value = copy?.(key);
+  return value && value !== key ? value : fallback;
+};
 
 export const preflopStrength = (cards: PlayingCard[]) => {
   const [left, right] = cards;
@@ -94,13 +103,22 @@ const styleFromTraits = (traits: AivatarGrowthTraits, darkTraits: AivatarDarkTra
 export const describePokerTemperament = (
   traits: AivatarGrowthTraits,
   darkTraits: AivatarDarkTraits,
+  copy?: CardRoomCopy,
 ) => {
   const style = styleFromTraits(traits, darkTraits);
-  if (style.pressure > 0.62 && style.risk > 0.5) return "pressure-heavy";
-  if (style.caution > 0.52) return "tight";
-  if (style.discipline > 0.58) return "disciplined";
-  if (style.confusion > 0.35) return "erratic";
-  return "balanced";
+  if (style.pressure > 0.62 && style.risk > 0.5) {
+    return cardRoomCopy(copy, "cardRoom.temperament.pressure-heavy", "pressure-heavy");
+  }
+  if (style.caution > 0.52) {
+    return cardRoomCopy(copy, "cardRoom.temperament.tight", "tight");
+  }
+  if (style.discipline > 0.58) {
+    return cardRoomCopy(copy, "cardRoom.temperament.disciplined", "disciplined");
+  }
+  if (style.confusion > 0.35) {
+    return cardRoomCopy(copy, "cardRoom.temperament.erratic", "erratic");
+  }
+  return cardRoomCopy(copy, "cardRoom.temperament.balanced", "balanced");
 };
 
 export const choosePokerAiAction = (
@@ -238,6 +256,7 @@ const pokerAiThinkingCue = (
   table: HoldemTableState,
   player: HoldemPlayer,
   action: HoldemAction,
+  copy?: CardRoomCopy,
 ): { type: CardRoomActionType; text: string; intensity: "small" | "medium" | "large" } => {
   const traits = timingScales(player.traits, player.darkTraits);
   const toCall = Math.max(0, table.currentBet - player.roundBet);
@@ -256,7 +275,10 @@ const pokerAiThinkingCue = (
   if (aggressiveAction && snapScore > 1.05 && hesitationScore < 1.1) {
     return {
       type: "snap",
-      text: action.type === "all-in" ? "Now." : "I know.",
+      text:
+        action.type === "all-in"
+          ? cardRoomCopy(copy, "cardRoom.actionCue.now", "Now.")
+          : cardRoomCopy(copy, "cardRoom.actionCue.iKnow", "I know."),
       intensity: "medium",
     };
   }
@@ -264,7 +286,10 @@ const pokerAiThinkingCue = (
   if (hesitationScore > 1.05 && !aggressiveAction) {
     return {
       type: "hesitate",
-      text: action.type === "fold" ? "Too much..." : "Hmm...",
+      text:
+        action.type === "fold"
+          ? cardRoomCopy(copy, "cardRoom.actionCue.tooMuch", "Too much...")
+          : cardRoomCopy(copy, "cardRoom.actionCue.hesitate", "Hmm..."),
       intensity: pressure > 0.55 ? "medium" : "small",
     };
   }
@@ -272,7 +297,10 @@ const pokerAiThinkingCue = (
   if (aggressiveAction && pressureScore > 0.85) {
     return {
       type: "pressure",
-      text: traits.coldness > 0.5 ? "Make them pay." : "Push.",
+      text:
+        traits.coldness > 0.5
+          ? cardRoomCopy(copy, "cardRoom.actionCue.makeThemPay", "Make them pay.")
+          : cardRoomCopy(copy, "cardRoom.actionCue.push", "Push."),
       intensity: action.type === "all-in" ? "large" : "medium",
     };
   }
@@ -280,23 +308,30 @@ const pokerAiThinkingCue = (
   if (traits.foolishness > 0.55 && Math.random() < 0.45) {
     return {
       type: "hesitate",
-      text: "Wait...",
+      text: cardRoomCopy(copy, "cardRoom.actionCue.wait", "Wait..."),
       intensity: "small",
     };
   }
 
   return {
     type: "think",
-    text: focusScore > 0.85 ? "Counting odds." : "Thinking...",
+    text:
+      focusScore > 0.85
+        ? cardRoomCopy(copy, "cardRoom.actionCue.countingOdds", "Counting odds.")
+        : cardRoomCopy(copy, "cardRoom.actionCue.think", "Thinking..."),
     intensity: pressure > 0.6 ? "medium" : "small",
   };
 };
 
-export const choosePokerAiMove = (table: HoldemTableState, player: HoldemPlayer) => {
+export const choosePokerAiMove = (
+  table: HoldemTableState,
+  player: HoldemPlayer,
+  copy?: CardRoomCopy,
+) => {
   const action = choosePokerAiAction(table, player);
   return {
     action,
     delayMs: pokerAiActionDelayMs(table, player, action),
-    thinkingCue: pokerAiThinkingCue(table, player, action),
+    thinkingCue: pokerAiThinkingCue(table, player, action, copy),
   };
 };
