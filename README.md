@@ -2,9 +2,9 @@
 
 ![Aivatar 0.3 pixel companion life banner with daily work, social visits, and Card Room play](docs/assets/aivatar-readme-hero-0.3-card-room.png)
 
-**EN** | Aivatar is a local-first desktop companion for AI coding agents. It turns Codex, Claude Code, opencode, or a custom local agent bridge into a lively pixel-room companion with selectable characters, upgraded room materials, live status, growth, `bits`, and room customization.
+**EN** | Aivatar is a local-first desktop companion for AI coding agents. It turns Codex, Claude Code, opencode, Tencent WorkBuddy, or a custom local agent bridge into a lively pixel-room companion with selectable characters, upgraded room materials, live status, growth, `bits`, and room customization.
 
-**中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。它把 Codex、Claude Code、opencode 或自定义本地 agent 桥接映射成像素房间里的小伙伴行为：思考、编码、等待、报错、完成任务，并通过多角色形象、升级后的房间材质、`bits`、成长、背包、商店和房间装修形成一个可互动的工作陪伴系统。
+**中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。它把 Codex、Claude Code、opencode、腾讯 WorkBuddy 或自定义本地 agent 桥接映射成像素房间里的小伙伴行为：思考、编码、等待、报错、完成任务，并通过多角色形象、升级后的房间材质、`bits`、成长、背包、商店和房间装修形成一个可互动的工作陪伴系统。
 
 <p align="center">
   <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.0/Aivatar_0.3.0_universal.dmg"><strong>Download macOS DMG</strong></a>
@@ -26,6 +26,7 @@
 - Card Room also adds hidden dark-trait growth: greed, foolishness, recklessness, cowardice, arrogance, and coldness can evolve through poker play and shape companion betting behavior without replacing the main-room Growth personality.
 - Card Room decor is now a real content surface: upgraded wall materials, floor materials, window assets, poker furniture, and shop filtering let the side room visually evolve independently from the main room.
 - Desktop rendering is hardened for the heavier poker scene with cached static room layers and WebAudio-based deal-card sounds to avoid WKWebView short-audio stutter during deal animations.
+- Windows 0.3.0 installers were refreshed with Tencent WorkBuddy support: Aivatar can discover local WorkBuddy `working` and `coding` sessions, map their live status into avatar bubbles, show context token usage, and settle eligible completions into `bits`.
 - This release publishes a new universal macOS DMG, Windows NSIS EXE, and Windows MSI installer for 0.3.0.
 
 **中文**
@@ -36,6 +37,7 @@
 - 纸牌屋还加入隐藏的黑化人格成长：贪婪、愚钝、鲁莽、怯懦、傲慢和冷漠会随打牌过程变化，并影响小伙伴的下注风格，但不会取代主房间的普通 Growth 人格。
 - 纸牌屋装修成为独立内容面：升级墙纸、地板、窗户、扑克家具与商店筛选，使侧房间可以独立于主房间演进视觉风格。
 - 为更重的扑克场景加固桌面渲染：缓存静态房间层，并把发牌短音效改为 WebAudio 播放，避免 macOS WKWebView 在发牌动画中因短音频连续触发而卡顿。
+- Windows 0.3.0 安装包已刷新，加入腾讯 WorkBuddy 支持：Aivatar 可以发现本地 WorkBuddy 的 `working` 与 `coding` 会话，把实时状态映射到头像气泡，显示 context token 用量，并将符合条件的完成会话结算为 `bits`。
 - 本版本发布新的 0.3.0 macOS universal DMG、Windows NSIS EXE 和 Windows MSI 安装包。
 
 ## 0.2.3 Patch Highlights / 0.2.3 补丁亮点
@@ -72,7 +74,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.3.0 is available as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer through GitHub Releases. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
+> Current status / 当前状态: 0.3.0 is available as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer through GitHub Releases. The Windows installers were refreshed on 2026-07-07 with Tencent WorkBuddy discovery and status/reward support. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
 
 ## Contents / 目录
 
@@ -633,7 +635,7 @@ Current release-prep notes:
 - The 0.3.0 preview release is available through GitHub Releases, with a macOS universal `.dmg`, Windows NSIS `.exe`, and Windows MSI installer.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
 - Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, shop rapid-click protection, long-press bulk buying, and Card Room are now part of the 0.3.0 preview surface.
-- Native bridge support exists for local status, Codex Desktop session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
+- Native bridge support exists for local status, Codex Desktop session discovery, Tencent WorkBuddy `working`/`coding` session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
 - A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
 - Linux packaging remains planned after the desktop integration path is stable.
 
@@ -644,7 +646,7 @@ Current release-prep notes:
 - 0.3.0 预览版已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
 - 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、商店快速点击保护、长按批量购买与纸牌屋 Card Room，已经纳入 0.3.0 预览体验。
-- 本地状态、Codex Desktop 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。
+- 本地状态、Codex Desktop 会话发现、腾讯 WorkBuddy `working`/`coding` 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。
 - 完全 Rust-native 的 connected runner 和面向发布模式的 provider-backed learning 仍是后续加固工作。
 - Linux 打包计划会在桌面集成路径继续稳定后推进。
 
