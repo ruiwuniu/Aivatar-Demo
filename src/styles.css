@@ -6315,6 +6315,13 @@ h2 {
     #2f2931;
 }
 
+.idle-bubble-candidate.agent-workbuddy:not(.llm) {
+  border-color: #c9a3ff;
+  background:
+    linear-gradient(90deg, rgba(201, 163, 255, 0.18), rgba(117, 247, 213, 0.06)),
+    #2d2739;
+}
+
 .idle-bubble-candidate.llm:disabled {
   border-color: rgba(117, 247, 213, 0.65);
   color: #dffdf6;
@@ -6326,7 +6333,8 @@ h2 {
 
 .idle-bubble-candidate.agent-claude-code:disabled:not(.llm),
 .idle-bubble-candidate.agent-codex:disabled:not(.llm),
-.idle-bubble-candidate.agent-opencode:disabled:not(.llm) {
+.idle-bubble-candidate.agent-opencode:disabled:not(.llm),
+.idle-bubble-candidate.agent-workbuddy:disabled:not(.llm) {
   color: #d8fff7;
   opacity: 0.9;
 }
@@ -6364,6 +6372,12 @@ h2 {
   background: #ffb86b;
 }
 
+.idle-bubble-candidate .idle-bubble-source.agent-workbuddy {
+  border-color: rgba(201, 163, 255, 0.84);
+  color: #291641;
+  background: #c9a3ff;
+}
+
 .idle-bubble-candidate .idle-bubble-source.llm,
 .idle-bubble-candidate:disabled .idle-bubble-source {
   border-color: rgba(117, 247, 213, 0.75);
@@ -6387,6 +6401,12 @@ h2 {
   border-color: rgba(255, 184, 107, 0.84);
   color: #3f2108;
   background: #ffb86b;
+}
+
+.idle-bubble-candidate:disabled .idle-bubble-source.agent-workbuddy {
+  border-color: rgba(201, 163, 255, 0.84);
+  color: #291641;
+  background: #c9a3ff;
 }
 
 .idle-bubble-empty {
@@ -8858,6 +8878,7 @@ input[type="range"]::-moz-range-thumb {
 .app-shell.theme-classic .idle-bubble-candidate.agent-claude-code:not(.llm),
 .app-shell.theme-classic .idle-bubble-candidate.agent-codex:not(.llm),
 .app-shell.theme-classic .idle-bubble-candidate.agent-opencode:not(.llm),
+.app-shell.theme-classic .idle-bubble-candidate.agent-workbuddy:not(.llm),
 .app-shell.theme-classic .idle-bubble-candidate.llm:disabled {
   border-color: #fff #404040 #404040 #fff;
   color: #000;
@@ -9654,6 +9675,7 @@ input[type="range"]::-moz-range-thumb {
 .app-shell.theme-arcade-cabinet .idle-bubble-candidate.llm,
 .app-shell.theme-arcade-cabinet .idle-bubble-candidate.agent-claude-code:not(.llm),
 .app-shell.theme-arcade-cabinet .idle-bubble-candidate.agent-codex:not(.llm),
+.app-shell.theme-arcade-cabinet .idle-bubble-candidate.agent-workbuddy:not(.llm),
 .app-shell.theme-arcade-cabinet .idle-bubble-candidate.llm:disabled {
   border-color: #ffb32c;
   background:
@@ -10736,6 +10758,7 @@ input[type="range"]::-moz-range-thumb {
 .app-shell.theme-starship-console .idle-bubble-candidate.agent-claude-code:not(.llm),
 .app-shell.theme-starship-console .idle-bubble-candidate.agent-codex:not(.llm),
 .app-shell.theme-starship-console .idle-bubble-candidate.agent-opencode:not(.llm),
+.app-shell.theme-starship-console .idle-bubble-candidate.agent-workbuddy:not(.llm),
 .app-shell.theme-starship-console .idle-bubble-candidate.llm:disabled {
   border-color: #f2a34b;
   background:

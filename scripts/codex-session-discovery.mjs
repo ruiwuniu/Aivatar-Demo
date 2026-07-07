@@ -28,6 +28,8 @@ const usageBaselinePath =
 const learningScript =
   process.env.AIVATAR_LEARNING_SCRIPT ??
   join(scriptDir, "aivatar-learning-worker.mjs");
+const workbuddyDiscoveryScript = join(scriptDir, "workbuddy-session-discovery.mjs");
+const workbuddyDiscoveryEnabled = process.env.AIVATAR_WORKBUDDY_DISCOVERY !== "0";
 const discoveryIntervalMs = Math.max(
   1000,
   Number(process.env.AIVATAR_DISCOVERY_INTERVAL_MS ?? 3000),
@@ -74,6 +76,7 @@ const claudeDesktopSessionIndex = new Map();
 const claudeChatActivityCache = new Map();
 const claudeLogOffsets = new Map();
 const claudeLogEventCache = new Map();
+let workbuddyDiscoveryProcess = null;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -288,6 +291,32 @@ const ensureSingleInstance = async () => {
       2,
     ),
   );
+};
+
+const startWorkbuddyDiscovery = async () => {
+  if (!workbuddyDiscoveryEnabled || !(await pathExists(workbuddyDiscoveryScript))) return;
+  if (workbuddyDiscoveryProcess && !workbuddyDiscoveryProcess.killed) return;
+
+  workbuddyDiscoveryProcess = spawn(process.execPath, [workbuddyDiscoveryScript], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      AIVATAR_HTTP_ENDPOINT: statusEndpoint,
+      AIVATAR_PRESENCE_ENDPOINT: presenceEndpoint,
+    },
+    stdio: ["ignore", "inherit", "inherit"],
+    windowsHide: true,
+  });
+  workbuddyDiscoveryProcess.on("exit", (code, signal) => {
+    if (code && code !== 0) {
+      console.warn(
+        `[codex-session-discovery] Workbuddy discovery exited with code ${code}${
+          signal ? ` (${signal})` : ""
+        }`,
+      );
+    }
+    workbuddyDiscoveryProcess = null;
+  });
 };
 
 const walkJsonl = async function* (directory) {
@@ -1075,6 +1104,9 @@ const ensureHelpers = async (session) => {
 };
 
 const cleanup = async () => {
+  if (workbuddyDiscoveryProcess && !workbuddyDiscoveryProcess.killed) {
+    workbuddyDiscoveryProcess.kill();
+  }
   try {
     const record = JSON.parse(await readFile(pidFile, "utf8"));
     if (record?.pid === process.pid) {
@@ -1105,6 +1137,7 @@ if (!(await pathExists(heartbeatScript)) || !(await pathExists(watcherScript))) 
 console.log(
   `[codex-session-discovery] watching ${sessionsRoot} every ${discoveryIntervalMs}ms`,
 );
+await startWorkbuddyDiscovery();
 
 try {
   while (!stopped) {

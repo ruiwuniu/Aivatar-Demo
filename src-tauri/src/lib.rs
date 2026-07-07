@@ -9,6 +9,7 @@ use tauri::{path::BaseDirectory, Emitter, Manager, Size};
 
 mod codex_discovery;
 mod local_bridge;
+mod workbuddy_discovery;
 
 #[derive(serde::Serialize)]
 struct BridgeStartResult {
@@ -820,6 +821,7 @@ fn start_status_bridge_inner(app: Option<&tauri::AppHandle>) -> Result<BridgeSta
     let learning_script = scripts_root(app).map(|path| path.join("aivatar-learning-worker.mjs"));
     if is_status_bridge_running() {
         let _ = codex_discovery::start(learning_script);
+        let _ = workbuddy_discovery::start();
         return Ok(BridgeStartResult {
             status: "already-running".to_string(),
             message: "Bridge already running.".to_string(),
@@ -828,6 +830,7 @@ fn start_status_bridge_inner(app: Option<&tauri::AppHandle>) -> Result<BridgeSta
 
     local_bridge::start(learning_script.clone())?;
     let _ = codex_discovery::start(learning_script);
+    let _ = workbuddy_discovery::start();
 
     Ok(BridgeStartResult {
         status: "started".to_string(),

@@ -1,6 +1,6 @@
 import type { CodexStatusMessage } from "./types";
 
-export type KnownAgentId = "codex" | "claude-code" | "opencode";
+export type KnownAgentId = "codex" | "claude-code" | "opencode" | "workbuddy";
 export type LauncherAgentId = KnownAgentId;
 
 export interface AgentDefinition {
@@ -40,6 +40,15 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     rewardEligible: true,
     terminalBubble: true,
     launcherEnabled: true,
+  },
+  {
+    id: "workbuddy",
+    label: "Workbuddy",
+    shortLabel: "WB",
+    command: "workbuddy",
+    rewardEligible: true,
+    terminalBubble: true,
+    launcherEnabled: false,
   },
 ];
 

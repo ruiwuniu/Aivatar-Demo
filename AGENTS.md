@@ -125,7 +125,35 @@ Run Codex Desktop session discovery:
 npm.cmd run status:discover
 ```
 
-Manual bridge startup is still useful for web-only previews, bridge debugging, or when running the React dev server without the Tauri shell. For web-only previews that should auto-detect Codex Desktop sessions, run both `status:bridge` and `status:discover`.
+`status:discover` also starts the Workbuddy session discovery helper when
+`scripts/workbuddy-session-discovery.mjs` is present. The helper reads only
+Workbuddy metadata under `~\.workbuddy-ai`: `workbuddy.db` tables `sessions`
+and `session_usage`, plus sidecar heartbeat JSON files under `sessions\`. It
+does not read Workbuddy chat transcripts, local storage payloads, bearer tokens,
+or full logs. Workbuddy's `sessions.source_mode` distinguishes the `working`
+and `coding` UI areas; both are posted as `workbuddy` sessions to Aivatar.
+
+Run Workbuddy discovery by itself:
+
+```powershell
+npm.cmd run status:discover:workbuddy
+```
+
+Run the Workbuddy discovery smoke test against a derived temporary SQLite
+fixture:
+
+```powershell
+npm.cmd run status:discover:workbuddy:smoke
+```
+
+Workbuddy `session_usage.used` / `size` are treated as context-window usage.
+Active Workbuddy rows send `scope: "context-window"` for meters only. Completed
+rows can send `scope: "since-baseline"` with the observed `used` delta from the
+current watcher process so normal Aivatar bits settlement applies. If no live
+baseline is available, old completed Workbuddy rows should not be over-rewarded
+from their full context window.
+
+Manual bridge startup is still useful for web-only previews, bridge debugging, or when running the React dev server without the Tauri shell. For web-only previews that should auto-detect Codex Desktop and Workbuddy sessions, run both `status:bridge` and `status:discover`.
 
 Run Aivatar session-learning worker manually:
 

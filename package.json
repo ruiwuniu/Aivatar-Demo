@@ -36,6 +36,8 @@
     "shop:purchase:smoke": "node scripts/aivatar-shop-purchase-smoke.mjs",
     "shop:ui:smoke": "node scripts/aivatar-shop-ui-smoke.mjs",
     "status:discover": "node scripts/codex-session-discovery.mjs",
+    "status:discover:workbuddy": "node scripts/workbuddy-session-discovery.mjs",
+    "status:discover:workbuddy:smoke": "node scripts/workbuddy-session-discovery-smoke.mjs",
     "status:mock": "node scripts/mock-codex-status.mjs",
     "status:send": "node scripts/send-codex-status.mjs"
   },
