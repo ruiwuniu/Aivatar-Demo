@@ -9,12 +9,32 @@
 <p align="center">
   <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.0/Aivatar_0.3.0_universal.dmg"><strong>Download macOS DMG</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.0/Aivatar_0.3.0_x64-setup.exe"><strong>Download Windows EXE 0.3.0</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.1/Aivatar_0.3.1_x64-setup.exe"><strong>Download Windows EXE 0.3.1</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.0/Aivatar_0.3.0_x64_en-US.msi"><strong>Download Windows MSI 0.3.0</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.3.1/Aivatar_0.3.1_x64_en-US.msi"><strong>Download Windows MSI 0.3.1</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.3.0">Release 0.3.0</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.3.1">Release 0.3.1</a>
 </p>
+
+## 0.3.1 Windows Patch Highlights / 0.3.1 Windows 补丁亮点
+
+**EN**
+
+- Card Room rendering now keeps the side-room aspect ratio stable as the window changes size, so the poker room scales without stretching and avoids HUD clipping.
+- Card Room companions now appear after a short entry delay, making arrivals feel like they are walking in from the main room instead of spawning instantly.
+- Card Room readability is improved with larger companion names, larger speech bubbles, larger centered table plaque labels, clearer chip numbers, and corrected window placement.
+- The Card Room right panel has a tighter order and smooth collapsible cards for seated companions, chip shop, and decor shop; collapsed chip shop cards keep the key rate, hint, house-bank, and debt-settlement information visible.
+- Main-room side-panel menu cards now use the same smooth collapse/expand motion while preserving the current UI skin styling.
+- This patch publishes Windows NSIS EXE and MSI installers for 0.3.1. The macOS universal DMG remains on 0.3.0 until the next macOS build.
+
+**中文**
+
+- 纸牌屋渲染现在会在窗口大小变化时保持房间长宽比例，整体放大缩小但不拉伸，并减少 HUD 遮挡问题。
+- 纸牌屋角色进入时增加短暂延迟，让角色更像是从主房间走进来，而不是瞬间出现。
+- 纸牌屋可读性进一步提升：角色名、气泡、牌桌铭牌、筹码数字更清楚，窗户位置也完成校准。
+- 纸牌屋右侧面板调整了顺序，并为入座角色、筹码商店和纸牌屋商店加入丝滑折叠/展开；筹码商店折叠时仍保留倍率、说明、账房和补平欠账等主要信息。
+- 主房间右侧菜单卡片也加入同款折叠/展开动效，并保留不同 UI 皮肤的原有样式。
+- 本补丁发布 0.3.1 Windows NSIS EXE 和 MSI 安装包；macOS universal DMG 仍暂时沿用 0.3.0，等待下一次 macOS 打包。
 
 ## 0.3.0 Major Highlights / 0.3.0 大版本亮点
 
@@ -74,7 +94,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.3.0 is available as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer through GitHub Releases. The Windows installers were refreshed on 2026-07-07 with Tencent WorkBuddy discovery and status/reward support. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
+> Current status / 当前状态: 0.3.1 is available as Windows NSIS EXE and Windows MSI installers through GitHub Releases. The macOS universal DMG remains on 0.3.0 until the next macOS build. These builds are unsigned and intended for GitHub-only tester distribution while installer and release-mode integrations continue to harden.
 
 ## Contents / 目录
 
@@ -632,9 +652,9 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 Current release-prep notes:
 
-- The 0.3.0 preview release is available through GitHub Releases, with a macOS universal `.dmg`, Windows NSIS `.exe`, and Windows MSI installer.
+- The 0.3.1 Windows patch release is available through GitHub Releases, with Windows NSIS `.exe` and Windows MSI installers. The macOS universal `.dmg` remains on 0.3.0 until the next macOS build.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
-- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, shop rapid-click protection, long-press bulk buying, and Card Room are now part of the 0.3.0 preview surface.
+- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, shop rapid-click protection, long-press bulk buying, Card Room, and the 0.3.1 Card Room/main-room panel polish are now part of the preview surface.
 - Native bridge support exists for local status, Codex Desktop session discovery, Tencent WorkBuddy `working`/`coding` session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
 - A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
 - Linux packaging remains planned after the desktop integration path is stable.
@@ -643,9 +663,9 @@ Current release-prep notes:
 
 当前发布准备阶段说明：
 
-- 0.3.0 预览版已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包。
+- 0.3.1 Windows 补丁版已通过 GitHub Releases 提供 Windows NSIS `.exe` 和 Windows MSI 安装包；macOS universal `.dmg` 暂时保持 0.3.0，等待下一次 macOS 打包。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
-- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、商店快速点击保护、长按批量购买与纸牌屋 Card Room，已经纳入 0.3.0 预览体验。
+- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、商店快速点击保护、长按批量购买、纸牌屋 Card Room，以及 0.3.1 纸牌屋/主房间面板打磨，已经纳入预览体验。
 - 本地状态、Codex Desktop 会话发现、腾讯 WorkBuddy `working`/`coding` 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。
 - 完全 Rust-native 的 connected runner 和面向发布模式的 provider-backed learning 仍是后续加固工作。
 - Linux 打包计划会在桌面集成路径继续稳定后推进。

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LOCALE_KEY, localeOptions, resolveInitialLocale, t, type Locale } from "../i18n";
 import type {
   AivatarDarkTraits,
@@ -1110,6 +1110,32 @@ const clampWagerTarget = (
   return Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, target));
 };
 
+const useCardRoomCollapsibleHeight = () => {
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [bodyHeight, setBodyHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return undefined;
+
+    const measure = () => {
+      const nextHeight = body.scrollHeight;
+      setBodyHeight((height) => (height === nextHeight ? height : nextHeight));
+    };
+
+    measure();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    observer?.observe(body);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+
+  return { bodyHeight, bodyRef };
+};
+
 const CardRoomHandCard = ({ card }: { card: PlayingCard }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -1347,6 +1373,12 @@ export const CardRoomApp = () => {
   const playersSeatedReadyRef = useRef(false);
   const [userHandCardsReady, setUserHandCardsReady] = useState(false);
   const userHandCardsReadyRef = useRef(false);
+  const [companionsPanelCollapsed, setCompanionsPanelCollapsed] = useState(false);
+  const companionsPanel = useCardRoomCollapsibleHeight();
+  const [chipShopPanelCollapsed, setChipShopPanelCollapsed] = useState(false);
+  const chipShopPanel = useCardRoomCollapsibleHeight();
+  const [decorShopPanelCollapsed, setDecorShopPanelCollapsed] = useState(false);
+  const decorShopPanel = useCardRoomCollapsibleHeight();
   const actionCuesRef = useRef<Record<string, CardRoomActionCue>>({});
   const playerActionSnapshotsRef = useRef<Record<string, string>>({});
   const hostHandDarkStatsRef = useRef<CardRoomHandDarkStats | null>(null);
@@ -1380,6 +1412,7 @@ export const CardRoomApp = () => {
   const playedCheckAudioKeysRef = useRef<Set<string>>(new Set());
   const chipAudioHandNumberRef = useRef<number | null>(null);
   const playedChipAudioKeysRef = useRef<Set<string>>(new Set());
+
   const playedUserWinAudioKeysRef = useRef<Set<string>>(new Set());
   const playedCharacterWinAudioKeysRef = useRef<Set<string>>(new Set());
   const roomKey = hostSlotId ?? "preview";
@@ -2180,16 +2213,21 @@ export const CardRoomApp = () => {
         const freeRoam =
           !tablePlaying && (freeRoamEnabledRef.current || currentTable.street === "waiting");
         const previousPartners = characters
-          .map((character) => ({
-            avatarId: character.avatarId,
-            avatarName: character.avatarName,
-            runtime: visitorStateMap[character.avatarId]?.runtime,
-          }))
+          .map((character) => {
+            const visitorState = visitorStateMap[character.avatarId];
+            return {
+              avatarId: character.avatarId,
+              avatarName: character.avatarName,
+              runtime: visitorState?.runtime,
+              phase: visitorState?.phase,
+            };
+          })
           .filter((entry): entry is {
             avatarId: string;
             avatarName: string;
             runtime: AvatarRuntime;
-          } => Boolean(entry.runtime && entry.avatarId !== host?.avatarId));
+            phase: CardRoomVisitorState["phase"];
+          } => Boolean(entry.runtime && entry.phase !== "pending" && entry.avatarId !== host?.avatarId));
         const nextVisitorStateMap: Record<string, CardRoomVisitorState> = {};
         const nextRuntimeMap: Record<string, AvatarRuntime> = {};
         const bubbleMap: Record<string, { text: string; startedAt: number }> = {};
@@ -2245,12 +2283,14 @@ export const CardRoomApp = () => {
             },
           );
           nextVisitorStateMap[character.avatarId] = nextState;
-          nextRuntimeMap[character.avatarId] = nextState.runtime;
-          if (nextState.bubbleText && typeof nextState.bubbleStartedAt === "number") {
-            bubbleMap[character.avatarId] = {
-              text: nextState.bubbleText,
-              startedAt: nextState.bubbleStartedAt,
-            };
+          if (nextState.phase !== "pending") {
+            nextRuntimeMap[character.avatarId] = nextState.runtime;
+            if (nextState.bubbleText && typeof nextState.bubbleStartedAt === "number") {
+              bubbleMap[character.avatarId] = {
+                text: nextState.bubbleText,
+                startedAt: nextState.bubbleStartedAt,
+              };
+            }
           }
         });
         visitorStatesRef.current = nextVisitorStateMap;
@@ -3411,15 +3451,111 @@ export const CardRoomApp = () => {
             {statusMessage ? <p className="card-room-message">{statusMessage}</p> : null}
           </section>
 
-          <section className="card-room-control-group card-room-chip-shop">
+          <section className="card-room-control-group">
             <div className="card-room-control-heading">
-              <span>{ui("cardRoom.chipShop")}</span>
-              <strong>
-                {ui("cardRoom.chipShopRate", {
-                  bits: CARD_ROOM_CHIP_BUNDLE_BITS,
-                  chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
+              <span>{ui("cardRoom.log")}</span>
+              <strong>{streetLabel(table.street, ui)}</strong>
+            </div>
+            <div className="card-room-log">
+              {table.log.length > 0 ? (
+                table.log.map((entry, index) => (
+                  <p key={`${entry}-${index}`}>{translateCardRoomTableText(entry, ui)}</p>
+                ))
+              ) : (
+                <p>{ui("cardRoom.noLog")}</p>
+              )}
+            </div>
+            {table.winners.length > 0 ? (
+              <div className="card-room-winners">
+                {table.winners.map((winner, index) => (
+                  <p key={`${winner.seatIndex}-${index}`}>
+                    <strong>{winner.avatarName}</strong> +{winner.amount}
+                    {winner.handDescription || winner.handName
+                      ? ` / ${localizePokerHandDescription(winner.handDescription, winner.handName, ui)}`
+                      : ""}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </section>
+
+          <section
+            className={`card-room-control-group${companionsPanelCollapsed ? " card-room-control-group-collapsed" : ""}`}
+          >
+            <div className="card-room-control-heading card-room-control-heading-toggle">
+              <button
+                type="button"
+                className="card-room-card-toggle"
+                aria-expanded={!companionsPanelCollapsed}
+                aria-controls="card-room-companion-list"
+                aria-label={ui(companionsPanelCollapsed ? "cardRoom.expandPanel" : "cardRoom.collapsePanel", {
+                  panel: ui("cardRoom.companions"),
                 })}
-              </strong>
+                onClick={() => setCompanionsPanelCollapsed((collapsed) => !collapsed)}
+              >
+                <span>{ui("cardRoom.companions")}</span>
+                <strong>
+                  {selectedCompanions.length}/{MAX_COMPANIONS}
+                </strong>
+                <i className="card-room-card-toggle-icon" aria-hidden="true" />
+              </button>
+            </div>
+            <div
+              id="card-room-companion-list"
+              className="card-room-collapsible-body"
+              aria-hidden={companionsPanelCollapsed}
+              style={{ maxHeight: companionsPanelCollapsed ? 0 : companionsPanel.bodyHeight }}
+            >
+              <div ref={companionsPanel.bodyRef} className="card-room-collapsible-body-inner">
+                {availableCompanions.length > 0 ? (
+                  <div className="card-room-roster">
+                    {availableCompanions.map((character) => (
+                      <button
+                        key={character.slotId}
+                        type="button"
+                        className={selectedSlotIds.includes(character.slotId) ? "active" : ""}
+                        tabIndex={companionsPanelCollapsed ? -1 : undefined}
+                        onClick={() => toggleCompanion(character.slotId)}
+                      >
+                        <span>{character.avatarName}</span>
+                        <small>
+                          {ui("growth.level", { value: character.growthLevel })} /{" "}
+                          {describePokerTemperament(character.traits, character.darkTraits, ui)}
+                        </small>
+                        <small>{stackLabel(stacks[character.avatarId] ?? character.pokerChips, ui)}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="card-room-message">{ui("cardRoom.noCompanions")}</p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section
+            className={`card-room-control-group card-room-chip-shop${chipShopPanelCollapsed ? " card-room-control-group-collapsed" : ""}`}
+          >
+            <div className="card-room-control-heading card-room-control-heading-toggle">
+              <button
+                type="button"
+                className="card-room-card-toggle"
+                aria-expanded={!chipShopPanelCollapsed}
+                aria-controls="card-room-chip-shop-list-panel"
+                aria-label={ui(chipShopPanelCollapsed ? "cardRoom.expandPanel" : "cardRoom.collapsePanel", {
+                  panel: ui("cardRoom.chipShop"),
+                })}
+                onClick={() => setChipShopPanelCollapsed((collapsed) => !collapsed)}
+              >
+                <span>{ui("cardRoom.chipShop")}</span>
+                <strong>
+                  {ui("cardRoom.chipShopRate", {
+                    bits: CARD_ROOM_CHIP_BUNDLE_BITS,
+                    chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
+                  })}
+                </strong>
+                <i className="card-room-card-toggle-icon" aria-hidden="true" />
+              </button>
             </div>
             <p className="card-room-message">
               {ui("cardRoom.chipShopHint", {
@@ -3452,248 +3588,230 @@ export const CardRoomApp = () => {
                 {ui("cardRoom.settleHouseDebt")}
               </button>
             </div>
-            <div className="card-room-chip-shop-list">
-              {chipShopCharacters.map((character) => {
-                const isUser = character.avatarId === USER_PLAYER_AVATAR_ID;
-                const chips = stacks[character.avatarId] ?? character.pokerChips;
-                const ownerCanExchangeChips =
-                  isUser && normalizeOwnerBits(houseBank.ownerBits) >= CARD_ROOM_CHIP_BUNDLE_BITS;
-                const ownerCanGiftChips =
-                  !isUser && normalizeOwnerBits(houseBank.ownerBits) >= CARD_ROOM_CHIP_BUNDLE_BITS;
-                const exchangeEnabled =
-                  !handInProgress &&
-                  (isUser
-                    ? ownerCanExchangeChips ||
-                      canBorrowPlayerPokerChips({
-                        ...playerWallet,
-                        pokerChips: chips,
-                      })
-                    : canExchangePokerChips({
-                        bits: character.walletBits,
-                        pokerChips: chips,
-                      }));
-                const redeemEnabled =
-                  !handInProgress && !isUser && canRedeemPokerChipsForBits({ pokerChips: chips });
-                return (
-                  <article key={character.slotId} className="card-room-chip-shop-row">
-                    <div>
-                      <strong>{character.avatarName}</strong>
-                      <span>
-                        {isUser
-                          ? ui("cardRoom.playerChipAccount", {
-                              debt: normalizeChipDebt(playerWallet.chipDebt),
-                              chips,
-                            })
-                          : `${character.walletBits} bits / ${stackLabel(chips, ui)}`}
-                      </span>
-                    </div>
-                    <div className="card-room-chip-shop-actions">
-                      <button
-                        type="button"
-                        className="pixel-button"
-                        disabled={!exchangeEnabled}
-                        onClick={() => exchangeCharacterChips(character)}
-                      >
-                        {ui(
-                          isUser && ownerCanExchangeChips
-                            ? "cardRoom.ownerExchangeChips"
-                            : isUser
-                              ? "cardRoom.borrowChips"
-                              : "cardRoom.exchangeChips",
-                          {
-                            bits: CARD_ROOM_CHIP_BUNDLE_BITS,
-                            chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
-                          },
-                        )}
-                      </button>
-                      {!isUser ? (
-                        <button
-                          type="button"
-                          className="pixel-button"
-                          disabled={!ownerCanGiftChips || handInProgress}
-                          onClick={() => giftCharacterChips(character)}
-                        >
-                          {ui("cardRoom.giftChips", {
-                            chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
-                          })}
-                        </button>
-                      ) : null}
-                      {!isUser ? (
-                        <button
-                          type="button"
-                          className="pixel-button"
-                          disabled={!redeemEnabled}
-                          onClick={() => redeemCharacterBits(character)}
-                        >
-                          {ui("cardRoom.redeemBits", {
-                            bits: CARD_ROOM_CHIP_BUNDLE_BITS,
-                          })}
-                        </button>
-                      ) : null}
-                    </div>
-                  </article>
-                );
-              })}
+            <div
+              id="card-room-chip-shop-list-panel"
+              className="card-room-collapsible-body"
+              aria-hidden={chipShopPanelCollapsed}
+              style={{ maxHeight: chipShopPanelCollapsed ? 0 : chipShopPanel.bodyHeight }}
+            >
+              <div ref={chipShopPanel.bodyRef} className="card-room-collapsible-body-inner">
+                <div className="card-room-chip-shop-list">
+                  {chipShopCharacters.map((character) => {
+                    const isUser = character.avatarId === USER_PLAYER_AVATAR_ID;
+                    const chips = stacks[character.avatarId] ?? character.pokerChips;
+                    const ownerCanExchangeChips =
+                      isUser && normalizeOwnerBits(houseBank.ownerBits) >= CARD_ROOM_CHIP_BUNDLE_BITS;
+                    const ownerCanGiftChips =
+                      !isUser && normalizeOwnerBits(houseBank.ownerBits) >= CARD_ROOM_CHIP_BUNDLE_BITS;
+                    const exchangeEnabled =
+                      !handInProgress &&
+                      (isUser
+                        ? ownerCanExchangeChips ||
+                          canBorrowPlayerPokerChips({
+                            ...playerWallet,
+                            pokerChips: chips,
+                          })
+                        : canExchangePokerChips({
+                            bits: character.walletBits,
+                            pokerChips: chips,
+                          }));
+                    const redeemEnabled =
+                      !handInProgress && !isUser && canRedeemPokerChipsForBits({ pokerChips: chips });
+                    return (
+                      <article key={character.slotId} className="card-room-chip-shop-row">
+                        <div>
+                          <strong>{character.avatarName}</strong>
+                          <span>
+                            {isUser
+                              ? ui("cardRoom.playerChipAccount", {
+                                  debt: normalizeChipDebt(playerWallet.chipDebt),
+                                  chips,
+                                })
+                              : `${character.walletBits} bits / ${stackLabel(chips, ui)}`}
+                          </span>
+                        </div>
+                        <div className="card-room-chip-shop-actions">
+                          <button
+                            type="button"
+                            className="pixel-button"
+                            disabled={!exchangeEnabled}
+                            tabIndex={chipShopPanelCollapsed ? -1 : undefined}
+                            onClick={() => exchangeCharacterChips(character)}
+                          >
+                            {ui(
+                              isUser && ownerCanExchangeChips
+                                ? "cardRoom.ownerExchangeChips"
+                                : isUser
+                                  ? "cardRoom.borrowChips"
+                                  : "cardRoom.exchangeChips",
+                              {
+                                bits: CARD_ROOM_CHIP_BUNDLE_BITS,
+                                chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
+                              },
+                            )}
+                          </button>
+                          {!isUser ? (
+                            <button
+                              type="button"
+                              className="pixel-button"
+                              disabled={!ownerCanGiftChips || handInProgress}
+                              tabIndex={chipShopPanelCollapsed ? -1 : undefined}
+                              onClick={() => giftCharacterChips(character)}
+                            >
+                              {ui("cardRoom.giftChips", {
+                                chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
+                              })}
+                            </button>
+                          ) : null}
+                          {!isUser ? (
+                            <button
+                              type="button"
+                              className="pixel-button"
+                              disabled={!redeemEnabled}
+                              tabIndex={chipShopPanelCollapsed ? -1 : undefined}
+                              onClick={() => redeemCharacterBits(character)}
+                            >
+                              {ui("cardRoom.redeemBits", {
+                                bits: CARD_ROOM_CHIP_BUNDLE_BITS,
+                              })}
+                            </button>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </section>
 
-          <section className="card-room-control-group card-room-decor-shop">
-            <div className="card-room-control-heading">
-              <span>{ui("cardRoom.decorShop")}</span>
-              <strong>
-                {ui("cardRoom.decorBalance", {
-                  bits: normalizeOwnerBits(houseBank.ownerBits),
+          <section
+            className={`card-room-control-group card-room-decor-shop${decorShopPanelCollapsed ? " card-room-control-group-collapsed" : ""}`}
+          >
+            <div className="card-room-control-heading card-room-control-heading-toggle">
+              <button
+                type="button"
+                className="card-room-card-toggle"
+                aria-expanded={!decorShopPanelCollapsed}
+                aria-controls="card-room-decor-shop-panel"
+                aria-label={ui(decorShopPanelCollapsed ? "cardRoom.expandPanel" : "cardRoom.collapsePanel", {
+                  panel: ui("cardRoom.decorShop"),
                 })}
-              </strong>
-            </div>
-            <p className="card-room-message">{ui("cardRoom.decorShopHint")}</p>
-            <div className="card-room-house-bank">
-              <div>
-                <span>{ui("cardRoom.houseVault")}</span>
-                <strong>{normalizeHouseBits(houseBank.vaultBits)} bits</strong>
-              </div>
-              <div>
-                <span>{ui("cardRoom.houseDebt")}</span>
-                <strong>{normalizePayoutDebtBits(houseBank.payoutDebtBits)} bits</strong>
-              </div>
-              <div>
-                <span>{ui("cardRoom.ownerPocket")}</span>
-                <strong>{normalizeOwnerBits(houseBank.ownerBits)} bits</strong>
-              </div>
-              <button
-                type="button"
-                className="pixel-button"
-                disabled={normalizeHouseBits(houseBank.vaultBits) <= 0}
-                onClick={withdrawHouseBits}
+                onClick={() => setDecorShopPanelCollapsed((collapsed) => !collapsed)}
               >
-                {ui("cardRoom.withdrawHouseBits")}
-              </button>
-              <button
-                type="button"
-                className="pixel-button"
-                disabled={
-                  normalizeHouseBits(houseBank.vaultBits) <= 0 ||
-                  normalizePayoutDebtBits(houseBank.payoutDebtBits) <= 0
-                }
-                onClick={settleHouseDebt}
-              >
-                {ui("cardRoom.settleHouseDebt")}
+                <span>{ui("cardRoom.decorShop")}</span>
+                <strong>
+                  {ui("cardRoom.decorBalance", {
+                    bits: normalizeOwnerBits(houseBank.ownerBits),
+                  })}
+                </strong>
+                <i className="card-room-card-toggle-icon" aria-hidden="true" />
               </button>
             </div>
-            <div className="card-room-decor-tabs" aria-label={ui("cardRoom.decorShop")}>
-              {visibleDecorCategories.map((category) => (
-                <button
-                  key={category.id}
-                  type="button"
-                  className={resolvedActiveDecorCategory === category.id ? "active" : ""}
-                  onClick={() => setActiveDecorCategory(category.id)}
-                >
-                  {ui(category.copyKey)}
-                </button>
-              ))}
-            </div>
-            <div className="card-room-decor-shop-list">
-              {decorShopItems.map((item) => {
-                const purchased = cardRoomDecor.purchasedItemIds.includes(item.id);
-                const active = isDecorItemActive(item);
-                const canAfford =
-                  purchased || normalizeOwnerBits(houseBank.ownerBits) >= item.price;
-                const actionLabel = active
-                  ? ui("cardRoom.decorApplied")
-                  : purchased
-                    ? ui(
-                        item.cardRoomCategory === "furniture"
-                          ? "cardRoom.decorPlace"
-                          : "cardRoom.decorApply",
-                      )
-                    : ui("cardRoom.decorBuy", { price: item.price });
-                return (
-                  <article key={item.id} className="card-room-decor-shop-row">
-                    <div
-                      className={`card-room-decor-swatch card-room-decor-swatch-${item.cardRoomCategory}`}
-                      data-item={item.id}
-                      aria-hidden="true"
-                    />
-                    <div className="card-room-decor-shop-copy">
-                      <strong>{item.name}</strong>
-                      <span>{item.description}</span>
-                      <small>
-                        {purchased
-                          ? ui("cardRoom.decorOwned")
-                          : ui("cardRoom.decorPrice", { price: item.price })}
-                      </small>
-                    </div>
-                    <button
-                      type="button"
-                      className="pixel-button"
-                      disabled={handInProgress || active || !canAfford}
-                      onClick={() => buyOrApplyDecorItem(item)}
-                    >
-                      {actionLabel}
-                    </button>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="card-room-control-group">
-            <div className="card-room-control-heading">
-              <span>{ui("cardRoom.companions")}</span>
-              <strong>
-                {selectedCompanions.length}/{MAX_COMPANIONS}
-              </strong>
-            </div>
-            {availableCompanions.length > 0 ? (
-              <div className="card-room-roster">
-                {availableCompanions.map((character) => (
+            <div
+              id="card-room-decor-shop-panel"
+              className="card-room-collapsible-body"
+              aria-hidden={decorShopPanelCollapsed}
+              style={{ maxHeight: decorShopPanelCollapsed ? 0 : decorShopPanel.bodyHeight }}
+            >
+              <div ref={decorShopPanel.bodyRef} className="card-room-collapsible-body-inner">
+                <p className="card-room-message">{ui("cardRoom.decorShopHint")}</p>
+                <div className="card-room-house-bank">
+                  <div>
+                    <span>{ui("cardRoom.houseVault")}</span>
+                    <strong>{normalizeHouseBits(houseBank.vaultBits)} bits</strong>
+                  </div>
+                  <div>
+                    <span>{ui("cardRoom.houseDebt")}</span>
+                    <strong>{normalizePayoutDebtBits(houseBank.payoutDebtBits)} bits</strong>
+                  </div>
+                  <div>
+                    <span>{ui("cardRoom.ownerPocket")}</span>
+                    <strong>{normalizeOwnerBits(houseBank.ownerBits)} bits</strong>
+                  </div>
                   <button
-                    key={character.slotId}
                     type="button"
-                    className={selectedSlotIds.includes(character.slotId) ? "active" : ""}
-                    onClick={() => toggleCompanion(character.slotId)}
+                    className="pixel-button"
+                    disabled={normalizeHouseBits(houseBank.vaultBits) <= 0}
+                    tabIndex={decorShopPanelCollapsed ? -1 : undefined}
+                    onClick={withdrawHouseBits}
                   >
-                    <span>{character.avatarName}</span>
-                    <small>
-                      {ui("growth.level", { value: character.growthLevel })} /{" "}
-                      {describePokerTemperament(character.traits, character.darkTraits, ui)}
-                    </small>
-                    <small>{stackLabel(stacks[character.avatarId] ?? character.pokerChips, ui)}</small>
+                    {ui("cardRoom.withdrawHouseBits")}
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    className="pixel-button"
+                    disabled={
+                      normalizeHouseBits(houseBank.vaultBits) <= 0 ||
+                      normalizePayoutDebtBits(houseBank.payoutDebtBits) <= 0
+                    }
+                    tabIndex={decorShopPanelCollapsed ? -1 : undefined}
+                    onClick={settleHouseDebt}
+                  >
+                    {ui("cardRoom.settleHouseDebt")}
+                  </button>
+                </div>
+                <div className="card-room-decor-tabs" aria-label={ui("cardRoom.decorShop")}>
+                  {visibleDecorCategories.map((category) => (
+                    <button
+                      key={category.id}
+                      type="button"
+                      className={resolvedActiveDecorCategory === category.id ? "active" : ""}
+                      tabIndex={decorShopPanelCollapsed ? -1 : undefined}
+                      onClick={() => setActiveDecorCategory(category.id)}
+                    >
+                      {ui(category.copyKey)}
+                    </button>
+                  ))}
+                </div>
+                <div className="card-room-decor-shop-list">
+                  {decorShopItems.map((item) => {
+                    const purchased = cardRoomDecor.purchasedItemIds.includes(item.id);
+                    const active = isDecorItemActive(item);
+                    const canAfford =
+                      purchased || normalizeOwnerBits(houseBank.ownerBits) >= item.price;
+                    const actionLabel = active
+                      ? ui("cardRoom.decorApplied")
+                      : purchased
+                        ? ui(
+                            item.cardRoomCategory === "furniture"
+                              ? "cardRoom.decorPlace"
+                              : "cardRoom.decorApply",
+                          )
+                        : ui("cardRoom.decorBuy", { price: item.price });
+                    return (
+                      <article key={item.id} className="card-room-decor-shop-row">
+                        <div
+                          className={`card-room-decor-swatch card-room-decor-swatch-${item.cardRoomCategory}`}
+                          data-item={item.id}
+                          aria-hidden="true"
+                        />
+                        <div className="card-room-decor-shop-copy">
+                          <strong>{item.name}</strong>
+                          <span>{item.description}</span>
+                          <small>
+                            {purchased
+                              ? ui("cardRoom.decorOwned")
+                              : ui("cardRoom.decorPrice", { price: item.price })}
+                          </small>
+                        </div>
+                        <button
+                          type="button"
+                          className="pixel-button"
+                          disabled={handInProgress || active || !canAfford}
+                          tabIndex={decorShopPanelCollapsed ? -1 : undefined}
+                          onClick={() => buyOrApplyDecorItem(item)}
+                        >
+                          {actionLabel}
+                        </button>
+                      </article>
+                    );
+                  })}
+                </div>
               </div>
-            ) : (
-              <p className="card-room-message">{ui("cardRoom.noCompanions")}</p>
-            )}
+            </div>
           </section>
 
-          <section className="card-room-control-group">
-            <div className="card-room-control-heading">
-              <span>{ui("cardRoom.log")}</span>
-              <strong>{streetLabel(table.street, ui)}</strong>
-            </div>
-            <div className="card-room-log">
-              {table.log.length > 0 ? (
-                table.log.map((entry, index) => (
-                  <p key={`${entry}-${index}`}>{translateCardRoomTableText(entry, ui)}</p>
-                ))
-              ) : (
-                <p>{ui("cardRoom.noLog")}</p>
-              )}
-            </div>
-            {table.winners.length > 0 ? (
-              <div className="card-room-winners">
-                {table.winners.map((winner, index) => (
-                  <p key={`${winner.seatIndex}-${index}`}>
-                    <strong>{winner.avatarName}</strong> +{winner.amount}
-                    {winner.handDescription || winner.handName
-                      ? ` / ${localizePokerHandDescription(winner.handDescription, winner.handName, ui)}`
-                      : ""}
-                  </p>
-                ))}
-              </div>
-            ) : null}
-          </section>
         </aside>
       </section>
     </main>

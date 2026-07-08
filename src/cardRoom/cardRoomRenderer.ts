@@ -38,6 +38,12 @@ export const cardRoomSceneSize = {
   height: 640,
 };
 
+const CARD_ROOM_VIEWPORT_ASPECT_RATIO = 219 / 188;
+const cardRoomViewportSize = {
+  width: cardRoomSceneSize.width,
+  height: cardRoomSceneSize.width / CARD_ROOM_VIEWPORT_ASPECT_RATIO,
+};
+
 const TOP_OPPONENT_SEAT_COUNT = 6;
 const VISIBLE_OPPONENT_SEAT_COUNT = 8;
 const TABLE_CARD_SCALE = 0.62;
@@ -1172,7 +1178,7 @@ const drawAvatarFigure = (
   drawText(ctx, character.avatarName.slice(0, 12), x, y - 64, {
     align: "center",
     color: active ? "#fde68a" : "#e5e7eb",
-    size: 9,
+    size: 11,
     weight: "800",
   });
 };
@@ -1187,11 +1193,11 @@ const drawCharacterBubble = (
 
   const text = bubble.text.length > 28 ? `${bubble.text.slice(0, 25)}...` : bubble.text;
   ctx.save();
-  ctx.font = `800 8px "Antonio", monospace`;
-  const width = Math.min(150, Math.max(48, Math.ceil(ctx.measureText(text).width) + 18));
-  const height = 18;
+  ctx.font = `800 10px "Antonio", monospace`;
+  const width = Math.min(180, Math.max(58, Math.ceil(ctx.measureText(text).width) + 22));
+  const height = 22;
   const x = Math.round(runtime.x - width / 2);
-  const y = Math.round(runtime.y - 88);
+  const y = Math.round(runtime.y - 98);
   drawPixelRect(ctx, x + 3, y + 4, width, height, "#020617");
   drawPixelRect(ctx, x, y, width, height, "#facc15");
   drawPixelRect(ctx, x + 2, y + 2, width - 4, height - 4, "#111827");
@@ -1200,7 +1206,7 @@ const drawCharacterBubble = (
   drawText(ctx, text, runtime.x, y + 4, {
     align: "center",
     color: "#f8fafc",
-    size: 8,
+    size: 10,
     weight: "800",
   });
   ctx.restore();
@@ -1507,6 +1513,8 @@ const cardRoomStaticLayerKey = (
   displayWidth: number,
   displayHeight: number,
   scale: number,
+  viewportOffsetX: number,
+  viewportOffsetY: number,
 ) => {
   const roomWindow = content.room.windows?.find((item) => item.id === content.room.windowId);
   const windowSpriteReady = roomWindow ? (getCardRoomCityWindowSprite(ctx) ? "1" : "0") : "none";
@@ -1525,6 +1533,8 @@ const cardRoomStaticLayerKey = (
     displayWidth,
     displayHeight,
     Math.round(scale * 1000),
+    viewportOffsetX,
+    viewportOffsetY,
     Math.round(layout.width * 100),
     Math.round(layout.height * 100),
     Math.round(layout.originX * 100),
@@ -1548,8 +1558,19 @@ const getCardRoomStaticLayer = (
   displayWidth: number,
   displayHeight: number,
   scale: number,
+  viewportOffsetX: number,
+  viewportOffsetY: number,
 ) => {
-  const key = cardRoomStaticLayerKey(ctx, content, layout, displayWidth, displayHeight, scale);
+  const key = cardRoomStaticLayerKey(
+    ctx,
+    content,
+    layout,
+    displayWidth,
+    displayHeight,
+    scale,
+    viewportOffsetX,
+    viewportOffsetY,
+  );
   let cache = cardRoomStaticLayerCaches.get(canvas);
   if (!cache) {
     cache = {
@@ -1573,7 +1594,7 @@ const getCardRoomStaticLayer = (
       cacheCtx.setTransform(1, 0, 0, 1, 0, 0);
       cacheCtx.clearRect(0, 0, displayWidth, displayHeight);
       cacheCtx.imageSmoothingEnabled = false;
-      cacheCtx.setTransform(scale, 0, 0, scale, 0, 0);
+      cacheCtx.setTransform(scale, 0, 0, scale, viewportOffsetX, viewportOffsetY);
       drawRoomStaticShell(cacheCtx, content, layout);
       content.room.furniture
         .filter((item) => item.id !== "poker-table" && !isCardRoomDynamicDecorFurniture(item))
@@ -2127,12 +2148,10 @@ const drawBet = (
     13,
     { useValueTier: true },
   );
-  drawPixelRect(ctx, x - 20, y + 5, 40, 11, "#020617");
-  drawPixelStroke(ctx, x - 20, y + 5, 40, 11, "#7dd3fc", 1);
   drawText(ctx, String(committed), x, y + 6, {
     align: "center",
     color: "#f5f3ff",
-    size: 8,
+    size: 10,
     weight: "900",
   });
 };
@@ -2149,20 +2168,10 @@ const drawStackChips = (
   drawChipStackPile(ctx, Math.abs(stack), x, y, colors, shadows, CHIP_STACK_VALUE_PER_ROW, 10, {
     useValueTier: stack >= 0,
   });
-  drawPixelRect(ctx, x - 17, y + 8, 40, 12, "#020617");
-  drawPixelStroke(
-    ctx,
-    x - 17,
-    y + 8,
-    40,
-    12,
-    stack < 0 ? "#fb7185" : stack === 0 ? "#64748b" : "#facc15",
-    1,
-  );
-  drawText(ctx, label, x + 3, y + 10, {
+  drawText(ctx, label, x + 3, y + 9, {
     align: "center",
     color: stack < 0 ? "#fb7185" : stack === 0 ? "#e2e8f0" : "#fde68a",
-    size: 7,
+    size: 9,
     weight: "900",
   });
 };
@@ -2314,11 +2323,11 @@ const drawPokerTable = (
   drawPixelRect(ctx, x - 28, y + 22, width + 56, height - 8, "rgba(0, 0, 0, 0.38)");
   drawCardRoomMatrixSprite(ctx, CARD_ROOM_POKER_TABLE_SPRITE, x, y, width, height);
 
-  drawText(ctx, "SYSTEM DEALER", x + width / 2, y + 22, {
+  drawText(ctx, "SYSTEM DEALER", x + width / 2, y + 23, {
     color: "#f8e7bd",
     align: "center",
     baseline: "middle",
-    size: 10,
+    size: 12,
     weight: "900",
   });
 
@@ -2399,11 +2408,11 @@ const drawPokerTable = (
       { useValueTier: true },
     );
   }
-  drawText(ctx, `POT ${visiblePotAmount}`, x + width / 2, y + height - 19, {
+  drawText(ctx, `POT ${visiblePotAmount}`, x + width / 2, y + height - 24, {
     align: "center",
     baseline: "middle",
     color: "#f8e7bd",
-    size: 9,
+    size: 12,
     weight: "900",
   });
 };
@@ -2454,14 +2463,16 @@ export const renderCardRoom = (
   ctx.imageSmoothingEnabled = false;
 
   const scale = Math.min(
-    displayWidth / cardRoomSceneSize.width,
-    displayHeight / cardRoomSceneSize.height,
+    displayWidth / cardRoomViewportSize.width,
+    displayHeight / cardRoomViewportSize.height,
   );
+  const viewportOffsetX = Math.round((displayWidth - cardRoomViewportSize.width * scale) / 2);
+  const viewportOffsetY = Math.round((displayHeight - cardRoomViewportSize.height * scale) / 2);
   const layout: CardRoomRenderLayout = {
-    width: displayWidth / scale,
-    height: displayHeight / scale,
-    originX: (displayWidth / scale - cardRoomSceneSize.width) / 2,
-    originY: (displayHeight / scale - cardRoomSceneSize.height) / 2,
+    width: cardRoomViewportSize.width,
+    height: cardRoomViewportSize.height,
+    originX: 0,
+    originY: (cardRoomViewportSize.height - cardRoomSceneSize.height) / 2,
   };
   const staticLayer = getCardRoomStaticLayer(
     canvas,
@@ -2471,9 +2482,11 @@ export const renderCardRoom = (
     displayWidth,
     displayHeight,
     scale,
+    viewportOffsetX,
+    viewportOffsetY,
   );
   ctx.drawImage(staticLayer, 0, 0);
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.setTransform(scale, 0, 0, scale, viewportOffsetX, viewportOffsetY);
   ctx.imageSmoothingEnabled = false;
 
   const pokerTable =

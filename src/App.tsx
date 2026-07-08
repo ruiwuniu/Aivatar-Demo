@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import { defaultContent } from "./data/defaultContent";
 import { loadContentConfig } from "./data/loadContent";
@@ -3394,6 +3401,97 @@ type TaskCabinetVisualFlow = {
   actionStartedAt?: number;
   terminalStatus?: "complete" | "error";
   terminalAt?: number;
+};
+
+const SidePanelCollapsible = ({
+  children,
+  className,
+  id,
+  open,
+}: {
+  children: ReactNode;
+  className?: string;
+  id?: string;
+  open: boolean;
+}) => {
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const measuredHeightRef = useRef(0);
+  const frameRef = useRef<number | null>(null);
+  const [animatedHeight, setAnimatedHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return undefined;
+
+    const measure = (syncAnimatedHeight = false) => {
+      const styles = window.getComputedStyle(body);
+      const marginTop = Number.parseFloat(styles.marginTop) || 0;
+      const marginBottom = Number.parseFloat(styles.marginBottom) || 0;
+      const nextHeight = Math.ceil(body.scrollHeight + marginTop + marginBottom);
+      measuredHeightRef.current = nextHeight;
+      if (open && syncAnimatedHeight) {
+        setAnimatedHeight((height) => (height === nextHeight ? height : nextHeight));
+      }
+    };
+
+    measure();
+    const observer =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => measure(true))
+        : null;
+    observer?.observe(body);
+    const handleResize = () => measure(true);
+    window.addEventListener("resize", handleResize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (bodyRef.current) bodyRef.current.inert = !open;
+
+    const shell = shellRef.current;
+    const body = bodyRef.current;
+    if (!shell || !body) return undefined;
+
+    if (frameRef.current !== null) {
+      window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+
+    const currentHeight = Math.ceil(shell.getBoundingClientRect().height);
+    setAnimatedHeight(currentHeight);
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = null;
+      setAnimatedHeight(open ? measuredHeightRef.current : 0);
+    });
+
+    return () => {
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+    };
+  }, [open]);
+
+  return (
+    <div
+      ref={shellRef}
+      id={id}
+      className="side-panel-collapsible-body"
+      aria-hidden={!open}
+      style={{ maxHeight: animatedHeight }}
+    >
+      <div
+        ref={bodyRef}
+        className={`side-panel-collapsible-body-inner${className ? ` ${className}` : ""}`}
+      >
+        {children}
+      </div>
+    </div>
+  );
 };
 
 export const App = () => {
@@ -12820,8 +12918,7 @@ export const App = () => {
             </span>
           </button>
 
-          {soundPanelOpen ? (
-            <div className="settings-submenu">
+          <SidePanelCollapsible open={soundPanelOpen} className="settings-submenu">
               <label className="name-editor settings-name-editor">
                 <span>{ui("avatar.name")}</span>
                 <input
@@ -13002,8 +13099,7 @@ export const App = () => {
                   style={{ width: "auto", justifySelf: "start" }}
                 />
               </label>
-            </div>
-          ) : null}
+          </SidePanelCollapsible>
         </section>
 
         <div className="status-card">
@@ -13049,8 +13145,7 @@ export const App = () => {
             </span>
           </button>
 
-          {growthPanelOpen ? (
-            <div className="growth-submenu">
+          <SidePanelCollapsible open={growthPanelOpen} className="growth-submenu">
               <div className="growth-trait-hex">
                 <svg
                   className="growth-trait-chart"
@@ -13271,8 +13366,7 @@ export const App = () => {
                   <p className="idle-bubble-empty">{ui("socialBubble.noSuggestions")}</p>
                 )}
               </div>
-            </div>
-          ) : null}
+          </SidePanelCollapsible>
         </section>
 
         <section className="sessions-card" aria-label={ui("sessions.title")}>
@@ -13308,8 +13402,7 @@ export const App = () => {
             </span>
           </button>
 
-          {sessionsPanelOpen ? (
-            <div className="sessions-submenu">
+          <SidePanelCollapsible open={sessionsPanelOpen} className="sessions-submenu">
               {activeSessionKey ? (
                 <button
                   type="button"
@@ -13418,8 +13511,7 @@ export const App = () => {
               ) : (
                 <p className="session-empty">{ui("sessions.empty")}</p>
               )}
-            </div>
-          ) : null}
+          </SidePanelCollapsible>
         </section>
 
         <section className="integrations-card" aria-label={ui("integrations.title")}>
@@ -13444,8 +13536,7 @@ export const App = () => {
             </span>
           </button>
 
-          {integrationsPanelOpen ? (
-            <div className="integrations-submenu">
+          <SidePanelCollapsible open={integrationsPanelOpen} className="integrations-submenu">
               <div className="integrations-actions">
                 <button
                   type="button"
@@ -13510,8 +13601,7 @@ export const App = () => {
               {agentIntegrationMessage ? (
                 <p className="integrations-message">{agentIntegrationMessage}</p>
               ) : null}
-            </div>
-          ) : null}
+          </SidePanelCollapsible>
         </section>
 
         <section className="task-cabinet-card" aria-label={ui("taskCabinet.title")}>
@@ -13537,8 +13627,7 @@ export const App = () => {
             </span>
           </button>
 
-          {taskCabinetPanelOpen ? (
-            <div className="task-cabinet-submenu">
+          <SidePanelCollapsible open={taskCabinetPanelOpen} className="task-cabinet-submenu">
               <label className="task-cabinet-field">
                 <span>{ui("taskCabinet.path")}</span>
                 <span className="path-picker-row">
@@ -13845,8 +13934,7 @@ export const App = () => {
                   {ui("taskCabinet.empty")}
                 </p>
               )}
-            </div>
-          ) : null}
+          </SidePanelCollapsible>
         </section>
 
         <section className="launcher-card" aria-label={ui("launcher.title")}>
@@ -13868,8 +13956,7 @@ export const App = () => {
             </span>
           </button>
 
-          {launcherPanelOpen ? (
-            <div className="launcher-submenu">
+          <SidePanelCollapsible open={launcherPanelOpen} className="launcher-submenu">
               <label className="launcher-field">
                 <span>{ui("launcher.directory")}</span>
                 <span className="path-picker-row">
@@ -13935,8 +14022,7 @@ export const App = () => {
               {launcherMessage ? (
                 <p className="launcher-message">{launcherMessage}</p>
               ) : null}
-            </div>
-          ) : null}
+          </SidePanelCollapsible>
         </section>
 
         <section
@@ -13963,8 +14049,10 @@ export const App = () => {
             </span>
           </button>
 
-          {entertainmentPanelOpen ? (
-            <div className="settings-submenu entertainment-submenu">
+          <SidePanelCollapsible
+            open={entertainmentPanelOpen}
+            className="settings-submenu entertainment-submenu"
+          >
               <button
                 type="button"
                 className="pixel-button"
@@ -13975,8 +14063,7 @@ export const App = () => {
               {cardRoomMessage ? (
                 <small className="settings-action-message">{cardRoomMessage}</small>
               ) : null}
-            </div>
-          ) : null}
+          </SidePanelCollapsible>
         </section>
 
         {SHOW_DEBUG_CARD ? (
@@ -13999,8 +14086,7 @@ export const App = () => {
               </span>
             </button>
 
-          {debugPanelOpen ? (
-            <div className="debug-submenu">
+          <SidePanelCollapsible open={debugPanelOpen} className="debug-submenu">
               <div className="debug-grid">
                 {debugStatuses.map((statusName) => (
                   <button
@@ -14136,8 +14222,7 @@ export const App = () => {
                   </dd>
                 </div>
               </dl>
-            </div>
-          ) : null}
+          </SidePanelCollapsible>
           </section>
         ) : null}
 
@@ -14329,8 +14414,7 @@ export const App = () => {
             </span>
             <span aria-hidden="true">{decorPanelOpen ? "-" : "+"}</span>
           </button>
-          {decorPanelOpen ? (
-            <>
+          <SidePanelCollapsible open={decorPanelOpen} className="side-panel-panel-flow">
               <div className="decor-surface-tabs" aria-label={ui("decor.title")}>
                 {DECOR_SURFACE_CATEGORIES.map((category) => (
                   <button
@@ -14416,8 +14500,7 @@ export const App = () => {
                   })}
                 </div>
               </div>
-            </>
-          ) : null}
+          </SidePanelCollapsible>
         </section>
 
         <section className="control-section painting-gallery-panel">
@@ -14435,8 +14518,10 @@ export const App = () => {
             </span>
             <span aria-hidden="true">{paintingGalleryPanelOpen ? "-" : "+"}</span>
           </button>
-          {paintingGalleryPanelOpen ? (
-            <>
+          <SidePanelCollapsible
+            open={paintingGalleryPanelOpen}
+            className="side-panel-panel-flow"
+          >
               {paintingGallery.activeDraft ? (
                 <div className="painting-draft-card">
                   <PaintingThumbnail
@@ -14528,8 +14613,7 @@ export const App = () => {
                   {ui("action.clearApplied")}
                 </button>
               ) : null}
-            </>
-          ) : null}
+          </SidePanelCollapsible>
         </section>
 
         <section className="control-section">

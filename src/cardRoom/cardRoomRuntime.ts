@@ -49,6 +49,7 @@ const TARGET_FACING_DISTANCE = 0.5;
 const CARD_ROOM_ENTRY_POINT: Point = { x: WALK_MIN_X - 34, y: WALK_MAX_Y - 18 };
 const CARD_ROOM_ENTRY_TARGET: Point = { x: WALK_MIN_X + 58, y: WALK_MAX_Y - 28 };
 const CARD_ROOM_BUBBLE_DURATION_MS = 2600;
+const CARD_ROOM_ENTRY_DELAY_MS = 5000;
 
 const cardRoomCopy = (
   copy: CardRoomCopy | undefined,
@@ -88,7 +89,7 @@ const cardRoomActionActivityLabel = (
   return lastAction;
 };
 
-export type CardRoomVisitorPhase = "entering" | "free" | "seating" | "seated";
+export type CardRoomVisitorPhase = "pending" | "entering" | "free" | "seating" | "seated";
 
 export type CardRoomActionType =
   | "think"
@@ -115,6 +116,7 @@ export interface CardRoomVisitorState {
   phase: CardRoomVisitorPhase;
   bubbleText?: string;
   bubbleStartedAt?: number;
+  enterAt?: number;
 }
 
 export interface CardRoomNavigationMemory {
@@ -975,9 +977,8 @@ export const createInitialCardRoomVisitorState = (
       ),
       navigationFailure: undefined,
     },
-    phase: "entering",
-    bubbleText: cardRoomCopy(copy, "cardRoom.bubble.imHere", "I'm here."),
-    bubbleStartedAt: now,
+    phase: "pending",
+    enterAt: now + CARD_ROOM_ENTRY_DELAY_MS,
   };
 };
 
@@ -1188,6 +1189,20 @@ export const advanceCardRoomVisitorState = (
 ): CardRoomVisitorState => {
   useContentCollisionRects(options.content);
   const navigationKey = options.navigationKey ?? options.character.avatarId;
+  if (state.phase === "pending") {
+    if (options.now < (state.enterAt ?? options.now)) {
+      return state;
+    }
+
+    return {
+      ...state,
+      phase: "entering",
+      bubbleText: cardRoomCopy(options.copy, "cardRoom.bubble.imHere", "I'm here."),
+      bubbleStartedAt: options.now,
+      enterAt: undefined,
+    };
+  }
+
   const tablePlaying =
     options.table.street !== "waiting" &&
     options.table.street !== "handComplete" &&
