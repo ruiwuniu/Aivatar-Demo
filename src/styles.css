@@ -2720,6 +2720,7 @@ meter {
 }
 
 .side-panel {
+  contain: layout paint style;
   display: flex;
   flex-direction: column;
   gap: 7px;

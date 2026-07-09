@@ -239,7 +239,8 @@ const PAINT_RECOVERY_INTERVAL_SECONDS = 16;
 const PAINT_INTERACTION_SECONDS = 24;
 const PAINTING_PROGRESS_SAVE_INTERVAL_SECONDS = 1;
 const PAINTING_PLAN_REQUEST_TIMEOUT_MS = 52_000;
-const UI_MIRROR_UPDATE_INTERVAL_SECONDS = 1;
+const UI_MIRROR_UPDATE_INTERVAL_SECONDS = 2;
+const WORK_BOOST_UI_MIRROR_UPDATE_INTERVAL_SECONDS = 1;
 const PET_STATS_TICK_INTERVAL_SECONDS = 5;
 const UI_COPY_CACHE_LIMIT = 900;
 const MUSIC_MOOD_DECAY_MULTIPLIER = 0.35;
@@ -385,6 +386,7 @@ const COLLAPSED_WINDOW_RESIZE_RETRY_LIMIT = 2;
 const MEMORY_RECENT_EVENT_LIMIT = 20;
 const BEHAVIOR_DEMO_SECONDS = 3;
 const SIDE_PANEL_TRANSITION_MS = 80;
+const SIDE_PANEL_COLLAPSIBLE_UNMOUNT_DELAY_MS = 360;
 const TASK_CABINET_FURNITURE_ID = "file-cabinet";
 const TASK_CABINET_UNLOCK_LEVEL = 25;
 const TASK_CABINET_SCHEDULE_INTERVAL_MS = 5000;
@@ -3422,7 +3424,10 @@ const SidePanelCollapsible = ({
   const measuredHeightRef = useRef(0);
   const frameRef = useRef<number | null>(null);
   const measureFrameRef = useRef<number | null>(null);
+  const unmountTimerRef = useRef<number | null>(null);
   const [animatedHeight, setAnimatedHeight] = useState(0);
+  const [renderChildren, setRenderChildren] = useState(open);
+  const childrenMounted = open || renderChildren;
 
   const measureBodyHeight = () => {
     const body = bodyRef.current;
@@ -3432,6 +3437,30 @@ const SidePanelCollapsible = ({
     const marginBottom = Number.parseFloat(styles.marginBottom) || 0;
     return Math.ceil(body.scrollHeight + marginTop + marginBottom);
   };
+
+  useEffect(() => {
+    if (unmountTimerRef.current !== null) {
+      window.clearTimeout(unmountTimerRef.current);
+      unmountTimerRef.current = null;
+    }
+
+    if (open) {
+      setRenderChildren(true);
+      return undefined;
+    }
+
+    unmountTimerRef.current = window.setTimeout(() => {
+      setRenderChildren(false);
+      unmountTimerRef.current = null;
+    }, SIDE_PANEL_COLLAPSIBLE_UNMOUNT_DELAY_MS);
+
+    return () => {
+      if (unmountTimerRef.current !== null) {
+        window.clearTimeout(unmountTimerRef.current);
+        unmountTimerRef.current = null;
+      }
+    };
+  }, [open]);
 
   useLayoutEffect(() => {
     if (!open) return undefined;
@@ -3509,7 +3538,7 @@ const SidePanelCollapsible = ({
         ref={bodyRef}
         className={`side-panel-collapsible-body-inner${className ? ` ${className}` : ""}`}
       >
-        {children}
+        {childrenMounted ? children : null}
       </div>
     </div>
   );
@@ -6834,6 +6863,22 @@ export const App = () => {
     let autonomousActionWatchSeconds = 0;
     let stopped = false;
 
+    const syncUiMirror = () => {
+      if (uiAccumulator < WORK_BOOST_UI_MIRROR_UPDATE_INTERVAL_SECONDS) return;
+
+      const workBoostActive = saveRef.current.workBoostUntil
+        ? getWorkBoostRemainingSeconds(saveRef.current.workBoostUntil, Date.now()) > 0
+        : false;
+      const updateInterval = workBoostActive
+        ? WORK_BOOST_UI_MIRROR_UPDATE_INTERVAL_SECONDS
+        : UI_MIRROR_UPDATE_INTERVAL_SECONDS;
+      if (uiAccumulator < updateInterval) return;
+
+      uiAccumulator = 0;
+      setNowMs(Date.now());
+      setAvatar(runtimeRef.current);
+    };
+
     const loop = (now: number) => {
       if (stopped) return;
       const rawElapsedSeconds = (now - previous) / 1000;
@@ -6889,11 +6934,7 @@ export const App = () => {
           : currentStatus;
 
       if (avatarAwayRef.current) {
-        if (uiAccumulator >= UI_MIRROR_UPDATE_INTERVAL_SECONDS) {
-          uiAccumulator = 0;
-          setNowMs(Date.now());
-          setAvatar(runtimeRef.current);
-        }
+        syncUiMirror();
 
         if (canvasRef.current) {
           renderScene(
@@ -8304,11 +8345,7 @@ export const App = () => {
         coffeeAccumulator = 0;
       }
 
-      if (uiAccumulator >= UI_MIRROR_UPDATE_INTERVAL_SECONDS) {
-        uiAccumulator = 0;
-        setNowMs(Date.now());
-        setAvatar(runtimeRef.current);
-      }
+      syncUiMirror();
 
       if (statAccumulator >= PET_STATS_TICK_INTERVAL_SECONDS) {
         const elapsedStats = statAccumulator;
