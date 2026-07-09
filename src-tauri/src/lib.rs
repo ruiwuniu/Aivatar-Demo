@@ -422,6 +422,34 @@ const CLAUDE_REQUIRED_TOOL_EVENTS: &[&str] = &[
     "PostToolUseFailure",
 ];
 
+const MAIN_WINDOW_DEFAULT_WIDTH: f64 = 760.0;
+const MAIN_WINDOW_DEFAULT_HEIGHT: f64 = 520.0;
+const MAIN_WINDOW_MIN_WIDTH: f64 = 720.0;
+const MAIN_WINDOW_MIN_HEIGHT: f64 = 500.0;
+
+fn main_window_min_size(width: f64) -> Size {
+    Size::Logical(tauri::LogicalSize {
+        width,
+        height: MAIN_WINDOW_MIN_HEIGHT,
+    })
+}
+
+fn main_window_size(width: f64, height: f64) -> Size {
+    Size::Logical(tauri::LogicalSize { width, height })
+}
+
+fn normalize_main_window_size(window: &tauri::WebviewWindow) {
+    let _ = window.set_maximizable(false);
+    if window.is_maximized().unwrap_or(false) {
+        let _ = window.unmaximize();
+    }
+    let _ = window.set_min_size(Some(main_window_min_size(MAIN_WINDOW_MIN_WIDTH)));
+    let _ = window.set_size(main_window_size(
+        MAIN_WINDOW_DEFAULT_WIDTH,
+        MAIN_WINDOW_DEFAULT_HEIGHT,
+    ));
+}
+
 fn claude_hook_event_has_aivatar(settings: &serde_json::Value, event: &str) -> bool {
     settings
         .get("hooks")
@@ -1302,11 +1330,14 @@ fn resize_main_window_for_side_panel(
     min_width: f64,
     height: f64,
 ) -> Result<(), String> {
-    let min_size = Size::Logical(tauri::LogicalSize {
-        width: min_width,
-        height: 500.0,
-    });
-    let size = Size::Logical(tauri::LogicalSize { width, height });
+    let _ = window.set_maximizable(false);
+    if window.is_maximized().unwrap_or(false) {
+        window
+            .unmaximize()
+            .map_err(|error| format!("Could not restore window before resizing: {error}"))?;
+    }
+    let min_size = main_window_min_size(min_width);
+    let size = main_window_size(width, height);
 
     window
         .set_min_size(Some(min_size))
@@ -1350,9 +1381,10 @@ async fn open_save_slot_window(
         tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
     )
     .title(title)
-    .inner_size(760.0, 520.0)
-    .min_inner_size(720.0, 500.0)
+    .inner_size(MAIN_WINDOW_DEFAULT_WIDTH, MAIN_WINDOW_DEFAULT_HEIGHT)
+    .min_inner_size(MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT)
     .resizable(false)
+    .maximizable(false)
     .always_on_top(false)
     .decorations(true)
     .focused(true)
@@ -1396,6 +1428,7 @@ async fn open_card_room_window(
     .inner_size(1180.0, 900.0)
     .min_inner_size(1180.0, 900.0)
     .resizable(false)
+    .maximizable(false)
     .always_on_top(false)
     .decorations(true)
     .focused(true)
@@ -1499,6 +1532,7 @@ pub fn run() {
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
+                normalize_main_window_size(&window);
                 attach_save_before_close_handler(window);
             }
             let app_handle = app.handle().clone();

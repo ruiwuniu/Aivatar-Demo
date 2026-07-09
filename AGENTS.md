@@ -93,7 +93,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 
 The Tauri desktop app attempts to start the local status bridge automatically during app setup. The Debug panel also includes a `Start bridge` button for manually starting it from the app. Starting the bridge from Tauri also attempts to start Codex Desktop session discovery.
 
-The desktop shell registers the Tauri single-instance plugin before other plugins. A second app launch should focus/show the existing main window instead of keeping another full WebView process alive.
+The desktop shell registers the Tauri single-instance plugin before other plugins. A second app launch should focus/show the existing main window instead of keeping another full WebView process alive. Fixed-size room windows explicitly disable native maximize, and the side-panel resize path clears maximized state before applying Aivatar-owned window sizes so Windows restore bounds cannot corrupt the normal room size.
 
 Run real local status bridge:
 
@@ -1017,7 +1017,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Exposes `start_agent_cli`, used by the CLI Launcher. It validates the selected working directory, starts the status bridge if needed, opens PowerShell in that folder, and runs `scripts/aivatar-connected-run.mjs --agent <agent> -- <codex|claude|opencode> <args>` so launcher-started CLIs auto-connect to Aivatar and disconnect on exit.
   - Exposes `start_task_agent`, used by Task Cabinet automation. It validates the selected working directory, validates that the task path is an existing `.md` file, reads the source `.md` file without modifying it, rejects prompts over 24,000 characters, writes a derived prompt copy under `%TEMP%\aivatar-task-prompts\`, starts the bridge if needed, and launches Codex, Claude Code, or opencode through `scripts/aivatar-connected-run.mjs --prompt-file <tempPrompt>`.
   - Exposes `pick_markdown_task_file` and `pick_launcher_directory`, used by desktop Browse buttons for Task Cabinet and CLI Launcher path selection.
-  - Exposes `resize_main_window_for_side_panel`, used by the React side-panel collapse flow to update the main window minimum size and size together, reducing WebView flicker during menu collapse/expand.
+  - Exposes `resize_main_window_for_side_panel`, used by the React side-panel collapse flow to update the main window minimum size and size together, first clearing maximized state and disabling native maximize so Windows restore bounds cannot leave the main room at a stale size.
   - Intercepts main-window close requests, emits `aivatar://save-before-close` to the frontend, waits briefly, then closes the window so the latest avatar runtime, room surface choices, layout, inventory, wallet, and stats have a chance to flush to localStorage.
 
 - `src-tauri/tauri.conf.json`
