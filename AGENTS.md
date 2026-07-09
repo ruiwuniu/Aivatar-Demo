@@ -127,11 +127,12 @@ npm.cmd run status:discover
 
 `status:discover` also starts the Workbuddy session discovery helper when
 `scripts/workbuddy-session-discovery.mjs` is present. The helper reads only
-Workbuddy metadata under `~\.workbuddy-ai`: `workbuddy.db` tables `sessions`
-and `session_usage`, plus sidecar heartbeat JSON files under `sessions\`. It
-does not read Workbuddy chat transcripts, local storage payloads, bearer tokens,
-or full logs. Workbuddy's `sessions.source_mode` distinguishes the `working`
-and `coding` UI areas; both are posted as `workbuddy` sessions to Aivatar.
+Workbuddy metadata under the China mainland home `~\.workbuddy` and the
+international home `~\.workbuddy-ai`: `workbuddy.db` tables `sessions` and
+`session_usage`, plus sidecar heartbeat JSON files under `sessions\`. It does
+not read Workbuddy chat transcripts, local storage payloads, bearer tokens, or
+full logs. Workbuddy's `sessions.source_mode` distinguishes the `working` and
+`coding` UI areas; both are posted as `workbuddy` sessions to Aivatar.
 
 Run Workbuddy discovery by itself:
 
@@ -989,6 +990,13 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Does not modify, rename, delete, migrate, or hide Codex Desktop session/chat files.
   - Does not set `/agent-active` by default; manual `aivatar-connect`, Agent Sessions Follow, and launcher flows remain the explicit ways to choose the followed session.
 
+- `scripts/workbuddy-session-discovery.mjs`
+  - Aivatar-side Tencent WorkBuddy session discovery helper used by `status:discover` and `status:discover:workbuddy`.
+  - Reads only WorkBuddy metadata from `workbuddy.db` and sidecar heartbeat JSON files. It does not read WorkBuddy chat transcripts, local storage payloads, bearer tokens, or full logs.
+  - Defaults to scanning both the China mainland WorkBuddy home `%USERPROFILE%\.workbuddy` and the international WorkBuddy home `%USERPROFILE%\.workbuddy-ai`. `AIVATAR_WORKBUDDY_HOME`, `WORKBUDDY_HOME`, or `WORKBUDDY_CONFIG_DIR` can override discovery to a single explicit home for tests or manual debugging.
+  - Stores watcher-side baseline state by `home + sessionId` so simultaneously installed mainland and international WorkBuddy builds cannot reuse each other's token baseline when session ids overlap.
+  - `scripts/workbuddy-session-discovery-smoke.mjs` builds derived temporary SQLite fixtures for both home styles and verifies multi-home discovery without touching real WorkBuddy data.
+
 - `src-tauri/src/codex_discovery.rs`
   - Native packaged-app Codex Desktop discovery path used when Tauri starts the bridge/discovery flow.
   - Watches local Codex rollout JSONL events read-only, emits ordinary turn status, writes sanitized learning context files, and starts `scripts/aivatar-learning-worker.mjs` after `final` / `final_answer` events when a provider command is available.
@@ -996,6 +1004,12 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
   - Mirrors the JS Claude Desktop activity tracking path by tailing `logs\main.log` for Cowork/Code lifecycle events and posting short Chat cache update summaries when available. It uses the same Chat settle window and `desktopSessionId` alias behavior as the JS bridge/discovery path, so packaged builds do not split Cowork `local_*` running rows from CLI UUID completion rows.
   - Resolves `node`, `codex`, and `claude` through PATH, Windows command variants, and macOS Homebrew/user-bin fallback paths. It passes the resolved provider path to the worker via `AIVATAR_CODEX_COMMAND` or `AIVATAR_CLAUDE_COMMAND`.
   - On Windows, wraps `where.exe` command lookup and worker spawning with `CREATE_NO_WINDOW`, fixing the two quick terminal flashes that could appear after each Codex Desktop turn.
+
+- `src-tauri/src/workbuddy_discovery.rs`
+  - Native packaged-app Tencent WorkBuddy discovery path used when Tauri starts the bridge/discovery flow.
+  - Mirrors the JS WorkBuddy helper by scanning both `%USERPROFILE%\.workbuddy` and `%USERPROFILE%\.workbuddy-ai` unless a WorkBuddy home environment override is set.
+  - Reads the same metadata-only surfaces as the JS helper: `workbuddy.db` tables `sessions` and `session_usage`, plus heartbeat sidecars under `sessions\`.
+  - Keeps token baseline state separated by `home + sessionId` so mainland and international WorkBuddy installs can be watched side by side.
 
 - `C:\Users\rniu\plugins\aivatar-session-bridge`
   - External local session plugin, currently outside this repo.

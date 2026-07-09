@@ -77,6 +77,60 @@ try {
   ).run("coding-session", 4500, 200000, now - 1000, null);
   db.close();
 
+  const internationalHome = join(tempDir, "workbuddy-ai-home");
+  await mkdir(internationalHome, { recursive: true });
+  const internationalDb = new DatabaseSync(join(internationalHome, "workbuddy.db"));
+  internationalDb.exec(`
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      cwd TEXT,
+      title TEXT,
+      custom_title TEXT,
+      status TEXT,
+      created_at INTEGER,
+      updated_at INTEGER,
+      deleted_at INTEGER,
+      source_mode TEXT,
+      mode TEXT,
+      model TEXT,
+      permission_mode TEXT,
+      last_activity_at INTEGER
+    );
+    CREATE TABLE session_usage (
+      session_id TEXT PRIMARY KEY,
+      used INTEGER NOT NULL,
+      size INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      credit_json TEXT
+    );
+  `);
+  internationalDb
+    .prepare(
+      `
+      INSERT INTO sessions (
+        id, cwd, title, custom_title, status, created_at, updated_at,
+        deleted_at, source_mode, mode, model, permission_mode, last_activity_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 'craft', 'fast-model', 'bypassPermissions', ?)
+    `,
+    )
+    .run(
+      "international-session",
+      "C:/Workbuddy/international",
+      "International task",
+      null,
+      "running",
+      now - 3000,
+      now - 500,
+      "coding",
+      now - 500,
+    );
+  internationalDb
+    .prepare(
+      "INSERT INTO session_usage (session_id, used, size, updated_at, credit_json) VALUES (?, ?, ?, ?, ?)",
+    )
+    .run("international-session", 2200, 168000, now - 500, null);
+  internationalDb.close();
+
   await writeFile(
     join(tempDir, "sessions", "coding-session.json"),
     JSON.stringify({
@@ -134,6 +188,22 @@ try {
     now,
   );
   assert.equal(terminatedLive.status, "thinking");
+
+  const combinedPayloads = await discoverWorkbuddyOnce({
+    DatabaseSync,
+    configDirs: [join(tempDir, "missing-home"), tempDir, internationalHome],
+    states: new Map(),
+    now,
+    post: false,
+  });
+  assert.ok(
+    combinedPayloads.some((payload) => payload.sessionId === "working-session"),
+    "mainland-style WorkBuddy home should be scanned",
+  );
+  assert.ok(
+    combinedPayloads.some((payload) => payload.sessionId === "international-session"),
+    "international WorkBuddy home should be scanned",
+  );
 
   console.log("[workbuddy-session-discovery-smoke] ok");
 } finally {

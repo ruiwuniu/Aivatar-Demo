@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -80,14 +80,16 @@ fn discovery_loop() {
     let mut states = HashMap::<String, SessionState>::new();
 
     loop {
-        if let Some(root) = workbuddy_home() {
+        for root in workbuddy_homes() {
             let sidecars = read_sidecars(&root);
             match read_sessions(&root) {
                 Ok(rows) => {
                     let now = now_ms();
                     for row in rows {
                         let sidecar = sidecars.get(&row.id);
-                        let state = states.entry(row.id.clone()).or_default();
+                        let state = states
+                            .entry(session_state_key(&root, &row.id))
+                            .or_default();
                         if let Some(payload) = build_payload(&row, sidecar, state, now) {
                             let _ = submit_presence(&row, sidecar);
                             let _ = local_bridge::submit_status(payload);
@@ -104,24 +106,50 @@ fn discovery_loop() {
     }
 }
 
-fn workbuddy_home() -> Option<PathBuf> {
+fn push_workbuddy_home(roots: &mut Vec<PathBuf>, path: PathBuf) {
+    if !path.join("workbuddy.db").is_file() {
+        return;
+    }
+    let key = path.to_string_lossy().to_ascii_lowercase();
+    if roots
+        .iter()
+        .any(|root| root.to_string_lossy().to_ascii_lowercase() == key)
+    {
+        return;
+    }
+    roots.push(path);
+}
+
+fn workbuddy_homes() -> Vec<PathBuf> {
+    let mut configured_roots = Vec::new();
     for key in [
         "AIVATAR_WORKBUDDY_HOME",
         "WORKBUDDY_HOME",
         "WORKBUDDY_CONFIG_DIR",
     ] {
         if let Some(path) = std::env::var_os(key).map(PathBuf::from) {
-            if path.join("workbuddy.db").is_file() {
-                return Some(path);
-            }
+            push_workbuddy_home(&mut configured_roots, path);
         }
     }
+    if !configured_roots.is_empty() {
+        return configured_roots;
+    }
 
-    let home = std::env::var_os("USERPROFILE")
+    let Some(home) = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)?;
-    let path = home.join(".workbuddy-ai");
-    path.join("workbuddy.db").is_file().then_some(path)
+        .map(PathBuf::from)
+    else {
+        return Vec::new();
+    };
+
+    let mut roots = Vec::new();
+    push_workbuddy_home(&mut roots, home.join(".workbuddy"));
+    push_workbuddy_home(&mut roots, home.join(".workbuddy-ai"));
+    roots
+}
+
+fn session_state_key(root: &Path, session_id: &str) -> String {
+    format!("{}:{session_id}", root.to_string_lossy())
 }
 
 fn read_sessions(root: &std::path::Path) -> Result<Vec<WorkbuddySession>, String> {

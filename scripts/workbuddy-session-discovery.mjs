@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
@@ -51,15 +51,33 @@ const processIsRunning = (pid) => {
   }
 };
 
-const workbuddyHome = () => {
+const uniquePaths = (paths) => {
+  const seen = new Set();
+  const result = [];
+  for (const path of paths) {
+    const clean = typeof path === "string" ? path.trim() : "";
+    if (!clean) continue;
+    const resolved = resolve(clean);
+    const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(resolved);
+  }
+  return result;
+};
+
+export const workbuddyHomes = () => {
   const configured =
     process.env.AIVATAR_WORKBUDDY_HOME ??
     process.env.WORKBUDDY_HOME ??
     process.env.WORKBUDDY_CONFIG_DIR;
-  return configured && configured.trim()
-    ? configured.trim()
-    : join(homedir(), ".workbuddy-ai");
+  if (configured && configured.trim()) {
+    return uniquePaths([configured]);
+  }
+  return uniquePaths([join(homedir(), ".workbuddy"), join(homedir(), ".workbuddy-ai")]);
 };
+
+const workbuddyHome = () => workbuddyHomes()[0] ?? join(homedir(), ".workbuddy");
 
 const timestampMsFromValue = (value) => {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -498,35 +516,42 @@ const postPresence = async (row, sidecar) => {
 
 export const discoverWorkbuddyOnce = async ({
   DatabaseSync,
-  configDir = workbuddyHome(),
+  configDir,
+  configDirs,
   states = new Map(),
   now = Date.now(),
   post = false,
 } = {}) => {
-  const rows = readWorkbuddyRows(DatabaseSync, configDir);
-  const sidecars = await readWorkbuddySidecars(configDir);
+  const roots = uniquePaths(configDirs ?? (configDir ? [configDir] : workbuddyHomes()));
   const payloads = [];
 
-  for (const row of rows) {
-    const state = states.get(row.id) ?? {};
-    const sidecar = sidecars.get(row.id);
-    const payload = buildWorkbuddyStatusPayload(row, sidecar, state, now);
-    updateWorkbuddySessionState(row, payload, state);
-    states.set(row.id, state);
+  for (const root of roots) {
+    if (!(await pathExists(join(root, "workbuddy.db")))) continue;
+    const rows = readWorkbuddyRows(DatabaseSync, root);
+    const sidecars = await readWorkbuddySidecars(root);
 
-    const key = payloadKey(payload);
-    if (state.lastPayloadKey === key) continue;
-    state.lastPayloadKey = key;
+    for (const row of rows) {
+      const stateKey = `${root}:${row.id}`;
+      const state = states.get(stateKey) ?? states.get(row.id) ?? {};
+      const sidecar = sidecars.get(row.id);
+      const payload = buildWorkbuddyStatusPayload(row, sidecar, state, now);
+      updateWorkbuddySessionState(row, payload, state);
+      states.set(stateKey, state);
 
-    if (post) {
-      const presence = await postPresence(row, sidecar).catch((error) => ({
-        error,
-      }));
-      if (!presence?.ignored) {
-        await postJson(statusEndpoint, payload);
+      const key = payloadKey(payload);
+      if (state.lastPayloadKey === key) continue;
+      state.lastPayloadKey = key;
+
+      if (post) {
+        const presence = await postPresence(row, sidecar).catch((error) => ({
+          error,
+        }));
+        if (!presence?.ignored) {
+          await postJson(statusEndpoint, payload);
+        }
       }
+      payloads.push(payload);
     }
-    payloads.push(payload);
   }
 
   return payloads;
@@ -549,7 +574,7 @@ const ensureSingleInstance = async () => {
       {
         pid: process.pid,
         startedAt: new Date().toISOString(),
-        workbuddyHome: workbuddyHome(),
+        workbuddyHomes: workbuddyHomes(),
       },
       null,
       2,
@@ -581,9 +606,17 @@ const loadDatabaseSync = async () => {
 
 const main = async () => {
   const DatabaseSync = await loadDatabaseSync();
-  const configDir = workbuddyHome();
-  if (!(await pathExists(join(configDir, "workbuddy.db")))) {
-    console.warn(`[workbuddy-session-discovery] Workbuddy DB not found under ${configDir}`);
+  const configDirs = workbuddyHomes();
+  const availableConfigDirs = [];
+  for (const configDir of configDirs) {
+    if (await pathExists(join(configDir, "workbuddy.db"))) {
+      availableConfigDirs.push(configDir);
+    }
+  }
+  if (availableConfigDirs.length === 0) {
+    console.warn(
+      `[workbuddy-session-discovery] Workbuddy DB not found under ${configDirs.join(", ")}`,
+    );
   }
   await ensureSingleInstance();
   const states = new Map();
@@ -596,13 +629,13 @@ const main = async () => {
   });
 
   console.log(
-    `[workbuddy-session-discovery] watching ${configDir} every ${discoveryIntervalMs}ms`,
+    `[workbuddy-session-discovery] watching ${configDirs.join(", ")} every ${discoveryIntervalMs}ms`,
   );
 
   try {
     while (!stopped) {
       try {
-        await discoverWorkbuddyOnce({ DatabaseSync, configDir, states, post: true });
+        await discoverWorkbuddyOnce({ DatabaseSync, configDirs, states, post: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[workbuddy-session-discovery] ${message}`);
