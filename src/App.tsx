@@ -239,6 +239,9 @@ const PAINT_RECOVERY_INTERVAL_SECONDS = 16;
 const PAINT_INTERACTION_SECONDS = 24;
 const PAINTING_PROGRESS_SAVE_INTERVAL_SECONDS = 1;
 const PAINTING_PLAN_REQUEST_TIMEOUT_MS = 52_000;
+const UI_MIRROR_UPDATE_INTERVAL_SECONDS = 1;
+const PET_STATS_TICK_INTERVAL_SECONDS = 5;
+const UI_COPY_CACHE_LIMIT = 900;
 const MUSIC_MOOD_DECAY_MULTIPLIER = 0.35;
 const BGM_AUTONOMOUS_STOP_MIN_SECONDS = 45;
 const BGM_AUTONOMOUS_STOP_CHECK_SECONDS = 60;
@@ -3920,8 +3923,21 @@ export const App = () => {
     capacity: tableCoffeeCapacity,
     quantity: Math.min(rawTableCoffeeStorage.quantity, tableCoffeeCapacity),
   };
-  const ui = (key: string, params?: Record<string, string | number>) =>
-    t(locale, key, params);
+  const uiCopyCache = useMemo(() => new Map<string, string>(), [locale]);
+  const ui = (key: string, params?: Record<string, string | number>) => {
+    if (params && Object.keys(params).length > 0) return t(locale, key, params);
+
+    const cachedCopy = uiCopyCache.get(key);
+    if (cachedCopy !== undefined) return cachedCopy;
+
+    const copy = t(locale, key);
+    if (uiCopyCache.size >= UI_COPY_CACHE_LIMIT) {
+      const oldestKey = uiCopyCache.keys().next().value;
+      if (typeof oldestKey === "string") uiCopyCache.delete(oldestKey);
+    }
+    uiCopyCache.set(key, copy);
+    return copy;
+  };
   const configStateLabel = ui(`config.${configState}`);
   const taskCabinetStatusLabel = (status: TaskCabinetStatus) =>
     ui(`taskCabinet.status.${status}`);
@@ -6873,7 +6889,7 @@ export const App = () => {
           : currentStatus;
 
       if (avatarAwayRef.current) {
-        if (uiAccumulator >= 0.2) {
+        if (uiAccumulator >= UI_MIRROR_UPDATE_INTERVAL_SECONDS) {
           uiAccumulator = 0;
           setNowMs(Date.now());
           setAvatar(runtimeRef.current);
@@ -8288,13 +8304,13 @@ export const App = () => {
         coffeeAccumulator = 0;
       }
 
-      if (uiAccumulator >= 0.2) {
+      if (uiAccumulator >= UI_MIRROR_UPDATE_INTERVAL_SECONDS) {
         uiAccumulator = 0;
         setNowMs(Date.now());
         setAvatar(runtimeRef.current);
       }
 
-      if (statAccumulator >= 2) {
+      if (statAccumulator >= PET_STATS_TICK_INTERVAL_SECONDS) {
         const elapsedStats = statAccumulator;
         statAccumulator = 0;
         setSave((current) => ({

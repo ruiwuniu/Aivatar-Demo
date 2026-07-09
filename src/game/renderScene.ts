@@ -719,11 +719,35 @@ const pixelGlyphs: Record<string, string[]> = {
 
 const pixelGlyphFor = (char: string) => pixelGlyphs[char.toUpperCase()];
 
+const PIXEL_TEXT_MEASURE_CACHE_LIMIT = 700;
+const BUBBLE_TEXT_WRAP_CACHE_LIMIT = 240;
+const pixelTextMeasureCache = new Map<string, number>();
+const bubbleTextWrapCache = new Map<string, string[]>();
+
+const rememberCachedValue = <T,>(
+  cache: Map<string, T>,
+  key: string,
+  value: T,
+  limit: number,
+) => {
+  if (!cache.has(key) && cache.size >= limit) {
+    const oldestKey = cache.keys().next().value;
+    if (typeof oldestKey === "string") cache.delete(oldestKey);
+  }
+
+  cache.set(key, value);
+  return value;
+};
+
 const measurePixelText = (
   ctx: CanvasRenderingContext2D,
   text: string,
   scale = 1,
 ) => {
+  const cacheKey = `${scale}\u0000${text}`;
+  const cachedWidth = pixelTextMeasureCache.get(cacheKey);
+  if (cachedWidth !== undefined) return cachedWidth;
+
   let width = 0;
 
   for (const char of text) {
@@ -746,7 +770,12 @@ const measurePixelText = (
     ctx.font = previousFont;
   }
 
-  return Math.max(0, width - scale);
+  return rememberCachedValue(
+    pixelTextMeasureCache,
+    cacheKey,
+    Math.max(0, width - scale),
+    PIXEL_TEXT_MEASURE_CACHE_LIMIT,
+  );
 };
 
 const drawPixelText = (
@@ -817,8 +846,27 @@ const wrapBubbleTextByWidth = (
   maxLines: number,
 ) => {
   const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) return [""];
-  if (maxLines <= 1) return [ellipsizeToWidth(ctx, normalized, maxWidth)];
+  const cacheKey = `${maxWidth}\u0000${maxLines}\u0000${normalized}`;
+  const cachedLines = bubbleTextWrapCache.get(cacheKey);
+  if (cachedLines) return cachedLines;
+
+  if (!normalized) {
+    return rememberCachedValue(
+      bubbleTextWrapCache,
+      cacheKey,
+      [""],
+      BUBBLE_TEXT_WRAP_CACHE_LIMIT,
+    );
+  }
+
+  if (maxLines <= 1) {
+    return rememberCachedValue(
+      bubbleTextWrapCache,
+      cacheKey,
+      [ellipsizeToWidth(ctx, normalized, maxWidth)],
+      BUBBLE_TEXT_WRAP_CACHE_LIMIT,
+    );
+  }
 
   const lines: string[] = [];
   let line = "";
@@ -842,7 +890,12 @@ const wrapBubbleTextByWidth = (
     lines.push(ellipsizeToWidth(ctx, last.trim(), maxWidth));
   }
 
-  return lines.length > 0 ? lines.slice(0, maxLines) : [""];
+  return rememberCachedValue(
+    bubbleTextWrapCache,
+    cacheKey,
+    lines.length > 0 ? lines.slice(0, maxLines) : [""],
+    BUBBLE_TEXT_WRAP_CACHE_LIMIT,
+  );
 };
 
 const wrapBubbleText = (text: string, maxLineLength: number, maxLines: number) => {
