@@ -2411,11 +2411,20 @@ const paintingDictionary: Record<Locale, Record<string, string>> = {
   },
 };
 
-const getDictionary = (locale: Locale): Record<string, string> => ({
-  ...englishDictionary,
-  ...(locale === "en" ? {} : dictionaries[locale]),
-  ...paintingDictionary[locale],
-});
+const dictionaryCache = new Map<Locale, Record<string, string>>();
+
+const getDictionary = (locale: Locale): Record<string, string> => {
+  const cachedDictionary = dictionaryCache.get(locale);
+  if (cachedDictionary) return cachedDictionary;
+
+  const dictionary = {
+    ...englishDictionary,
+    ...(locale === "en" ? {} : dictionaries[locale]),
+    ...paintingDictionary[locale],
+  };
+  dictionaryCache.set(locale, dictionary);
+  return dictionary;
+};
 
 const format = (template: string, params: CopyParams = {}) =>
   Object.entries(params).reduce(

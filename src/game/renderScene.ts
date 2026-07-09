@@ -1696,7 +1696,15 @@ const isBedSpriteEdgeHaloPixel = (
   return left || right || top || bottom;
 };
 
-const drawBedSpriteMatrix = (
+interface CachedBedSprite {
+  canvas: HTMLCanvasElement;
+  width: number;
+  height: number;
+}
+
+const bedSpriteCache = new WeakMap<BedSpriteDefinition, CachedBedSprite>();
+
+const drawBedSpriteMatrixRows = (
   ctx: CanvasRenderingContext2D,
   spriteX: number,
   spriteY: number,
@@ -1724,6 +1732,46 @@ const drawBedSpriteMatrix = (
       runStart = column;
     }
   }
+};
+
+const getCachedBedSprite = (
+  ctx: CanvasRenderingContext2D,
+  sprite: BedSpriteDefinition,
+) => {
+  const cachedSprite = bedSpriteCache.get(sprite);
+  if (cachedSprite) return cachedSprite;
+
+  const width = Math.max(0, ...sprite.rows.map((row) => row.length));
+  const height = sprite.rows.length;
+  if (width <= 0 || height <= 0) return null;
+
+  const cacheCanvas = ctx.canvas.ownerDocument.createElement("canvas");
+  cacheCanvas.width = width;
+  cacheCanvas.height = height;
+  const cacheCtx = cacheCanvas.getContext("2d");
+  if (!cacheCtx) return null;
+
+  cacheCtx.imageSmoothingEnabled = false;
+  drawBedSpriteMatrixRows(cacheCtx, 0, 0, sprite);
+
+  const nextSprite = { canvas: cacheCanvas, width, height };
+  bedSpriteCache.set(sprite, nextSprite);
+  return nextSprite;
+};
+
+const drawBedSpriteMatrix = (
+  ctx: CanvasRenderingContext2D,
+  spriteX: number,
+  spriteY: number,
+  sprite: BedSpriteDefinition,
+) => {
+  const cachedSprite = getCachedBedSprite(ctx, sprite);
+  if (!cachedSprite) {
+    drawBedSpriteMatrixRows(ctx, spriteX, spriteY, sprite);
+    return;
+  }
+
+  ctx.drawImage(cachedSprite.canvas, Math.round(spriteX), Math.round(spriteY));
 };
 
 const bedSpriteForSkinId = (skinId: BedSkinId): BedSpriteDefinition | undefined =>
@@ -10362,6 +10410,35 @@ const drawGrayTechFloor = (
   drawPixelRect(ctx, floorX + floorWidth - 2, floorY, 2, floorHeight, "rgba(47, 56, 64, 0.26)");
 };
 
+let grayTechFloorGlowCanvas: HTMLCanvasElement | null = null;
+
+const getGrayTechFloorGlowCanvas = (ctx: CanvasRenderingContext2D) => {
+  const ownerDocument = ctx.canvas.ownerDocument;
+  const glowCanvas =
+    grayTechFloorGlowCanvas?.ownerDocument === ownerDocument
+      ? grayTechFloorGlowCanvas
+      : ownerDocument.createElement("canvas");
+  grayTechFloorGlowCanvas = glowCanvas;
+
+  if (glowCanvas.width !== ctx.canvas.width) {
+    glowCanvas.width = ctx.canvas.width;
+  }
+  if (glowCanvas.height !== ctx.canvas.height) {
+    glowCanvas.height = ctx.canvas.height;
+  }
+
+  const glowCtx = glowCanvas.getContext("2d");
+  if (!glowCtx) return null;
+
+  glowCtx.setTransform(1, 0, 0, 1, 0, 0);
+  glowCtx.globalAlpha = 1;
+  glowCtx.globalCompositeOperation = "source-over";
+  glowCtx.clearRect(0, 0, glowCanvas.width, glowCanvas.height);
+  glowCtx.imageSmoothingEnabled = false;
+
+  return { glowCanvas, glowCtx };
+};
+
 const drawGrayTechFloorLedGlow = (
   ctx: CanvasRenderingContext2D,
   content: AivatarContent,
@@ -10372,12 +10449,9 @@ const drawGrayTechFloorLedGlow = (
   const splitX = floorX + splitOffsetX;
   const splitY = floorY + splitOffsetY;
 
-  const glowCanvas = ctx.canvas.ownerDocument.createElement("canvas");
-  glowCanvas.width = ctx.canvas.width;
-  glowCanvas.height = ctx.canvas.height;
-  const glowCtx = glowCanvas.getContext("2d");
-  if (!glowCtx) return;
-  glowCtx.imageSmoothingEnabled = false;
+  const glowSurface = getGrayTechFloorGlowCanvas(ctx);
+  if (!glowSurface) return;
+  const { glowCanvas, glowCtx } = glowSurface;
 
   drawPixelRect(glowCtx, splitX - 4, floorY + 6, 10, floorHeight - 12, "rgba(78, 167, 255, 0.10)");
   drawPixelRect(glowCtx, splitX - 2, floorY + 7, 6, floorHeight - 14, "rgba(78, 167, 255, 0.16)");
@@ -12537,6 +12611,7 @@ const drawAvatarRenderLayer = (
       memory,
       avatarAppearanceId,
     );
+    drawSleepBlanketOverlay(ctx, content, layer.runtime);
     return;
   }
 
@@ -12904,7 +12979,6 @@ export const renderScene = (
   }
   drawFloorLightOverlay(ctx, floorSurface, content, avatar);
   if (primaryAvatarVisible) {
-    drawSleepBlanketOverlay(ctx, content, avatar);
     if (avatar.behavior !== "sleep") {
       if (status.status === "thinking") {
         drawCodexThinkingBubble(ctx, avatar, status, memory, uiTheme);
