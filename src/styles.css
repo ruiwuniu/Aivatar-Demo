@@ -1820,6 +1820,7 @@ meter {
 }
 
 .card-room-collapsible-body {
+  contain: layout paint;
   max-height: 0;
   overflow: hidden;
   opacity: 1;
@@ -2912,6 +2913,7 @@ meter {
 }
 
 .side-panel-collapsible-body {
+  contain: layout paint;
   max-height: 0;
   overflow: hidden;
   opacity: 1;

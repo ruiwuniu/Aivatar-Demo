@@ -3418,34 +3418,50 @@ const SidePanelCollapsible = ({
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const measuredHeightRef = useRef(0);
   const frameRef = useRef<number | null>(null);
+  const measureFrameRef = useRef<number | null>(null);
   const [animatedHeight, setAnimatedHeight] = useState(0);
 
-  useLayoutEffect(() => {
+  const measureBodyHeight = () => {
     const body = bodyRef.current;
-    if (!body) return undefined;
+    if (!body) return 0;
+    const styles = window.getComputedStyle(body);
+    const marginTop = Number.parseFloat(styles.marginTop) || 0;
+    const marginBottom = Number.parseFloat(styles.marginBottom) || 0;
+    return Math.ceil(body.scrollHeight + marginTop + marginBottom);
+  };
 
-    const measure = (syncAnimatedHeight = false) => {
-      const styles = window.getComputedStyle(body);
-      const marginTop = Number.parseFloat(styles.marginTop) || 0;
-      const marginBottom = Number.parseFloat(styles.marginBottom) || 0;
-      const nextHeight = Math.ceil(body.scrollHeight + marginTop + marginBottom);
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+
+    const syncMeasuredHeight = () => {
+      const nextHeight = measureBodyHeight();
       measuredHeightRef.current = nextHeight;
-      if (open && syncAnimatedHeight) {
-        setAnimatedHeight((height) => (height === nextHeight ? height : nextHeight));
-      }
+      setAnimatedHeight((height) => (height === nextHeight ? height : nextHeight));
     };
 
-    measure();
+    const scheduleMeasure = () => {
+      if (measureFrameRef.current !== null) return;
+      measureFrameRef.current = window.requestAnimationFrame(() => {
+        measureFrameRef.current = null;
+        syncMeasuredHeight();
+      });
+    };
+
+    const body = bodyRef.current;
+    if (!body) return undefined;
     const observer =
       typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(() => measure(true))
+        ? new ResizeObserver(scheduleMeasure)
         : null;
     observer?.observe(body);
-    const handleResize = () => measure(true);
-    window.addEventListener("resize", handleResize);
+    window.addEventListener("resize", scheduleMeasure);
     return () => {
+      if (measureFrameRef.current !== null) {
+        window.cancelAnimationFrame(measureFrameRef.current);
+        measureFrameRef.current = null;
+      }
       observer?.disconnect();
-      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("resize", scheduleMeasure);
     };
   }, [open]);
 
@@ -3463,9 +3479,11 @@ const SidePanelCollapsible = ({
 
     const currentHeight = Math.ceil(shell.getBoundingClientRect().height);
     setAnimatedHeight(currentHeight);
+    const targetHeight = open ? measureBodyHeight() : 0;
+    measuredHeightRef.current = targetHeight;
     frameRef.current = window.requestAnimationFrame(() => {
       frameRef.current = null;
-      setAnimatedHeight(open ? measuredHeightRef.current : 0);
+      setAnimatedHeight(targetHeight);
     });
 
     return () => {

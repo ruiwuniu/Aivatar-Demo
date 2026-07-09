@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentStatusSnapshot,
   CodexStatusMessage,
@@ -60,6 +60,40 @@ const fetchCurrentStatus = async () => {
   return isStatusMessage(parsed) || isStatusSnapshot(parsed) ? parsed : null;
 };
 
+const statusRenderSignature = (message: CodexStatusMessage) =>
+  JSON.stringify({
+    agent: message.agent ?? null,
+    connected: message.connected ?? null,
+    detail: message.detail ?? null,
+    idleBubbleCandidates: message.idleBubbleCandidates ?? null,
+    learning: message.learning ?? null,
+    message: message.message ?? null,
+    phase: message.phase ?? null,
+    progress: message.progress ?? null,
+    sessionId: message.sessionId ?? null,
+    severity: message.severity ?? null,
+    status: message.status,
+    summary: message.summary ?? null,
+    task: message.task ?? null,
+    timestamp: message.timestamp,
+    usage: message.usage ?? null,
+  });
+
+const statusPayloadSignature = (payload: unknown) => {
+  if (isStatusSnapshot(payload)) {
+    return JSON.stringify({
+      activeSessionKey: payload.activeSessionKey ?? null,
+      connectedSessionKey: payload.connectedSessionKey ?? null,
+      currentSessionKey: payload.currentSessionKey ?? null,
+      currentStatus: statusRenderSignature(payload.currentStatus),
+      sessions: payload.sessions.map(statusRenderSignature),
+      type: payload.type,
+    });
+  }
+
+  return isStatusMessage(payload) ? statusRenderSignature(payload) : null;
+};
+
 export const useCodexStatus = () => {
   const [source, setSource] = useState<StatusSource>("simulated");
   const [status, setStatus] = useState<CodexStatusMessage>(() =>
@@ -69,8 +103,13 @@ export const useCodexStatus = () => {
   const [activeSessionKey, setActiveSessionKey] = useState<string | null>(null);
   const [connectedSessionKey, setConnectedSessionKey] = useState<string | null>(null);
   const [currentSessionKey, setCurrentSessionKey] = useState<string | null>(null);
+  const lastPayloadSignatureRef = useRef<string | null>(null);
 
   const applyStatusPayload = (payload: unknown) => {
+    const signature = statusPayloadSignature(payload);
+    if (signature && signature === lastPayloadSignatureRef.current) return;
+    if (signature) lastPayloadSignatureRef.current = signature;
+
     if (isStatusSnapshot(payload)) {
       setStatus(payload.currentStatus);
       setSessions(payload.sessions);
@@ -159,12 +198,14 @@ export const useCodexStatus = () => {
           const parsed: unknown = JSON.parse(event.data);
           applyStatusPayload(parsed);
         } catch {
+          lastPayloadSignatureRef.current = null;
           setStatus(createStatus("error", "Received unreadable Codex status"));
         }
       };
 
       socket.onclose = () => {
         if (closed) return;
+        lastPayloadSignatureRef.current = null;
         setSource("simulated");
         reconnectTimer = window.setTimeout(connect, 3000);
       };
@@ -205,6 +246,7 @@ export const useCodexStatus = () => {
       index = (index + 1) % simulatedStatuses.length;
       const next = simulatedStatuses[index];
       const simulatedStatus = createStatus(next, `Simulated ${next.replace(/_/g, " ")}`);
+      lastPayloadSignatureRef.current = null;
       setStatus(simulatedStatus);
       setSessions([simulatedStatus]);
     }, 6500);

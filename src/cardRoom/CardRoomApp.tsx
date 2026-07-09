@@ -1110,11 +1110,14 @@ const clampWagerTarget = (
   return Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, target));
 };
 
-const useCardRoomCollapsibleHeight = () => {
+const useCardRoomCollapsibleHeight = (open: boolean) => {
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const measureFrameRef = useRef<number | null>(null);
   const [bodyHeight, setBodyHeight] = useState(0);
 
   useLayoutEffect(() => {
+    if (!open) return undefined;
+
     const body = bodyRef.current;
     if (!body) return undefined;
 
@@ -1123,15 +1126,28 @@ const useCardRoomCollapsibleHeight = () => {
       setBodyHeight((height) => (height === nextHeight ? height : nextHeight));
     };
 
-    measure();
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
-    observer?.observe(body);
-    window.addEventListener("resize", measure);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", measure);
+    const scheduleMeasure = () => {
+      if (measureFrameRef.current !== null) return;
+      measureFrameRef.current = window.requestAnimationFrame(() => {
+        measureFrameRef.current = null;
+        measure();
+      });
     };
-  }, []);
+
+    measure();
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleMeasure) : null;
+    observer?.observe(body);
+    window.addEventListener("resize", scheduleMeasure);
+    return () => {
+      if (measureFrameRef.current !== null) {
+        window.cancelAnimationFrame(measureFrameRef.current);
+        measureFrameRef.current = null;
+      }
+      observer?.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+    };
+  }, [open]);
 
   return { bodyHeight, bodyRef };
 };
@@ -1374,11 +1390,11 @@ export const CardRoomApp = () => {
   const [userHandCardsReady, setUserHandCardsReady] = useState(false);
   const userHandCardsReadyRef = useRef(false);
   const [companionsPanelCollapsed, setCompanionsPanelCollapsed] = useState(false);
-  const companionsPanel = useCardRoomCollapsibleHeight();
+  const companionsPanel = useCardRoomCollapsibleHeight(!companionsPanelCollapsed);
   const [chipShopPanelCollapsed, setChipShopPanelCollapsed] = useState(false);
-  const chipShopPanel = useCardRoomCollapsibleHeight();
+  const chipShopPanel = useCardRoomCollapsibleHeight(!chipShopPanelCollapsed);
   const [decorShopPanelCollapsed, setDecorShopPanelCollapsed] = useState(false);
-  const decorShopPanel = useCardRoomCollapsibleHeight();
+  const decorShopPanel = useCardRoomCollapsibleHeight(!decorShopPanelCollapsed);
   const actionCuesRef = useRef<Record<string, CardRoomActionCue>>({});
   const playerActionSnapshotsRef = useRef<Record<string, string>>({});
   const hostHandDarkStatsRef = useRef<CardRoomHandDarkStats | null>(null);
