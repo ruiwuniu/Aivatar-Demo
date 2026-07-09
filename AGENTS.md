@@ -1037,7 +1037,7 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 - `src-tauri/tauri.conf.json`
   - Tauri bundle configuration now points at `icons/icon.ico`, so desktop builds use Aivatar's app icon instead of relying on an empty icon list.
   - The main window no longer starts as always-on-top by config. `alwaysOnTop` defaults to `false`; the user-facing Settings toggle in `src/App.tsx` controls Tauri `setAlwaysOnTop` at runtime.
-  - Current desktop preview package metadata is `0.1.1` across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`. The Windows NSIS installer `Aivatar_0.1.1_x64-setup.exe` has been uploaded to the GitHub release tag `v0.1.1-desktop-preview`.
+  - Current desktop preview package metadata is `0.3.2` across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`. The Windows NSIS installer `Aivatar_0.3.2_x64-setup.exe` and Windows MSI installer `Aivatar_0.3.2_x64_en-US.msi` are prepared for the GitHub release tag `v0.3.2`.
 
 - `src-tauri/capabilities/default.json`
   - Includes `core:window:allow-set-always-on-top` so the React Settings toggle can update the native desktop window's always-on-top state. Keep this permission narrow unless another frontend window API is actually needed.
