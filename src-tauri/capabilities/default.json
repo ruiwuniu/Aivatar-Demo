@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default desktop permissions for Aivatar.",
-  "windows": ["main", "save-slot-*", "card-room-*"],
+  "windows": ["main", "save-slot-*", "card-room-*", "park-*", "park-developer-*"],
   "permissions": ["core:default", "core:window:allow-set-always-on-top"]
 }

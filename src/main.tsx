@@ -2,7 +2,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { CardRoomApp } from "./cardRoom/CardRoomApp";
+import { ParkApp } from "./park/ParkApp";
+import { ParkDeveloperApp } from "./park/ParkDeveloperApp";
 import "./styles.css";
+import "./park/park.css";
 
 interface AppErrorBoundaryState {
   error: Error | null;
@@ -45,7 +48,14 @@ class AppErrorBoundary extends React.Component<
 }
 
 const view = new URLSearchParams(window.location.search).get("view");
-const RootApp = view === "card-room" ? CardRoomApp : App;
+const RootApp =
+  view === "card-room"
+    ? CardRoomApp
+    : view === "park"
+      ? ParkApp
+      : view === "park-developer"
+        ? ParkDeveloperApp
+        : App;
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

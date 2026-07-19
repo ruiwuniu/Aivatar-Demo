@@ -87,6 +87,16 @@ struct CardRoomWindowResult {
     label: String,
 }
 
+#[derive(serde::Deserialize)]
+struct ParkWindowRequest {
+    host_slot_id: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct ParkWindowResult {
+    label: String,
+}
+
 const MAX_TASK_PROMPT_CHARS: usize = 24_000;
 
 fn hash_value(value: &str) -> u64 {
@@ -129,6 +139,27 @@ fn card_room_window_label(host_slot_id: &str) -> String {
     let prefix = if prefix.is_empty() { "table" } else { &prefix };
 
     format!("card-room-{prefix}-{:016x}", hash_value(host_slot_id))
+}
+
+fn park_window_label(host_slot_id: &str) -> String {
+    let sanitized: String = host_slot_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let compact = sanitized.trim_matches('-');
+    let prefix: String = compact.chars().take(36).collect();
+    let prefix = if prefix.is_empty() { "meadow" } else { &prefix };
+    format!("park-{prefix}-{:016x}", hash_value(host_slot_id))
+}
+
+fn park_developer_window_label(host_slot_id: &str) -> String {
+    format!("park-developer-{:016x}", hash_value(host_slot_id))
 }
 
 fn url_component(value: &str) -> String {
@@ -1438,6 +1469,90 @@ async fn open_card_room_window(
     Ok(CardRoomWindowResult { label })
 }
 
+#[tauri::command]
+async fn open_park_window(
+    app: tauri::AppHandle,
+    request: ParkWindowRequest,
+) -> Result<ParkWindowResult, String> {
+    let host_slot_id = request
+        .host_slot_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("local-park");
+    let label = park_window_label(host_slot_id);
+    if let Some(window) = app.get_webview_window(&label) {
+        window
+            .set_focus()
+            .map_err(|error| format!("Could not focus park: {error}"))?;
+        return Ok(ParkWindowResult { label });
+    }
+
+    let url = format!(
+        "./?view=park&hostSlotId={}",
+        url_component(host_slot_id)
+    );
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
+    )
+    .title("Aivatar - Hilltop Park")
+    .inner_size(1180.0, 900.0)
+    .min_inner_size(1180.0, 900.0)
+    .resizable(false)
+    .maximizable(false)
+    .always_on_top(false)
+    .decorations(true)
+    .focused(true)
+    .build()
+    .map_err(|error| format!("Could not open park: {error}"))?;
+
+    Ok(ParkWindowResult { label })
+}
+
+#[tauri::command]
+async fn open_park_developer_window(
+    app: tauri::AppHandle,
+    request: ParkWindowRequest,
+) -> Result<ParkWindowResult, String> {
+    let host_slot_id = request
+        .host_slot_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("local-park");
+    let label = park_developer_window_label(host_slot_id);
+    if let Some(window) = app.get_webview_window(&label) {
+        window
+            .set_focus()
+            .map_err(|error| format!("Could not focus park developer: {error}"))?;
+        return Ok(ParkWindowResult { label });
+    }
+
+    let url = format!(
+        "./?view=park-developer&hostSlotId={}",
+        url_component(host_slot_id)
+    );
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
+    )
+    .title("Aivatar - Park Developer")
+    .inner_size(1180.0, 900.0)
+    .min_inner_size(960.0, 720.0)
+    .resizable(true)
+    .maximizable(true)
+    .always_on_top(false)
+    .decorations(true)
+    .focused(true)
+    .build()
+    .map_err(|error| format!("Could not open park developer: {error}"))?;
+
+    Ok(ParkWindowResult { label })
+}
+
 fn safe_social_room_memory_key(key: &str) -> String {
     let sanitized: String = key
         .chars()
@@ -1525,6 +1640,8 @@ pub fn run() {
             resize_main_window_for_side_panel,
             open_save_slot_window,
             open_card_room_window,
+            open_park_window,
+            open_park_developer_window,
             get_agent_integrations,
             enable_agent_integration,
             read_social_room_memory,

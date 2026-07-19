@@ -417,6 +417,54 @@
       "effect": { "energy": 8, "mood": 8, "hunger": 6 }
     },
     {
+      "id": "fishing-rod",
+      "name": "Fishing Rod",
+      "kind": "tool",
+      "tags": ["item", "fishing-rod"],
+      "price": 160
+    },
+    {
+      "id": "raw-black-bass",
+      "name": "Raw Black Bass",
+      "kind": "ingredient",
+      "tags": ["raw-fish"],
+      "price": 0
+    },
+    {
+      "id": "raw-crucian-carp",
+      "name": "Raw Crucian Carp",
+      "kind": "ingredient",
+      "tags": ["raw-fish"],
+      "price": 0
+    },
+    {
+      "id": "cooked-black-bass",
+      "name": "Cooked Black Bass",
+      "kind": "food",
+      "tags": ["consumable", "cooked-fish"],
+      "price": 0,
+      "effect": { "energy": 12, "mood": 18, "hunger": 30 }
+    },
+    {
+      "id": "cooked-crucian-carp",
+      "name": "Cooked Crucian Carp",
+      "kind": "food",
+      "tags": ["consumable", "cooked-fish"],
+      "price": 0,
+      "effect": { "energy": 10, "mood": 16, "hunger": 28 }
+    },
+    {
+      "id": "gas-oven-range",
+      "name": "Gas Range with Oven",
+      "kind": "furniture",
+      "tags": ["furniture", "stove"],
+      "placementSurfaces": ["floor"],
+      "placement": "floor",
+      "rotatable": false,
+      "price": 680,
+      "effect": { "mood": 5 }
+    },
+    {
       "id": "tiny-plant",
       "name": "Tiny Plant",
       "kind": "decor",
@@ -859,6 +907,24 @@
         "tags": ["consumable"],
         "price": 10,
         "effect": { "energy": 8, "mood": 8, "hunger": 6 }
+      },
+      {
+        "id": "fishing-rod",
+        "name": "Fishing Rod",
+        "kind": "tool",
+        "tags": ["item", "fishing-rod"],
+        "price": 160
+      },
+      {
+        "id": "gas-oven-range",
+        "name": "Gas Range with Oven",
+        "kind": "furniture",
+        "tags": ["furniture", "stove"],
+        "placementSurfaces": ["floor"],
+        "placement": "floor",
+        "rotatable": false,
+        "price": 680,
+        "effect": { "mood": 5 }
       },
       {
         "id": "tiny-plant",

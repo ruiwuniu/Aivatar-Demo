@@ -317,6 +317,10 @@ export type ContentTag =
   | "coffee-cup"
   | "coffee-storage"
   | "file-cabinet"
+  | "stove"
+  | "fishing-rod"
+  | "raw-fish"
+  | "cooked-fish"
   | "one-time";
 
 export type PlacementSurface = "floor" | "furnitureTop" | "wall";
@@ -324,7 +328,7 @@ export type PlacementSurface = "floor" | "furnitureTop" | "wall";
 export interface ItemDefinition {
   id: string;
   name: string;
-  kind: "food" | "drink" | "tool" | "decor" | "furniture" | "window";
+  kind: "food" | "drink" | "ingredient" | "tool" | "decor" | "furniture" | "window";
   price: number;
   unlockLevel?: number;
   tags?: ContentTag[];
@@ -429,6 +433,7 @@ export type FurnitureInteractionKind =
   | "feed"
   | "work"
   | "brew"
+  | "cook"
   | "blocked"
   | "none";
 
@@ -442,6 +447,8 @@ export interface FurnitureInteractionState {
   bubbleText?: string;
   progress?: number;
   rewardBits?: number;
+  itemId?: string;
+  resultItemId?: string;
 }
 
 export interface RoomDefinition {
@@ -529,6 +536,8 @@ export interface AivatarSaveState {
   avatarRuntime?: AvatarRuntime;
   memory?: AivatarMemory;
   navMemory?: AivatarNavMemory;
+  parkNavMemory?: AivatarNavMemory;
+  parkRuntime?: AvatarRuntime;
   paintingGallery?: AivatarPaintingGallery;
   petStats: PetStats;
   inventory: InventoryEntry[];
@@ -578,7 +587,7 @@ export type AivatarVisitPhase =
   | "ended"
   | "cancelled";
 
-export type AivatarVisitKind = "room-visit" | "card-room";
+export type AivatarVisitKind = "room-visit" | "card-room" | "park";
 
 export interface AivatarVisitSession {
   type?: "aivatar.room.visit";

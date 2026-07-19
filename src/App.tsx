@@ -135,6 +135,7 @@ import {
   isWindowItem,
   reserveShopPurchaseSlot as reserveShopPurchaseSlotBase,
 } from "./shopPurchase";
+import { shouldChooseCooking } from "./park/parkProbability";
 import type {
   AivatarContent,
   AivatarDarkTraits,
@@ -203,6 +204,10 @@ type CardRoomWindowResult = {
   label: string;
 };
 
+type ParkWindowResult = {
+  label: string;
+};
+
 const SAVE_KEY = "aivatar.save.v1";
 const SAVE_SLOTS_KEY = "aivatar.saveSlots.v1";
 const ACTIVE_SAVE_SLOT_KEY = "aivatar.activeSaveSlot.v1";
@@ -223,6 +228,12 @@ const ROOMS_URL = "http://127.0.0.1:38988/rooms";
 const VISIT_INVITE_URL = "http://127.0.0.1:38988/visits/invite";
 const VISIT_STATE_URL = "http://127.0.0.1:38988/visits/state";
 const VISIT_END_URL = "http://127.0.0.1:38988/visits/end";
+const isAwayDestinationVisit = (visit: AivatarVisitSession | null | undefined) =>
+  visit?.visitKind === "card-room" || visit?.visitKind === "park";
+const awayVisitUiKey = (
+  visit: AivatarVisitSession | null | undefined,
+  suffix: "away" | "accepted" | "cancelled" | "returned" | "busySelf",
+) => `${visit?.visitKind === "park" ? "park" : "cardRoom"}.${suffix}`;
 const SAVE_LAYOUT_VERSION = 2;
 const MAX_SAVE_SLOTS = 8;
 const DEFAULT_AVATAR_APPEARANCE_ID = "octopus";
@@ -248,6 +259,7 @@ const BGM_AUTONOMOUS_STOP_MIN_SECONDS = 45;
 const BGM_AUTONOMOUS_STOP_CHECK_SECONDS = 60;
 const BGM_AUTONOMOUS_STOP_CHANCE = 0.08;
 const COFFEE_MACHINE_ITEM_ID = "coffee-machine";
+const FISH_COOK_SECONDS = 8;
 const EASEL_ITEM_ID = "oil-easel";
 const RECORD_PLAYER_ITEM_ID = "record-player";
 const COFFEE_CUP_ITEM_ID = "coffee-cup";
@@ -256,6 +268,13 @@ const COFFEE_ITEM_ID = "coffee";
 const COLA_ITEM_ID = "cola";
 const BENTO_ITEM_ID = "bento";
 const COOKIE_ITEM_ID = "cookie";
+const FISHING_ROD_ITEM_ID = "fishing-rod";
+const GAS_OVEN_RANGE_ITEM_ID = "gas-oven-range";
+const RAW_FISH_ITEM_IDS = ["raw-black-bass", "raw-crucian-carp"] as const;
+const COOKED_FISH_BY_RAW_ID: Record<(typeof RAW_FISH_ITEM_IDS)[number], string> = {
+  "raw-black-bass": "cooked-black-bass",
+  "raw-crucian-carp": "cooked-crucian-carp",
+};
 const REPAIR_KIT_ITEM_ID = "repair-kit";
 const ITEM_ARCADE_A_THUMBNAIL_CELL_SIZE = 16;
 const ITEM_ARCADE_A_THUMBNAIL_INDICES: Record<string, number> = {
@@ -698,7 +717,11 @@ const getShopCategoryId = (item: ItemDefinition): ShopCategoryId => {
   return "furniture";
 };
 
-const UNIQUE_SHOP_ITEM_IDS = new Set<string>([TASK_CABINET_FURNITURE_ID]);
+const UNIQUE_SHOP_ITEM_IDS = new Set<string>([
+  TASK_CABINET_FURNITURE_ID,
+  FISHING_ROD_ITEM_ID,
+  GAS_OVEN_RANGE_ITEM_ID,
+]);
 const SPECIAL_SHOP_UNLOCK_LEVELS: Readonly<Record<string, number>> = {
   [TASK_CABINET_FURNITURE_ID]: TASK_CABINET_UNLOCK_LEVEL,
 };
@@ -1560,6 +1583,7 @@ const traitChangesForConsumable = (
   if (item.id === COLA_ITEM_ID) return { efficiency: 1, warmth: 1 };
   if (item.id === BENTO_ITEM_ID) return { resilience: 1, warmth: 1 };
   if (item.id === COOKIE_ITEM_ID) return { creativity: 1, warmth: 1 };
+  if (item.id.startsWith("cooked-")) return { warmth: 2, curiosity: 1 };
   return { resilience: 1, warmth: 1 };
 };
 
@@ -1572,6 +1596,8 @@ const behaviorForConsumable = (item: Pick<ItemDefinition, "id">): BehaviorName =
         ? "bento"
         : item.id === COOKIE_ITEM_ID
           ? "cookie"
+          : item.id.startsWith("cooked-")
+            ? "bento"
         : "interact";
 
 const foodPreferenceScoreForConsumable = (
@@ -1747,7 +1773,8 @@ const isBlockingInteraction = (
     interaction.kind !== "sleep" &&
     interaction.kind !== "feed" &&
     interaction.kind !== "work" &&
-    interaction.kind !== "brew"
+    interaction.kind !== "brew" &&
+    interaction.kind !== "cook"
   ) {
     return false;
   }
@@ -1759,6 +1786,14 @@ const isBlockingInteraction = (
 
 const getInventoryQuantity = (inventory: InventoryEntry[], itemId: string) =>
   inventory.find((entry) => entry.itemId === itemId)?.quantity ?? 0;
+
+const firstRawFishInFridge = (storage: FurnitureStorageEntry[] | undefined) =>
+  RAW_FISH_ITEM_IDS.find(
+    (itemId) =>
+      ((storage ?? []).find(
+        (entry) => entry.furnitureId === "fridge" && entry.itemId === itemId,
+      )?.quantity ?? 0) > 0,
+  );
 
 const defaultFurnitureStorage = (): FurnitureStorageEntry[] => [
   {
@@ -2336,6 +2371,7 @@ const isLegacyDefaultFurniturePlacement = (
 
 type PlacedItemInteractionKind =
   | "brew"
+  | "cook"
   | "paint"
   | "play"
   | "music"
@@ -3668,6 +3704,7 @@ export const App = () => {
   const [saveSlotMessage, setSaveSlotMessage] = useState("");
   const [cardRoomMessage, setCardRoomMessage] = useState("");
   const [contentBase, setContentBase] = useState(defaultContent);
+  const [parkMessage, setParkMessage] = useState("");
   const [configState, setConfigState] = useState<"builtin" | "config" | "fallback">(
     "builtin",
   );
@@ -4408,7 +4445,7 @@ export const App = () => {
     visit: AivatarVisitSession,
     role: "host" | "guest",
   ) => {
-    if (visit.visitKind === "card-room") return;
+    if (isAwayDestinationVisit(visit)) return;
 
     const rewardKey = `${role}:${visit.visitId}`;
     if (completedVisitIdsRef.current.has(rewardKey)) return;
@@ -4700,13 +4737,17 @@ export const App = () => {
     handledVisitIdsRef.current.add(visit.visitId);
     const isCardRoomVisit = visit.visitKind === "card-room";
 
+    const isParkVisit = visit.visitKind === "park";
+    const isAwayVisit = isCardRoomVisit || isParkVisit;
     if (isRoomVisitSessionBusy()) {
       publishVisitEnd(visit, "cancelled", ROOM_VISIT_BUSY_CANCEL_REASON);
-      setRoomVisitMessage(ui(isCardRoomVisit ? "cardRoom.busySelf" : "roomVisit.busySelf"));
+      setRoomVisitMessage(
+        ui(isAwayVisit ? awayVisitUiKey(visit, "busySelf") : "roomVisit.busySelf"),
+      );
       return;
     }
 
-    if (!isCardRoomVisit) {
+    if (!isAwayVisit) {
       void readSocialRoomMemory(visit).then((memory) => {
         if (activeVisitRef.current?.visitId === visit.visitId) {
           socialRoomMemoryRef.current = memory;
@@ -4740,7 +4781,7 @@ export const App = () => {
 
     activeVisitRef.current = accepted;
     setActiveVisit(accepted);
-    if (!isCardRoomVisit) {
+    if (!isAwayVisit) {
       syncActiveVisitRelationship(accepted);
     }
     runtimeRef.current = {
@@ -4760,12 +4801,12 @@ export const App = () => {
       kind: "none",
       furnitureId: "room-door",
       furnitureName: ui("roomVisit.title"),
-      message: ui(isCardRoomVisit ? "cardRoom.accepted" : "roomVisit.accepted", {
+      message: ui(isAwayVisit ? awayVisitUiKey(visit, "accepted") : "roomVisit.accepted", {
         name: visit.host.avatarName,
       }),
       startedAt: performance.now(),
       endsAt: performance.now() + INTERACTION_FEEDBACK_SECONDS * 1000,
-      bubbleText: isCardRoomVisit ? ui("cardRoom.away") : "roomVisit.bubble.enter.1",
+      bubbleText: isAwayVisit ? ui(awayVisitUiKey(visit, "away")) : "roomVisit.bubble.enter.1",
     });
     void postRoomJson(VISIT_STATE_URL, accepted).catch(() => {
       console.warn("Could not accept room visit.");
@@ -4822,23 +4863,25 @@ export const App = () => {
       (visit) => visit.visitId === currentVisit.visitId,
     );
     if (!latestVisit) {
-      const isCardRoomVisit = currentVisit.visitKind === "card-room";
+      const isAwayVisit = isAwayDestinationVisit(currentVisit);
       finishVisitLocally(currentVisit, {
         returnHome: avatarAwayRef.current,
         cancelled: true,
-        message: ui(isCardRoomVisit ? "cardRoom.cancelled" : "roomVisit.connectionLost"),
+        message: ui(isAwayVisit ? awayVisitUiKey(currentVisit, "cancelled") : "roomVisit.connectionLost"),
       });
       return;
     }
 
     const isLatestCardRoomVisit = latestVisit.visitKind === "card-room";
     if (latestVisit.phase === "cancelled") {
+    const isLatestParkVisit = latestVisit.visitKind === "park";
+    const isLatestAwayVisit = isLatestCardRoomVisit || isLatestParkVisit;
       finishVisitLocally(latestVisit, {
         returnHome: latestVisit.guest.roomInstanceId === ownRoomInstanceId,
         cancelled: true,
         message:
-          isLatestCardRoomVisit
-            ? ui("cardRoom.cancelled")
+          isLatestAwayVisit
+            ? ui(awayVisitUiKey(latestVisit, "cancelled"))
             : latestVisit.cancelReason === ROOM_VISIT_BUSY_CANCEL_REASON
             ? ui("roomVisit.busyOther", { name: latestVisit.guest.avatarName })
             : ui("roomVisit.cancelled"),
@@ -4849,20 +4892,20 @@ export const App = () => {
     if (latestVisit.phase === "ended") {
       finishVisitLocally(latestVisit, {
         returnHome: latestVisit.guest.roomInstanceId === ownRoomInstanceId,
-        reward: !isLatestCardRoomVisit,
-        message: ui(isLatestCardRoomVisit ? "cardRoom.returned" : "roomVisit.ended"),
+        reward: !isLatestAwayVisit,
+        message: ui(isLatestAwayVisit ? awayVisitUiKey(latestVisit, "returned") : "roomVisit.ended"),
       });
       return;
     }
 
     activeVisitRef.current = latestVisit;
     setActiveVisit(latestVisit);
-    if (!isLatestCardRoomVisit) {
+    if (!isLatestAwayVisit) {
       syncActiveVisitRelationship(latestVisit);
     }
 
     if (latestVisit.guest.roomInstanceId === ownRoomInstanceId) {
-      if (!isLatestCardRoomVisit) {
+      if (!isLatestAwayVisit) {
         sampleGuestVisitMemory(latestVisit);
       }
       return;
@@ -5560,6 +5603,8 @@ export const App = () => {
       kind === "brew"
         ? "brew"
         : kind === "paint"
+        : kind === "cook"
+          ? "brew"
           ? "paint"
           : kind === "play"
             ? "play"
@@ -5572,6 +5617,8 @@ export const App = () => {
       kind === "brew"
         ? "Brewing coffee"
         : kind === "paint"
+        : kind === "cook"
+          ? "Cooking fish"
           ? "Painting"
           : kind === "play"
             ? "Playing games"
@@ -5638,6 +5685,7 @@ export const App = () => {
     if (isBuiltinTerminalPlacedItem(placedItem)) return "interact";
     if (placedItem.itemId === COFFEE_MACHINE_ITEM_ID) return "brew";
     if (placedItem.itemId === "game-console") return "play";
+    if (placedItem.itemId === GAS_OVEN_RANGE_ITEM_ID) return "cook";
     if (placedItem.itemId === RECORD_PLAYER_ITEM_ID) return "music";
     if (placedItem.itemId === EASEL_ITEM_ID) return "paint";
     return null;
@@ -5897,6 +5945,28 @@ export const App = () => {
   const installSaveIntoSlot = (slotIndex: number, nextSave: AivatarSaveState) => {
     if (saveSlotsRef.current.some((slot) => slot.slotIndex === slotIndex)) return;
     persistCurrentSaveSlot();
+
+  const openParkWindow = async () => {
+    setParkMessage("");
+    const slotId = activeSaveSlotIdRef.current;
+    if (!slotId) {
+      setParkMessage(ui("park.noActiveSlot"));
+      return;
+    }
+
+    persistCurrentSaveSlot();
+
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke<ParkWindowResult>("open_park_window", {
+        request: { host_slot_id: slotId },
+      });
+      setParkMessage(ui("park.windowOpened"));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setParkMessage(detail || ui("park.windowDesktopOnly"));
+    }
+  };
 
     const slotId = createSaveSlotId();
     const timestamp = new Date().toISOString();
@@ -6206,6 +6276,33 @@ export const App = () => {
   useEffect(() => {
     roomVisitorRef.current = roomVisitor;
   }, [roomVisitor]);
+
+  useEffect(() => {
+    if (!activeSaveSlotId) return;
+    const storageKey = saveSlotStorageKey(activeSaveSlotId);
+    const mergeParkSave = (event: StorageEvent) => {
+      if (event.key !== storageKey || !event.newValue) return;
+      try {
+        const external = normalizeSavePayload(
+          contentBase,
+          JSON.parse(event.newValue) as Partial<AivatarSaveState>,
+        );
+        setSave((current) => ({
+          ...current,
+          petStats: external.petStats,
+          memory: external.memory,
+          inventory: external.inventory,
+          furnitureStorage: external.furnitureStorage,
+          parkNavMemory: external.parkNavMemory,
+          parkRuntime: external.parkRuntime,
+        }));
+      } catch {
+        // Ignore incomplete cross-window writes; the next park update will retry.
+      }
+    };
+    window.addEventListener("storage", mergeParkSave);
+    return () => window.removeEventListener("storage", mergeParkSave);
+  }, [activeSaveSlotId, contentBase]);
 
   useEffect(() => {
     avatarAwayRef.current = avatarAway;
@@ -6860,6 +6957,7 @@ export const App = () => {
     let lastNavLearningSuccessKey = "";
     let lastNavLearningFailureKey = "";
     let autonomousActionWatchKey = "";
+    let cookingDecisionAccumulator = 0;
     let autonomousActionWatchSeconds = 0;
     let stopped = false;
 
@@ -7074,7 +7172,11 @@ export const App = () => {
 
       if (guestLeavingForVisit) {
         const leavingActivityLabel =
-          activeRoomVisit?.visitKind === "card-room" ? "Playing cards" : "Visiting";
+          activeRoomVisit?.visitKind === "card-room"
+            ? "Playing cards"
+            : activeRoomVisit?.visitKind === "park"
+              ? "Going to the park"
+              : "Visiting";
         runtimeRef.current = {
           ...runtimeRef.current,
           targetX: ROOM_DOOR_OUTSIDE_POINT.x,
@@ -7155,8 +7257,8 @@ export const App = () => {
             guestSocialNavMemory: socialRoomMemoryRef.current?.navMemory,
             activity: entryRuntime.behavior,
             bubbleText:
-              activeRoomVisit.visitKind === "card-room"
-                ? ui("cardRoom.away")
+              isAwayDestinationVisit(activeRoomVisit)
+                ? ui(awayVisitUiKey(activeRoomVisit, "away"))
                 : "roomVisit.bubble.enter.1",
           });
         } else if (now - visitStatePostedAtRef.current >= ROOM_VISIT_STATE_POST_MS) {
@@ -7168,8 +7270,8 @@ export const App = () => {
             guestSocialNavMemory: socialRoomMemoryRef.current?.navMemory,
             activity: runtimeRef.current.behavior,
             bubbleText:
-              activeRoomVisit.visitKind === "card-room"
-                ? ui("cardRoom.away")
+              isAwayDestinationVisit(activeRoomVisit)
+                ? ui(awayVisitUiKey(activeRoomVisit, "away"))
                 : "roomVisit.bubble.enter.1",
           });
         }
@@ -7658,6 +7760,8 @@ export const App = () => {
                 facing: "front",
                 activityLabel: "Painting",
               };
+            } else if (pendingWorldInteraction.kind === "cook") {
+              startGasRangeCooking(pendingWorldInteraction.placedItem);
               setAvatar(runtimeRef.current);
               updateActiveInteraction({
                 kind: "none",
@@ -7859,6 +7963,57 @@ export const App = () => {
             targetX: runtimeRef.current.x,
             targetY: runtimeRef.current.y,
             behavior: "idle",
+      } else if (
+        currentInteraction?.kind === "cook" &&
+        currentInteraction.endsAt &&
+        now >= currentInteraction.endsAt
+      ) {
+        const rawFishId = RAW_FISH_ITEM_IDS.find(
+          (itemId) => itemId === currentInteraction.itemId,
+        );
+        const cookedFishId = currentInteraction.resultItemId;
+        if (rawFishId && cookedFishId) {
+          setSave((current) => {
+            const available = firstRawFishInFridge(current.furnitureStorage) === rawFishId ||
+              (current.furnitureStorage ?? []).some(
+                (entry) =>
+                  entry.furnitureId === "fridge" &&
+                  entry.itemId === rawFishId &&
+                  entry.quantity > 0,
+              );
+            if (!available) return current;
+            return {
+              ...current,
+              furnitureStorage: consumeFurnitureStorageItem(
+                current.furnitureStorage,
+                "fridge",
+                rawFishId,
+              ),
+              inventory: addInventoryItem(current.inventory, cookedFishId, 1, 999),
+              memory: recordLifeMemory(
+                current.memory,
+                {
+                  type: "item_used",
+                  summary: `Cooked ${rawFishId}`,
+                  behavior: "brew",
+                  itemId: cookedFishId,
+                },
+                { warmth: 1 },
+              ),
+            };
+          });
+        }
+        runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
+        setAvatar(runtimeRef.current);
+        updateActiveInteraction({
+          ...currentInteraction,
+          kind: "none",
+          message: ui("message.fishCooked"),
+          bubbleText: ui("thought.fishCooked"),
+          startedAt: now,
+          endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
+          progress: 1,
+        });
             behaviorTimer: 2,
             expression: "calm",
             activityLabel: undefined,
@@ -8357,6 +8512,33 @@ export const App = () => {
               ? MUSIC_MOOD_DECAY_MULTIPLIER
               : 1,
           }),
+      const gasRange = currentContent.placedItems?.find(
+        (item) => item.itemId === GAS_OVEN_RANGE_ITEM_ID,
+      );
+      const rawFishForCooking = firstRawFishInFridge(saveRef.current.furnitureStorage);
+      const canConsiderCooking =
+        Boolean(gasRange && rawFishForCooking) &&
+        !isHighPriorityStatus(currentStatus) &&
+        !pendingWorldInteractionRef.current &&
+        !isBlockingInteraction(activeInteractionRef.current) &&
+        !taskCabinetVisualFlowActive &&
+        runtimeActionBehavior(runtimeRef.current) !== "brew";
+      if (canConsiderCooking) {
+        cookingDecisionAccumulator += elapsedSeconds;
+        if (cookingDecisionAccumulator >= 30) {
+          cookingDecisionAccumulator = 0;
+          const warmth = saveRef.current.memory?.growth.traits.warmth ?? 0;
+          if (gasRange && shouldChooseCooking(warmth)) {
+            const definition = currentContent.itemDefinitions.find(
+              (item) => item.id === GAS_OVEN_RANGE_ITEM_ID,
+            );
+            if (definition) queuePlacedItemInteraction(gasRange, definition, "cook");
+          }
+        }
+      } else {
+        cookingDecisionAccumulator = 0;
+      }
+
         }));
       }
 
@@ -8543,7 +8725,17 @@ export const App = () => {
     sessions,
   ]);
 
-  const inventoryItems = save.inventory
+  const inventoryEntriesForPanel = [
+    ...save.inventory,
+    ...(save.furnitureStorage ?? [])
+      .filter(
+        (entry) =>
+          entry.furnitureId === "fridge" &&
+          RAW_FISH_ITEM_IDS.includes(entry.itemId as (typeof RAW_FISH_ITEM_IDS)[number]),
+      )
+      .map((entry) => ({ itemId: entry.itemId, quantity: entry.quantity })),
+  ];
+  const inventoryItems = inventoryEntriesForPanel
     .filter((entry) => {
       const item =
         content.itemDefinitions.find((candidate) => candidate.id === entry.itemId) ??
@@ -8699,6 +8891,18 @@ export const App = () => {
           kind: "feed",
           furnitureId: TABLE_FURNITURE_ID,
           furnitureName: item.name,
+    if (item.kind === "tool" || item.kind === "ingredient") {
+      updateActiveInteraction({
+        kind: "none",
+        furnitureId: item.id,
+        furnitureName: item.name,
+        message: ui("message.selected", { name: item.name }),
+        startedAt: performance.now(),
+        bubbleText: item.id === FISHING_ROD_ITEM_ID ? ui("park.title") : item.name,
+      });
+      return;
+    }
+
           message: ui("message.noFood", { name: item.name }),
           startedAt: performance.now(),
           bubbleText: ui("thought.noFood"),
@@ -10552,6 +10756,7 @@ export const App = () => {
       }))
       .filter(
         (candidate): candidate is { entry: InventoryEntry; item: ItemDefinition } => {
+        itemId: coffeeDefinition.id,
           if (!candidate.item) return false;
           if (
             candidate.item.id === COFFEE_ITEM_ID &&
@@ -10667,6 +10872,7 @@ export const App = () => {
       ...current,
       wallet: { ...current.wallet, bits: current.wallet.bits + bitsEarned },
       workBoostUntil: boostUntil,
+      itemId: consumable.item.id,
     }));
 
     runtimeRef.current = setBehavior(runtimeRef.current, behavior, contentRef.current, 6, undefined, {
@@ -10799,6 +11005,47 @@ export const App = () => {
       clearPendingFurnitureInteraction();
       placeInventoryItem(placingItemRef.current, scenePoint.x, scenePoint.y);
       return;
+  const startGasRangeCooking = (placedItem: PlacedItem) => {
+    const rawFishId = firstRawFishInFridge(saveRef.current.furnitureStorage);
+    const rangeName =
+      contentRef.current.itemDefinitions.find((item) => item.id === GAS_OVEN_RANGE_ITEM_ID)
+        ?.name ?? "Gas Range with Oven";
+    if (!rawFishId) {
+      updateActiveInteraction({
+        kind: "blocked",
+        furnitureId: placedItem.id,
+        furnitureName: rangeName,
+        message: ui("message.noRawFish"),
+        startedAt: performance.now(),
+        bubbleText: ui("thought.noRawFish"),
+      });
+      return;
+    }
+    const cookedFishId = COOKED_FISH_BY_RAW_ID[rawFishId];
+    runtimeRef.current = setBehavior(
+      runtimeRef.current,
+      "brew",
+      contentRef.current,
+      FISH_COOK_SECONDS,
+      "Cooking fish",
+      { startImmediately: true },
+    );
+    setAvatar(runtimeRef.current);
+    const now = performance.now();
+    updateActiveInteraction({
+      kind: "cook",
+      furnitureId: placedItem.id,
+      furnitureName: rangeName,
+      message: ui("message.cookingFish"),
+      startedAt: now,
+      endsAt: now + FISH_COOK_SECONDS * 1000,
+      bubbleText: ui("thought.cookingFish"),
+      progress: 0,
+      itemId: rawFishId,
+      resultItemId: cookedFishId,
+    });
+  };
+
     }
 
     if (movingPlacedItemRef.current) {
@@ -11420,13 +11667,15 @@ export const App = () => {
   const onlineVisitRooms = (roomSnapshot?.rooms ?? []).filter((room) => {
     if (room.roomInstanceId === roomInstanceIdRef.current) return false;
     if (room.slotId === activeSaveSlotId) return false;
-    if (room.roomId === "card-room") return false;
+    if (room.roomId === "card-room" || room.roomId === "park") return false;
     if (room.status !== "home" && room.status !== "busy") return false;
     const expiresAt = Date.parse(room.expiresAt);
     return Number.isNaN(expiresAt) || expiresAt > nowMs;
   });
   const avatarAwayLabel =
-    activeVisit?.visitKind === "card-room" ? ui("cardRoom.away") : ui("roomVisit.away");
+    isAwayDestinationVisit(activeVisit)
+      ? ui(awayVisitUiKey(activeVisit, "away"))
+      : ui("roomVisit.away");
   const idleBubbleSlotCount = Math.max(1, growth.level);
   const idleBubbleSlotsAvailable = idleBubblePhrases.length < idleBubbleSlotCount;
   const filterIdleBubbleCandidates = (phrases: string[]) =>
@@ -11725,6 +11974,8 @@ export const App = () => {
   }) => (
     <svg
       className="painting-thumbnail"
+        : sceneContextMenu.target.action === "cook"
+          ? ui("scene.action.cook")
       viewBox={`0 0 ${artwork.width} ${artwork.height}`}
       preserveAspectRatio="none"
       aria-label={artwork.title}
@@ -12821,8 +13072,8 @@ export const App = () => {
                   ? ui(
                       activeVisit.guestRuntimeRoomInstanceId ===
                         activeVisit.host.roomInstanceId
-                        ? activeVisit.visitKind === "card-room"
-                          ? "cardRoom.away"
+                        ? isAwayDestinationVisit(activeVisit)
+                          ? awayVisitUiKey(activeVisit, "away")
                           : "roomVisit.hosting"
                         : "roomVisit.waiting",
                       { name: activeVisit.guest.avatarName },
@@ -14110,10 +14361,10 @@ export const App = () => {
           >
             <span className="settings-toggle-main entertainment-toggle-main">
               <span>{ui("entertainment.title")}</span>
-              <b>1</b>
+              <b>2</b>
             </span>
             <span className="settings-toggle-status entertainment-toggle-status">
-              {ui("cardRoom.title")}
+              {ui("entertainment.status")}
             </span>
             <span className="settings-toggle-chevron entertainment-toggle-chevron" aria-hidden="true">
               {entertainmentPanelOpen ? "-" : "+"}
@@ -14155,6 +14406,16 @@ export const App = () => {
               <span className="debug-toggle-chevron" aria-hidden="true">
                 {debugPanelOpen ? "-" : "+"}
               </span>
+              <button
+                type="button"
+                className="pixel-button"
+                onClick={() => void openParkWindow()}
+              >
+                {ui("park.open")}
+              </button>
+              {parkMessage ? (
+                <small className="settings-action-message">{parkMessage}</small>
+              ) : null}
             </button>
 
           <SidePanelCollapsible open={debugPanelOpen} className="debug-submenu">

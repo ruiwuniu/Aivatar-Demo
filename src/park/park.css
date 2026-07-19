@@ -1,0 +1,244 @@
+.park-app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #10192d;
+}
+
+.park-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.park-debug {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 4;
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.park-debug-panel {
+  display: grid;
+  gap: 10px;
+  width: min(390px, calc(100vw - 28px));
+  max-width: min(420px, calc(100vw - 28px));
+  max-height: calc(100vh - 76px);
+  overflow-y: auto;
+  border: 2px solid rgba(255, 226, 161, 0.76);
+  padding: 8px;
+  color: #fff0c5;
+  background: rgba(15, 24, 38, 0.86);
+  box-shadow: 4px 4px 0 rgba(5, 9, 16, 0.5);
+}
+
+.park-debug-title {
+  color: #fff0c5;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.park-debug-section {
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid rgba(112, 128, 154, 0.52);
+  padding-top: 7px;
+}
+
+.park-debug-label {
+  color: #d7e4d0;
+  letter-spacing: 0.12em;
+}
+
+.park-debug-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.park-debug button {
+  border: 1px solid #70809a;
+  padding: 4px 6px;
+  color: #e7edf1;
+  background: #263449;
+  font: inherit;
+  cursor: pointer;
+}
+
+.park-debug button:hover,
+.park-debug button.active {
+  border-color: #ffe2a1;
+  color: #172333;
+  background: #f0c679;
+}
+
+.park-debug button:focus-visible {
+  outline: 2px solid #fff0c5;
+  outline-offset: 2px;
+}
+
+.park-debug-toggle {
+  min-width: 74px;
+  border-width: 2px !important;
+  padding: 6px 10px !important;
+  color: #172333 !important;
+  background: #f0c679 !important;
+  box-shadow: 3px 3px 0 rgba(5, 9, 16, 0.5);
+  font-weight: 700 !important;
+  letter-spacing: 0.14em;
+}
+
+.park-debug-message {
+  margin: 0;
+  color: #b9d8c0;
+  line-height: 1.45;
+}
+
+.park-developer-app {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #111927;
+  color: #f3ead1;
+}
+
+.park-developer-panel {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 3px solid #8aa24b;
+  padding: 16px;
+  background: #172333;
+  box-shadow: 8px 0 0 rgba(7, 12, 20, 0.45);
+}
+
+.park-developer-panel h1,
+.park-developer-panel p {
+  margin: 0;
+}
+
+.park-developer-kicker {
+  color: #b9cf78;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.park-developer-panel h1 {
+  color: #ffe3a1;
+  font-size: 20px;
+}
+
+.park-developer-palette {
+  display: grid;
+  gap: 6px;
+}
+
+.park-developer-panel button {
+  border: 2px solid #5e7347;
+  padding: 8px 10px;
+  color: #eef4d6;
+  background: #293a32;
+  text-align: left;
+  cursor: pointer;
+}
+
+.park-developer-panel button:hover,
+.park-developer-panel button.active {
+  border-color: #ffe3a1;
+  color: #172333;
+  background: #b9cf78;
+}
+
+.park-developer-message {
+  min-height: 54px;
+  border: 1px solid #52647a;
+  padding: 8px;
+  color: #d8e7ea;
+  background: #101927;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.park-developer-panel small {
+  color: #91a6b1;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.park-developer-stage {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  cursor: crosshair;
+}
+
+.item-thumb-fishing-rod .item-thumb-shape,
+.item-thumb-fishing-rod .item-thumb-accent {
+  position: absolute;
+  width: 3px;
+  height: 25px;
+  transform: rotate(38deg);
+  background: #8b5a2b;
+}
+
+.item-thumb-fishing-rod .item-thumb-accent {
+  width: 1px;
+  height: 23px;
+  margin-left: 10px;
+  background: #d7e2cf;
+}
+
+.item-thumb-raw-black-bass .item-thumb-shape,
+.item-thumb-raw-crucian-carp .item-thumb-shape,
+.item-thumb-cooked-black-bass .item-thumb-shape,
+.item-thumb-cooked-crucian-carp .item-thumb-shape {
+  position: absolute;
+  width: 27px;
+  height: 12px;
+  border: 2px solid #253332;
+  background: #69805c;
+  clip-path: polygon(0 24%, 72% 0, 100% 50%, 72% 100%, 0 76%, 14% 50%);
+}
+
+.item-thumb-raw-crucian-carp .item-thumb-shape {
+  background: #b9aa80;
+}
+
+.item-thumb-cooked-black-bass .item-thumb-shape,
+.item-thumb-cooked-crucian-carp .item-thumb-shape {
+  border-color: #4b2c1e;
+  background: #c67b36;
+}
+
+.item-thumb-gas-oven-range .item-thumb-shape {
+  position: absolute;
+  width: 26px;
+  height: 25px;
+  border: 2px solid #202b32;
+  background: #77838b;
+}
+
+.item-thumb-gas-oven-range .item-thumb-accent {
+  position: absolute;
+  width: 20px;
+  height: 8px;
+  margin-top: -8px;
+  border: 2px solid #25323a;
+  background: #dc8b31;
+}

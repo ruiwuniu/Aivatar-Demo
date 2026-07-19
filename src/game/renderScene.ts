@@ -8002,6 +8002,32 @@ export const drawAvatar = (
   drawTraitMicroExpression(ctx, dominantTrait, avatar, x, y, frame, theme);
 };
 
+const drawFishInteractionOverlay = (
+  ctx: CanvasRenderingContext2D,
+  avatar: AvatarRuntime,
+  interaction: FurnitureInteractionState | null | undefined,
+  frame: number,
+) => {
+  if (!interaction?.itemId) return;
+  const rawFish = interaction.itemId === "raw-black-bass" || interaction.itemId === "raw-crucian-carp";
+  const cookedFish = interaction.itemId === "cooked-black-bass" || interaction.itemId === "cooked-crucian-carp";
+  const x = Math.round(avatar.x);
+  const y = Math.round(avatar.y);
+  if (interaction.kind === "cook" && rawFish) {
+    const stir = Math.round(Math.sin(frame / 3) * 5);
+    drawPixelRect(ctx, x + 8, y - 28, 20, 4, "#30383b");
+    drawPixelRect(ctx, x + 24, y - 27, 12, 2, "#67462e");
+    drawPixelRect(ctx, x + 12 + stir, y - 43, 3, 20, "#c7b791");
+    return;
+  }
+  if (interaction.kind === "feed" && cookedFish) {
+    const chew = Math.round(Math.sin(frame / 2) * 2);
+    drawPixelRect(ctx, x - 14, y - 24 + chew, 29, 4, "#e4d3ad");
+    drawPixelRect(ctx, x - 10, y - 30 + chew, 20, 8, "#9b512b");
+    drawPixelRect(ctx, x + 8, y - 28 + chew, 7, 5, "#c77936");
+  }
+};
+
 const drawSleepBlanketOverlay = (
   ctx: CanvasRenderingContext2D,
   content: AivatarContent,
@@ -9358,6 +9384,41 @@ const drawCoffeeCup = (
   }
 };
 
+const drawGasOvenRange = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  ghost: "none" | "valid" | "invalid" = "none",
+  frame = 0,
+  cooking = false,
+) => {
+  const tint = ghost === "invalid" ? "#c75b66" : ghost === "valid" ? "#75c48f" : null;
+  const body = tint ?? "#6f7a80";
+  drawPixelRect(ctx, x - 31, y - 45, 62, 47, "#20282d");
+  drawPixelRect(ctx, x - 28, y - 42, 56, 41, body);
+  drawPixelRect(ctx, x - 25, y - 38, 50, 12, "#303a3f");
+  [-17, 0, 17].forEach((offset) => {
+    drawPixelRect(ctx, x + offset - 6, y - 35, 12, 7, "#11191d");
+    drawPixelRect(ctx, x + offset - 3, y - 33, 6, 3, cooking ? "#4db6d6" : "#536067");
+  });
+  drawPixelRect(ctx, x - 22, y - 21, 44, 18, "#1d252a");
+  drawPixelRect(ctx, x - 18, y - 18, 36, 12, cooking ? "#e89039" : "#3b474c");
+  drawPixelRect(ctx, x - 15, y - 16, 30, 8, cooking ? "#ffd36a" : "#222d31");
+  for (let knob = -18; knob <= 18; knob += 12) {
+    drawPixelRect(ctx, x + knob - 2, y - 24, 4, 4, "#c9c9b8");
+  }
+  if (cooking) {
+    const lift = Math.round(Math.sin(frame / 4) * 2);
+    drawPixelRect(ctx, x - 18, y - 51 + lift, 36, 5, "#161d21");
+    drawPixelRect(ctx, x - 12, y - 55 + lift, 25, 5, "#58636a");
+    drawPixelRect(ctx, x + 16, y - 51 + lift, 17, 3, "#33251d");
+    for (let steam = 0; steam < 3; steam += 1) {
+      const rise = (frame * 2 + steam * 9) % 23;
+      drawPixelRect(ctx, x - 9 + steam * 8, y - 59 - rise, 2, 6, "rgba(238,244,230,0.6)");
+    }
+  }
+};
+
 const drawPlaceableItem = (
   ctx: CanvasRenderingContext2D,
   itemId: string,
@@ -9416,6 +9477,9 @@ const drawPlaceableItem = (
       return;
     case "coffee-machine":
       drawCoffeeMachine(ctx, x, y, ghost, frame, brewing);
+      return;
+    case "gas-oven-range":
+      drawGasOvenRange(ctx, x, y, ghost, frame, brewing);
       return;
     case "coffee-cup":
       drawCoffeeCup(ctx, x, y, ghost, coffeeCupHasCoffee, frame);
@@ -9536,9 +9600,9 @@ const drawPlacedItem = (
   const paintingArtwork = activeDraft?.artwork ?? placedArtwork;
   const paintingProgress = activeDraft ? paintingProgressRatio(activeDraft) : 1;
   const brewing =
-    definition.id === "coffee-machine" &&
-    activeInteraction?.kind === "brew" &&
-    activeInteraction.furnitureId === item.id;
+    ((definition.id === "coffee-machine" && activeInteraction?.kind === "brew") ||
+      (definition.id === "gas-oven-range" && activeInteraction?.kind === "cook")) &&
+    activeInteraction?.furnitureId === item.id;
   const gameConsolePlaying = isAvatarPlayingGameConsole(
     avatar,
     item,
@@ -12862,6 +12926,9 @@ export const renderScene = (
       avatarAppearanceId,
     );
   });
+  if (primaryAvatarVisible) {
+    drawFishInteractionOverlay(ctx, avatar, activeInteraction, frame);
+  }
   drawPlacedItems(
     ctx,
     content,

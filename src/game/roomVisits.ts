@@ -1266,7 +1266,12 @@ export const normalizeVisitSession = (
   return {
     type: "aivatar.room.visit",
     visitId: value.visitId,
-    visitKind: value.visitKind === "card-room" ? "card-room" : "room-visit",
+    visitKind:
+      value.visitKind === "card-room"
+        ? "card-room"
+        : value.visitKind === "park"
+          ? "park"
+          : "room-visit",
     phase,
     host,
     guest,
