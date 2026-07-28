@@ -3,7 +3,9 @@ import type { AivatarSaveState, ItemDefinition } from "./types";
 export const SHOP_BULK_PURCHASE_QUANTITY = 10;
 export const SHOP_LONG_PRESS_MS = 550;
 export const SHOP_LONG_PRESS_CLICK_SUPPRESSION_MS = 750;
-export const SHOP_PURCHASE_COOLDOWN_MS = 160;
+export const SHOP_PURCHASE_COOLDOWN_MS = 450;
+
+const SHOP_GLOBAL_PURCHASE_SLOT_ID = "__shop-global-purchase-slot__";
 
 type IdCollection = ReadonlySet<string> | readonly string[];
 
@@ -91,15 +93,20 @@ export const reserveShopPurchaseSlot = (
   now: number,
   cooldownMs = SHOP_PURCHASE_COOLDOWN_MS,
 ) => {
-  const lockedUntil = cooldowns[itemId] ?? 0;
+  const lockedUntil = Math.max(
+    cooldowns[itemId] ?? 0,
+    cooldowns[SHOP_GLOBAL_PURCHASE_SLOT_ID] ?? 0,
+  );
   if (lockedUntil > now) {
     return { reserved: false, cooldowns };
   }
+  const nextLockedUntil = now + cooldownMs;
   return {
     reserved: true,
     cooldowns: {
       ...cooldowns,
-      [itemId]: now + cooldownMs,
+      [itemId]: nextLockedUntil,
+      [SHOP_GLOBAL_PURCHASE_SLOT_ID]: nextLockedUntil,
     },
   };
 };

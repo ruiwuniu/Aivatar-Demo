@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { CardRoomApp } from "./cardRoom/CardRoomApp";
 import { ParkApp } from "./park/ParkApp";
+import { ParkAnimationPreviewApp } from "./park/ParkAnimationPreviewApp";
 import { ParkDeveloperApp } from "./park/ParkDeveloperApp";
 import "./styles.css";
 import "./park/park.css";
@@ -53,6 +54,8 @@ const RootApp =
     ? CardRoomApp
     : view === "park"
       ? ParkApp
+      : view === "park-animation-preview"
+        ? ParkAnimationPreviewApp
       : view === "park-developer"
         ? ParkDeveloperApp
         : App;

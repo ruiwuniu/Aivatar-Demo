@@ -8,8 +8,10 @@ import { drawAvatar } from "../game/renderScene";
 import {
   PARK_SCENE_HEIGHT,
   PARK_SCENE_WIDTH,
+  type ParkFishingSpot,
   type ParkObjectPlacement,
 } from "./parkContent";
+import { drawParkFishingAnimation } from "./parkFishingAnimation";
 import type { ParkFishingPose } from "./parkRuntime";
 import type { ParkRawFishId } from "./parkProbability";
 import {
@@ -23,6 +25,7 @@ import {
   ensureParkReferenceLayers,
   getParkReferenceLayers,
   PARK_REFERENCE_SHADOW_CASTERS,
+  type ParkReferenceOccluder,
   type ParkReferenceLayers,
   type ParkReferenceShadowCaster,
 } from "./parkReferenceLayers";
@@ -262,55 +265,6 @@ const drawParkObject = (ctx: CanvasRenderingContext2D, object: ParkObjectPlaceme
   rect(ctx, object.x - 4, object.y - 57, 8, 60, "#27323a");
   rect(ctx, object.x - 10, object.y - 67, 20, 14, "#1b252c");
   rect(ctx, object.x - 6, object.y - 64, 12, 8, "#ffe4a1");
-};
-
-const drawFish = (
-  ctx: CanvasRenderingContext2D,
-  fishId: ParkRawFishId,
-  x: number,
-  y: number,
-  scale = 1,
-) => {
-  const body = fishId === "raw-black-bass" ? "#526f54" : "#b5aa84";
-  const light = fishId === "raw-black-bass" ? "#9bb870" : "#e1d3a6";
-  rect(ctx, x - 15 * scale, y - 6 * scale, 25 * scale, 12 * scale, "#263b38");
-  rect(ctx, x - 11 * scale, y - 8 * scale, 24 * scale, 14 * scale, body);
-  rect(ctx, x - 6 * scale, y - 5 * scale, 17 * scale, 4 * scale, light);
-  rect(ctx, x + 11 * scale, y - 3 * scale, 9 * scale, 8 * scale, body);
-  rect(ctx, x + 17 * scale, y - 7 * scale, 5 * scale, 15 * scale, "#354a42");
-  rect(ctx, x - 8 * scale, y - 5 * scale, 2 * scale, 2 * scale, "#111b1b");
-};
-
-const drawFishingOverlay = (
-  ctx: CanvasRenderingContext2D,
-  avatar: AvatarRuntime,
-  pose: ParkFishingPose,
-  fishId: ParkRawFishId | undefined,
-  frame: number,
-) => {
-  if (pose === "none") return;
-  const x = Math.round(avatar.x);
-  const y = Math.round(avatar.y);
-  if (pose !== "display") {
-    const reel = pose === "reel" ? Math.sin(frame / 2) * 10 : 0;
-    ctx.strokeStyle = "#50351e";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(x + 7, y - 24);
-    ctx.lineTo(x + 49 - reel, y - 72 + reel * 0.3);
-    ctx.stroke();
-    ctx.strokeStyle = "#d7e2cf";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x + 49 - reel, y - 72 + reel * 0.3);
-    ctx.lineTo(x + 92, pose === "reel" ? y - 28 : y + 3);
-    ctx.stroke();
-    if (pose === "whistle") {
-      rect(ctx, x + 23, y - 45, 4, 4, "#fff0a6");
-      rect(ctx, x + 31, y - 52, 3, 3, "#fff0a6");
-    }
-  }
-  if (pose === "display" && fishId) drawFish(ctx, fishId, x, y - 55, 1.6);
 };
 
 type Rgb = [number, number, number];
@@ -1520,6 +1474,13 @@ const drawReferenceObject = (
   );
 };
 
+const drawReferenceOccluder = (
+  ctx: CanvasRenderingContext2D,
+  occluder: ParkReferenceOccluder,
+) => {
+  ctx.drawImage(occluder.canvas, occluder.x, occluder.y);
+};
+
 const applyTimeGrade = (ctx: CanvasRenderingContext2D, visual: ParkTimeVisual) => {
   ctx.save();
   ctx.beginPath();
@@ -1595,6 +1556,8 @@ export interface ParkRenderOptions {
   petStats?: PetStats;
   memory?: AivatarMemory;
   fishingPose?: ParkFishingPose;
+  fishingPoseStartedAt?: number;
+  fishingSpot?: ParkFishingSpot;
   displayedFish?: ParkRawFishId;
   selectedObjectId?: string;
 }
@@ -1663,6 +1626,13 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   canvas.dataset.parkPondRipplePhase = ((motionNowMs % 10_200) / 10_200).toFixed(3);
   canvas.dataset.parkPondTimeGraded = "true";
   canvas.dataset.parkPondSource = "layered-cellular-canvas";
+  canvas.dataset.parkStaticOccluderCount = String(layers.staticOccluders.length);
+  canvas.dataset.parkStaticOccluderIds = layers.staticOccluders
+    .map((occluder) => occluder.id)
+    .join(",");
+  canvas.dataset.parkStaticOccluderPixels = String(
+    layers.staticOccluders.reduce((total, occluder) => total + occluder.opaquePixelCount, 0),
+  );
   canvas.dataset.parkSeaSparkleCount = String(PARK_SEA_SPARKLE_TOTAL);
   canvas.dataset.parkSeaSparklePhase = ((motionNowMs % 10_000) / 10_000).toFixed(3);
   canvas.dataset.parkShoreFoamInnerMaskPixels = String(layers.shoreFoamInnerMaskPixels);
@@ -1696,6 +1666,12 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   drawPondSurface(ctx, layers, motionNowMs);
 
   const avatarY = options.avatar?.y ?? Number.POSITIVE_INFINITY;
+  const staticOccludersInFront = options.avatar
+    ? layers.staticOccluders.filter((occluder) => occluder.depthY > avatarY)
+    : [];
+  canvas.dataset.parkStaticOccludersInFront = staticOccludersInFront
+    .map((occluder) => occluder.id)
+    .join(",");
   const sorted = [...options.objects].sort((left, right) => left.y - right.y);
   sorted
     .filter((object) => object.y <= avatarY)
@@ -1710,17 +1686,24 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
       options.memory,
       options.avatarAppearanceId,
     );
-    drawFishingOverlay(
+    drawParkFishingAnimation({
       ctx,
-      options.avatar,
-      options.fishingPose ?? "none",
-      options.displayedFish,
-      options.frame,
-    );
+      avatar: options.avatar,
+      appearanceId: options.avatarAppearanceId,
+      pose: options.fishingPose ?? "none",
+      fishId: options.displayedFish,
+      frame: options.frame,
+      nowMs: motionNowMs,
+      poseStartedAt: options.fishingPoseStartedAt ?? motionNowMs,
+      spot: options.fishingSpot,
+    });
   }
   sorted
     .filter((object) => object.y > avatarY)
     .forEach((object) => drawReferenceObject(ctx, layers, object, options.frame));
+  staticOccludersInFront
+    .sort((left, right) => left.depthY - right.depthY)
+    .forEach((occluder) => drawReferenceOccluder(ctx, occluder));
 
   const shoreFoamBreath = resolveShoreFoamBreath(motionNowMs);
   canvas.dataset.parkShoreFoamBreath = shoreFoamBreath.toFixed(3);

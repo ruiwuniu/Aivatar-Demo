@@ -56,6 +56,9 @@ assert.equal(cookingProbability(1_000_000), 0.75);
 assert.equal(isGrass(420, 650), true);
 assert.equal(isGrass(1080, 650), false, "pond must remain non-walkable");
 assert.equal(isGrass(80, 700), false, "cliff must remain non-walkable");
+for (const [x, y] of [[937, 574], [916, 660], [943, 756]]) {
+  assert.equal(isGrass(x, y), false, `fishing bobber target ${x},${y} must be off grass`);
+}
 const morningSun = sunPosition(6.5);
 const noonSun = sunPosition(12.2);
 const duskSun = sunPosition(18.3);
@@ -100,13 +103,37 @@ const cloudAfterWrapX = -cloudTravelWidth - 520 / 2
 assert(cloudBeforeWrapX > 1180, "cloud must be fully beyond the right edge before wrapping");
 assert(cloudAfterWrapX + cloudDrawWidth < 0, "cloud must restart fully beyond the left edge");
 
-const [configText, appText, parkText, parkCssText, runtimeText, rendererText, layersText, cloudAtlasText, typesText, tauriText, groundImage, referenceImage, cloudAtlasImage] = await Promise.all([
+const [
+  configText,
+  appText,
+  mainText,
+  parkText,
+  parkCssText,
+  parkContentText,
+  runtimeText,
+  rendererText,
+  fishingAnimationText,
+  animationPreviewText,
+  layersText,
+  cloudAtlasText,
+  typesText,
+  tauriText,
+  groundImage,
+  referenceImage,
+  cloudAtlasImage,
+  blackBassImage,
+  crucianCarpImage,
+] = await Promise.all([
   read("public/config/aivatar.config.json"),
   read("src/App.tsx"),
+  read("src/main.tsx"),
   read("src/park/ParkApp.tsx"),
   read("src/park/park.css"),
+  read("src/park/parkContent.ts"),
   read("src/park/parkRuntime.ts"),
   read("src/park/parkRenderer.ts"),
+  read("src/park/parkFishingAnimation.ts"),
+  read("src/park/ParkAnimationPreviewApp.tsx"),
   read("src/park/parkReferenceLayers.ts"),
   read("src/park/parkCloudAtlas.ts"),
   read("src/types.ts"),
@@ -114,6 +141,8 @@ const [configText, appText, parkText, parkCssText, runtimeText, rendererText, la
   readBinary("public/park/hilltop-park-midday-ground.png"),
   readBinary("public/park/hilltop-park-reference.png"),
   readBinary("public/park/cumulonimbus-cloud-time-atlas.png"),
+  readBinary("public/park/fish/raw-black-bass-v1.png"),
+  readBinary("public/park/fish/raw-crucian-carp-v1.png"),
 ]);
 const seaLightingText = rendererText.slice(
   rendererText.indexOf("const drawSeaLighting"),
@@ -147,6 +176,41 @@ for (const itemId of [
 ]) {
   assert(itemIds.has(itemId), `missing ${itemId} definition`);
 }
+
+assert.match(parkContentText, /export interface ParkFishingSpot/);
+for (const fishingSpotId of ["upper-bank", "middle-bank", "lower-bank"]) {
+  assert.match(parkContentText, new RegExp(`id: "${fishingSpotId}"`));
+}
+assert.match(runtimeText, /\| "bite"/);
+assert.match(runtimeText, /activity: "bite"/);
+assert.match(runtimeText, /activityStartedAt: pose === state\.fishingPose/);
+assert.match(runtimeText, /fishingSpotId: spot\.id/);
+assert.match(rendererText, /drawParkFishingAnimation/);
+assert.match(rendererText, /fishingPoseStartedAt/);
+assert.match(rendererText, /fishingSpot\?: ParkFishingSpot/);
+assert.match(fishingAnimationText, /const FISHING_HAND_ANCHORS/);
+assert.match(fishingAnimationText, /handAnchorCount: Object\.keys\(FISHING_HAND_ANCHORS\)\.length/);
+assert.match(fishingAnimationText, /quadraticCurveTo\(control\.x, control\.y, tip\.x, tip\.y\)/);
+assert.match(fishingAnimationText, /const drawPixelRipple/);
+assert.match(fishingAnimationText, /const drawSplash/);
+assert.match(fishingAnimationText, /const drawBobber/);
+assert.match(fishingAnimationText, /PARK_FISH_SPRITE_ASSETS/);
+assert.match(fishingAnimationText, /drawProceduralFishFallback/);
+assert.match(fishingAnimationText, /Math\.round\(Math\.sin\(frame \/ 6\)\)/);
+assert.match(fishingAnimationText, /showBobber = flight > 0\.84/);
+assert.match(fishingAnimationText, /showBobber = retrieve < 0\.24/);
+assert.match(animationPreviewText, /全部基础动作/);
+assert.match(animationPreviewText, /钓鱼动作/);
+assert.match(animationPreviewText, /drawParkFishingAnimation/);
+assert.match(animationPreviewText, /重新播放/);
+assert.match(animationPreviewText, /DISPLAY_FISH_OPTIONS/);
+assert.match(animationPreviewText, /previewFishId/);
+assert.match(animationPreviewText, /展示鱼种/);
+assert.match(mainText, /view === "park-animation-preview"/);
+assert.match(parkText, /open_park_animation_preview_window/);
+assert.match(parkText, /打开角色动作预览/);
+assert.match(tauriText, /open_park_animation_preview_window/);
+assert.match(tauriText, /\.inner_size\(760\.0, 600\.0\)/);
 
 assert.match(typesText, /"room-visit" \| "card-room" \| "park"/);
 assert.match(parkText, /guestRuntimeRoomInstanceId === instanceIdRef\.current/);
@@ -498,6 +562,35 @@ assert.match(layersText, /directionY: band\.directionY/);
 assert.match(layersText, /shoreFoamSegments: makeShoreFoamSegments\(distantShoreFoam, sourceImage\)/);
 assert.doesNotMatch(layersText, /CLOUD_RECIPES/);
 assert.match(layersText, /PARK_REFERENCE_SHADOW_CASTERS/);
+assert.match(layersText, /const STATIC_OCCLUDER_RECIPES/);
+for (const occluderId of [
+  "upper-rock-flower-cluster",
+  "left-double-rock-cluster",
+  "middle-single-rock",
+  "middle-white-flower-shrub",
+  "lower-pink-flower-shrub",
+]) {
+  assert.match(layersText, new RegExp(`id: "${occluderId}"`));
+}
+assert.match(layersText, /const makeStaticOccluder/);
+assert.match(layersText, /type OccluderContour/);
+assert.match(layersText, /pointInsideContour/);
+assert.match(layersText, /occluderContourAt/);
+assert.match(layersText, /minComponentPixels/);
+assert.match(layersText, /connectedPixels/);
+assert.match(layersText, /component\.length >= recipe\.minComponentPixels/);
+assert.match(layersText, /mode: "solid"/);
+assert.doesNotMatch(layersText, /OccluderEllipse/);
+assert.doesNotMatch(layersText, /occluderSilhouetteCoverage/);
+assert.match(layersText, /staticOccluders: ParkReferenceOccluder\[\]/);
+assert.match(layersText, /makeStaticOccluder\(neutralBase, recipe\)/);
+assert.match(rendererText, /const staticOccludersInFront = options\.avatar/);
+assert.match(rendererText, /occluder\.depthY > avatarY/);
+assert.match(rendererText, /drawReferenceOccluder\(ctx, occluder\)/);
+assert.match(rendererText, /parkStaticOccluderCount/);
+assert.match(rendererText, /parkStaticOccludersInFront/);
+assert.doesNotMatch(rendererText, /parkOccluderDebug/);
+assert.doesNotMatch(rendererText, /black-background/);
 assert.match(layersText, /seaMaskPixels/);
 assert.match(layersText, /seaMotionMaskPixels/);
 assert.match(layersText, /shoreFoamInnerMaskPixels/);
@@ -547,5 +640,18 @@ assert.equal(
   "eb01111594f15522e71029b9f80f25597baba273533ec30a54fa2b59a4aba899",
   "three-state ImageGen cloud atlas must remain stable",
 );
+for (const [name, image, expectedHash] of [
+  ["black bass", blackBassImage, "6cd6e5413a4d31e1ec4e702ad2c56a6cb4c1b0c532f34fc7d386f9809c3d171e"],
+  ["crucian carp", crucianCarpImage, "6b8ecb86e2c718771fac0dab5720642ff0c389ce22beb4dbc93573e29a3a9084"],
+]) {
+  assert.equal(image.readUInt32BE(16), 64, `${name} sprite width must remain 64px`);
+  assert.equal(image.readUInt32BE(20), 40, `${name} sprite height must remain 40px`);
+  assert.equal(image.readUInt8(25), 6, `${name} sprite must remain RGBA`);
+  assert.equal(
+    createHash("sha256").update(image).digest("hex"),
+    expectedHash,
+    `${name} ImageGen sprite must remain stable`,
+  );
+}
 
-console.log("Park smoke passed: sun/moon bodies removed, ambient shimmer and moving shadows retained, looping clouds, neutral reference layers, handoff, traits, fish, cooking, and window size markers are present.");
+console.log("Park smoke passed: static rock/shrub occluders, ambient water and foam motion, looping clouds, handoff, traits, fish, cooking, and window size markers are present.");

@@ -3583,6 +3583,7 @@ const SidePanelCollapsible = ({
 export const App = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scenePanelRef = useRef<HTMLElement | null>(null);
+  const sidePanelRef = useRef<HTMLElement | null>(null);
   const roomEditPanelRef = useRef<HTMLElement | null>(null);
   const initialSaveSlotsRef = useRef<SaveSlotSummary[] | null>(null);
   const initialActiveSaveSlotIdRef = useRef<string | null>(null);
@@ -3703,8 +3704,8 @@ export const App = () => {
   const [deleteSaveSlot, setDeleteSaveSlot] = useState<SaveSlotSummary | null>(null);
   const [saveSlotMessage, setSaveSlotMessage] = useState("");
   const [cardRoomMessage, setCardRoomMessage] = useState("");
-  const [contentBase, setContentBase] = useState(defaultContent);
   const [parkMessage, setParkMessage] = useState("");
+  const [contentBase, setContentBase] = useState(defaultContent);
   const [configState, setConfigState] = useState<"builtin" | "config" | "fallback">(
     "builtin",
   );
@@ -4736,9 +4737,9 @@ export const App = () => {
     if (handledVisitIdsRef.current.has(visit.visitId)) return;
     handledVisitIdsRef.current.add(visit.visitId);
     const isCardRoomVisit = visit.visitKind === "card-room";
-
     const isParkVisit = visit.visitKind === "park";
     const isAwayVisit = isCardRoomVisit || isParkVisit;
+
     if (isRoomVisitSessionBusy()) {
       publishVisitEnd(visit, "cancelled", ROOM_VISIT_BUSY_CANCEL_REASON);
       setRoomVisitMessage(
@@ -4873,9 +4874,9 @@ export const App = () => {
     }
 
     const isLatestCardRoomVisit = latestVisit.visitKind === "card-room";
-    if (latestVisit.phase === "cancelled") {
     const isLatestParkVisit = latestVisit.visitKind === "park";
     const isLatestAwayVisit = isLatestCardRoomVisit || isLatestParkVisit;
+    if (latestVisit.phase === "cancelled") {
       finishVisitLocally(latestVisit, {
         returnHome: latestVisit.guest.roomInstanceId === ownRoomInstanceId,
         cancelled: true,
@@ -5602,9 +5603,9 @@ export const App = () => {
     const behavior =
       kind === "brew"
         ? "brew"
-        : kind === "paint"
         : kind === "cook"
           ? "brew"
+        : kind === "paint"
           ? "paint"
           : kind === "play"
             ? "play"
@@ -5616,9 +5617,9 @@ export const App = () => {
     const activity =
       kind === "brew"
         ? "Brewing coffee"
-        : kind === "paint"
         : kind === "cook"
           ? "Cooking fish"
+        : kind === "paint"
           ? "Painting"
           : kind === "play"
             ? "Playing games"
@@ -5684,8 +5685,8 @@ export const App = () => {
   ): PlacedItemInteractionKind | null => {
     if (isBuiltinTerminalPlacedItem(placedItem)) return "interact";
     if (placedItem.itemId === COFFEE_MACHINE_ITEM_ID) return "brew";
-    if (placedItem.itemId === "game-console") return "play";
     if (placedItem.itemId === GAS_OVEN_RANGE_ITEM_ID) return "cook";
+    if (placedItem.itemId === "game-console") return "play";
     if (placedItem.itemId === RECORD_PLAYER_ITEM_ID) return "music";
     if (placedItem.itemId === EASEL_ITEM_ID) return "paint";
     return null;
@@ -5794,8 +5795,19 @@ export const App = () => {
     if (!sidePanelOpen) return;
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
-        roomEditPanelRef.current?.scrollIntoView({
-          block: "start",
+        const sidePanel = sidePanelRef.current;
+        const editPanel = roomEditPanelRef.current;
+        if (!sidePanel || !editPanel) return;
+
+        const sidePanelRect = sidePanel.getBoundingClientRect();
+        const editPanelRect = editPanel.getBoundingClientRect();
+        const sidePanelStyle = window.getComputedStyle(sidePanel);
+        const sidePanelPaddingTop = Number.parseFloat(sidePanelStyle.paddingTop) || 0;
+        const nextScrollTop =
+          sidePanel.scrollTop + editPanelRect.top - sidePanelRect.top - sidePanelPaddingTop;
+
+        sidePanel.scrollTo({
+          top: Math.max(0, nextScrollTop),
           behavior: "smooth",
         });
       });
@@ -5934,18 +5946,6 @@ export const App = () => {
     }
   };
 
-  const startCreateSaveSlot = (slotIndex: number) => {
-    setSaveSlotMessage("");
-    setDeleteSaveSlot(null);
-    setCreatingSaveSlotIndex(slotIndex);
-    setSelectedAvatarAppearanceId(DEFAULT_AVATAR_APPEARANCE_ID);
-    setNewSaveAvatarName(contentBase.avatar.name);
-  };
-
-  const installSaveIntoSlot = (slotIndex: number, nextSave: AivatarSaveState) => {
-    if (saveSlotsRef.current.some((slot) => slot.slotIndex === slotIndex)) return;
-    persistCurrentSaveSlot();
-
   const openParkWindow = async () => {
     setParkMessage("");
     const slotId = activeSaveSlotIdRef.current;
@@ -5967,6 +5967,18 @@ export const App = () => {
       setParkMessage(detail || ui("park.windowDesktopOnly"));
     }
   };
+
+  const startCreateSaveSlot = (slotIndex: number) => {
+    setSaveSlotMessage("");
+    setDeleteSaveSlot(null);
+    setCreatingSaveSlotIndex(slotIndex);
+    setSelectedAvatarAppearanceId(DEFAULT_AVATAR_APPEARANCE_ID);
+    setNewSaveAvatarName(contentBase.avatar.name);
+  };
+
+  const installSaveIntoSlot = (slotIndex: number, nextSave: AivatarSaveState) => {
+    if (saveSlotsRef.current.some((slot) => slot.slotIndex === slotIndex)) return;
+    persistCurrentSaveSlot();
 
     const slotId = createSaveSlotId();
     const timestamp = new Date().toISOString();
@@ -6266,18 +6278,6 @@ export const App = () => {
   }, [activeSaveSlotId, save]);
 
   useEffect(() => {
-    roomSnapshotRef.current = roomSnapshot;
-  }, [roomSnapshot]);
-
-  useEffect(() => {
-    activeVisitRef.current = activeVisit;
-  }, [activeVisit]);
-
-  useEffect(() => {
-    roomVisitorRef.current = roomVisitor;
-  }, [roomVisitor]);
-
-  useEffect(() => {
     if (!activeSaveSlotId) return;
     const storageKey = saveSlotStorageKey(activeSaveSlotId);
     const mergeParkSave = (event: StorageEvent) => {
@@ -6303,6 +6303,18 @@ export const App = () => {
     window.addEventListener("storage", mergeParkSave);
     return () => window.removeEventListener("storage", mergeParkSave);
   }, [activeSaveSlotId, contentBase]);
+
+  useEffect(() => {
+    roomSnapshotRef.current = roomSnapshot;
+  }, [roomSnapshot]);
+
+  useEffect(() => {
+    activeVisitRef.current = activeVisit;
+  }, [activeVisit]);
+
+  useEffect(() => {
+    roomVisitorRef.current = roomVisitor;
+  }, [roomVisitor]);
 
   useEffect(() => {
     avatarAwayRef.current = avatarAway;
@@ -6945,6 +6957,7 @@ export const App = () => {
     let paintAccumulator = 0;
     let paintingProgressAccumulator = 0;
     let coffeeAccumulator = 0;
+    let cookingDecisionAccumulator = 0;
     let bgmAutonomousStopAccumulator = 0;
     let uiAccumulator = 0;
     let exploreAccumulator = 0;
@@ -6957,7 +6970,6 @@ export const App = () => {
     let lastNavLearningSuccessKey = "";
     let lastNavLearningFailureKey = "";
     let autonomousActionWatchKey = "";
-    let cookingDecisionAccumulator = 0;
     let autonomousActionWatchSeconds = 0;
     let stopped = false;
 
@@ -7748,6 +7760,8 @@ export const App = () => {
               }
             } else if (pendingWorldInteraction.kind === "brew") {
               startCoffeeMachineInteraction(pendingWorldInteraction.placedItem);
+            } else if (pendingWorldInteraction.kind === "cook") {
+              startGasRangeCooking(pendingWorldInteraction.placedItem);
             } else if (pendingWorldInteraction.kind === "paint") {
               const progress = ensurePaintingDraftForEasel(
                 pendingWorldInteraction.placedItem,
@@ -7760,8 +7774,6 @@ export const App = () => {
                 facing: "front",
                 activityLabel: "Painting",
               };
-            } else if (pendingWorldInteraction.kind === "cook") {
-              startGasRangeCooking(pendingWorldInteraction.placedItem);
               setAvatar(runtimeRef.current);
               updateActiveInteraction({
                 kind: "none",
@@ -7952,18 +7964,6 @@ export const App = () => {
           }));
         }
       } else if (
-        currentInteraction?.kind === "brew" &&
-        currentInteraction.endsAt &&
-        now >= currentInteraction.endsAt
-      ) {
-        coffeeAccumulator = 0;
-        if (runtimeActionBehavior(runtimeRef.current) === "brew") {
-          runtimeRef.current = {
-            ...runtimeRef.current,
-            targetX: runtimeRef.current.x,
-            targetY: runtimeRef.current.y,
-            behavior: "idle",
-      } else if (
         currentInteraction?.kind === "cook" &&
         currentInteraction.endsAt &&
         now >= currentInteraction.endsAt
@@ -8014,6 +8014,18 @@ export const App = () => {
           endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
           progress: 1,
         });
+      } else if (
+        currentInteraction?.kind === "brew" &&
+        currentInteraction.endsAt &&
+        now >= currentInteraction.endsAt
+      ) {
+        coffeeAccumulator = 0;
+        if (runtimeActionBehavior(runtimeRef.current) === "brew") {
+          runtimeRef.current = {
+            ...runtimeRef.current,
+            targetX: runtimeRef.current.x,
+            targetY: runtimeRef.current.y,
+            behavior: "idle",
             behaviorTimer: 2,
             expression: "calm",
             activityLabel: undefined,
@@ -8500,18 +8512,6 @@ export const App = () => {
         coffeeAccumulator = 0;
       }
 
-      syncUiMirror();
-
-      if (statAccumulator >= PET_STATS_TICK_INTERVAL_SECONDS) {
-        const elapsedStats = statAccumulator;
-        statAccumulator = 0;
-        setSave((current) => ({
-          ...current,
-          petStats: applyPetTick(current.petStats, elapsedStats, {
-            moodDecayMultiplier: activeRecordPlayerIdRef.current
-              ? MUSIC_MOOD_DECAY_MULTIPLIER
-              : 1,
-          }),
       const gasRange = currentContent.placedItems?.find(
         (item) => item.itemId === GAS_OVEN_RANGE_ITEM_ID,
       );
@@ -8539,6 +8539,18 @@ export const App = () => {
         cookingDecisionAccumulator = 0;
       }
 
+      syncUiMirror();
+
+      if (statAccumulator >= PET_STATS_TICK_INTERVAL_SECONDS) {
+        const elapsedStats = statAccumulator;
+        statAccumulator = 0;
+        setSave((current) => ({
+          ...current,
+          petStats: applyPetTick(current.petStats, elapsedStats, {
+            moodDecayMultiplier: activeRecordPlayerIdRef.current
+              ? MUSIC_MOOD_DECAY_MULTIPLIER
+              : 1,
+          }),
         }));
       }
 
@@ -8879,18 +8891,6 @@ export const App = () => {
       return;
     }
 
-    const highPriorityStatus = isHighPriorityStatus(effectiveStatus);
-
-    if (item.id === COFFEE_ITEM_ID) {
-      const table = contentRef.current.room.furniture.find(
-        (furniture) => furniture.id === TABLE_FURNITURE_ID,
-      );
-
-      if (!table) {
-        updateActiveInteraction({
-          kind: "feed",
-          furnitureId: TABLE_FURNITURE_ID,
-          furnitureName: item.name,
     if (item.kind === "tool" || item.kind === "ingredient") {
       updateActiveInteraction({
         kind: "none",
@@ -8903,6 +8903,18 @@ export const App = () => {
       return;
     }
 
+    const highPriorityStatus = isHighPriorityStatus(effectiveStatus);
+
+    if (item.id === COFFEE_ITEM_ID) {
+      const table = contentRef.current.room.furniture.find(
+        (furniture) => furniture.id === TABLE_FURNITURE_ID,
+      );
+
+      if (!table) {
+        updateActiveInteraction({
+          kind: "feed",
+          furnitureId: TABLE_FURNITURE_ID,
+          furnitureName: item.name,
           message: ui("message.noFood", { name: item.name }),
           startedAt: performance.now(),
           bubbleText: ui("thought.noFood"),
@@ -10744,6 +10756,7 @@ export const App = () => {
         }),
         startedAt: performance.now(),
         bubbleText: ui("thought.coffee"),
+        itemId: coffeeDefinition.id,
       });
       return;
     }
@@ -10756,7 +10769,6 @@ export const App = () => {
       }))
       .filter(
         (candidate): candidate is { entry: InventoryEntry; item: ItemDefinition } => {
-        itemId: coffeeDefinition.id,
           if (!candidate.item) return false;
           if (
             candidate.item.id === COFFEE_ITEM_ID &&
@@ -10860,6 +10872,7 @@ export const App = () => {
           : consumable.item.kind === "food"
             ? ui("thought.food")
             : ui("thought.drink"),
+      itemId: consumable.item.id,
     });
   };
 
@@ -10872,7 +10885,6 @@ export const App = () => {
       ...current,
       wallet: { ...current.wallet, bits: current.wallet.bits + bitsEarned },
       workBoostUntil: boostUntil,
-      itemId: consumable.item.id,
     }));
 
     runtimeRef.current = setBehavior(runtimeRef.current, behavior, contentRef.current, 6, undefined, {
@@ -10993,18 +11005,6 @@ export const App = () => {
     });
   };
 
-  const interactWithFurniture = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    setSceneContextMenu(null);
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const scenePoint = canvasPointToScene(canvas, event.clientX, event.clientY);
-    if (!scenePoint) return;
-
-    if (placingItemRef.current) {
-      clearPendingFurnitureInteraction();
-      placeInventoryItem(placingItemRef.current, scenePoint.x, scenePoint.y);
-      return;
   const startGasRangeCooking = (placedItem: PlacedItem) => {
     const rawFishId = firstRawFishInFridge(saveRef.current.furnitureStorage);
     const rangeName =
@@ -11046,6 +11046,18 @@ export const App = () => {
     });
   };
 
+  const interactWithFurniture = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    setSceneContextMenu(null);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const scenePoint = canvasPointToScene(canvas, event.clientX, event.clientY);
+    if (!scenePoint) return;
+
+    if (placingItemRef.current) {
+      clearPendingFurnitureInteraction();
+      placeInventoryItem(placingItemRef.current, scenePoint.x, scenePoint.y);
+      return;
     }
 
     if (movingPlacedItemRef.current) {
@@ -11378,6 +11390,7 @@ export const App = () => {
       return;
     }
     if (saveRef.current.wallet.bits < item.price) return;
+    if (!reserveShopPurchaseSlot(item.id)) return;
 
     setSave((current) => {
       const purchased = current.purchasedItemIds.includes(item.id);
@@ -11453,6 +11466,13 @@ export const App = () => {
       });
       return;
     }
+
+    const currentSave = saveRef.current;
+    const currentlyPurchased = currentSave.purchasedItemIds.includes(item.id);
+    const currentlyApplied = currentSave.activeFurnitureSkinIds?.[targetFurnitureId] === item.id;
+    if (currentlyApplied) return;
+    if (!currentlyPurchased && currentSave.wallet.bits < item.price) return;
+    if (!reserveShopPurchaseSlot(item.id)) return;
 
     setSave((current) => {
       const purchased = current.purchasedItemIds.includes(item.id);
@@ -11553,6 +11573,7 @@ export const App = () => {
       (currentlyPurchased ? 0 : item.price) +
       (currentlyApplied ? 0 : SURFACE_APPLY_COST);
     if (currentSpendCost <= 0 || currentSave.wallet.bits < currentSpendCost) return;
+    if (!reserveShopPurchaseSlot(item.id)) return;
 
     setSave((current) => {
       const purchased = current.purchasedItemIds.includes(item.id);
@@ -11953,6 +11974,8 @@ export const App = () => {
     sceneContextMenu?.target.kind === "placed-item"
       ? sceneContextMenu.target.action === "brew"
         ? ui("scene.action.brew")
+        : sceneContextMenu.target.action === "cook"
+          ? ui("scene.action.cook")
         : sceneContextMenu.target.action === "paint"
           ? ui("scene.action.paint")
           : sceneContextMenu.target.action === "play"
@@ -11974,8 +11997,6 @@ export const App = () => {
   }) => (
     <svg
       className="painting-thumbnail"
-        : sceneContextMenu.target.action === "cook"
-          ? ui("scene.action.cook")
       viewBox={`0 0 ${artwork.width} ${artwork.height}`}
       preserveAspectRatio="none"
       aria-label={artwork.title}
@@ -13184,7 +13205,7 @@ export const App = () => {
         ) : null}
       </section>
 
-      <aside className="side-panel" aria-hidden={!sidePanelOpen}>
+      <aside ref={sidePanelRef} className="side-panel" aria-hidden={!sidePanelOpen}>
         <header className="status-header">
           <div>
             <p className="eyebrow">
@@ -14385,6 +14406,16 @@ export const App = () => {
               {cardRoomMessage ? (
                 <small className="settings-action-message">{cardRoomMessage}</small>
               ) : null}
+              <button
+                type="button"
+                className="pixel-button"
+                onClick={() => void openParkWindow()}
+              >
+                {ui("park.open")}
+              </button>
+              {parkMessage ? (
+                <small className="settings-action-message">{parkMessage}</small>
+              ) : null}
           </SidePanelCollapsible>
         </section>
 
@@ -14406,16 +14437,6 @@ export const App = () => {
               <span className="debug-toggle-chevron" aria-hidden="true">
                 {debugPanelOpen ? "-" : "+"}
               </span>
-              <button
-                type="button"
-                className="pixel-button"
-                onClick={() => void openParkWindow()}
-              >
-                {ui("park.open")}
-              </button>
-              {parkMessage ? (
-                <small className="settings-action-message">{parkMessage}</small>
-              ) : null}
             </button>
 
           <SidePanelCollapsible open={debugPanelOpen} className="debug-submenu">

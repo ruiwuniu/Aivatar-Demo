@@ -19,6 +19,15 @@ export interface ParkReferenceStamp {
   anchorY: number;
 }
 
+export interface ParkReferenceOccluder {
+  id: string;
+  canvas: HTMLCanvasElement;
+  x: number;
+  y: number;
+  depthY: number;
+  opaquePixelCount: number;
+}
+
 export interface ParkShoreFoamSegment {
   id: string;
   group: ParkShoreFoamGroup;
@@ -48,6 +57,7 @@ export interface ParkReferenceLayers {
   distantShoreFoamMask: HTMLCanvasElement;
   shoreFoamMotionMask: HTMLCanvasElement;
   shoreFoamSegments: ParkShoreFoamSegment[];
+  staticOccluders: ParkReferenceOccluder[];
   sun: ParkReferenceStamp;
   seaMaskPixels: number;
   seaMotionMaskPixels: number;
@@ -80,6 +90,26 @@ type StampRecipe = {
   threshold: number;
 };
 
+type OccluderPoint = { x: number; y: number };
+
+type OccluderContour = {
+  points: OccluderPoint[];
+  mode?: "adaptive" | "solid";
+  threshold?: number;
+};
+
+type OccluderRecipe = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  depthY: number;
+  threshold: number;
+  minComponentPixels: number;
+  contours: OccluderContour[];
+};
+
 const STAMP_RECIPES: Partial<Record<ParkObjectKind, StampRecipe>> = {
   tree: { x: 442, y: 88, width: 250, height: 242, anchorX: 134, anchorY: 225, threshold: 34 },
   flowers: { x: 510, y: 556, width: 96, height: 64, anchorX: 48, anchorY: 54, threshold: 24 },
@@ -88,6 +118,79 @@ const STAMP_RECIPES: Partial<Record<ParkObjectKind, StampRecipe>> = {
   bench: { x: 754, y: 267, width: 101, height: 78, anchorX: 50, anchorY: 67, threshold: 30 },
   lamp: { x: 925, y: 653, width: 55, height: 92, anchorX: 28, anchorY: 82, threshold: 33 },
 };
+
+const STATIC_OCCLUDER_RECIPES: OccluderRecipe[] = [
+  {
+    id: "upper-rock-flower-cluster",
+    x: 360,
+    y: 300,
+    width: 135,
+    height: 80,
+    depthY: 370,
+    threshold: 24,
+    minComponentPixels: 7,
+    contours: [
+      { points: [{ x: 29, y: 33 }, { x: 35, y: 25 }, { x: 48, y: 21 }, { x: 64, y: 21 }, { x: 75, y: 27 }, { x: 76, y: 39 }, { x: 67, y: 48 }, { x: 49, y: 50 }, { x: 35, y: 44 }] },
+      { points: [{ x: 77, y: 36 }, { x: 84, y: 27 }, { x: 104, y: 25 }, { x: 118, y: 32 }, { x: 122, y: 44 }, { x: 115, y: 54 }, { x: 91, y: 55 }, { x: 78, y: 48 }] },
+      { threshold: 46, points: [{ x: 10, y: 51 }, { x: 20, y: 41 }, { x: 35, y: 40 }, { x: 49, y: 46 }, { x: 64, y: 49 }, { x: 82, y: 50 }, { x: 98, y: 48 }, { x: 117, y: 51 }, { x: 125, y: 57 }, { x: 119, y: 63 }, { x: 99, y: 64 }, { x: 79, y: 68 }, { x: 57, y: 67 }, { x: 36, y: 65 }, { x: 19, y: 62 }, { x: 9, y: 57 }] },
+    ],
+  },
+  {
+    id: "left-double-rock-cluster",
+    x: 165,
+    y: 430,
+    width: 140,
+    height: 95,
+    depthY: 516,
+    threshold: 24,
+    minComponentPixels: 9,
+    contours: [
+      { points: [{ x: 35, y: 39 }, { x: 40, y: 31 }, { x: 53, y: 25 }, { x: 78, y: 25 }, { x: 93, y: 33 }, { x: 96, y: 43 }, { x: 89, y: 51 }, { x: 57, y: 56 }, { x: 42, y: 48 }] },
+      { points: [{ x: 27, y: 64 }, { x: 35, y: 55 }, { x: 50, y: 49 }, { x: 76, y: 50 }, { x: 90, y: 60 }, { x: 88, y: 73 }, { x: 75, y: 82 }, { x: 45, y: 83 }, { x: 30, y: 74 }] },
+      { points: [{ x: 96, y: 61 }, { x: 104, y: 54 }, { x: 120, y: 56 }, { x: 132, y: 65 }, { x: 131, y: 75 }, { x: 119, y: 82 }, { x: 103, y: 77 }] },
+    ],
+  },
+  {
+    id: "middle-single-rock",
+    x: 570,
+    y: 455,
+    width: 90,
+    height: 67,
+    depthY: 515,
+    threshold: 25,
+    minComponentPixels: 7,
+    contours: [
+      { points: [{ x: 20, y: 40 }, { x: 24, y: 32 }, { x: 36, y: 27 }, { x: 52, y: 27 }, { x: 64, y: 32 }, { x: 67, y: 41 }, { x: 60, y: 50 }, { x: 35, y: 53 }, { x: 23, y: 47 }] },
+      { threshold: 46, points: [{ x: 15, y: 50 }, { x: 26, y: 45 }, { x: 38, y: 50 }, { x: 53, y: 50 }, { x: 68, y: 47 }, { x: 78, y: 51 }, { x: 76, y: 57 }, { x: 61, y: 60 }, { x: 29, y: 59 }, { x: 17, y: 55 }] },
+    ],
+  },
+  {
+    id: "middle-white-flower-shrub",
+    x: 505,
+    y: 550,
+    width: 125,
+    height: 80,
+    depthY: 622,
+    threshold: 20,
+    minComponentPixels: 6,
+    contours: [
+      { mode: "solid", points: [{ x: 22, y: 60 }, { x: 30, y: 50 }, { x: 43, y: 46 }, { x: 55, y: 40 }, { x: 70, y: 43 }, { x: 84, y: 42 }, { x: 96, y: 47 }, { x: 108, y: 53 }, { x: 110, y: 63 }, { x: 102, y: 70 }, { x: 89, y: 75 }, { x: 70, y: 77 }, { x: 51, y: 73 }, { x: 34, y: 69 }] },
+    ],
+  },
+  {
+    id: "lower-pink-flower-shrub",
+    x: 340,
+    y: 620,
+    width: 155,
+    height: 110,
+    depthY: 716,
+    threshold: 20,
+    minComponentPixels: 7,
+    contours: [
+      { mode: "solid", points: [{ x: 18, y: 67 }, { x: 22, y: 51 }, { x: 34, y: 42 }, { x: 40, y: 25 }, { x: 58, y: 17 }, { x: 72, y: 16 }, { x: 84, y: 24 }, { x: 97, y: 21 }, { x: 108, y: 30 }, { x: 117, y: 45 }, { x: 130, y: 50 }, { x: 137, y: 63 }, { x: 132, y: 78 }, { x: 119, y: 88 }, { x: 100, y: 92 }, { x: 83, y: 98 }, { x: 61, y: 91 }, { x: 42, y: 94 }, { x: 27, y: 82 }] },
+    ],
+  },
+];
 
 export const PARK_REFERENCE_SHADOW_CASTERS: ParkReferenceShadowCaster[] = [
   { x: 803, y: 321, width: 54, length: 62, strength: 0.48 },
@@ -214,6 +317,141 @@ const insideEllipse = (
 const smoothFeather = (value: number) => {
   const clamped = Math.max(0, Math.min(1, value));
   return clamped * clamped * (3 - 2 * clamped);
+};
+
+const pointInsideContour = (
+  x: number,
+  y: number,
+  contour: OccluderContour,
+) => {
+  let inside = false;
+  for (let index = 0, previous = contour.points.length - 1; index < contour.points.length; previous = index, index += 1) {
+    const currentPoint = contour.points[index]!;
+    const previousPoint = contour.points[previous]!;
+    const crosses = (currentPoint.y > y) !== (previousPoint.y > y)
+      && x < ((previousPoint.x - currentPoint.x) * (y - currentPoint.y))
+        / (previousPoint.y - currentPoint.y) + currentPoint.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+};
+
+const occluderContourAt = (
+  x: number,
+  y: number,
+  contours: OccluderContour[],
+) => contours.find((contour) => pointInsideContour(x + 0.5, y + 0.5, contour));
+
+const makeStaticOccluder = (
+  source: HTMLCanvasElement,
+  recipe: OccluderRecipe,
+): ParkReferenceOccluder => {
+  const canvas = newCanvas(recipe.width, recipe.height);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    source,
+    recipe.x,
+    recipe.y,
+    recipe.width,
+    recipe.height,
+    0,
+    0,
+    recipe.width,
+    recipe.height,
+  );
+  const image = ctx.getImageData(0, 0, recipe.width, recipe.height);
+  const extractedAlpha = new Uint8ClampedArray(recipe.width * recipe.height);
+  for (let y = 0; y < recipe.height; y += 1) {
+    const background = edgeColorForRow(image.data, recipe.width, y);
+    for (let x = 0; x < recipe.width; x += 1) {
+      const pixelIndex = y * recipe.width + x;
+      const offset = pixelIndex * 4;
+      const contour = occluderContourAt(x, y, recipe.contours);
+      if (!contour) continue;
+      if (contour.mode === "solid") {
+        extractedAlpha[pixelIndex] = 255;
+        continue;
+      }
+      const distance = colorDistance(
+        image.data[offset] ?? 0,
+        image.data[offset + 1] ?? 0,
+        image.data[offset + 2] ?? 0,
+        background,
+      );
+      const subject = smoothFeather((distance - (contour.threshold ?? recipe.threshold)) / 12);
+      extractedAlpha[pixelIndex] = Math.round(subject * 255);
+    }
+  }
+
+  const connectedPixels = new Uint8Array(recipe.width * recipe.height);
+  const visitedPixels = new Uint8Array(recipe.width * recipe.height);
+  const neighbours = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1, 0], [1, 0],
+    [-1, 1], [0, 1], [1, 1],
+  ] as const;
+  for (let startY = 0; startY < recipe.height; startY += 1) {
+    for (let startX = 0; startX < recipe.width; startX += 1) {
+      const startIndex = startY * recipe.width + startX;
+      if (visitedPixels[startIndex] || (extractedAlpha[startIndex] ?? 0) < 64) continue;
+      const component: number[] = [];
+      const queue = [startIndex];
+      visitedPixels[startIndex] = 1;
+      for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+        const pixelIndex = queue[queueIndex]!;
+        component.push(pixelIndex);
+        const x = pixelIndex % recipe.width;
+        const y = Math.floor(pixelIndex / recipe.width);
+        neighbours.forEach(([deltaX, deltaY]) => {
+          const sampleX = x + deltaX;
+          const sampleY = y + deltaY;
+          if (sampleX < 0 || sampleX >= recipe.width || sampleY < 0 || sampleY >= recipe.height) return;
+          const sampleIndex = sampleY * recipe.width + sampleX;
+          if (visitedPixels[sampleIndex] || (extractedAlpha[sampleIndex] ?? 0) < 64) return;
+          visitedPixels[sampleIndex] = 1;
+          queue.push(sampleIndex);
+        });
+      }
+      if (component.length >= recipe.minComponentPixels) {
+        component.forEach((pixelIndex) => {
+          connectedPixels[pixelIndex] = 1;
+        });
+      }
+    }
+  }
+
+  let opaquePixelCount = 0;
+  for (let y = 0; y < recipe.height; y += 1) {
+    for (let x = 0; x < recipe.width; x += 1) {
+      const pixelIndex = y * recipe.width + x;
+      let alpha = extractedAlpha[pixelIndex] ?? 0;
+      if (!connectedPixels[pixelIndex]) {
+        const touchesConnectedPixel = alpha >= 24 && neighbours.some(([deltaX, deltaY]) => {
+          const sampleX = x + deltaX;
+          const sampleY = y + deltaY;
+          return sampleX >= 0
+            && sampleX < recipe.width
+            && sampleY >= 0
+            && sampleY < recipe.height
+            && connectedPixels[sampleY * recipe.width + sampleX] === 1;
+        });
+        if (!touchesConnectedPixel) alpha = 0;
+      }
+      image.data[pixelIndex * 4 + 3] = alpha;
+      if (alpha > 24) opaquePixelCount += 1;
+    }
+  }
+  ctx.clearRect(0, 0, recipe.width, recipe.height);
+  ctx.putImageData(image, 0, 0);
+  return {
+    id: recipe.id,
+    canvas,
+    x: recipe.x,
+    y: recipe.y,
+    depthY: recipe.depthY,
+    opaquePixelCount,
+  };
 };
 
 const makeNeutralBase = (source: HTMLCanvasElement) => {
@@ -1151,6 +1389,8 @@ const buildLayers = (
     pondEdgeMask,
     pondRimMask,
   } = makePondMasks(neutralBase);
+  const staticOccluders = STATIC_OCCLUDER_RECIPES.map((recipe) =>
+    makeStaticOccluder(neutralBase, recipe));
   return {
     full,
     neutralBase,
@@ -1166,6 +1406,7 @@ const buildLayers = (
     distantShoreFoamMask,
     shoreFoamMotionMask,
     shoreFoamSegments,
+    staticOccluders,
     sun: makeSunStamp(stampFull),
     seaMaskPixels: countOpaquePixels(seaMask),
     seaMotionMaskPixels: countOpaquePixels(seaMotionMask),

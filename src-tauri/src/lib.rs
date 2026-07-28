@@ -162,6 +162,10 @@ fn park_developer_window_label(host_slot_id: &str) -> String {
     format!("park-developer-{:016x}", hash_value(host_slot_id))
 }
 
+fn park_animation_preview_window_label(host_slot_id: &str) -> String {
+    format!("park-animation-preview-{:016x}", hash_value(host_slot_id))
+}
+
 fn url_component(value: &str) -> String {
     let mut encoded = String::new();
 
@@ -1553,6 +1557,48 @@ async fn open_park_developer_window(
     Ok(ParkWindowResult { label })
 }
 
+#[tauri::command]
+async fn open_park_animation_preview_window(
+    app: tauri::AppHandle,
+    request: ParkWindowRequest,
+) -> Result<ParkWindowResult, String> {
+    let host_slot_id = request
+        .host_slot_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("local-park");
+    let label = park_animation_preview_window_label(host_slot_id);
+    if let Some(window) = app.get_webview_window(&label) {
+        window
+            .set_focus()
+            .map_err(|error| format!("Could not focus park animation preview: {error}"))?;
+        return Ok(ParkWindowResult { label });
+    }
+
+    let url = format!(
+        "./?view=park-animation-preview&hostSlotId={}",
+        url_component(host_slot_id)
+    );
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
+    )
+    .title("Aivatar - Character Animation Preview")
+    .inner_size(760.0, 600.0)
+    .min_inner_size(680.0, 520.0)
+    .resizable(true)
+    .maximizable(false)
+    .always_on_top(false)
+    .decorations(true)
+    .focused(true)
+    .build()
+    .map_err(|error| format!("Could not open park animation preview: {error}"))?;
+
+    Ok(ParkWindowResult { label })
+}
+
 fn safe_social_room_memory_key(key: &str) -> String {
     let sanitized: String = key
         .chars()
@@ -1642,6 +1688,7 @@ pub fn run() {
             open_card_room_window,
             open_park_window,
             open_park_developer_window,
+            open_park_animation_preview_window,
             get_agent_integrations,
             enable_agent_integration,
             read_social_room_memory,

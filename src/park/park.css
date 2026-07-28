@@ -103,6 +103,160 @@
   line-height: 1.45;
 }
 
+.park-animation-preview-app {
+  display: grid;
+  grid-template-rows: minmax(180px, 42vh) minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  color: #f7edcf;
+  background: #111927;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.park-animation-preview-stage {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  place-items: center;
+  border-bottom: 3px solid #8aa24b;
+  padding: 14px;
+  background:
+    linear-gradient(rgba(12, 20, 32, 0.46), rgba(12, 20, 32, 0.72)),
+    #172333;
+}
+
+.park-animation-preview-stage canvas {
+  display: block;
+  width: auto;
+  height: min(100%, 320px);
+  max-width: 100%;
+  max-height: 100%;
+  box-sizing: border-box;
+  aspect-ratio: 7 / 4;
+  object-fit: contain;
+  border: 3px solid #c9ad69;
+  background: #142438;
+  box-shadow: 6px 6px 0 rgba(4, 8, 14, 0.62);
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.park-animation-preview-caption {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  border: 1px solid rgba(255, 232, 176, 0.72);
+  padding: 4px 7px;
+  color: #fff0c5;
+  background: rgba(13, 23, 37, 0.82);
+  font-size: 11px;
+}
+
+.park-animation-preview-controls {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  box-sizing: border-box;
+  isolation: isolate;
+  padding: 12px 14px 18px;
+  background: #172333;
+}
+
+.park-animation-preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  border-bottom: 1px solid #53647b;
+  padding-bottom: 9px;
+}
+
+.park-animation-preview-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #d7e4d0;
+  font-size: 11px;
+}
+
+.park-animation-preview-toolbar select,
+.park-animation-preview-app button {
+  border: 1px solid #70809a;
+  border-radius: 0;
+  padding: 5px 7px;
+  color: #e7edf1;
+  background: #263449;
+  font: inherit;
+}
+
+.park-animation-preview-app button {
+  cursor: pointer;
+}
+
+.park-animation-preview-app button:hover,
+.park-animation-preview-app button.active {
+  border-color: #ffe2a1;
+  color: #172333;
+  background: #f0c679;
+}
+
+.park-animation-preview-app button:focus-visible,
+.park-animation-preview-toolbar select:focus-visible {
+  outline: 2px solid #fff0c5;
+  outline-offset: 2px;
+}
+
+.park-animation-preview-facing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.park-animation-preview-group {
+  display: grid;
+  gap: 6px;
+}
+
+.park-animation-preview-group h2 {
+  margin: 0;
+  color: #cbdab7;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.park-animation-preview-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+@media (max-height: 640px) {
+  .park-animation-preview-app {
+    grid-template-rows: minmax(160px, 38vh) minmax(0, 1fr);
+  }
+
+  .park-animation-preview-stage {
+    padding: 8px;
+  }
+
+  .park-animation-preview-stage canvas {
+    height: min(100%, 240px);
+  }
+
+  .park-animation-preview-caption {
+    right: 14px;
+    bottom: 14px;
+  }
+}
+
 .park-developer-app {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -204,8 +358,6 @@
   background: #d7e2cf;
 }
 
-.item-thumb-raw-black-bass .item-thumb-shape,
-.item-thumb-raw-crucian-carp .item-thumb-shape,
 .item-thumb-cooked-black-bass .item-thumb-shape,
 .item-thumb-cooked-crucian-carp .item-thumb-shape {
   position: absolute;
@@ -216,8 +368,25 @@
   clip-path: polygon(0 24%, 72% 0, 100% 50%, 72% 100%, 0 76%, 14% 50%);
 }
 
+.item-thumb-raw-black-bass .item-thumb-shape,
 .item-thumb-raw-crucian-carp .item-thumb-shape {
-  background: #b9aa80;
+  position: absolute;
+  left: -7px;
+  top: -11px;
+  width: 32px;
+  height: 20px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  image-rendering: pixelated;
+}
+
+.item-thumb-raw-black-bass .item-thumb-shape {
+  background-image: url("/park/fish/raw-black-bass-v1.png");
+}
+
+.item-thumb-raw-crucian-carp .item-thumb-shape {
+  background-image: url("/park/fish/raw-crucian-carp-v1.png");
 }
 
 .item-thumb-cooked-black-bass .item-thumb-shape,

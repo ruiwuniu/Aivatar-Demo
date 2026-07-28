@@ -10,6 +10,8 @@ const repoRoot = process.cwd();
 const COOKIE_PRICE = 6;
 const START_BITS = 200;
 const RAPID_CLICK_COUNT = 30;
+const RAPID_CLICK_INTERVAL_MS = 30;
+const EXPECTED_RAPID_PURCHASES = 2;
 const LONG_PRESS_MS = 650;
 const smokeSlotId = `shop-ui-smoke-${Date.now()}`;
 const smokeAvatarId = "avatar-shop-ui-smoke";
@@ -324,13 +326,14 @@ try {
   }
 
   const before = await evaluate(client, readSaveExpression);
-  const rapidResult = await evaluate(client, `(() => {
+  const rapidResult = await evaluate(client, `(async () => {
     const button = ${cookieButtonExpression};
     if (!button) return { found: false };
     for (let index = 0; index < ${RAPID_CLICK_COUNT}; index += 1) {
       button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
       button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, buttons: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
       button.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+      await new Promise((resolve) => setTimeout(resolve, ${RAPID_CLICK_INTERVAL_MS}));
     }
     return { found: true };
   })()`);
@@ -338,8 +341,9 @@ try {
   await delay(700);
   const afterRapid = await evaluate(client, readSaveExpression);
   const rapidSpend = before.bits - afterRapid.bits;
-  if (rapidSpend !== COOKIE_PRICE) {
-    throw new Error(`Rapid click smoke expected one Cookie purchase (${COOKIE_PRICE} bits), spent ${rapidSpend}.`);
+  const expectedRapidSpend = COOKIE_PRICE * EXPECTED_RAPID_PURCHASES;
+  if (rapidSpend !== expectedRapidSpend) {
+    throw new Error(`Rapid click smoke expected ${EXPECTED_RAPID_PURCHASES} Cookie purchases (${expectedRapidSpend} bits), spent ${rapidSpend}.`);
   }
 
   const longPressResult = await evaluate(client, `(async () => {
@@ -367,6 +371,7 @@ try {
         browser: path.basename(findBrowserExecutable()),
         vitePort: vite.port,
         rapidClickCount: RAPID_CLICK_COUNT,
+        rapidClickIntervalMs: RAPID_CLICK_INTERVAL_MS,
         rapidSpend,
         longPressSpend,
         before,

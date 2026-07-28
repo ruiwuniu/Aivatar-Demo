@@ -49,6 +49,13 @@ const cookie = {
   price: 6,
   tags: ["item", "consumable"],
 };
+const coffee = {
+  id: "coffee",
+  name: "Coffee",
+  kind: "food",
+  price: 8,
+  tags: ["item", "consumable"],
+};
 const windowItem = { id: "city-window", name: "City Window", kind: "window", price: 90 };
 const furnitureSkin = {
   id: "white-fridge-skin",
@@ -160,6 +167,33 @@ assert(acceptedClicks === 1, "rapid clicks inside cooldown should accept one pur
 assert(save.inventory.find((entry) => entry.itemId === cookie.id)?.quantity === 1, "rapid click quantity mismatch");
 assert(save.wallet.bits === 114, "rapid click wallet mismatch");
 
+let alternatingCooldowns = {};
+const firstItemReservation = reserveShopPurchaseSlot(
+  alternatingCooldowns,
+  cookie.id,
+  1_000,
+  SHOP_PURCHASE_COOLDOWN_MS,
+);
+alternatingCooldowns = firstItemReservation.cooldowns;
+const alternatingItemReservation = reserveShopPurchaseSlot(
+  alternatingCooldowns,
+  coffee.id,
+  1_000 + SHOP_PURCHASE_COOLDOWN_MS - 1,
+  SHOP_PURCHASE_COOLDOWN_MS,
+);
+assert(firstItemReservation.reserved, "first shop item should reserve the global purchase slot");
+assert(
+  !alternatingItemReservation.reserved,
+  "alternating shop items should not bypass the global purchase cooldown",
+);
+const postCooldownReservation = reserveShopPurchaseSlot(
+  alternatingCooldowns,
+  coffee.id,
+  1_000 + SHOP_PURCHASE_COOLDOWN_MS,
+  SHOP_PURCHASE_COOLDOWN_MS,
+);
+assert(postCooldownReservation.reserved, "shop purchase should resume after the global cooldown");
+
 const bulk = applyInventoryPurchase(save, cookie, SHOP_BULK_PURCHASE_QUANTITY);
 assert(bulk.quantity === SHOP_BULK_PURCHASE_QUANTITY, "long press should buy ten when affordable");
 assert(
@@ -177,6 +211,7 @@ console.log(
     {
       ok: true,
       rapidClickAccepted: acceptedClicks,
+      alternatingClickBlocked: !alternatingItemReservation.reserved,
       longPressQuantity: bulk.quantity,
       remainingBits: bulk.save.wallet.bits,
     },

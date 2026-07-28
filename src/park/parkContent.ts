@@ -39,11 +39,45 @@ export const PARK_SCENE_WIDTH = 1180;
 export const PARK_SCENE_HEIGHT = 900;
 
 export const PARK_ENTRY_POINT = { x: 330, y: 760 };
-export const PARK_FISHING_SPOTS = [
-  { x: 805, y: 555, facing: "right" as const },
-  { x: 785, y: 650, facing: "right" as const },
-  { x: 805, y: 745, facing: "right" as const },
+
+export interface ParkFishingSpot {
+  id: string;
+  x: number;
+  y: number;
+  facing: "right";
+  bobberX: number;
+  bobberY: number;
+}
+
+export const PARK_FISHING_SPOTS: ParkFishingSpot[] = [
+  {
+    id: "upper-bank",
+    x: 805,
+    y: 555,
+    facing: "right",
+    bobberX: 937,
+    bobberY: 574,
+  },
+  {
+    id: "middle-bank",
+    x: 785,
+    y: 650,
+    facing: "right",
+    bobberX: 916,
+    bobberY: 660,
+  },
+  {
+    id: "lower-bank",
+    x: 805,
+    y: 745,
+    facing: "right",
+    bobberX: 943,
+    bobberY: 756,
+  },
 ];
+
+export const parkFishingSpotById = (id?: string) =>
+  PARK_FISHING_SPOTS.find((spot) => spot.id === id);
 
 export const parkObjectDefinition = (kind: ParkObjectKind) =>
   PARK_OBJECT_DEFINITIONS.find((definition) => definition.kind === kind)!;

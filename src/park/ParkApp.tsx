@@ -30,7 +30,10 @@ import {
   recordParkCatch,
   recordParkMoodRecovery,
 } from "./parkStorage";
-import type { ParkObjectPlacement } from "./parkContent";
+import {
+  parkFishingSpotById,
+  type ParkObjectPlacement,
+} from "./parkContent";
 
 const ROOMS_URL = "http://127.0.0.1:38988/rooms";
 const VISIT_INVITE_URL = "http://127.0.0.1:38988/visits/invite";
@@ -347,6 +350,8 @@ export const ParkApp = () => {
           petStats: activeSave?.petStats,
           memory: activeSave?.memory,
           fishingPose: activeSimulation?.fishingPose,
+          fishingPoseStartedAt: activeSimulation?.activityStartedAt,
+          fishingSpot: parkFishingSpotById(activeSimulation?.fishingSpotId),
           displayedFish: activeSimulation?.pendingFish,
         });
       }
@@ -441,6 +446,32 @@ export const ParkApp = () => {
     setDebugMessage("已临时配发钓竿，角色正在前往池边；不会修改背包。");
   };
 
+  const openAnimationPreview = () => {
+    if ("__TAURI_INTERNALS__" in window) {
+      void import("@tauri-apps/api/core")
+        .then(({ invoke }) =>
+          invoke("open_park_animation_preview_window", {
+            request: { host_slot_id: hostSlotId },
+          }),
+        )
+        .catch(() => {
+          setDebugMessage("无法打开角色动作预览窗口。");
+        });
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    url.search = "";
+    url.searchParams.set("view", "park-animation-preview");
+    if (hostSlotId) url.searchParams.set("hostSlotId", hostSlotId);
+    const preview = window.open(
+      url.toString(),
+      `park-animation-preview-${hostSlotId ?? "local"}`,
+      "popup,width=760,height=600",
+    );
+    if (!preview) setDebugMessage("浏览器阻止了角色动作预览弹窗，请允许此站点打开弹窗。");
+  };
+
   return (
     <main className="park-app" aria-label="Aivatar Hilltop Park">
       <canvas ref={canvasRef} className="park-canvas" />
@@ -475,6 +506,9 @@ export const ParkApp = () => {
                 </button>
                 <button type="button" onClick={forceDebugFishing}>
                   强制钓鱼（临时钓竿）
+                </button>
+                <button type="button" onClick={openAnimationPreview}>
+                  打开角色动作预览
                 </button>
               </div>
             </section>

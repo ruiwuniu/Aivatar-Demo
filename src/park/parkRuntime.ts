@@ -17,7 +17,14 @@ import {
 } from "./parkProbability";
 import { defaultParkNavMemory, normalizeParkNavMemory } from "./parkStorage";
 
-export type ParkActivity = "wander" | "to-fishing" | "cast" | "wait" | "reel" | "display";
+export type ParkActivity =
+  | "wander"
+  | "to-fishing"
+  | "cast"
+  | "wait"
+  | "bite"
+  | "reel"
+  | "display";
 export type ParkFishingPose = "none" | "cast" | "yawn" | "focus" | "whistle" | "bite" | "reel" | "display";
 
 type Point = { x: number; y: number };
@@ -33,6 +40,7 @@ export interface ParkSimulationState {
   fishingSessionEndsAt: number;
   nextBiteAt: number;
   nextDecisionAt: number;
+  fishingSpotId?: string;
   pendingFish?: ParkRawFishId;
 }
 
@@ -251,6 +259,7 @@ export const forceParkFishingPreview = (
       activity: "wander",
       fishingPose: "none",
       path: [],
+      fishingSpotId: spot.id,
       pendingFish: undefined,
       activityStartedAt: now,
       activityEndsAt: 0,
@@ -359,6 +368,7 @@ export const advanceParkSimulation = (
       ...state,
       activity: "wait",
       fishingPose: "focus",
+      activityStartedAt: now,
       nextBiteAt: now + fishingBiteDelaySeconds(random) * 1000,
       avatar: { ...state.avatar, behavior: "admire", expression: "calm", activityLabel: "Fishing" },
     };
@@ -367,21 +377,34 @@ export const advanceParkSimulation = (
 
   if (state.activity === "wait") {
     if (now >= state.fishingSessionEndsAt) {
-      state = { ...state, activity: "wander", fishingPose: "none", nextDecisionAt: now + 3000 };
+      state = {
+        ...state,
+        activity: "wander",
+        fishingPose: "none",
+        fishingSpotId: undefined,
+        nextDecisionAt: now + 3000,
+      };
     } else if (now >= state.nextBiteAt) {
       if (canLandFishingCatch(options.traits.focus, random)) {
         state = {
           ...state,
-          activity: "reel",
-          fishingPose: "reel",
+          activity: "bite",
+          fishingPose: "bite",
           pendingFish: randomFishingCatch(random),
-          activityEndsAt: now + 1450,
-          avatar: { ...state.avatar, behavior: "interact", expression: "focused", activityLabel: "Reeling in" },
+          activityStartedAt: now,
+          activityEndsAt: now + 520,
+          avatar: {
+            ...state.avatar,
+            behavior: "interact",
+            expression: "focused",
+            activityLabel: "A fish is on the line",
+          },
         };
       } else {
         state = {
           ...state,
-          fishingPose: "bite",
+          fishingPose: "focus",
+          activityStartedAt: now,
           nextBiteAt: now + fishingBiteDelaySeconds(random) * 1000,
           avatar: { ...state.avatar, behavior: "admire", expression: "worried", activityLabel: "The fish got away" },
         };
@@ -391,6 +414,7 @@ export const advanceParkSimulation = (
       state = {
         ...state,
         fishingPose: pose,
+        activityStartedAt: pose === state.fishingPose ? state.activityStartedAt : now,
         avatar: {
           ...state.avatar,
           behavior: pose === "yawn" ? "sleep" : "admire",
@@ -402,11 +426,29 @@ export const advanceParkSimulation = (
     return { state, events };
   }
 
+  if (state.activity === "bite" && now >= state.activityEndsAt && state.pendingFish) {
+    state = {
+      ...state,
+      activity: "reel",
+      fishingPose: "reel",
+      activityStartedAt: now,
+      activityEndsAt: now + 1450,
+      avatar: {
+        ...state.avatar,
+        behavior: "interact",
+        expression: "focused",
+        activityLabel: "Reeling in",
+      },
+    };
+    return { state, events };
+  }
+
   if (state.activity === "reel" && now >= state.activityEndsAt && state.pendingFish) {
     state = {
       ...state,
       activity: "display",
       fishingPose: "display",
+      activityStartedAt: now,
       activityEndsAt: now + 2800,
       avatar: { ...state.avatar, facing: "front", behavior: "success", expression: "happy", activityLabel: "Showing the catch" },
     };
@@ -421,6 +463,7 @@ export const advanceParkSimulation = (
         activity: "cast",
         fishingPose: "cast",
         pendingFish: undefined,
+        activityStartedAt: now,
         activityEndsAt: now + 1200,
         avatar: { ...state.avatar, facing: "right", behavior: "interact", expression: "focused", activityLabel: "Casting again" },
       };
@@ -429,6 +472,7 @@ export const advanceParkSimulation = (
         ...state,
         activity: "wander",
         fishingPose: "none",
+        fishingSpotId: undefined,
         pendingFish: undefined,
         nextDecisionAt: now + 3500,
       };
@@ -439,7 +483,12 @@ export const advanceParkSimulation = (
   if (state.activity === "wander" && now >= state.nextDecisionAt) {
     if (options.hasRod && random() < 0.42) {
       const spot = PARK_FISHING_SPOTS[Math.floor(random() * PARK_FISHING_SPOTS.length)]!;
-      state = beginPath(state, spot, "to-fishing", options.objects);
+      state = beginPath(
+        { ...state, fishingSpotId: spot.id },
+        spot,
+        "to-fishing",
+        options.objects,
+      );
     } else {
       state = beginPath(
         { ...state, nextDecisionAt: now + 4500 + random() * 5500 },
