@@ -359,7 +359,11 @@
 }
 
 .item-thumb-cooked-black-bass .item-thumb-shape,
-.item-thumb-cooked-crucian-carp .item-thumb-shape {
+.item-thumb-cooked-crucian-carp .item-thumb-shape,
+.item-thumb-cooked-bluegill .item-thumb-shape,
+.item-thumb-cooked-yellow-perch .item-thumb-shape,
+.item-thumb-cooked-weather-loach .item-thumb-shape,
+.item-thumb-cooked-rainbow-trout .item-thumb-shape {
   position: absolute;
   width: 27px;
   height: 12px;
@@ -369,7 +373,11 @@
 }
 
 .item-thumb-raw-black-bass .item-thumb-shape,
-.item-thumb-raw-crucian-carp .item-thumb-shape {
+.item-thumb-raw-crucian-carp .item-thumb-shape,
+.item-thumb-raw-bluegill .item-thumb-shape,
+.item-thumb-raw-yellow-perch .item-thumb-shape,
+.item-thumb-raw-weather-loach .item-thumb-shape,
+.item-thumb-raw-rainbow-trout .item-thumb-shape {
   position: absolute;
   left: -7px;
   top: -11px;
@@ -389,8 +397,28 @@
   background-image: url("/park/fish/raw-crucian-carp-v1.png");
 }
 
+.item-thumb-raw-bluegill .item-thumb-shape {
+  background-image: url("/park/fish/raw-bluegill-v1.png");
+}
+
+.item-thumb-raw-yellow-perch .item-thumb-shape {
+  background-image: url("/park/fish/raw-yellow-perch-v1.png");
+}
+
+.item-thumb-raw-weather-loach .item-thumb-shape {
+  background-image: url("/park/fish/raw-weather-loach-v1.png");
+}
+
+.item-thumb-raw-rainbow-trout .item-thumb-shape {
+  background-image: url("/park/fish/raw-rainbow-trout-v1.png");
+}
+
 .item-thumb-cooked-black-bass .item-thumb-shape,
-.item-thumb-cooked-crucian-carp .item-thumb-shape {
+.item-thumb-cooked-crucian-carp .item-thumb-shape,
+.item-thumb-cooked-bluegill .item-thumb-shape,
+.item-thumb-cooked-yellow-perch .item-thumb-shape,
+.item-thumb-cooked-weather-loach .item-thumb-shape,
+.item-thumb-cooked-rainbow-trout .item-thumb-shape {
   border-color: #4b2c1e;
   background: #c67b36;
 }

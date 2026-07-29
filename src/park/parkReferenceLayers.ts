@@ -1,4 +1,6 @@
 import {
+  isParkGrassPoint,
+  PARK_REFERENCE_COLLIDERS,
   PARK_SCENE_HEIGHT,
   PARK_SCENE_WIDTH,
   type ParkObjectKind,
@@ -42,19 +44,31 @@ export interface ParkShoreFoamSegment {
   directionY: -1 | 0 | 1;
 }
 
+export interface ParkCliffFogSegment {
+  id: string;
+  canvas: HTMLCanvasElement;
+  x: number;
+  y: number;
+  periodMs: number;
+  phase: number;
+  amplitudeX: number;
+  amplitudeY: number;
+  alpha: number;
+}
+
 export interface ParkReferenceLayers {
-  full: HTMLCanvasElement;
   neutralBase: HTMLCanvasElement;
-  neutralBaseWithoutDistantShoreFoam: HTMLCanvasElement;
+  neutralBaseWithoutDistantShoreFoamAndCliffFog: HTMLCanvasElement;
+  cliffFogMotionMask: HTMLCanvasElement;
+  cliffFogSegments: ParkCliffFogSegment[];
+  grassRippleMask: HTMLCanvasElement;
   seaMask: HTMLCanvasElement;
   seaMotionMask: HTMLCanvasElement;
-  pondMask: HTMLCanvasElement;
   pondInteriorMask: HTMLCanvasElement;
   pondEdgeMask: HTMLCanvasElement;
   pondRimMask: HTMLCanvasElement;
   shoreFoamInnerMask: HTMLCanvasElement;
   shoreFoamOuterMask: HTMLCanvasElement;
-  distantShoreFoamMask: HTMLCanvasElement;
   shoreFoamMotionMask: HTMLCanvasElement;
   shoreFoamSegments: ParkShoreFoamSegment[];
   staticOccluders: ParkReferenceOccluder[];
@@ -69,6 +83,10 @@ export interface ParkReferenceLayers {
   shoreFoamOuterMaskPixels: number;
   distantShoreFoamMaskPixels: number;
   shoreFoamMotionMaskPixels: number;
+  cliffFogMaskPixels: number;
+  cliffFogMotionMaskPixels: number;
+  grassRippleMaskPixels: number;
+  grassRippleObstacleExclusionCount: number;
   stamps: Partial<Record<ParkObjectKind, ParkReferenceStamp>>;
 }
 
@@ -655,6 +673,50 @@ const pointInsidePolygon = (x: number, y: number, polygon: readonly ParkMaskPoin
   return inside;
 };
 
+type ParkCliffFogBand = {
+  id: string;
+  polygon: readonly ParkMaskPoint[];
+  periodMs: number;
+  phase: number;
+  amplitudeX: number;
+  amplitudeY: number;
+  alpha: number;
+};
+
+// Three narrow valley-side polygons follow the authored mist below the west
+// cliff. Their right edges stop before the rock face, so drifting pixels stay
+// behind the cliff instead of washing over the playable plateau.
+const PARK_CLIFF_FOG_BANDS: readonly ParkCliffFogBand[] = [
+  {
+    id: "upper-cliff-fog",
+    polygon: [[0, 435], [103, 435], [126, 462], [122, 500], [96, 530], [0, 537]],
+    periodMs: 46_000,
+    phase: 0.35,
+    amplitudeX: 12,
+    amplitudeY: 1.25,
+    alpha: 0.98,
+  },
+  {
+    id: "middle-cliff-fog",
+    polygon: [[0, 590], [72, 590], [96, 614], [95, 650], [72, 681], [0, 690]],
+    periodMs: 58_000,
+    phase: 2.2,
+    amplitudeX: 9,
+    amplitudeY: 1,
+    alpha: 0.96,
+  },
+  {
+    id: "lower-cliff-fog",
+    polygon: [[0, 746], [72, 746], [104, 774], [110, 810], [88, 844], [0, 852]],
+    periodMs: 52_000,
+    phase: 4.1,
+    amplitudeX: 5,
+    amplitudeY: 1.5,
+    alpha: 0.97,
+  },
+] as const;
+const PARK_CLIFF_FOG_FEATHER_RADIUS = 4;
+
 const makeLandExclusionMask = (
   polygons: readonly (readonly ParkMaskPoint[])[] = PARK_OCEAN_LAND_EXCLUSIONS,
 ) => {
@@ -872,6 +934,226 @@ const makeBaseWithoutDistantShoreFoam = (
 
   ctx.putImageData(cleaned, 0, 0);
   return canvas;
+};
+
+const makeCliffFogLayers = (sourceBase: HTMLCanvasElement) => {
+  const source = sourceBase.getContext("2d", { willReadFrequently: true })!;
+  const sourceImage = source.getImageData(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+  const pixelCount = PARK_SCENE_WIDTH * PARK_SCENE_HEIGHT;
+  const fogPixels = new Uint8Array(pixelCount);
+  const fogAlphaPixels = new Uint8Array(pixelCount);
+  const motionPixels = new Uint8Array(pixelCount);
+  const cleaned = newCanvas(PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+  const cleanedContext = cleaned.getContext("2d")!;
+  const cleanedImage = cleanedContext.createImageData(PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+  cleanedImage.data.set(sourceImage.data);
+  const segments: ParkCliffFogSegment[] = [];
+  const allFogPixels: number[] = [];
+
+  PARK_CLIFF_FOG_BANDS.forEach((band) => {
+    const minX = Math.max(0, Math.floor(Math.min(...band.polygon.map(([x]) => x))));
+    const maxX = Math.min(
+      PARK_SCENE_WIDTH - 1,
+      Math.ceil(Math.max(...band.polygon.map(([x]) => x))),
+    );
+    const minY = Math.max(0, Math.floor(Math.min(...band.polygon.map(([, y]) => y))));
+    const maxY = Math.min(
+      PARK_SCENE_HEIGHT - 1,
+      Math.ceil(Math.max(...band.polygon.map(([, y]) => y))),
+    );
+    const candidates = new Uint8Array(pixelCount);
+    const seeds = new Uint8Array(pixelCount);
+    const visited = new Uint8Array(pixelCount);
+
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        if (!pointInsidePolygon(x + 0.5, y + 0.5, band.polygon)) continue;
+        const index = y * PARK_SCENE_WIDTH + x;
+        motionPixels[index] = 255;
+        const offset = index * 4;
+        const red = sourceImage.data[offset] ?? 0;
+        const green = sourceImage.data[offset + 1] ?? 0;
+        const blue = sourceImage.data[offset + 2] ?? 0;
+        const luma = red * 0.299 + green * 0.587 + blue * 0.114;
+        const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+        const coolEnough = blue >= red - 46 && blue >= green - 38;
+        if (luma >= 118 && chroma <= 72 && coolEnough) candidates[index] = 1;
+        if (luma >= 158 && chroma <= 60 && coolEnough) seeds[index] = 1;
+      }
+    }
+
+    const selectedPixels: number[] = [];
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const seedIndex = y * PARK_SCENE_WIDTH + x;
+        if (candidates[seedIndex] === 0 || visited[seedIndex] !== 0) continue;
+        const component: number[] = [];
+        const queue = [seedIndex];
+        let hasFogSeed = false;
+        visited[seedIndex] = 1;
+        for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+          const index = queue[queueIndex]!;
+          component.push(index);
+          if (seeds[index] !== 0) hasFogSeed = true;
+          const pixelX = index % PARK_SCENE_WIDTH;
+          const pixelY = Math.floor(index / PARK_SCENE_WIDTH);
+          for (let deltaY = -1; deltaY <= 1; deltaY += 1) {
+            const nextY = pixelY + deltaY;
+            if (nextY < minY || nextY > maxY) continue;
+            for (let deltaX = -1; deltaX <= 1; deltaX += 1) {
+              if (deltaX === 0 && deltaY === 0) continue;
+              const nextX = pixelX + deltaX;
+              if (nextX < minX || nextX > maxX) continue;
+              const nextIndex = nextY * PARK_SCENE_WIDTH + nextX;
+              if (candidates[nextIndex] === 0 || visited[nextIndex] !== 0) continue;
+              visited[nextIndex] = 1;
+              queue.push(nextIndex);
+            }
+          }
+        }
+        if (!hasFogSeed || component.length < 12) continue;
+        component.forEach((index) => {
+          fogPixels[index] = 255;
+          selectedPixels.push(index);
+          allFogPixels.push(index);
+        });
+      }
+    }
+
+    if (selectedPixels.length === 0) return;
+    selectedPixels.forEach((index) => {
+      const x = index % PARK_SCENE_WIDTH;
+      const y = Math.floor(index / PARK_SCENE_WIDTH);
+      let nearestOutside = PARK_CLIFF_FOG_FEATHER_RADIUS + 1;
+      for (
+        let deltaY = -PARK_CLIFF_FOG_FEATHER_RADIUS;
+        deltaY <= PARK_CLIFF_FOG_FEATHER_RADIUS;
+        deltaY += 1
+      ) {
+        const sampleY = y + deltaY;
+        if (sampleY < 0 || sampleY >= PARK_SCENE_HEIGHT) continue;
+        for (
+          let deltaX = -PARK_CLIFF_FOG_FEATHER_RADIUS;
+          deltaX <= PARK_CLIFF_FOG_FEATHER_RADIUS;
+          deltaX += 1
+        ) {
+          const distance = Math.max(Math.abs(deltaX), Math.abs(deltaY));
+          if (distance === 0 || distance >= nearestOutside) continue;
+          const sampleX = x + deltaX;
+          if (sampleX < 0 || sampleX >= PARK_SCENE_WIDTH) continue;
+          const sampleIndex = sampleY * PARK_SCENE_WIDTH + sampleX;
+          if (fogPixels[sampleIndex] === 0) nearestOutside = distance;
+        }
+      }
+      fogAlphaPixels[index] = nearestOutside > PARK_CLIFF_FOG_FEATHER_RADIUS
+        ? 255
+        : Math.round(
+            smoothFeather(nearestOutside / PARK_CLIFF_FOG_FEATHER_RADIUS) * 255,
+          );
+    });
+    const segmentMinX = Math.min(...selectedPixels.map((index) => index % PARK_SCENE_WIDTH));
+    const segmentMaxX = Math.max(...selectedPixels.map((index) => index % PARK_SCENE_WIDTH));
+    const segmentMinY = Math.min(
+      ...selectedPixels.map((index) => Math.floor(index / PARK_SCENE_WIDTH)),
+    );
+    const segmentMaxY = Math.max(
+      ...selectedPixels.map((index) => Math.floor(index / PARK_SCENE_WIDTH)),
+    );
+    const segmentCanvas = newCanvas(
+      segmentMaxX - segmentMinX + 1,
+      segmentMaxY - segmentMinY + 1,
+    );
+    const segmentContext = segmentCanvas.getContext("2d")!;
+    const segmentImage = segmentContext.createImageData(
+      segmentCanvas.width,
+      segmentCanvas.height,
+    );
+    selectedPixels.forEach((index) => {
+      const x = index % PARK_SCENE_WIDTH;
+      const y = Math.floor(index / PARK_SCENE_WIDTH);
+      const sourceOffset = index * 4;
+      const segmentOffset = (
+        (y - segmentMinY) * segmentCanvas.width + x - segmentMinX
+      ) * 4;
+      segmentImage.data[segmentOffset] = sourceImage.data[sourceOffset] ?? 0;
+      segmentImage.data[segmentOffset + 1] = sourceImage.data[sourceOffset + 1] ?? 0;
+      segmentImage.data[segmentOffset + 2] = sourceImage.data[sourceOffset + 2] ?? 0;
+      segmentImage.data[segmentOffset + 3] = fogAlphaPixels[index] ?? 0;
+    });
+    segmentContext.putImageData(segmentImage, 0, 0);
+    segments.push({
+      id: band.id,
+      canvas: segmentCanvas,
+      x: segmentMinX,
+      y: segmentMinY,
+      periodMs: band.periodMs,
+      phase: band.phase,
+      amplitudeX: band.amplitudeX,
+      amplitudeY: band.amplitudeY,
+      alpha: band.alpha,
+    });
+  });
+
+  // The source PNG stays untouched. Inpaint only the extracted mist pixels by
+  // propagating the immediately surrounding valley colours inward one ring at
+  // a time. This keeps the revealed background continuous when a bank drifts,
+  // instead of exposing an offset clone or a stationary copy of the mist.
+  const unresolved = new Uint8Array(fogPixels);
+  let remainingPixels = allFogPixels.length;
+  for (let pass = 0; pass < 180 && remainingPixels > 0; pass += 1) {
+    const updates: Array<readonly [number, number, number, number]> = [];
+    allFogPixels.forEach((index) => {
+      if (unresolved[index] === 0) return;
+      const x = index % PARK_SCENE_WIDTH;
+      const y = Math.floor(index / PARK_SCENE_WIDTH);
+      let redTotal = 0;
+      let greenTotal = 0;
+      let blueTotal = 0;
+      let samples = 0;
+      for (let deltaY = -1; deltaY <= 1; deltaY += 1) {
+        const sampleY = y + deltaY;
+        if (sampleY < 0 || sampleY >= PARK_SCENE_HEIGHT) continue;
+        for (let deltaX = -1; deltaX <= 1; deltaX += 1) {
+          if (deltaX === 0 && deltaY === 0) continue;
+          const sampleX = x + deltaX;
+          if (sampleX < 0 || sampleX >= PARK_SCENE_WIDTH) continue;
+          const sampleIndex = sampleY * PARK_SCENE_WIDTH + sampleX;
+          if (unresolved[sampleIndex] !== 0) continue;
+          const sampleOffset = sampleIndex * 4;
+          redTotal += cleanedImage.data[sampleOffset] ?? 0;
+          greenTotal += cleanedImage.data[sampleOffset + 1] ?? 0;
+          blueTotal += cleanedImage.data[sampleOffset + 2] ?? 0;
+          samples += 1;
+        }
+      }
+      if (samples === 0) return;
+      const texture = ((x * 17 + y * 31 + pass * 13) % 7) - 3;
+      updates.push([
+        index,
+        Math.max(0, Math.min(255, Math.round(redTotal / samples) + texture)),
+        Math.max(0, Math.min(255, Math.round(greenTotal / samples) + texture)),
+        Math.max(0, Math.min(255, Math.round(blueTotal / samples) + texture)),
+      ]);
+    });
+    if (updates.length === 0) break;
+    updates.forEach(([index, red, green, blue]) => {
+      const offset = index * 4;
+      cleanedImage.data[offset] = red;
+      cleanedImage.data[offset + 1] = green;
+      cleanedImage.data[offset + 2] = blue;
+      cleanedImage.data[offset + 3] = 255;
+      unresolved[index] = 0;
+      remainingPixels -= 1;
+    });
+  }
+
+  cleanedContext.putImageData(cleanedImage, 0, 0);
+  return {
+    neutralBaseWithoutDistantShoreFoamAndCliffFog: cleaned,
+    cliffFogMask: makeMaskCanvas(fogAlphaPixels),
+    cliffFogMotionMask: makeMaskCanvas(motionPixels),
+    cliffFogSegments: segments,
+  };
 };
 
 const makeMaskDistanceField = (seeds: Uint8Array, maximumDistance: number) => {
@@ -1332,6 +1614,92 @@ const countOpaquePixels = (canvas: HTMLCanvasElement) => {
   return count;
 };
 
+const makeGrassRippleMask = (
+  neutralBase: HTMLCanvasElement,
+  staticOccluders: readonly ParkReferenceOccluder[],
+) => {
+  const source = neutralBase.getContext("2d", { willReadFrequently: true })!;
+  const image = source.getImageData(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+  const values = new Uint8Array(PARK_SCENE_WIDTH * PARK_SCENE_HEIGHT);
+
+  // Keep the ripple on authored grass pixels rather than on a broad plateau
+  // polygon. Grey stone, brown soil, flowers, docks and water therefore remain
+  // transparent even before the explicit object exclusions below.
+  for (let y = 235; y <= 842; y += 1) {
+    for (let x = 0; x < PARK_SCENE_WIDTH; x += 1) {
+      if (!isParkGrassPoint(x, y)) continue;
+      const index = y * PARK_SCENE_WIDTH + x;
+      const offset = index * 4;
+      const red = image.data[offset] ?? 0;
+      const green = image.data[offset + 1] ?? 0;
+      const blue = image.data[offset + 2] ?? 0;
+      const redDominance = green - red;
+      const blueDominance = green - blue;
+      const grassLike = green >= 55
+        && redDominance >= 7
+        && blueDominance >= 9
+        && red >= 28;
+      if (!grassLike) continue;
+      const confidence = Math.max(
+        0,
+        Math.min(1, (Math.min(redDominance, blueDominance) - 6) / 24),
+      );
+      values[index] = Math.round(148 + confidence * 107);
+    }
+  }
+
+  // Placement colliders cover the authored large rocks, bench and other fixed
+  // obstacles. A small safety margin prevents the highlighted grass fringe
+  // from visually climbing their silhouettes.
+  PARK_REFERENCE_COLLIDERS.forEach((collider) => {
+    const radius = collider.radius + 6;
+    const minX = Math.max(0, Math.floor(collider.x - radius));
+    const maxX = Math.min(PARK_SCENE_WIDTH - 1, Math.ceil(collider.x + radius));
+    const minY = Math.max(0, Math.floor(collider.y - radius));
+    const maxY = Math.min(PARK_SCENE_HEIGHT - 1, Math.ceil(collider.y + radius));
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        if (Math.hypot(x - collider.x, y - collider.y) <= radius) {
+          values[y * PARK_SCENE_WIDTH + x] = 0;
+        }
+      }
+    }
+  });
+
+  // The contour-derived occluders include the authored shrub/flower clusters
+  // whose green pixels would otherwise pass the grass colour classifier.
+  staticOccluders.forEach((occluder) => {
+    const occluderContext = occluder.canvas.getContext("2d", { willReadFrequently: true })!;
+    const occluderPixels = occluderContext.getImageData(
+      0,
+      0,
+      occluder.canvas.width,
+      occluder.canvas.height,
+    ).data;
+    for (let localY = 0; localY < occluder.canvas.height; localY += 1) {
+      for (let localX = 0; localX < occluder.canvas.width; localX += 1) {
+        const alpha = occluderPixels[(localY * occluder.canvas.width + localX) * 4 + 3] ?? 0;
+        if (alpha <= 24) continue;
+        const centerX = occluder.x + localX;
+        const centerY = occluder.y + localY;
+        for (let deltaY = -3; deltaY <= 3; deltaY += 1) {
+          const y = centerY + deltaY;
+          if (y < 0 || y >= PARK_SCENE_HEIGHT) continue;
+          for (let deltaX = -3; deltaX <= 3; deltaX += 1) {
+            const x = centerX + deltaX;
+            if (x < 0 || x >= PARK_SCENE_WIDTH) continue;
+            if (deltaX * deltaX + deltaY * deltaY <= 9) {
+              values[y * PARK_SCENE_WIDTH + x] = 0;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  return makeMaskCanvas(values);
+};
+
 const buildLayers = (
   image: HTMLImageElement,
   stampImage: HTMLImageElement,
@@ -1384,6 +1752,12 @@ const buildLayers = (
     shoreFoamSegments,
   } = makeSeaMasks(neutralBase, full);
   const {
+    neutralBaseWithoutDistantShoreFoamAndCliffFog,
+    cliffFogMask,
+    cliffFogMotionMask,
+    cliffFogSegments,
+  } = makeCliffFogLayers(neutralBaseWithoutDistantShoreFoam);
+  const {
     pondMask,
     pondInteriorMask,
     pondEdgeMask,
@@ -1391,19 +1765,20 @@ const buildLayers = (
   } = makePondMasks(neutralBase);
   const staticOccluders = STATIC_OCCLUDER_RECIPES.map((recipe) =>
     makeStaticOccluder(neutralBase, recipe));
+  const grassRippleMask = makeGrassRippleMask(neutralBase, staticOccluders);
   return {
-    full,
     neutralBase,
-    neutralBaseWithoutDistantShoreFoam,
+    neutralBaseWithoutDistantShoreFoamAndCliffFog,
+    cliffFogMotionMask,
+    cliffFogSegments,
+    grassRippleMask,
     seaMask,
     seaMotionMask,
-    pondMask,
     pondInteriorMask,
     pondEdgeMask,
     pondRimMask,
     shoreFoamInnerMask,
     shoreFoamOuterMask,
-    distantShoreFoamMask,
     shoreFoamMotionMask,
     shoreFoamSegments,
     staticOccluders,
@@ -1418,6 +1793,11 @@ const buildLayers = (
     shoreFoamOuterMaskPixels: countOpaquePixels(shoreFoamOuterMask),
     distantShoreFoamMaskPixels: countOpaquePixels(distantShoreFoamMask),
     shoreFoamMotionMaskPixels: countOpaquePixels(shoreFoamMotionMask),
+    cliffFogMaskPixels: countOpaquePixels(cliffFogMask),
+    cliffFogMotionMaskPixels: countOpaquePixels(cliffFogMotionMask),
+    grassRippleMaskPixels: countOpaquePixels(grassRippleMask),
+    grassRippleObstacleExclusionCount:
+      PARK_REFERENCE_COLLIDERS.length + staticOccluders.length,
     stamps,
   };
 };

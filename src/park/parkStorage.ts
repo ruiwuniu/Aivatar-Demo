@@ -12,6 +12,14 @@ export const PARK_LAYOUT_STORAGE_KEY = "aivatar.park.layout.v2";
 export const PARK_LAYOUT_EVENT = "aivatar:park-layout";
 export const SAVE_SLOT_KEY_PREFIX = "aivatar.saveSlot.v1.";
 const FRIDGE_FISH_CAPACITY = 999;
+const PARK_FISH_NAMES: Record<ParkRawFishId, string> = {
+  "raw-crucian-carp": "Crucian Carp",
+  "raw-bluegill": "Bluegill",
+  "raw-black-bass": "Black Bass",
+  "raw-yellow-perch": "Yellow Perch",
+  "raw-weather-loach": "Weather Loach",
+  "raw-rainbow-trout": "Rainbow Trout",
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -131,7 +139,7 @@ const recordCatchMemory = (
         id: `park-catch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
         type: "recovery_used" as const,
         timestamp: now,
-        summary: `Caught ${fishId === "raw-black-bass" ? "Black Bass" : "Crucian Carp"} at the park`,
+        summary: `Caught ${PARK_FISH_NAMES[fishId]} at the park`,
         itemId: fishId,
         behavior: "relax" as const,
       },

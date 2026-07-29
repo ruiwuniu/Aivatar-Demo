@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "canvas": {
+    "width": 64,
+    "height": 40,
+    "format": "PNG",
+    "colorMode": "RGBA",
+    "background": "transparent",
+    "orientation": "head-left"
+  },
+  "styleReferences": [
+    "raw-black-bass-v1.png",
+    "raw-crucian-carp-v1.png"
+  ],
+  "generator": "../../../scripts/generate-park-fish-sprites.py",
+  "exports": [
+    {
+      "id": "raw-bluegill",
+      "file": "raw-bluegill-v1.png",
+      "sourceSilhouette": "raw-crucian-carp-v1.png"
+    },
+    {
+      "id": "raw-yellow-perch",
+      "file": "raw-yellow-perch-v1.png",
+      "sourceSilhouette": "raw-black-bass-v1.png"
+    },
+    {
+      "id": "raw-weather-loach",
+      "file": "raw-weather-loach-v1.png",
+      "sourceSilhouette": "raw-black-bass-v1.png",
+      "geometry": "deterministic-slender-remap-with-barbels"
+    },
+    {
+      "id": "raw-rainbow-trout",
+      "file": "raw-rainbow-trout-v1.png",
+      "sourceSilhouette": "raw-black-bass-v1.png"
+    }
+  ]
+}

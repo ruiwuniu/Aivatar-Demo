@@ -39,12 +39,43 @@ export const shouldChooseCooking = (
   random: ParkRandomSource = Math.random,
 ) => clamp01(random()) < cookingChoiceProbability(warmthPoints);
 
-export const PARK_FISH_IDS = ["raw-black-bass", "raw-crucian-carp"] as const;
+export const PARK_FISH_IDS = [
+  "raw-crucian-carp",
+  "raw-bluegill",
+  "raw-black-bass",
+  "raw-yellow-perch",
+  "raw-weather-loach",
+  "raw-rainbow-trout",
+] as const;
 export type ParkRawFishId = (typeof PARK_FISH_IDS)[number];
+
+export const PARK_FISH_CATCH_WEIGHTS: ReadonlyArray<{
+  id: ParkRawFishId;
+  weight: number;
+}> = [
+  { id: "raw-crucian-carp", weight: 26 },
+  { id: "raw-bluegill", weight: 22 },
+  { id: "raw-black-bass", weight: 18 },
+  { id: "raw-yellow-perch", weight: 15 },
+  { id: "raw-weather-loach", weight: 11 },
+  { id: "raw-rainbow-trout", weight: 8 },
+];
 
 export const randomFishingCatch = (
   random: ParkRandomSource = Math.random,
-): ParkRawFishId => PARK_FISH_IDS[clamp01(random()) < 0.5 ? 0 : 1];
+): ParkRawFishId => {
+  const totalWeight = PARK_FISH_CATCH_WEIGHTS.reduce(
+    (total, fish) => total + fish.weight,
+    0,
+  );
+  const roll = clamp01(random()) * totalWeight;
+  let cumulativeWeight = 0;
+  for (const fish of PARK_FISH_CATCH_WEIGHTS) {
+    cumulativeWeight += fish.weight;
+    if (roll < cumulativeWeight) return fish.id;
+  }
+  return PARK_FISH_CATCH_WEIGHTS[PARK_FISH_CATCH_WEIGHTS.length - 1]!.id;
+};
 
 export const fishingRewards = () => ({ mood: 10, curiosity: 1 });
 

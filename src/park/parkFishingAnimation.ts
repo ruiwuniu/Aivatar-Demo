@@ -8,6 +8,8 @@ type Point = { x: number; y: number };
 interface FishingHandAnchor {
   x: number;
   y: number;
+  frontX: number;
+  frontY: number;
   followsBodyBob: boolean;
 }
 
@@ -27,19 +29,34 @@ const CAST_DURATION_MS = 1200;
 const REEL_DURATION_MS = 1450;
 const BITE_DURATION_MS = 520;
 const PARK_FISH_SPRITE_ASSETS: Record<ParkRawFishId, string> = {
-  "raw-black-bass": "/park/fish/raw-black-bass-v1.png",
   "raw-crucian-carp": "/park/fish/raw-crucian-carp-v1.png",
+  "raw-bluegill": "/park/fish/raw-bluegill-v1.png",
+  "raw-black-bass": "/park/fish/raw-black-bass-v1.png",
+  "raw-yellow-perch": "/park/fish/raw-yellow-perch-v1.png",
+  "raw-weather-loach": "/park/fish/raw-weather-loach-v1.png",
+  "raw-rainbow-trout": "/park/fish/raw-rainbow-trout-v1.png",
+};
+const PARK_FISH_FALLBACK_PALETTES: Record<
+  ParkRawFishId,
+  { body: string; light: string }
+> = {
+  "raw-crucian-carp": { body: "#b5aa84", light: "#e1d3a6" },
+  "raw-bluegill": { body: "#53765b", light: "#9bb376" },
+  "raw-black-bass": { body: "#526f54", light: "#9bb870" },
+  "raw-yellow-perch": { body: "#b79234", light: "#edcd68" },
+  "raw-weather-loach": { body: "#755b31", light: "#bc9958" },
+  "raw-rainbow-trout": { body: "#778b84", light: "#d3dcc7" },
 };
 const parkFishSpriteCache = new Map<ParkRawFishId, HTMLImageElement>();
 
 const FISHING_HAND_ANCHORS: Record<AvatarAppearanceId, FishingHandAnchor> = {
-  octopus: { x: 18, y: 4, followsBodyBob: true },
-  "demo-spark": { x: 18, y: -3, followsBodyBob: true },
-  "mood-slime": { x: 18, y: -3, followsBodyBob: true },
-  "cute-crayfish": { x: 22, y: -5, followsBodyBob: true },
-  "cute-ghost": { x: 22, y: -10, followsBodyBob: true },
-  "cute-penguin": { x: 19, y: -10, followsBodyBob: false },
-  "wave-lizard": { x: 20, y: -12, followsBodyBob: true },
+  octopus: { x: 18, y: 4, frontX: 11, frontY: 5, followsBodyBob: true },
+  "demo-spark": { x: 18, y: -3, frontX: 10, frontY: -1, followsBodyBob: true },
+  "mood-slime": { x: 18, y: -3, frontX: 10, frontY: -1, followsBodyBob: true },
+  "cute-crayfish": { x: 22, y: -5, frontX: 13, frontY: -2, followsBodyBob: true },
+  "cute-ghost": { x: 22, y: -10, frontX: 12, frontY: -7, followsBodyBob: true },
+  "cute-penguin": { x: 19, y: -10, frontX: 10, frontY: -7, followsBodyBob: false },
+  "wave-lizard": { x: 20, y: -12, frontX: 11, frontY: -9, followsBodyBob: true },
 };
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
@@ -71,6 +88,7 @@ const resolveHand = (
   frame: number,
 ): Point => {
   const anchor = FISHING_HAND_ANCHORS[appearanceId];
+  const frontFacing = avatar.facing === "front";
   const side = avatar.facing === "left" ? -1 : 1;
   const bodyBob = anchor.followsBodyBob
     ? avatar.behavior === "sleep"
@@ -78,8 +96,8 @@ const resolveHand = (
       : Math.sin(frame / 12) * 2
     : 0;
   return {
-    x: Math.round(avatar.x + anchor.x * side),
-    y: Math.round(avatar.y + bodyBob + anchor.y),
+    x: Math.round(avatar.x + (frontFacing ? anchor.frontX : anchor.x * side)),
+    y: Math.round(avatar.y + bodyBob + (frontFacing ? anchor.frontY : anchor.y)),
   };
 };
 
@@ -87,12 +105,21 @@ const resolveRodTip = (
   hand: Point,
   pose: ParkFishingPose,
   poseElapsedMs: number,
+  facing: AvatarRuntime["facing"],
 ): Point => {
-  const resting = { x: hand.x + 53, y: hand.y - 50 };
+  const frontFacing = facing === "front";
+  const side = facing === "left" ? -1 : 1;
+  const resting = frontFacing
+    ? { x: hand.x + 49, y: hand.y - 47 }
+    : { x: hand.x + 53 * side, y: hand.y - 50 };
   if (pose === "cast") {
     const progress = clamp01(poseElapsedMs / CAST_DURATION_MS);
-    const backswing = { x: hand.x - 30, y: hand.y - 52 };
-    const forward = { x: hand.x + 68, y: hand.y - 34 };
+    const backswing = frontFacing
+      ? { x: hand.x - 25, y: hand.y - 59 }
+      : { x: hand.x - 30 * side, y: hand.y - 52 };
+    const forward = frontFacing
+      ? { x: hand.x + 72, y: hand.y - 27 }
+      : { x: hand.x + 68 * side, y: hand.y - 34 };
     if (progress < 0.28) {
       return lerpPoint(resting, backswing, smoothstep(progress / 0.28));
     }
@@ -335,8 +362,7 @@ const drawProceduralFishFallback = (
   y: number,
   scale = 1,
 ) => {
-  const body = fishId === "raw-black-bass" ? "#526f54" : "#b5aa84";
-  const light = fishId === "raw-black-bass" ? "#9bb870" : "#e1d3a6";
+  const { body, light } = PARK_FISH_FALLBACK_PALETTES[fishId];
   rect(ctx, x - 15 * scale, y - 6 * scale, 25 * scale, 12 * scale, "#263b38");
   rect(ctx, x - 11 * scale, y - 8 * scale, 24 * scale, 14 * scale, body);
   rect(ctx, x - 6 * scale, y - 5 * scale, 17 * scale, 4 * scale, light);
@@ -390,7 +416,7 @@ export const drawParkFishingAnimation = ({
   }
 
   const hand = resolveHand(avatar, appearanceId, frame);
-  const tip = resolveRodTip(hand, pose, poseElapsedMs);
+  const tip = resolveRodTip(hand, pose, poseElapsedMs, avatar.facing);
   const waterTarget = spot
     ? { x: spot.bobberX, y: spot.bobberY }
     : { x: avatarX + 136, y: avatarY + 12 };
@@ -443,4 +469,5 @@ export const PARK_FISHING_ANIMATION_MARKERS = {
   reelDurationMs: REEL_DURATION_MS,
   handAnchorCount: Object.keys(FISHING_HAND_ANCHORS).length,
   fishSpriteCount: Object.keys(PARK_FISH_SPRITE_ASSETS).length,
+  frontCastSupported: true,
 } as const;

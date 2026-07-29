@@ -386,6 +386,7 @@ const PARK_HORIZON_Y = 122;
 const PARK_HORIZON_TINT_END_Y = 235;
 
 let horizonTintCanvas: HTMLCanvasElement | null = null;
+let horizonTintKey = "";
 
 const drawHorizonSeaTint = (
   ctx: CanvasRenderingContext2D,
@@ -397,35 +398,39 @@ const drawHorizonSeaTint = (
     horizonTintCanvas.width = PARK_SCENE_WIDTH;
     horizonTintCanvas.height = PARK_SCENE_HEIGHT;
   }
-  const tint = horizonTintCanvas.getContext("2d")!;
-  tint.setTransform(1, 0, 0, 1, 0, 0);
-  tint.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
   const color = visual.skyHorizon;
   const dawnWindow = Math.max(0, 1 - Math.abs(visual.hour - 6.5) / 2);
   const dawnBoost = dawnWindow * dawnWindow * (3 - 2 * dawnWindow);
-  const topAlpha = 0.62 + dawnBoost * 0.16;
-  const middleAlpha = 0.4 + dawnBoost * 0.12;
-  const lowerAlpha = 0.14 + dawnBoost * 0.05;
-  const gradient = tint.createLinearGradient(
-    0,
-    PARK_HORIZON_Y,
-    0,
-    PARK_HORIZON_TINT_END_Y,
-  );
-  gradient.addColorStop(0, `rgba(${color.join(",")},${topAlpha})`);
-  gradient.addColorStop(0.36, `rgba(${color.join(",")},${middleAlpha})`);
-  gradient.addColorStop(0.72, `rgba(${color.join(",")},${lowerAlpha})`);
-  gradient.addColorStop(1, `rgba(${color.join(",")},0)`);
-  tint.fillStyle = gradient;
-  tint.fillRect(
-    0,
-    PARK_HORIZON_Y,
-    PARK_SCENE_WIDTH,
-    PARK_HORIZON_TINT_END_Y - PARK_HORIZON_Y,
-  );
-  tint.globalCompositeOperation = "destination-in";
-  tint.drawImage(layers.seaMask, 0, 0);
-  tint.globalCompositeOperation = "source-over";
+  const nextTintKey = `${color.join(",")}/${Math.round(dawnBoost * 128)}`;
+  if (horizonTintKey !== nextTintKey) {
+    horizonTintKey = nextTintKey;
+    const tint = horizonTintCanvas.getContext("2d")!;
+    tint.setTransform(1, 0, 0, 1, 0, 0);
+    tint.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+    const topAlpha = 0.62 + dawnBoost * 0.16;
+    const middleAlpha = 0.4 + dawnBoost * 0.12;
+    const lowerAlpha = 0.14 + dawnBoost * 0.05;
+    const gradient = tint.createLinearGradient(
+      0,
+      PARK_HORIZON_Y,
+      0,
+      PARK_HORIZON_TINT_END_Y,
+    );
+    gradient.addColorStop(0, `rgba(${color.join(",")},${topAlpha})`);
+    gradient.addColorStop(0.36, `rgba(${color.join(",")},${middleAlpha})`);
+    gradient.addColorStop(0.72, `rgba(${color.join(",")},${lowerAlpha})`);
+    gradient.addColorStop(1, `rgba(${color.join(",")},0)`);
+    tint.fillStyle = gradient;
+    tint.fillRect(
+      0,
+      PARK_HORIZON_Y,
+      PARK_SCENE_WIDTH,
+      PARK_HORIZON_TINT_END_Y - PARK_HORIZON_Y,
+    );
+    tint.globalCompositeOperation = "destination-in";
+    tint.drawImage(layers.seaMask, 0, 0);
+    tint.globalCompositeOperation = "source-over";
+  }
   ctx.save();
   ctx.globalCompositeOperation = "soft-light";
   ctx.globalAlpha = 0.82;
@@ -662,19 +667,133 @@ const drawMovingCloudLayer = (
   ctx.restore();
 };
 
+const drawMovingCliffFog = (
+  ctx: CanvasRenderingContext2D,
+  layers: ParkReferenceLayers,
+  nowMs: number,
+) => {
+  if (!cliffFogMotionCanvas) {
+    cliffFogMotionCanvas = document.createElement("canvas");
+    cliffFogMotionCanvas.width = PARK_SCENE_WIDTH;
+    cliffFogMotionCanvas.height = PARK_SCENE_HEIGHT;
+  }
+  if (
+    ambientUpdateDue(
+      nowMs,
+      lastCliffFogUpdateAt,
+      PARK_FOG_UPDATE_INTERVAL_MS,
+    )
+  ) {
+    lastCliffFogUpdateAt = advanceAmbientUpdateAt(
+      nowMs,
+      lastCliffFogUpdateAt,
+      PARK_FOG_UPDATE_INTERVAL_MS,
+    );
+    const motion = cliffFogMotionCanvas.getContext("2d")!;
+    motion.setTransform(1, 0, 0, 1, 0, 0);
+    motion.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+    motion.imageSmoothingEnabled = true;
+    layers.cliffFogSegments.forEach((segment, index) => {
+      const phase = nowMs / segment.periodMs * Math.PI * 2 + segment.phase;
+      const horizontalOffset = -(Math.sin(phase) * 0.5 + 0.5) * segment.amplitudeX;
+      const verticalOffset = Math.sin(phase * 0.73 + index * 1.37) * segment.amplitudeY;
+      const breath = 0.94
+        + (Math.sin(phase * 0.61 + index * 0.83) * 0.5 + 0.5) * 0.06;
+      motion.globalAlpha = segment.alpha * breath;
+      motion.drawImage(
+        segment.canvas,
+        segment.x + horizontalOffset,
+        segment.y + verticalOffset,
+      );
+    });
+    motion.globalAlpha = 1;
+    motion.globalCompositeOperation = "destination-in";
+    motion.drawImage(layers.cliffFogMotionMask, 0, 0);
+    motion.globalCompositeOperation = "source-over";
+  }
+  ctx.drawImage(cliffFogMotionCanvas, 0, 0);
+};
+
+const PARK_DOWNWARD_RIPPLE_PHASE_SCALE_MS = 680;
+const PARK_DOWNWARD_RIPPLE_FREQUENCY = 0.049;
+const PARK_DOWNWARD_RIPPLE_SHARPNESS = 9;
+const PARK_DOWNWARD_RIPPLE_PERIOD_MS =
+  Math.PI * 2 * PARK_DOWNWARD_RIPPLE_PHASE_SCALE_MS;
+
 const drawTerrainMotion = (
   ctx: CanvasRenderingContext2D,
   layers: ParkReferenceLayers,
   nowMs: number,
 ) => {
-  const gust = Math.max(0, Math.sin(nowMs / 5200) - 0.7) / 0.3;
-  if (gust <= 0) return;
-  ctx.save();
-  ctx.globalAlpha = gust * 0.3;
-  for (let y = 345; y < 780; y += 19) {
-    const shift = Math.round(Math.sin(nowMs / 260 + y * 0.21) * 3 * gust);
-    ctx.drawImage(layers.neutralBase, 255, y, 580, 3, 255 + shift, y, 580, 3);
+  if (!grassRippleCanvas) {
+    grassRippleCanvas = document.createElement("canvas");
+    grassRippleCanvas.width = PARK_SCENE_WIDTH;
+    grassRippleCanvas.height = PARK_SCENE_HEIGHT;
   }
+  if (
+    ambientUpdateDue(
+      nowMs,
+      lastGrassRippleUpdateAt,
+      PARK_GRASS_UPDATE_INTERVAL_MS,
+    )
+  ) {
+    lastGrassRippleUpdateAt = advanceAmbientUpdateAt(
+      nowMs,
+      lastGrassRippleUpdateAt,
+      PARK_GRASS_UPDATE_INTERVAL_MS,
+    );
+    const ripple = grassRippleCanvas.getContext("2d")!;
+    ripple.setTransform(1, 0, 0, 1, 0, 0);
+    ripple.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+    ripple.imageSmoothingEnabled = false;
+    const phase = nowMs / PARK_DOWNWARD_RIPPLE_PHASE_SCALE_MS;
+    const stripHeight = 2;
+    for (let y = 235; y <= 842; y += stripHeight) {
+      const crestWave = 0.5
+        + Math.sin(y * PARK_DOWNWARD_RIPPLE_FREQUENCY - phase) * 0.5;
+      const crest = Math.pow(crestWave, PARK_DOWNWARD_RIPPLE_SHARPNESS);
+      if (crest < 0.004) continue;
+      const lateralBend = Math.sin(y * 0.083 - phase * 0.41) * (0.35 + crest * 1.35);
+      const lowerOffset = Math.floor(lateralBend);
+      const offsetMix = lateralBend - lowerOffset;
+      const height = Math.min(stripHeight, 843 - y);
+      ripple.globalCompositeOperation = "source-over";
+      ripple.globalAlpha = crest * 0.2 * (1 - offsetMix);
+      ripple.drawImage(
+        layers.neutralBase,
+        0,
+        y,
+        PARK_SCENE_WIDTH,
+        height,
+        lowerOffset,
+        y,
+        PARK_SCENE_WIDTH,
+        height,
+      );
+      ripple.globalAlpha = crest * 0.2 * offsetMix;
+      ripple.drawImage(
+        layers.neutralBase,
+        0,
+        y,
+        PARK_SCENE_WIDTH,
+        height,
+        lowerOffset + 1,
+        y,
+        PARK_SCENE_WIDTH,
+        height,
+      );
+      ripple.globalCompositeOperation = "screen";
+      ripple.globalAlpha = crest * 0.115;
+      ripple.fillStyle = "#d8e795";
+      ripple.fillRect(0, y, PARK_SCENE_WIDTH, height);
+    }
+    ripple.globalAlpha = 1;
+    ripple.globalCompositeOperation = "destination-in";
+    ripple.drawImage(layers.grassRippleMask, 0, 0);
+    ripple.globalCompositeOperation = "source-over";
+  }
+  ctx.save();
+  ctx.drawImage(grassRippleCanvas, 0, 0);
   ctx.restore();
 };
 
@@ -737,15 +856,80 @@ const drawDynamicShadows = (
 };
 
 let waterLightCanvas: HTMLCanvasElement | null = null;
+let cliffFogMotionCanvas: HTMLCanvasElement | null = null;
+let grassRippleCanvas: HTMLCanvasElement | null = null;
 let shoreFoamMotionCanvas: HTMLCanvasElement | null = null;
 let shoreFoamHighlightCanvas: HTMLCanvasElement | null = null;
 let shoreFoamFringeCanvas: HTMLCanvasElement | null = null;
 let pondSurfaceCanvas: HTMLCanvasElement | null = null;
 let pondTextureCanvas: HTMLCanvasElement | null = null;
+let pondCompositeCanvas: HTMLCanvasElement | null = null;
 let pondLargeHighlightTextures: HTMLCanvasElement[] | null = null;
 let pondLargeLowlightTextures: HTMLCanvasElement[] | null = null;
 let pondFineHighlightTextures: HTMLCanvasElement[] | null = null;
 let pondFineLowlightTextures: HTMLCanvasElement[] | null = null;
+const pondPatternCache = new WeakMap<HTMLCanvasElement, CanvasPattern>();
+
+const PARK_FOG_UPDATE_INTERVAL_MS = 1000 / 30;
+const PARK_GRASS_UPDATE_INTERVAL_MS = 1000 / 20;
+const PARK_POND_UPDATE_INTERVAL_MS = 1000 / 20;
+const PARK_SEA_LIGHT_UPDATE_INTERVAL_MS = 1000 / 20;
+const PARK_FOAM_UPDATE_INTERVAL_MS = 1000 / 24;
+const PARK_DIAGNOSTIC_UPDATE_INTERVAL_MS = 250;
+
+let lastCliffFogUpdateAt = Number.NEGATIVE_INFINITY;
+let lastGrassRippleUpdateAt = Number.NEGATIVE_INFINITY;
+let lastPondSurfaceUpdateAt = Number.NEGATIVE_INFINITY;
+let lastSeaLightUpdateAt = Number.NEGATIVE_INFINITY;
+let lastSeaLightVisualKey = "";
+let lastFoamUpdateAt = Number.NEGATIVE_INFINITY;
+let lastFoamVisualKey = "";
+let cachedFoamBreath = 0;
+let cachedFoamMotion = {
+  interpolatingSegments: 0,
+  breathingFringeSegments: 0,
+};
+const lastDiagnosticUpdateByCanvas = new WeakMap<HTMLCanvasElement, number>();
+
+const ambientUpdateDue = (
+  nowMs: number,
+  lastUpdateAt: number,
+  intervalMs: number,
+) => nowMs < lastUpdateAt || nowMs - lastUpdateAt >= intervalMs;
+
+const advanceAmbientUpdateAt = (
+  nowMs: number,
+  lastUpdateAt: number,
+  intervalMs: number,
+) => (
+  !Number.isFinite(lastUpdateAt) || nowMs < lastUpdateAt
+    ? nowMs
+    : nowMs - ((nowMs - lastUpdateAt) % intervalMs)
+);
+
+const setParkDataset = (
+  canvas: HTMLCanvasElement,
+  key: string,
+  value: string,
+) => {
+  if (canvas.dataset[key] !== value) canvas.dataset[key] = value;
+};
+
+const shouldUpdateParkDiagnostics = (
+  canvas: HTMLCanvasElement,
+  nowMs: number,
+) => {
+  const previous = lastDiagnosticUpdateByCanvas.get(canvas);
+  if (
+    previous !== undefined
+    && nowMs >= previous
+    && nowMs - previous < PARK_DIAGNOSTIC_UPDATE_INTERVAL_MS
+  ) {
+    return false;
+  }
+  lastDiagnosticUpdateByCanvas.set(canvas, nowMs);
+  return true;
+};
 
 type PondTextureColor = readonly [number, number, number, number];
 
@@ -864,6 +1048,11 @@ const ensurePondTextures = () => {
     pondTextureCanvas.width = PARK_SCENE_WIDTH;
     pondTextureCanvas.height = PARK_SCENE_HEIGHT;
   }
+  if (!pondCompositeCanvas) {
+    pondCompositeCanvas = document.createElement("canvas");
+    pondCompositeCanvas.width = PARK_SCENE_WIDTH;
+    pondCompositeCanvas.height = PARK_SCENE_HEIGHT;
+  }
   pondLargeHighlightTextures ??= makePondTextureSequence(224, 28, 0x1374, 0.5, [167, 226, 216, 190]);
   pondLargeLowlightTextures ??= makePondTextureSequence(224, 28, 0x1374, 0.5, [8, 47, 72, 158]);
   pondFineHighlightTextures ??= makePondTextureSequence(168, 14, 0x5b21, 0.5, [220, 246, 235, 136]);
@@ -885,7 +1074,7 @@ const drawTiledPondTexture = (
   const texture = textures[0]!;
   const textureLayer = pondTextureCanvas!.getContext("2d")!;
   textureLayer.setTransform(1, 0, 0, 1, 0, 0);
-  textureLayer.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+  textureLayer.clearRect(730, 405, 450, PARK_SCENE_HEIGHT - 405);
   textureLayer.imageSmoothingEnabled = false;
   const startX = -texture.width + ((offsetX % texture.width) + texture.width) % texture.width;
   const startY = 405 - texture.height + ((offsetY % texture.height) + texture.height) % texture.height;
@@ -895,14 +1084,20 @@ const drawTiledPondTexture = (
   const nextMorphFrame = (morphFrame + 1) % textures.length;
   const rawMorphMix = morphPosition - Math.floor(morphPosition);
   const morphMix = rawMorphMix * rawMorphMix * (3 - 2 * rawMorphMix);
-  for (let y = startY; y < PARK_SCENE_HEIGHT; y += texture.height) {
-    for (let x = startX; x < PARK_SCENE_WIDTH; x += texture.width) {
-      textureLayer.globalAlpha = 1 - morphMix;
-      textureLayer.drawImage(textures[morphFrame]!, x, y);
-      textureLayer.globalAlpha = morphMix;
-      textureLayer.drawImage(textures[nextMorphFrame]!, x, y);
+  const fillTexture = (textureFrame: HTMLCanvasElement, textureAlpha: number) => {
+    let pattern = pondPatternCache.get(textureFrame);
+    if (!pattern) {
+      pattern = textureLayer.createPattern(textureFrame, "repeat") ?? undefined;
+      if (!pattern) return;
+      pondPatternCache.set(textureFrame, pattern);
     }
-  }
+    pattern.setTransform({ e: startX, f: startY });
+    textureLayer.globalAlpha = textureAlpha;
+    textureLayer.fillStyle = pattern;
+    textureLayer.fillRect(730, 405, 450, PARK_SCENE_HEIGHT - 405);
+  };
+  fillTexture(textures[morphFrame]!, 1 - morphMix);
+  fillTexture(textures[nextMorphFrame]!, morphMix);
   textureLayer.globalAlpha = 1;
 
   // Deform the tiled field in two-pixel horizontal ribbons. Blending the two
@@ -981,6 +1176,25 @@ const drawPondSurface = (
   nowMs: number,
 ) => {
   ensurePondTextures();
+  if (
+    !ambientUpdateDue(
+      nowMs,
+      lastPondSurfaceUpdateAt,
+      PARK_POND_UPDATE_INTERVAL_MS,
+    )
+  ) {
+    ctx.drawImage(pondCompositeCanvas!, 0, 0);
+    return;
+  }
+  lastPondSurfaceUpdateAt = advanceAmbientUpdateAt(
+    nowMs,
+    lastPondSurfaceUpdateAt,
+    PARK_POND_UPDATE_INTERVAL_MS,
+  );
+  const output = pondCompositeCanvas!.getContext("2d")!;
+  output.setTransform(1, 0, 0, 1, 0, 0);
+  output.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+  output.imageSmoothingEnabled = false;
   const surface = pondSurfaceCanvas!.getContext("2d")!;
   surface.setTransform(1, 0, 0, 1, 0, 0);
   surface.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
@@ -1032,10 +1246,10 @@ const drawPondSurface = (
     0.036,
     nowMs / PARK_POND_LARGE_MORPH_PERIOD_MS,
     {
-      phase: nowMs / 680,
-      frequency: 0.049,
+      phase: nowMs / PARK_DOWNWARD_RIPPLE_PHASE_SCALE_MS,
+      frequency: PARK_DOWNWARD_RIPPLE_FREQUENCY,
       strength: 0.42,
-      sharpness: 9,
+      sharpness: PARK_DOWNWARD_RIPPLE_SHARPNESS,
     },
   );
   drawTiledPondTexture(
@@ -1095,10 +1309,10 @@ const drawPondSurface = (
   surface.globalCompositeOperation = "destination-in";
   surface.globalAlpha = 1;
   surface.drawImage(layers.pondInteriorMask, 0, 0);
-  ctx.save();
-  ctx.globalCompositeOperation = "source-over";
-  ctx.drawImage(pondSurfaceCanvas!, 0, 0);
-  ctx.restore();
+  output.save();
+  output.globalCompositeOperation = "source-over";
+  output.drawImage(pondSurfaceCanvas!, 0, 0);
+  output.restore();
 
   // Darken the bank-facing water, then restore a one-pixel inner land edge.
   // Both masks are derived from the exact connected pond component.
@@ -1109,11 +1323,11 @@ const drawPondSurface = (
   surface.fillRect(730, 405, 450, 495);
   surface.globalCompositeOperation = "destination-in";
   surface.drawImage(layers.pondEdgeMask, 0, 0);
-  ctx.save();
-  ctx.globalCompositeOperation = "multiply";
-  ctx.globalAlpha = 0.32;
-  ctx.drawImage(pondSurfaceCanvas!, 0, 0);
-  ctx.restore();
+  output.save();
+  output.globalCompositeOperation = "multiply";
+  output.globalAlpha = 0.32;
+  output.drawImage(pondSurfaceCanvas!, 0, 0);
+  output.restore();
 
   surface.globalCompositeOperation = "source-over";
   surface.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
@@ -1121,11 +1335,12 @@ const drawPondSurface = (
   surface.fillRect(730, 405, 450, 495);
   surface.globalCompositeOperation = "destination-in";
   surface.drawImage(layers.pondRimMask, 0, 0);
-  ctx.save();
-  ctx.globalCompositeOperation = "screen";
-  ctx.globalAlpha = 0.16;
-  ctx.drawImage(pondSurfaceCanvas!, 0, 0);
-  ctx.restore();
+  output.save();
+  output.globalCompositeOperation = "screen";
+  output.globalAlpha = 0.16;
+  output.drawImage(pondSurfaceCanvas!, 0, 0);
+  output.restore();
+  ctx.drawImage(pondCompositeCanvas!, 0, 0);
 };
 
 const PARK_SEA_FINE_GLINT_COUNT = 260;
@@ -1157,9 +1372,24 @@ const drawSeaLighting = (
     waterLightCanvas.width = PARK_SCENE_WIDTH;
     waterLightCanvas.height = PARK_SCENE_HEIGHT;
   }
-  const light = waterLightCanvas.getContext("2d")!;
-  light.setTransform(1, 0, 0, 1, 0, 0);
-  light.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+  const visualKey = `${visual.reflection.join(",")}/${visual.nightStrength.toFixed(3)}`;
+  if (
+    ambientUpdateDue(
+      nowMs,
+      lastSeaLightUpdateAt,
+      PARK_SEA_LIGHT_UPDATE_INTERVAL_MS,
+    )
+    || visualKey !== lastSeaLightVisualKey
+  ) {
+    lastSeaLightUpdateAt = advanceAmbientUpdateAt(
+      nowMs,
+      lastSeaLightUpdateAt,
+      PARK_SEA_LIGHT_UPDATE_INTERVAL_MS,
+    );
+    lastSeaLightVisualKey = visualKey;
+    const light = waterLightCanvas.getContext("2d")!;
+    light.setTransform(1, 0, 0, 1, 0, 0);
+    light.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
 
   const dawnWarmth = Math.max(0, 1 - Math.abs(visual.hour - 6.5) / 2.3);
   const duskWarmth = Math.max(0, 1 - Math.abs(visual.hour - 18.25) / 2.6);
@@ -1255,10 +1485,11 @@ const drawSeaLighting = (
     }
   }
 
-  light.globalCompositeOperation = "destination-in";
-  light.globalAlpha = 1;
-  light.drawImage(layers.seaMotionMask, 0, 0);
-  light.globalCompositeOperation = "source-over";
+    light.globalCompositeOperation = "destination-in";
+    light.globalAlpha = 1;
+    light.drawImage(layers.seaMotionMask, 0, 0);
+    light.globalCompositeOperation = "source-over";
+  }
   ctx.save();
   ctx.globalCompositeOperation = "screen";
   ctx.globalAlpha = 1 - visual.nightStrength * 0.32;
@@ -1285,10 +1516,6 @@ const drawShoreFoamBreath = (
     ctx.restore();
   };
 
-  const outerExpansion = Math.max(0, Math.min(1, (breath - 0.18) / 0.82));
-  drawFoamBand(layers.shoreFoamOuterMask, 0.1 + outerExpansion * 0.22);
-  drawFoamBand(layers.shoreFoamInnerMask, 0.44 + breath * 0.28);
-
   if (!shoreFoamMotionCanvas) {
     shoreFoamMotionCanvas = document.createElement("canvas");
     shoreFoamMotionCanvas.width = PARK_SCENE_WIDTH;
@@ -1304,27 +1531,39 @@ const drawShoreFoamBreath = (
     shoreFoamFringeCanvas.width = PARK_SCENE_WIDTH;
     shoreFoamFringeCanvas.height = PARK_SCENE_HEIGHT;
   }
-  const motion = shoreFoamMotionCanvas.getContext("2d")!;
-  const highlight = shoreFoamHighlightCanvas.getContext("2d")!;
-  const fringe = shoreFoamFringeCanvas.getContext("2d")!;
-  motion.setTransform(1, 0, 0, 1, 0, 0);
-  motion.globalCompositeOperation = "source-over";
-  motion.globalAlpha = 1;
-  motion.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
-  motion.imageSmoothingEnabled = false;
-  highlight.setTransform(1, 0, 0, 1, 0, 0);
-  highlight.globalCompositeOperation = "source-over";
-  highlight.globalAlpha = 1;
-  highlight.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
-  highlight.imageSmoothingEnabled = false;
-  fringe.setTransform(1, 0, 0, 1, 0, 0);
-  fringe.globalCompositeOperation = "source-over";
-  fringe.globalAlpha = 1;
-  fringe.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
-  fringe.imageSmoothingEnabled = false;
-  let interpolatingSegments = 0;
-  let breathingFringeSegments = 0;
-  layers.shoreFoamSegments.forEach((segment) => {
+  const foamVisualKey = visual.nightStrength.toFixed(3);
+  if (
+    ambientUpdateDue(nowMs, lastFoamUpdateAt, PARK_FOAM_UPDATE_INTERVAL_MS)
+    || foamVisualKey !== lastFoamVisualKey
+  ) {
+    lastFoamUpdateAt = advanceAmbientUpdateAt(
+      nowMs,
+      lastFoamUpdateAt,
+      PARK_FOAM_UPDATE_INTERVAL_MS,
+    );
+    lastFoamVisualKey = foamVisualKey;
+    cachedFoamBreath = breath;
+    const motion = shoreFoamMotionCanvas.getContext("2d")!;
+    const highlight = shoreFoamHighlightCanvas.getContext("2d")!;
+    const fringe = shoreFoamFringeCanvas.getContext("2d")!;
+    motion.setTransform(1, 0, 0, 1, 0, 0);
+    motion.globalCompositeOperation = "source-over";
+    motion.globalAlpha = 1;
+    motion.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+    motion.imageSmoothingEnabled = false;
+    highlight.setTransform(1, 0, 0, 1, 0, 0);
+    highlight.globalCompositeOperation = "source-over";
+    highlight.globalAlpha = 1;
+    highlight.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+    highlight.imageSmoothingEnabled = false;
+    fringe.setTransform(1, 0, 0, 1, 0, 0);
+    fringe.globalCompositeOperation = "source-over";
+    fringe.globalAlpha = 1;
+    fringe.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+    fringe.imageSmoothingEnabled = false;
+    let interpolatingSegments = 0;
+    let breathingFringeSegments = 0;
+    layers.shoreFoamSegments.forEach((segment) => {
     const cycle = (nowMs / segment.periodMs + segment.phase / (Math.PI * 2)) % 1;
     const riseAndFall = cycle < segment.inhaleRatio
       ? cycle / segment.inhaleRatio
@@ -1363,22 +1602,31 @@ const drawShoreFoamBreath = (
     const fringeMix = fringeDistanceSteps - fringeLowerStep;
     drawAtStep(fringe, fringeLowerStep, fringeAlpha * (1 - fringeMix));
     drawAtStep(fringe, fringeLowerStep + 1, fringeAlpha * fringeMix);
-  });
-  motion.globalAlpha = 1;
-  highlight.globalAlpha = 1;
-  fringe.globalAlpha = 1;
+    });
+    motion.globalAlpha = 1;
+    highlight.globalAlpha = 1;
+    fringe.globalAlpha = 1;
 
-  // The mask contains connected water plus the audited authored foam pixels.
-  // Both interpolated integer positions therefore remain off cliffs/islands.
-  motion.globalCompositeOperation = "destination-in";
-  motion.drawImage(layers.shoreFoamMotionMask, 0, 0);
-  motion.globalCompositeOperation = "source-over";
-  highlight.globalCompositeOperation = "destination-in";
-  highlight.drawImage(layers.shoreFoamMotionMask, 0, 0);
-  highlight.globalCompositeOperation = "source-over";
-  fringe.globalCompositeOperation = "destination-in";
-  fringe.drawImage(layers.shoreFoamMotionMask, 0, 0);
-  fringe.globalCompositeOperation = "source-over";
+    // The mask contains connected water plus the audited authored foam pixels.
+    // Both interpolated integer positions therefore remain off cliffs/islands.
+    motion.globalCompositeOperation = "destination-in";
+    motion.drawImage(layers.shoreFoamMotionMask, 0, 0);
+    motion.globalCompositeOperation = "source-over";
+    highlight.globalCompositeOperation = "destination-in";
+    highlight.drawImage(layers.shoreFoamMotionMask, 0, 0);
+    highlight.globalCompositeOperation = "source-over";
+    fringe.globalCompositeOperation = "destination-in";
+    fringe.drawImage(layers.shoreFoamMotionMask, 0, 0);
+    fringe.globalCompositeOperation = "source-over";
+    cachedFoamMotion = { interpolatingSegments, breathingFringeSegments };
+  }
+
+  const outerExpansion = Math.max(
+    0,
+    Math.min(1, (cachedFoamBreath - 0.18) / 0.82),
+  );
+  drawFoamBand(layers.shoreFoamOuterMask, 0.1 + outerExpansion * 0.22);
+  drawFoamBand(layers.shoreFoamInnerMask, 0.44 + cachedFoamBreath * 0.28);
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
   ctx.globalAlpha = nightDimming;
@@ -1390,72 +1638,7 @@ const drawShoreFoamBreath = (
   ctx.drawImage(shoreFoamHighlightCanvas, 0, 0);
   ctx.drawImage(shoreFoamFringeCanvas, 0, 0);
   ctx.restore();
-  return { interpolatingSegments, breathingFringeSegments };
-};
-
-const drawReferenceMotion = (
-  ctx: CanvasRenderingContext2D,
-  layers: ParkReferenceLayers,
-  nowMs: number,
-) => {
-  const cloudShift = Math.round(Math.sin(nowMs / 17_000) * 7);
-  const cloudRegions = [
-    { x: 0, y: 0, width: 280, height: 105 },
-    { x: 320, y: 5, width: 310, height: 115 },
-    { x: 720, y: 0, width: 460, height: 122 },
-  ];
-  ctx.save();
-  ctx.globalAlpha = 0.2;
-  cloudRegions.forEach((region, index) => {
-    const shift = cloudShift * (0.55 + index * 0.23);
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(region.x, region.y, region.width, region.height);
-    ctx.clip();
-    ctx.drawImage(
-      layers.full,
-      region.x,
-      region.y,
-      region.width,
-      region.height,
-      Math.round(region.x + shift),
-      region.y,
-      region.width,
-      region.height,
-    );
-    ctx.restore();
-  });
-  ctx.restore();
-
-  const shimmerRegions = [
-    { x: 0, y: 124, width: 440, height: 190 },
-    { x: 690, y: 124, width: 490, height: 250 },
-  ];
-  ctx.save();
-  ctx.globalAlpha = 0.3;
-  shimmerRegions.forEach((region, regionIndex) => {
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(region.x, region.y, region.width, region.height);
-    ctx.clip();
-    for (let y = region.y + 2; y < region.y + region.height; y += 7) {
-      const shift = Math.round(Math.sin(nowMs / 760 + y * 0.17 + regionIndex) * 3);
-      ctx.drawImage(layers.full, region.x, y, region.width, 2, region.x + shift, y, region.width, 2);
-    }
-    ctx.restore();
-  });
-  ctx.restore();
-
-  const gust = Math.max(0, Math.sin(nowMs / 5200) - 0.7) / 0.3;
-  if (gust > 0) {
-    ctx.save();
-    ctx.globalAlpha = gust * 0.32;
-    for (let y = 345; y < 780; y += 19) {
-      const shift = Math.round(Math.sin(nowMs / 260 + y * 0.21) * 3 * gust);
-      ctx.drawImage(layers.full, 255, y, 580, 3, 255 + shift, y, 580, 3);
-    }
-    ctx.restore();
-  }
+  return cachedFoamMotion;
 };
 
 const drawReferenceObject = (
@@ -1472,6 +1655,30 @@ const drawReferenceObject = (
     Math.round(object.x - stamp.anchorX + sway),
     Math.round(object.y - stamp.anchorY),
   );
+};
+
+let sortedObjectSource: ParkObjectPlacement[] | null = null;
+let sortedObjectCache: ParkObjectPlacement[] = [];
+const staticOccluderDepthCache = new WeakMap<
+  ParkReferenceLayers,
+  ParkReferenceOccluder[]
+>();
+
+const sortedParkObjects = (objects: ParkObjectPlacement[]) => {
+  if (objects === sortedObjectSource) return sortedObjectCache;
+  sortedObjectSource = objects;
+  sortedObjectCache = [...objects].sort((left, right) => left.y - right.y);
+  return sortedObjectCache;
+};
+
+const sortedStaticOccluders = (layers: ParkReferenceLayers) => {
+  const cached = staticOccluderDepthCache.get(layers);
+  if (cached) return cached;
+  const sorted = [...layers.staticOccluders].sort(
+    (left, right) => left.depthY - right.depthY,
+  );
+  staticOccluderDepthCache.set(layers, sorted);
+  return sorted;
 };
 
 const drawReferenceOccluder = (
@@ -1494,16 +1701,6 @@ const applyTimeGrade = (ctx: CanvasRenderingContext2D, visual: ParkTimeVisual) =
   ctx.globalAlpha = visual.screenAlpha;
   ctx.fillStyle = `rgb(${visual.screen.join(",")})`;
   ctx.fillRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
-  ctx.restore();
-};
-
-const coverReferenceSun = (ctx: CanvasRenderingContext2D, layers: ParkReferenceLayers) => {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(35, 55, 76, 65);
-  ctx.clip();
-  ctx.globalAlpha = 0.96;
-  ctx.drawImage(layers.full, 118, 55, 76, 65, 35, 55, 76, 65);
   ctx.restore();
 };
 
@@ -1549,6 +1746,7 @@ const drawCelestialLayer = (
 
 export interface ParkRenderOptions {
   nowMs: number;
+  fishingNowMs?: number;
   frame: number;
   objects: ParkObjectPlacement[];
   avatar?: AvatarRuntime;
@@ -1579,8 +1777,23 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   }
   const lightingNowMs = previewTime(options.nowMs);
   const motionNowMs = options.nowMs;
+  const fishingNowMs = options.fishingNowMs ?? motionNowMs;
+  const fishingPoseStartedAt = options.fishingPoseStartedAt ?? fishingNowMs;
   const timeVisual = resolveParkTimeVisual(lightingNowMs);
   const celestial = resolveParkCelestialPosition(timeVisual.hour);
+  const updateDiagnostics = shouldUpdateParkDiagnostics(canvas, motionNowMs);
+  setParkDataset(
+    canvas,
+    "parkFishingClock",
+    options.fishingNowMs === undefined ? "scene-time" : "animation-frame",
+  );
+  setParkDataset(canvas, "parkFishingPose", options.fishingPose ?? "none");
+  setParkDataset(
+    canvas,
+    "parkFishingElapsedMs",
+    Math.max(0, fishingNowMs - fishingPoseStartedAt).toFixed(1),
+  );
+  if (updateDiagnostics) {
   canvas.dataset.parkHour = timeVisual.hour.toFixed(3);
   canvas.dataset.parkCelestial = celestial.kind;
   canvas.dataset.parkCelestialX = celestial.x.toFixed(2);
@@ -1591,6 +1804,17 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   canvas.dataset.parkCloudPixels = String(parkCloudAtlasOpaquePixelCount());
   canvas.dataset.parkCloudSource = "imagegen-time-atlas";
   canvas.dataset.parkCloudCornerAlpha = String(blendedCloudCornerAlpha);
+  canvas.dataset.parkCliffFogSegmentCount = String(layers.cliffFogSegments.length);
+  canvas.dataset.parkCliffFogMaskPixels = String(layers.cliffFogMaskPixels);
+  canvas.dataset.parkCliffFogMotionMaskPixels = String(layers.cliffFogMotionMaskPixels);
+  canvas.dataset.parkCliffFogPhase = (
+    (motionNowMs % (layers.cliffFogSegments[0]?.periodMs ?? 1))
+    / (layers.cliffFogSegments[0]?.periodMs ?? 1)
+  ).toFixed(3);
+  canvas.dataset.parkCliffFogMaxOffset = String(
+    Math.max(0, ...layers.cliffFogSegments.map((segment) => segment.amplitudeX)),
+  );
+  canvas.dataset.parkCliffFogSource = "authored-reference-layer";
   canvas.dataset.parkNightStarCount = String(PARK_NIGHT_STARS.length);
   canvas.dataset.parkNightStarBandCount = String(PARK_NIGHT_STAR_BAND_COUNT);
   canvas.dataset.parkNightStarDistribution = "seeded-field-plus-band";
@@ -1606,6 +1830,21 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   canvas.dataset.parkPondWaveInterpolation = "adjacent-pixel-crossfade";
   canvas.dataset.parkPondTravellingHighlightLayer = "large-cell";
   canvas.dataset.parkPondTravellingHighlightDirection = "toward-foreground";
+  const downwardRipplePhase = (
+    (motionNowMs % PARK_DOWNWARD_RIPPLE_PERIOD_MS) / PARK_DOWNWARD_RIPPLE_PERIOD_MS
+  ).toFixed(3);
+  canvas.dataset.parkPondTravellingHighlightPhase = downwardRipplePhase;
+  canvas.dataset.parkPondTravellingHighlightPeriodMs =
+    PARK_DOWNWARD_RIPPLE_PERIOD_MS.toFixed(2);
+  canvas.dataset.parkGrassRipplePhase = downwardRipplePhase;
+  canvas.dataset.parkGrassRipplePeriodMs = PARK_DOWNWARD_RIPPLE_PERIOD_MS.toFixed(2);
+  canvas.dataset.parkGrassRippleDirection = "toward-foreground";
+  canvas.dataset.parkGrassRippleSharedWithPond = "true";
+  canvas.dataset.parkGrassRippleFrequency = String(PARK_DOWNWARD_RIPPLE_FREQUENCY);
+  canvas.dataset.parkGrassRippleMaskPixels = String(layers.grassRippleMaskPixels);
+  canvas.dataset.parkGrassRippleObstacleExclusionCount = String(
+    layers.grassRippleObstacleExclusionCount,
+  );
   canvas.dataset.parkPondFinePalette = "lightened";
   canvas.dataset.parkPondMorphFrameCount = String(PARK_POND_MORPH_FRAME_COUNT);
   canvas.dataset.parkPondLargeMorphPeriodMs = String(PARK_POND_LARGE_MORPH_PERIOD_MS);
@@ -1656,10 +1895,19 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
     0,
     1 - Math.abs(timeVisual.hour - 6.5) / 2,
   ).toFixed(3);
+  canvas.dataset.parkAmbientFogFps = "30";
+  canvas.dataset.parkAmbientGrassFps = "20";
+  canvas.dataset.parkAmbientPondFps = "20";
+  canvas.dataset.parkAmbientSeaLightFps = "20";
+  canvas.dataset.parkAmbientFoamFps = "24";
+  canvas.dataset.parkDiagnosticsIntervalMs = String(PARK_DIAGNOSTIC_UPDATE_INTERVAL_MS);
+  canvas.dataset.parkPondPatternCache = "repeating-canvas-pattern";
+  }
   drawDynamicSky(ctx, timeVisual);
   drawMovingNightSky(ctx, timeVisual, celestial, motionNowMs);
   drawMovingCloudLayer(ctx, timeVisual, motionNowMs);
-  ctx.drawImage(layers.neutralBaseWithoutDistantShoreFoam, 0, 0);
+  ctx.drawImage(layers.neutralBaseWithoutDistantShoreFoamAndCliffFog, 0, 0);
+  drawMovingCliffFog(ctx, layers, motionNowMs);
   drawHorizonSeaTint(ctx, layers, timeVisual);
   drawDynamicShadows(ctx, options.objects, celestial, timeVisual);
   drawTerrainMotion(ctx, layers, motionNowMs);
@@ -1667,12 +1915,14 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
 
   const avatarY = options.avatar?.y ?? Number.POSITIVE_INFINITY;
   const staticOccludersInFront = options.avatar
-    ? layers.staticOccluders.filter((occluder) => occluder.depthY > avatarY)
+    ? sortedStaticOccluders(layers).filter((occluder) => occluder.depthY > avatarY)
     : [];
-  canvas.dataset.parkStaticOccludersInFront = staticOccludersInFront
-    .map((occluder) => occluder.id)
-    .join(",");
-  const sorted = [...options.objects].sort((left, right) => left.y - right.y);
+  if (updateDiagnostics) {
+    canvas.dataset.parkStaticOccludersInFront = staticOccludersInFront
+      .map((occluder) => occluder.id)
+      .join(",");
+  }
+  const sorted = sortedParkObjects(options.objects);
   sorted
     .filter((object) => object.y <= avatarY)
     .forEach((object) => drawReferenceObject(ctx, layers, object, options.frame));
@@ -1693,8 +1943,8 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
       pose: options.fishingPose ?? "none",
       fishId: options.displayedFish,
       frame: options.frame,
-      nowMs: motionNowMs,
-      poseStartedAt: options.fishingPoseStartedAt ?? motionNowMs,
+      nowMs: fishingNowMs,
+      poseStartedAt: fishingPoseStartedAt,
       spot: options.fishingSpot,
     });
   }
@@ -1702,11 +1952,9 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
     .filter((object) => object.y > avatarY)
     .forEach((object) => drawReferenceObject(ctx, layers, object, options.frame));
   staticOccludersInFront
-    .sort((left, right) => left.depthY - right.depthY)
     .forEach((occluder) => drawReferenceOccluder(ctx, occluder));
 
   const shoreFoamBreath = resolveShoreFoamBreath(motionNowMs);
-  canvas.dataset.parkShoreFoamBreath = shoreFoamBreath.toFixed(3);
   const foamMotion = drawShoreFoamBreath(
     ctx,
     layers,
@@ -1716,6 +1964,8 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   );
   applyTimeGrade(ctx, timeVisual);
   drawSeaLighting(ctx, layers, timeVisual, motionNowMs);
+  if (updateDiagnostics) {
+  canvas.dataset.parkShoreFoamBreath = cachedFoamBreath.toFixed(3);
   canvas.dataset.parkShoreFoamInterpolatingSegments = String(foamMotion.interpolatingSegments);
   canvas.dataset.parkShoreFoamBreathingFringeSegments = String(
     foamMotion.breathingFringeSegments,
@@ -1724,6 +1974,7 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   canvas.dataset.parkShoreFoamTimeGraded = "true";
   canvas.dataset.parkShoreFoamNightDimming = "0.62";
   canvas.dataset.parkShoreFoamMotionPhase = ((motionNowMs % 12_400) / 12_400).toFixed(3);
+  }
 
   if (options.selectedObjectId) {
     const selected = options.objects.find((object) => object.id === options.selectedObjectId);

@@ -438,6 +438,34 @@
       "price": 0
     },
     {
+      "id": "raw-bluegill",
+      "name": "Raw Bluegill",
+      "kind": "ingredient",
+      "tags": ["raw-fish"],
+      "price": 0
+    },
+    {
+      "id": "raw-yellow-perch",
+      "name": "Raw Yellow Perch",
+      "kind": "ingredient",
+      "tags": ["raw-fish"],
+      "price": 0
+    },
+    {
+      "id": "raw-weather-loach",
+      "name": "Raw Weather Loach",
+      "kind": "ingredient",
+      "tags": ["raw-fish"],
+      "price": 0
+    },
+    {
+      "id": "raw-rainbow-trout",
+      "name": "Raw Rainbow Trout",
+      "kind": "ingredient",
+      "tags": ["raw-fish"],
+      "price": 0
+    },
+    {
       "id": "cooked-black-bass",
       "name": "Cooked Black Bass",
       "kind": "food",
@@ -452,6 +480,38 @@
       "tags": ["consumable", "cooked-fish"],
       "price": 0,
       "effect": { "energy": 10, "mood": 16, "hunger": 28 }
+    },
+    {
+      "id": "cooked-bluegill",
+      "name": "Cooked Bluegill",
+      "kind": "food",
+      "tags": ["consumable", "cooked-fish"],
+      "price": 0,
+      "effect": { "energy": 10, "mood": 15, "hunger": 25 }
+    },
+    {
+      "id": "cooked-yellow-perch",
+      "name": "Cooked Yellow Perch",
+      "kind": "food",
+      "tags": ["consumable", "cooked-fish"],
+      "price": 0,
+      "effect": { "energy": 11, "mood": 17, "hunger": 29 }
+    },
+    {
+      "id": "cooked-weather-loach",
+      "name": "Cooked Weather Loach",
+      "kind": "food",
+      "tags": ["consumable", "cooked-fish"],
+      "price": 0,
+      "effect": { "energy": 9, "mood": 14, "hunger": 24 }
+    },
+    {
+      "id": "cooked-rainbow-trout",
+      "name": "Cooked Rainbow Trout",
+      "kind": "food",
+      "tags": ["consumable", "cooked-fish"],
+      "price": 0,
+      "effect": { "energy": 14, "mood": 22, "hunger": 34 }
     },
     {
       "id": "gas-oven-range",

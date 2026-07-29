@@ -34,6 +34,13 @@ import {
   parkFishingSpotById,
   type ParkObjectPlacement,
 } from "./parkContent";
+import {
+  createParkFishingAudioBank,
+  disposeParkFishingAudioBank,
+  playParkFishingSound,
+  type ParkFishingAudioBank,
+} from "./parkFishingAudio";
+import { measureParkRender } from "./parkPerformance";
 
 const ROOMS_URL = "http://127.0.0.1:38988/rooms";
 const VISIT_INVITE_URL = "http://127.0.0.1:38988/visits/invite";
@@ -41,6 +48,8 @@ const VISIT_STATE_URL = "http://127.0.0.1:38988/visits/state";
 const VISIT_END_URL = "http://127.0.0.1:38988/visits/end";
 const PARK_VISIT_TTL_MS = 8000;
 const PARK_SYNC_MS = 650;
+const PARK_TARGET_FPS = 30;
+const PARK_RENDER_INTERVAL_MS = 1000 / PARK_TARGET_FPS;
 const PARK_PREVIEW_TIMES = [
   { label: "实时", hour: null },
   { label: "朝霞 06:30", hour: 6.5 },
@@ -147,11 +156,21 @@ export const ParkApp = () => {
   const visitRef = useRef<AivatarVisitSession | null>(null);
   const invitationStartedRef = useRef(false);
   const simulationRef = useRef<ParkSimulationState | null>(null);
+  const fishingAudioBankRef = useRef<ParkFishingAudioBank | null>(null);
   const debugPreviewRef = useRef(false);
   const debugRodRef = useRef(false);
   const lastVisitPostAtRef = useRef(0);
   const lastPersistAtRef = useRef(0);
   const lastMoodAtRef = useRef(0);
+
+  useEffect(() => {
+    const audioBank = createParkFishingAudioBank();
+    fishingAudioBankRef.current = audioBank;
+    return () => {
+      fishingAudioBankRef.current = null;
+      disposeParkFishingAudioBank(audioBank);
+    };
+  }, []);
 
   useEffect(() => {
     objectsRef.current = objects;
@@ -279,23 +298,32 @@ export const ParkApp = () => {
   useEffect(() => {
     let frame = 0;
     let previous = performance.now();
+    let lastRenderAt = previous - PARK_RENDER_INTERVAL_MS;
     let stopped = false;
+    let animation = 0;
     const loop = (now: number) => {
       if (stopped) return;
       const elapsed = Math.min(0.08, Math.max(0, (now - previous) / 1000));
       previous = now;
-      frame += 1;
+      frame += elapsed * 60;
       const simulation = simulationRef.current;
       const currentSave = saveRef.current;
       const visit = visitRef.current;
       const debugPreviewActive = debugPreviewRef.current;
       if (simulation && currentSave && hostSlotId && (visit || debugPreviewActive)) {
+        const previousFishingPose = simulation.fishingPose;
         const result = advanceParkSimulation(simulation, elapsed, now, {
           objects: objectsRef.current,
           traits: currentSave.memory?.growth.traits ?? {},
           hasRod: debugRodRef.current || hasFishingRod(currentSave),
         });
         simulationRef.current = result.state;
+        if (result.state.fishingPose !== previousFishingPose) {
+          playParkFishingSound(
+            fishingAudioBankRef.current,
+            result.state.fishingPose,
+          );
+        }
         if (!debugPreviewActive && visit) {
           result.events.forEach((event) => {
             const nextSave = recordParkCatch(hostSlotId, event.fishId);
@@ -338,26 +366,39 @@ export const ParkApp = () => {
         }
       }
 
-      if (canvasRef.current) {
+      const renderElapsedMs = now - lastRenderAt;
+      if (
+        canvasRef.current
+        && document.visibilityState !== "hidden"
+        && renderElapsedMs >= PARK_RENDER_INTERVAL_MS
+      ) {
+        lastRenderAt = now - (renderElapsedMs % PARK_RENDER_INTERVAL_MS);
+        const canvas = canvasRef.current;
+        if (canvas.dataset.parkTargetFps !== String(PARK_TARGET_FPS)) {
+          canvas.dataset.parkTargetFps = String(PARK_TARGET_FPS);
+        }
         const activeSimulation = simulationRef.current;
         const activeSave = saveRef.current;
-        renderParkScene(canvasRef.current, {
-          nowMs: Date.now(),
-          frame,
-          objects: objectsRef.current,
-          avatar: activeSimulation?.avatar,
-          avatarAppearanceId: parkAvatarAppearance(activeSave?.avatarAppearanceId),
-          petStats: activeSave?.petStats,
-          memory: activeSave?.memory,
-          fishingPose: activeSimulation?.fishingPose,
-          fishingPoseStartedAt: activeSimulation?.activityStartedAt,
-          fishingSpot: parkFishingSpotById(activeSimulation?.fishingSpotId),
-          displayedFish: activeSimulation?.pendingFish,
+        measureParkRender(canvas, now, () => {
+          renderParkScene(canvas, {
+            nowMs: Date.now(),
+            fishingNowMs: now,
+            frame: Math.floor(frame),
+            objects: objectsRef.current,
+            avatar: activeSimulation?.avatar,
+            avatarAppearanceId: parkAvatarAppearance(activeSave?.avatarAppearanceId),
+            petStats: activeSave?.petStats,
+            memory: activeSave?.memory,
+            fishingPose: activeSimulation?.fishingPose,
+            fishingPoseStartedAt: activeSimulation?.activityStartedAt,
+            fishingSpot: parkFishingSpotById(activeSimulation?.fishingSpotId),
+            displayedFish: activeSimulation?.pendingFish,
+          });
         });
       }
-      window.requestAnimationFrame(loop);
+      animation = window.requestAnimationFrame(loop);
     };
-    const animation = window.requestAnimationFrame(loop);
+    animation = window.requestAnimationFrame(loop);
     return () => {
       stopped = true;
       window.cancelAnimationFrame(animation);

@@ -354,7 +354,7 @@ export const advanceParkSimulation = (
         now + fishingSessionDurationSeconds(options.traits.resilience, random) * 1000,
       avatar: {
         ...state.avatar,
-        facing: "right",
+        facing: "front",
         behavior: "interact",
         expression: "focused",
         activityLabel: "Casting a line",
@@ -370,7 +370,13 @@ export const advanceParkSimulation = (
       fishingPose: "focus",
       activityStartedAt: now,
       nextBiteAt: now + fishingBiteDelaySeconds(random) * 1000,
-      avatar: { ...state.avatar, behavior: "admire", expression: "calm", activityLabel: "Fishing" },
+      avatar: {
+        ...state.avatar,
+        facing: "right",
+        behavior: "admire",
+        expression: "calm",
+        activityLabel: "Fishing",
+      },
     };
     return { state, events };
   }
@@ -465,7 +471,13 @@ export const advanceParkSimulation = (
         pendingFish: undefined,
         activityStartedAt: now,
         activityEndsAt: now + 1200,
-        avatar: { ...state.avatar, facing: "right", behavior: "interact", expression: "focused", activityLabel: "Casting again" },
+        avatar: {
+          ...state.avatar,
+          facing: "front",
+          behavior: "interact",
+          expression: "focused",
+          activityLabel: "Casting again",
+        },
       };
     } else {
       state = {

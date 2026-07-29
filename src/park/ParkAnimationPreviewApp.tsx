@@ -10,6 +10,12 @@ import {
   PARK_FISHING_SPOTS,
   type ParkFishingSpot,
 } from "./parkContent";
+import {
+  createParkFishingAudioBank,
+  disposeParkFishingAudioBank,
+  playParkFishingSound,
+  type ParkFishingAudioBank,
+} from "./parkFishingAudio";
 import { drawParkFishingAnimation } from "./parkFishingAnimation";
 import type { ParkRawFishId } from "./parkProbability";
 import type { ParkFishingPose } from "./parkRuntime";
@@ -76,8 +82,12 @@ const FISHING_ACTIONS: Array<{ id: ParkFishingPose; label: string }> = [
 ];
 
 const DISPLAY_FISH_OPTIONS: Array<{ id: ParkRawFishId; label: string }> = [
-  { id: "raw-black-bass", label: "黑鲈" },
   { id: "raw-crucian-carp", label: "鲫鱼" },
+  { id: "raw-bluegill", label: "蓝鳃太阳鱼" },
+  { id: "raw-black-bass", label: "黑鲈" },
+  { id: "raw-yellow-perch", label: "黄鲈" },
+  { id: "raw-weather-loach", label: "泥鳅" },
+  { id: "raw-rainbow-trout", label: "虹鳟" },
 ];
 
 const FISHING_LOOP_DURATION: Partial<Record<ParkFishingPose, number>> = {
@@ -156,12 +166,22 @@ const drawPreviewStage = (
 
 export const ParkAnimationPreviewApp = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fishingAudioBankRef = useRef<ParkFishingAudioBank | null>(null);
   const [appearanceId, setAppearanceId] = useState<AvatarAppearanceId>(appearanceFromSave);
   const [behavior, setBehavior] = useState<BehaviorName>("idle");
   const [fishingPose, setFishingPose] = useState<ParkFishingPose>("none");
   const [displayFishId, setDisplayFishId] = useState<ParkRawFishId>("raw-black-bass");
   const [facing, setFacing] = useState<AvatarRuntime["facing"]>("right");
   const [replayKey, setReplayKey] = useState(0);
+
+  useEffect(() => {
+    const audioBank = createParkFishingAudioBank();
+    fishingAudioBankRef.current = audioBank;
+    return () => {
+      fishingAudioBankRef.current = null;
+      disposeParkFishingAudioBank(audioBank);
+    };
+  }, []);
 
   useEffect(() => {
     let animation = 0;
@@ -181,7 +201,14 @@ export const ParkAnimationPreviewApp = () => {
       const walking = fishingPose === "none" && (behavior === "wander" || behavior === "explore");
       const avatarX = PREVIEW_SPOT.x + (walking ? Math.sin(now / 520) * 26 : 0);
       const activeBehavior = fishingPose === "none" ? behavior : behaviorForFishingPose(fishingPose);
-      const activeFacing = fishingPose === "none" ? facing : fishingPose === "display" ? "front" : "right";
+      const activeFacing =
+        fishingPose === "none"
+          ? facing
+          : fishingPose === "display"
+            ? "front"
+            : fishingPose === "cast"
+              ? facing
+              : "right";
       const avatar: AvatarRuntime = {
         x: avatarX,
         y: PREVIEW_SPOT.y,
@@ -224,6 +251,7 @@ export const ParkAnimationPreviewApp = () => {
       canvas.dataset.previewAppearance = appearanceId;
       canvas.dataset.previewFishingSpot = PREVIEW_SPOT.id;
       canvas.dataset.previewFishId = displayFishId;
+      canvas.dataset.previewFishingFacing = activeFacing;
       frame += 1;
       animation = window.requestAnimationFrame(draw);
     };
@@ -238,8 +266,15 @@ export const ParkAnimationPreviewApp = () => {
   };
 
   const selectFishingPose = (pose: ParkFishingPose) => {
+    playParkFishingSound(fishingAudioBankRef.current, pose);
+    if (pose === "cast") setFacing("front");
     setFishingPose(pose);
     setBehavior(behaviorForFishingPose(pose));
+    setReplayKey((value) => value + 1);
+  };
+
+  const replayAction = () => {
+    playParkFishingSound(fishingAudioBankRef.current, fishingPose);
     setReplayKey((value) => value + 1);
   };
 
@@ -273,14 +308,14 @@ export const ParkAnimationPreviewApp = () => {
                 className={facing === direction ? "active" : undefined}
                 onClick={() => {
                   setFacing(direction);
-                  setFishingPose("none");
+                  if (fishingPose !== "cast") setFishingPose("none");
                 }}
               >
                 {direction}
               </button>
             ))}
           </span>
-          <button type="button" onClick={() => setReplayKey((value) => value + 1)}>
+          <button type="button" onClick={replayAction}>
             重新播放
           </button>
           <span className="park-animation-preview-facing" aria-label="展示鱼种">

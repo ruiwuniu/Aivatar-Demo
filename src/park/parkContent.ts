@@ -71,8 +71,8 @@ export const PARK_FISHING_SPOTS: ParkFishingSpot[] = [
     x: 805,
     y: 745,
     facing: "right",
-    bobberX: 943,
-    bobberY: 756,
+    bobberX: 995,
+    bobberY: 788,
   },
 ];
 

@@ -270,10 +270,21 @@ const BENTO_ITEM_ID = "bento";
 const COOKIE_ITEM_ID = "cookie";
 const FISHING_ROD_ITEM_ID = "fishing-rod";
 const GAS_OVEN_RANGE_ITEM_ID = "gas-oven-range";
-const RAW_FISH_ITEM_IDS = ["raw-black-bass", "raw-crucian-carp"] as const;
+const RAW_FISH_ITEM_IDS = [
+  "raw-crucian-carp",
+  "raw-bluegill",
+  "raw-black-bass",
+  "raw-yellow-perch",
+  "raw-weather-loach",
+  "raw-rainbow-trout",
+] as const;
 const COOKED_FISH_BY_RAW_ID: Record<(typeof RAW_FISH_ITEM_IDS)[number], string> = {
-  "raw-black-bass": "cooked-black-bass",
   "raw-crucian-carp": "cooked-crucian-carp",
+  "raw-bluegill": "cooked-bluegill",
+  "raw-black-bass": "cooked-black-bass",
+  "raw-yellow-perch": "cooked-yellow-perch",
+  "raw-weather-loach": "cooked-weather-loach",
+  "raw-rainbow-trout": "cooked-rainbow-trout",
 };
 const REPAIR_KIT_ITEM_ID = "repair-kit";
 const ITEM_ARCADE_A_THUMBNAIL_CELL_SIZE = 16;
@@ -636,7 +647,9 @@ const loadInitialUiTheme = (): UiThemeId => {
 const uiThemeForScene = (theme: UiThemeId): SceneUiThemeId => theme;
 
 const loadInitialAudioVolume = () => {
-  const saved = Number(localStorage.getItem(AUDIO_VOLUME_KEY));
+  const stored = localStorage.getItem(AUDIO_VOLUME_KEY);
+  if (stored === null) return DEFAULT_AUDIO_VOLUME;
+  const saved = Number(stored);
   if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
   return DEFAULT_AUDIO_VOLUME;
 };
