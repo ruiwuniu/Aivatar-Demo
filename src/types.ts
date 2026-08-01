@@ -90,6 +90,7 @@ export type BehaviorName =
   | "fetch_task_file"
   | "carry_task_file"
   | "read_task_file"
+  | "read_book"
   | "wander"
   | "sleep"
   | "interact"

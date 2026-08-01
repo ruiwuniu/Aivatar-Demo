@@ -9,7 +9,12 @@ const clamp01 = (value) => Math.max(0, Math.min(1, value));
 const normalizedTrait = (points) =>
   clamp01(Math.log10(Math.max(0, points) + 1) / Math.log10(1_000_001));
 const catchProbability = (focus) => 0.2 + normalizedTrait(focus) * 0.6;
+const hookStruggleDuration = (randomValue) => 1.4 + clamp01(randomValue) * 1.4;
+const biteProbability = (elapsedSeconds) =>
+  0.25 * (1 - Math.cos(elapsedSeconds / 20 * Math.PI * 2));
 const cookingProbability = (warmth) => 0.1 + normalizedTrait(warmth) * 0.65;
+const readingProbability = (focus, curiosity) =>
+  0.45 + (normalizedTrait(focus) + normalizedTrait(curiosity)) * 0.15;
 const sunPosition = (hour) => {
   const progress = clamp01((hour - 5.6) / 13.7);
   return {
@@ -51,8 +56,24 @@ const isGrass = (x, y) => {
 
 assert.equal(catchProbability(0), 0.2);
 assert.equal(catchProbability(1_000_000), 0.8);
+assert.equal(hookStruggleDuration(0), 1.4);
+assert.equal(hookStruggleDuration(1), 2.8);
+for (const [elapsedSeconds, expected] of [
+  [0, 0],
+  [5, 0.25],
+  [10, 0.5],
+  [15, 0.25],
+  [20, 0],
+]) {
+  assert(
+    Math.abs(biteProbability(elapsedSeconds) - expected) < 1e-12,
+    `bite probability at ${elapsedSeconds}s must be ${expected}`,
+  );
+}
 assert.equal(cookingProbability(0), 0.1);
 assert.equal(cookingProbability(1_000_000), 0.75);
+assert.equal(readingProbability(0, 0), 0.45);
+assert.equal(readingProbability(1_000_000, 1_000_000), 0.75);
 assert.equal(isGrass(420, 650), true);
 assert.equal(isGrass(1080, 650), false, "pond must remain non-walkable");
 assert.equal(isGrass(80, 700), false, "cliff must remain non-walkable");
@@ -158,6 +179,7 @@ const [
   storageText,
   runtimeText,
   rendererText,
+  avatarRendererText,
   performanceText,
   fishingAnimationText,
   animationPreviewText,
@@ -176,6 +198,11 @@ const [
   rainbowTroutImage,
   fishManifestText,
   fishGeneratorText,
+  footstepAudioText,
+  grassStep1Audio,
+  grassStep2Audio,
+  grassStep3Audio,
+  grassStep4Audio,
 ] = await Promise.all([
   read("public/config/aivatar.config.json"),
   read("src/data/defaultContent.ts"),
@@ -188,6 +215,7 @@ const [
   read("src/park/parkStorage.ts"),
   read("src/park/parkRuntime.ts"),
   read("src/park/parkRenderer.ts"),
+  read("src/game/renderScene.ts"),
   read("src/park/parkPerformance.ts"),
   read("src/park/parkFishingAnimation.ts"),
   read("src/park/ParkAnimationPreviewApp.tsx"),
@@ -206,6 +234,11 @@ const [
   readBinary("public/park/fish/raw-rainbow-trout-v1.png"),
   read("public/park/fish/fish-sprite-manifest.json"),
   read("scripts/generate-park-fish-sprites.py"),
+  read("src/park/parkFootstepAudio.ts"),
+  readBinary("public/audio/park-grass-step-1.wav"),
+  readBinary("public/audio/park-grass-step-2.wav"),
+  readBinary("public/audio/park-grass-step-3.wav"),
+  readBinary("public/audio/park-grass-step-4.wav"),
 ]);
 const seaLightingText = rendererText.slice(
   rendererText.indexOf("const drawSeaLighting"),
@@ -346,6 +379,15 @@ assert.match(fishGeneratorText, /def weather_loach_marker/);
 assert.match(fishGeneratorText, /def rainbow_trout_marker/);
 
 assert.match(parkContentText, /export interface ParkFishingSpot/);
+assert.match(parkContentText, /export const PARK_BENCH_RELAX_SPOT/);
+assert.match(parkContentText, /x: 804/);
+assert.match(parkContentText, /y: 332/);
+assert.equal(isGrass(804, 332), true, "bench interaction point must stay on grass");
+assert.doesNotMatch(
+  parkContentText,
+  /\{ x: 803, y: 321, radius: 34 \}/,
+  "fixed hilltop bench must not block park navigation",
+);
 for (const fishingSpotId of ["upper-bank", "middle-bank", "lower-bank"]) {
   assert.match(parkContentText, new RegExp(`id: "${fishingSpotId}"`));
 }
@@ -419,12 +461,29 @@ assert.match(fishingAnimationText, /quadraticCurveTo\(control\.x, control\.y, ti
 assert.match(fishingAnimationText, /const drawPixelRipple/);
 assert.match(fishingAnimationText, /const drawSplash/);
 assert.match(fishingAnimationText, /const drawBobber/);
+assert.match(fishingAnimationText, /const HOOK_SHAKE_CYCLE_MS = 420/);
+assert.match(fishingAnimationText, /const resolveHookStruggle/);
+assert.match(fishingAnimationText, /irregularWave/);
+assert.match(fishingAnimationText, /drawPixelRipple\(ctx, \{ x, y: center\.y \}, nowMs \* 1\.45, 1\.08\)/);
 assert.match(fishingAnimationText, /PARK_FISH_SPRITE_ASSETS/);
 assert.match(fishingAnimationText, /drawProceduralFishFallback/);
 assert.match(fishingAnimationText, /Math\.round\(Math\.sin\(frame \/ 6\)\)/);
+assert.match(fishingAnimationText, /export const resolveParkFishingVisualAvatar/);
+assert.match(fishingAnimationText, /avatar\.x - waterDirection \* Math\.round\(pull \* 7\)/);
+assert.match(fishingAnimationText, /const REEL_FISH_EXIT_PROGRESS = 0\.34/);
+assert.match(fishingAnimationText, /const resolveReelFishFlight/);
+assert.match(fishingAnimationText, /point\.y -= Math\.sin\(flight \* Math\.PI\) \* 76/);
+assert.match(fishingAnimationText, /\{ x: avatarX, y: avatarY - 55 \}/);
+assert.match(fishingAnimationText, /drawFish\(ctx, fishId, reelFish\.point\.x, reelFish\.point\.y, frame\)/);
 assert.match(fishingAnimationText, /showBobber = flight > 0\.84/);
-assert.match(fishingAnimationText, /showBobber = retrieve < 0\.24/);
+assert.match(fishingAnimationText, /showBobber = reelProgress < REEL_FISH_EXIT_PROGRESS/);
+assert.match(rendererText, /resolveParkFishingVisualAvatar/);
+assert.match(animationPreviewText, /fishingPose === "display" \|\| fishingPose === "reel"/);
+assert.match(animationPreviewText, /previewFishingRecoilX/);
+assert.match(animationPreviewText, /bite: 3200/);
 assert.match(animationPreviewText, /全部基础动作/);
+assert.match(animationPreviewText, /\{ id: "read_book", label: "长椅读书" \}/);
+assert.match(animationPreviewText, /activeBehavior === "read_book"/);
 assert.match(animationPreviewText, /钓鱼动作/);
 assert.match(animationPreviewText, /drawParkFishingAnimation/);
 assert.match(animationPreviewText, /fishingPose === "cast"\s*\? facing/);
@@ -445,6 +504,7 @@ assert.match(tauriText, /open_park_animation_preview_window/);
 assert.match(tauriText, /\.inner_size\(760\.0, 600\.0\)/);
 
 assert.match(typesText, /"room-visit" \| "card-room" \| "park"/);
+assert.match(typesText, /\| "read_book"/);
 assert.match(parkText, /guestRuntimeRoomInstanceId === instanceIdRef\.current/);
 assert.match(parkText, /simulationRef\.current = null/);
 assert.match(parkText, /label: "实时", hour: null/);
@@ -458,6 +518,9 @@ assert.match(parkText, /aria-label="公园时间预览"/);
 assert.match(parkText, /aria-label="公园角色预览"/);
 assert.match(parkText, /强制召唤角色/);
 assert.match(parkText, /强制钓鱼（临时钓竿）/);
+assert.match(parkText, /强制长椅放松/);
+assert.match(parkText, /强制长椅读书/);
+assert.match(parkText, /benchPose: activeSimulation\?\.benchPose/);
 assert.match(parkText, /debugRodRef\.current \|\| hasFishingRod\(currentSave\)/);
 assert.match(parkText, /if \(!debugPreviewActive && visit\)/);
 assert.match(parkText, /Debug 行为不会写入存档/);
@@ -465,10 +528,74 @@ assert.match(parkCssText, /\.park-debug \{/);
 assert.match(parkCssText, /left: 14px;/);
 assert.match(parkCssText, /bottom: 14px;/);
 assert.match(runtimeText, /export const forceParkFishingPreview/);
+assert.match(runtimeText, /export const forceParkBenchPreview/);
 assert.match(runtimeText, /"to-fishing"/);
+for (const benchActivity of ["to-bench", "bench-relax", "bench-read"]) {
+  assert.match(runtimeText, new RegExp(`"${benchActivity}"`));
+}
+assert.match(runtimeText, /const fishingChance = options\.hasRod \? 0\.38 : 0/);
+assert.match(runtimeText, /const benchChance = options\.hasRod \? 0\.27 : 0\.32/);
+assert.match(runtimeText, /shouldChooseParkReading/);
+assert.match(runtimeText, /behavior: reading \? "read_book" : "relax"/);
+assert.match(runtimeText, /const benchTargetReachable/);
+assert.match(runtimeText, /\? \[\.\.\.gridPath, target\]\.filter/);
+assert.match(probabilityText, /export const parkReadingProbability/);
+assert.match(probabilityText, /export const shouldChooseParkReading/);
 assert.match(runtimeText, /canLandFishingCatch/);
+assert.match(probabilityText, /export const fishingHookStruggleDurationSeconds/);
+assert.match(probabilityText, /1\.4 \+ clamp01\(random\(\)\) \* 1\.4/);
+assert.match(probabilityText, /export const FISHING_BITE_WAVE_PERIOD_SECONDS = 20/);
+assert.match(probabilityText, /export const fishingBiteProbability/);
+assert.match(probabilityText, /return 0\.25 \* \(1 - Math\.cos\(phase\)\)/);
+assert.match(probabilityText, /export const shouldFishBite/);
+assert.match(runtimeText, /fishingStartedAt: number/);
+assert.match(runtimeText, /fishingStartedAt: now/);
+assert.match(runtimeText, /shouldFishBite\(elapsedFishingSeconds, random\)/);
+assert.match(runtimeText, /activityLabel: "Waiting for a bite"/);
+assert.match(runtimeText, /activityEndsAt: now \+ fishingHookStruggleDurationSeconds\(random\) \* 1000/);
+assert.match(
+  runtimeText,
+  /if \(state\.activity === "bite"[\s\S]*if \(canLandFishingCatch\(options\.traits\.focus, random\)\)/,
+);
+assert.match(runtimeText, /activityLabel: "The fish slipped off the hook"/);
 assert.match(runtimeText, /fishingSessionDurationSeconds/);
 assert.match(runtimeText, /PARK_REFERENCE_COLLIDERS/);
+assert.match(avatarRendererText, /const drawReadingBookSprite/);
+assert.match(avatarRendererText, /const openingLinear = Math\.max/);
+assert.match(avatarRendererText, /const coverLeft = "#8b4d2b"/);
+assert.match(avatarRendererText, /const coverRight = "#744026"/);
+assert.match(avatarRendererText, /const pageEdge = "#f5e5b8"/);
+assert.match(avatarRendererText, /The pages face the character/);
+assert.match(avatarRendererText, /Page turns happen on the character-facing side/);
+assert.doesNotMatch(avatarRendererText, /const pageX = Math\.round/);
+assert.doesNotMatch(avatarRendererText, /const pageLift = Math\.round/);
+assert.match(avatarRendererText, /avatar\.behavior === "read_book"/);
+assert.match(rendererText, /const visualAvatar = options\.avatar/);
+assert.doesNotMatch(rendererText, /PARK_BENCH_RELAX_SPOT\.visualX/);
+assert.doesNotMatch(rendererText, /drawFixedBenchFront/);
+for (const grassStepAudio of [
+  grassStep1Audio,
+  grassStep2Audio,
+  grassStep3Audio,
+  grassStep4Audio,
+]) {
+  assert.equal(grassStepAudio.subarray(0, 4).toString("ascii"), "RIFF");
+  assert(grassStepAudio.length > 40_000, "grass footstep must contain a full one-shot");
+}
+assert.match(
+  footstepAudioText,
+  /PARK_FOOTSTEP_MUTED_APPEARANCE_ID: AvatarAppearanceId =\s*"cute-ghost"/,
+);
+assert.match(footstepAudioText, /PARK_FOOTSTEP_VOLUME_MAX = 0\.07/);
+assert.match(footstepAudioText, /PARK_FOOTSTEP_DISTANCE_MIN = 18/);
+assert.match(footstepAudioText, /PARK_FOOTSTEP_DISTANCE_VARIANCE = 4/);
+assert.match(
+  footstepAudioText,
+  /update\.appearanceId === PARK_FOOTSTEP_MUTED_APPEARANCE_ID/,
+);
+assert.match(parkText, /updateParkFootstepAudio\(footstepAudioRef\.current/);
+assert.match(parkText, /distancePx: distanceMoved/);
+assert.match(parkText, /onGrass: isParkGrassPoint/);
 assert.match(appText, /shouldChooseCooking\(warmth\)/);
 assert.match(appText, /consumeFurnitureStorageItem\([\s\S]*"fridge"/);
 assert.match(tauriText, /inner_size\(1180\.0, 900\.0\)/);
@@ -947,7 +1074,7 @@ assert.doesNotMatch(layersText, /OccluderEllipse/);
 assert.doesNotMatch(layersText, /occluderSilhouetteCoverage/);
 assert.match(layersText, /staticOccluders: ParkReferenceOccluder\[\]/);
 assert.match(layersText, /makeStaticOccluder\(neutralBase, recipe\)/);
-assert.match(rendererText, /const staticOccludersInFront = options\.avatar/);
+assert.match(rendererText, /const staticOccludersInFront = visualAvatar/);
 assert.match(rendererText, /occluder\.depthY > avatarY/);
 assert.match(rendererText, /drawReferenceOccluder\(ctx, occluder\)/);
 assert.match(rendererText, /parkStaticOccluderCount/);

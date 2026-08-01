@@ -31,6 +31,26 @@ export const fishingSessionDurationSeconds = (
 export const fishingBiteDelaySeconds = (random: ParkRandomSource = Math.random) =>
   6 + clamp01(random()) * 6;
 
+export const FISHING_BITE_WAVE_PERIOD_SECONDS = 20;
+
+export const fishingBiteProbability = (elapsedFishingSeconds: number) => {
+  const elapsed = Math.max(
+    0,
+    Number.isFinite(elapsedFishingSeconds) ? elapsedFishingSeconds : 0,
+  );
+  const phase = elapsed / FISHING_BITE_WAVE_PERIOD_SECONDS * Math.PI * 2;
+  return 0.25 * (1 - Math.cos(phase));
+};
+
+export const shouldFishBite = (
+  elapsedFishingSeconds: number,
+  random: ParkRandomSource = Math.random,
+) => clamp01(random()) < fishingBiteProbability(elapsedFishingSeconds);
+
+export const fishingHookStruggleDurationSeconds = (
+  random: ParkRandomSource = Math.random,
+) => 1.4 + clamp01(random()) * 1.4;
+
 export const cookingChoiceProbability = (warmthPoints: number | undefined) =>
   0.1 + normalizedParkTrait(warmthPoints) * 0.65;
 
@@ -38,6 +58,19 @@ export const shouldChooseCooking = (
   warmthPoints: number | undefined,
   random: ParkRandomSource = Math.random,
 ) => clamp01(random()) < cookingChoiceProbability(warmthPoints);
+
+export const parkReadingProbability = (
+  focusPoints: number | undefined,
+  curiosityPoints: number | undefined,
+) =>
+  0.45
+  + (normalizedParkTrait(focusPoints) + normalizedParkTrait(curiosityPoints)) * 0.15;
+
+export const shouldChooseParkReading = (
+  focusPoints: number | undefined,
+  curiosityPoints: number | undefined,
+  random: ParkRandomSource = Math.random,
+) => clamp01(random()) < parkReadingProbability(focusPoints, curiosityPoints);
 
 export const PARK_FISH_IDS = [
   "raw-crucian-carp",
@@ -84,5 +117,6 @@ export const traitsForParkDecision = (
 ) => ({
   focus: Math.max(0, traits?.focus ?? 0),
   resilience: Math.max(0, traits?.resilience ?? 0),
+  curiosity: Math.max(0, traits?.curiosity ?? 0),
   warmth: Math.max(0, traits?.warmth ?? 0),
 });

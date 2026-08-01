@@ -16,7 +16,10 @@ import {
   playParkFishingSound,
   type ParkFishingAudioBank,
 } from "./parkFishingAudio";
-import { drawParkFishingAnimation } from "./parkFishingAnimation";
+import {
+  drawParkFishingAnimation,
+  resolveParkFishingVisualAvatar,
+} from "./parkFishingAnimation";
 import type { ParkRawFishId } from "./parkProbability";
 import type { ParkFishingPose } from "./parkRuntime";
 import { readParkSaveSlot } from "./parkStorage";
@@ -69,6 +72,7 @@ const BEHAVIOR_ACTIONS: Array<{ id: BehaviorName; label: string }> = [
   { id: "fetch_task_file", label: "取任务" },
   { id: "carry_task_file", label: "搬任务" },
   { id: "read_task_file", label: "读任务" },
+  { id: "read_book", label: "长椅读书" },
 ];
 
 const FISHING_ACTIONS: Array<{ id: ParkFishingPose; label: string }> = [
@@ -92,7 +96,7 @@ const DISPLAY_FISH_OPTIONS: Array<{ id: ParkRawFishId; label: string }> = [
 
 const FISHING_LOOP_DURATION: Partial<Record<ParkFishingPose, number>> = {
   cast: 1900,
-  bite: 1500,
+  bite: 3200,
   reel: 2200,
   display: 2800,
 };
@@ -201,6 +205,9 @@ export const ParkAnimationPreviewApp = () => {
       const walking = fishingPose === "none" && (behavior === "wander" || behavior === "explore");
       const avatarX = PREVIEW_SPOT.x + (walking ? Math.sin(now / 520) * 26 : 0);
       const activeBehavior = fishingPose === "none" ? behavior : behaviorForFishingPose(fishingPose);
+      const avatarFrame = activeBehavior === "read_book"
+        ? Math.max(0, Math.floor((now - actionStartedAt) / 1000 * 60))
+        : frame;
       const activeFacing =
         fishingPose === "none"
           ? facing
@@ -209,7 +216,7 @@ export const ParkAnimationPreviewApp = () => {
             : fishingPose === "cast"
               ? facing
               : "right";
-      const avatar: AvatarRuntime = {
+      const baseAvatar: AvatarRuntime = {
         x: avatarX,
         y: PREVIEW_SPOT.y,
         targetX: walking ? avatarX + Math.cos(now / 520) * 24 : avatarX,
@@ -220,26 +227,35 @@ export const ParkAnimationPreviewApp = () => {
         expression: expressionForAction(activeBehavior, fishingPose),
         activityLabel: fishingPose === "none" ? behavior : fishingPose,
       };
+      const loopDuration = FISHING_LOOP_DURATION[fishingPose];
+      const poseStartedAt = loopDuration
+        ? now - ((now - actionStartedAt) % loopDuration)
+        : actionStartedAt;
+      const avatar = resolveParkFishingVisualAvatar(
+        baseAvatar,
+        fishingPose,
+        now,
+        poseStartedAt,
+      );
       drawAvatar(
         ctx,
         avatar,
-        frame,
+        avatarFrame,
         PREVIEW_STATS,
         { status: "idle", timestamp: new Date().toISOString() },
         undefined,
         appearanceId,
       );
 
-      const loopDuration = FISHING_LOOP_DURATION[fishingPose];
-      const poseStartedAt = loopDuration
-        ? now - ((now - actionStartedAt) % loopDuration)
-        : actionStartedAt;
       drawParkFishingAnimation({
         ctx,
         avatar,
         appearanceId,
         pose: fishingPose,
-        fishId: fishingPose === "display" ? displayFishId : undefined,
+        fishId:
+          fishingPose === "display" || fishingPose === "reel"
+            ? displayFishId
+            : undefined,
         frame,
         nowMs: now,
         poseStartedAt,
@@ -252,6 +268,8 @@ export const ParkAnimationPreviewApp = () => {
       canvas.dataset.previewFishingSpot = PREVIEW_SPOT.id;
       canvas.dataset.previewFishId = displayFishId;
       canvas.dataset.previewFishingFacing = activeFacing;
+      canvas.dataset.previewFishingRecoilX = String(Math.round(avatar.x - baseAvatar.x));
+      canvas.dataset.previewBookFrame = String(avatarFrame);
       frame += 1;
       animation = window.requestAnimationFrame(draw);
     };
@@ -260,6 +278,7 @@ export const ParkAnimationPreviewApp = () => {
   }, [appearanceId, behavior, displayFishId, fishingPose, facing, replayKey]);
 
   const selectBehavior = (nextBehavior: BehaviorName) => {
+    if (nextBehavior === "read_book") setFacing("front");
     setBehavior(nextBehavior);
     setFishingPose("none");
     setReplayKey((value) => value + 1);

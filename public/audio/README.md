@@ -239,6 +239,42 @@ Aivatar uses a 7.2-second crop with a short fade-in and fade-out during the
 fish-cooking pan-toss animation. The derived clip has moderate gain compensation
 because the source recording is intentionally quiet.
 
+## park-sea-cliff-ambience.ogg
+
+- Source: sea from cliff
+- Author: bruno.auzet (Freesound)
+- Pixabay URL: https://pixabay.com/sound-effects/nature-sea-from-cliff-49163/
+- License: Pixabay Content License
+- Downloaded file: `audio_e756b86f82.mp3`
+
+Aivatar uses this Atlantic sea-cliff field recording as the Hilltop Park's
+looping environmental ambience. The downloaded source is stereo, `24 kHz`, and
+about `168.43s` long. The derived OGG starts from the source's four-second mark
+and crossfades the original final four seconds into the original first four
+seconds, producing an approximately `164.43s` seamless loop without gain
+compensation. Runtime playback uses `0.22` of the global
+`aivatar.audioVolume.v1` setting so fishing cues remain clearly audible. The
+loop pauses while the park document is hidden and resumes when visible after
+browser audio has been unlocked.
+
+## park-grass-step-1.wav through park-grass-step-4.wav
+
+- Source: Footsteps_Grass_1.wav
+- Author: SilentStrikeZ
+- Pixabay URL: https://pixabay.com/sound-effects/nature-footsteps-grass-1-6810/
+- Original URL: https://freesound.org/people/SilentStrikeZ/sounds/389625/
+- License: Pixabay Content License / original Freesound Creative Commons 0
+- Original file: `Footsteps_Grass_1.wav`
+
+Aivatar uses four individual grass steps cut from the source recording at about
+`4.53-4.98s`, `7.34-7.82s`, `9.19-9.68s`, and `11.83-12.34s`. The derived
+clips are mono, `48 kHz`, 16-bit WAV files with short fades and matched peak
+levels. Park movement triggers one-shots after each randomized `18-22` pixels
+of actual travel and applies a small playback-rate variation. Runtime volume is
+randomized between `0.055` and `0.07` of the global
+`aivatar.audioVolume.v1` setting, below the park ambience and fishing cues.
+The `cute-ghost` appearance is explicitly excluded from footstep playback.
+
 ## Game Console random pool
 
 Aivatar randomly chooses one of these tracks each time the Game Console play

@@ -4182,6 +4182,77 @@ const drawTaskFilePose = (
   }
 };
 
+const drawReadingBookSprite = (
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  anchorY: number,
+  frame: number,
+) => {
+  const bob = Math.round(Math.sin(frame / 12));
+  const openingLinear = Math.max(0, Math.min(1, frame / 50));
+  const opening = openingLinear * openingLinear * (3 - 2 * openingLinear);
+  const halfWidth = Math.max(4, Math.round(4 + opening * 10));
+  const top = anchorY - 22 + bob;
+  const pageHeight = 16;
+  const coverDark = "#4a271b";
+  const coverLeft = "#8b4d2b";
+  const coverRight = "#744026";
+  const coverTrim = "#c18443";
+  const pageEdge = "#f5e5b8";
+  const pageEdgeLight = "#fff4cf";
+  const pageEdgeShade = "#cfb779";
+  const left = centerX - halfWidth - 1;
+  const right = centerX + 1;
+
+  // The pages face the character. From the room camera we see the two outside
+  // covers, with only a thin page block visible along the top and outer edges.
+  drawPixelRect(ctx, left - 2, top - 1, halfWidth * 2 + 5, pageHeight + 3, coverDark);
+  drawPixelRect(ctx, left - 1, top, halfWidth + 1, pageHeight + 1, coverLeft);
+  drawPixelRect(ctx, right, top, halfWidth + 1, pageHeight + 1, coverRight);
+  drawPixelRect(ctx, left, top + 1, halfWidth - 1, 2, pageEdge);
+  drawPixelRect(ctx, right + 1, top + 1, halfWidth - 1, 2, pageEdgeLight);
+  drawPixelRect(ctx, left, top + 3, 1, pageHeight - 5, pageEdgeShade);
+  drawPixelRect(ctx, right + halfWidth - 1, top + 3, 1, pageHeight - 5, pageEdgeShade);
+  drawPixelRect(ctx, centerX, top, 2, pageHeight + 1, coverDark);
+  drawPixelRect(ctx, centerX + 1, top + 2, 1, pageHeight - 4, coverTrim);
+
+  if (halfWidth >= 8) {
+    drawPixelRect(ctx, left + 2, top + 5, halfWidth - 4, 1, coverTrim);
+    drawPixelRect(ctx, left + 2, top + 12, halfWidth - 4, 1, coverTrim);
+    drawPixelRect(ctx, left + 2, top + 6, 1, 6, coverTrim);
+    drawPixelRect(ctx, right + 2, top + 5, halfWidth - 4, 1, coverTrim);
+    drawPixelRect(ctx, right + 2, top + 12, halfWidth - 4, 1, coverTrim);
+    drawPixelRect(ctx, right + halfWidth - 3, top + 6, 1, 6, coverTrim);
+  }
+
+  // Page turns happen on the character-facing side of the covers. The outside
+  // cover deliberately occludes them from the room camera.
+
+  return {
+    leftGripX: left - 3,
+    rightGripX: right + halfWidth + 2,
+    gripY: top + 12,
+  };
+};
+
+const drawReadingBookPose = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  frame: number,
+  facing: AvatarRuntime["facing"],
+  body: string,
+  bodyLight: string,
+) => {
+  if (facing === "back") return;
+  const centerX = facing === "left" ? x - 9 : facing === "right" ? x + 9 : x;
+  const grip = drawReadingBookSprite(ctx, centerX, y, frame);
+  drawPixelRect(ctx, grip.leftGripX - 1, grip.gripY - 2, 9, 4, body);
+  drawPixelRect(ctx, grip.rightGripX - 7, grip.gripY - 2, 9, 4, body);
+  drawPixelRect(ctx, grip.leftGripX, grip.gripY + 1, 5, 2, bodyLight);
+  drawPixelRect(ctx, grip.rightGripX - 3, grip.gripY + 1, 5, 2, bodyLight);
+};
+
 const drawAdmirePose = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -4444,9 +4515,14 @@ const drawDemoSparkAvatar = (
   if (
     avatar.behavior === "fetch_task_file" ||
     avatar.behavior === "carry_task_file" ||
-    avatar.behavior === "read_task_file"
+    avatar.behavior === "read_task_file" ||
+    avatar.behavior === "read_book"
   ) {
-    drawTaskFilePose(ctx, x, y, frame, facing, body, bodyLight, avatar.behavior);
+    if (avatar.behavior === "read_book") {
+      drawReadingBookPose(ctx, x, y, frame, facing, body, bodyLight);
+    } else {
+      drawTaskFilePose(ctx, x, y, frame, facing, body, bodyLight, avatar.behavior);
+    }
   }
   if (avatar.behavior === "coding" || avatar.behavior === "thinking") {
     const deviceX = facing === "left" ? x - 30 : x + 17;
@@ -4754,7 +4830,9 @@ const drawCuteCrayfishAvatar = (
       avatar.behavior === "cola" ||
       avatar.behavior === "cookie";
     const isTwoClawHold =
-      avatar.behavior === "bento" || avatar.behavior === "read_task_file";
+      avatar.behavior === "bento"
+      || avatar.behavior === "read_task_file"
+      || avatar.behavior === "read_book";
     const isSinglePropHold =
       isFoodOrDrink ||
       avatar.behavior === "phone" ||
@@ -5454,6 +5532,11 @@ const drawCuteCrayfishAvatar = (
       return;
     }
 
+    if (avatar.behavior === "read_book") {
+      drawReadingBookSprite(ctx, x, y, frame);
+      return;
+    }
+
     if (
       avatar.behavior === "fetch_task_file" ||
       avatar.behavior === "carry_task_file" ||
@@ -6056,9 +6139,14 @@ const drawMoodSlimeAvatar = (
   if (
     avatar.behavior === "fetch_task_file" ||
     avatar.behavior === "carry_task_file" ||
-    avatar.behavior === "read_task_file"
+    avatar.behavior === "read_task_file" ||
+    avatar.behavior === "read_book"
   ) {
-    drawTaskFilePose(ctx, x, y, frame, facing, body, bodyLight, avatar.behavior);
+    if (avatar.behavior === "read_book") {
+      drawReadingBookPose(ctx, x, y, frame, facing, body, bodyLight);
+    } else {
+      drawTaskFilePose(ctx, x, y, frame, facing, body, bodyLight, avatar.behavior);
+    }
   }
   if (avatar.behavior === "coding" || avatar.behavior === "thinking") {
     const deviceX = facing === "left" ? x - 30 : x + 17;
@@ -6138,6 +6226,7 @@ const drawWaveLizardAvatar = (
     avatar.behavior === "fetch_task_file" ||
     avatar.behavior === "carry_task_file" ||
     avatar.behavior === "read_task_file" ||
+    avatar.behavior === "read_book" ||
     avatar.behavior === "admire" ||
     avatar.behavior === "paint";
   const isTyping = avatar.behavior === "coding" || avatar.behavior === "thinking";
@@ -6756,9 +6845,14 @@ const drawWaveLizardAvatar = (
   if (
     avatar.behavior === "fetch_task_file" ||
     avatar.behavior === "carry_task_file" ||
-    avatar.behavior === "read_task_file"
+    avatar.behavior === "read_task_file" ||
+    avatar.behavior === "read_book"
   ) {
-    drawTaskFilePose(ctx, x, y, frame, facing, bodyMid, bodyLight, avatar.behavior);
+    if (avatar.behavior === "read_book") {
+      drawReadingBookPose(ctx, x, y, frame, facing, bodyMid, bodyLight);
+    } else {
+      drawTaskFilePose(ctx, x, y, frame, facing, bodyMid, bodyLight, avatar.behavior);
+    }
   }
 
   drawTraitStatusMotif(ctx, dominantTrait, avatar, x, y, frame, theme);
@@ -6813,6 +6907,7 @@ const drawCutePenguinAvatar = (
     avatar.behavior === "fetch_task_file" ||
     avatar.behavior === "carry_task_file" ||
     avatar.behavior === "read_task_file" ||
+    avatar.behavior === "read_book" ||
     avatar.behavior === "admire" ||
     avatar.behavior === "paint";
   const isTyping = avatar.behavior === "coding" || avatar.behavior === "thinking";
@@ -7178,9 +7273,14 @@ const drawCutePenguinAvatar = (
   if (
     avatar.behavior === "fetch_task_file" ||
     avatar.behavior === "carry_task_file" ||
-    avatar.behavior === "read_task_file"
+    avatar.behavior === "read_task_file" ||
+    avatar.behavior === "read_book"
   ) {
-    drawTaskFilePose(ctx, x, y, frame, facing, body, bodyLight, avatar.behavior);
+    if (avatar.behavior === "read_book") {
+      drawReadingBookPose(ctx, x, y, frame, facing, body, bodyLight);
+    } else {
+      drawTaskFilePose(ctx, x, y, frame, facing, body, bodyLight, avatar.behavior);
+    }
   }
 
   drawTraitStatusMotif(ctx, dominantTrait, avatar, x, y, frame, theme);
@@ -7664,6 +7764,14 @@ const drawCuteGhostAvatar = (
       return;
     }
 
+    if (avatar.behavior === "read_book") {
+      const bookBob = Math.round(Math.sin(frame / 12));
+      drawGhostArm(x - 16, y - 10 + bookBob, -1);
+      drawGhostArm(x + 16, y - 10 + bookBob, 1);
+      drawReadingBookSprite(ctx, x, y, frame);
+      return;
+    }
+
     if (
       avatar.behavior === "fetch_task_file" ||
       avatar.behavior === "carry_task_file" ||
@@ -7715,7 +7823,8 @@ const drawCuteGhostAvatar = (
     avatar.behavior === "paint" ||
     avatar.behavior === "fetch_task_file" ||
     avatar.behavior === "carry_task_file" ||
-    avatar.behavior === "read_task_file"
+    avatar.behavior === "read_task_file" ||
+    avatar.behavior === "read_book"
   ) {
     if (!backTyping) {
       drawGhostInteractionPose();
@@ -7994,9 +8103,14 @@ export const drawAvatar = (
   if (
     avatar.behavior === "fetch_task_file" ||
     avatar.behavior === "carry_task_file" ||
-    avatar.behavior === "read_task_file"
+    avatar.behavior === "read_task_file" ||
+    avatar.behavior === "read_book"
   ) {
-    drawTaskFilePose(ctx, x, y, frame, facing, body, bodyLight, avatar.behavior);
+    if (avatar.behavior === "read_book") {
+      drawReadingBookPose(ctx, x, y, frame, facing, body, bodyLight);
+    } else {
+      drawTaskFilePose(ctx, x, y, frame, facing, body, bodyLight, avatar.behavior);
+    }
   }
 
   if (avatar.behavior === "coding" || avatar.behavior === "thinking") {

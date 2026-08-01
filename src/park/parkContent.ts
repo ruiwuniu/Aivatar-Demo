@@ -28,7 +28,6 @@ export const PARK_REFERENCE_COLLIDERS = [
   { x: 234, y: 397, radius: 38 },
   { x: 507, y: 298, radius: 52 },
   { x: 871, y: 334, radius: 40 },
-  { x: 803, y: 321, radius: 34 },
   { x: 410, y: 346, radius: 31 },
   { x: 892, y: 382, radius: 32 },
   { x: 230, y: 487, radius: 34 },
@@ -39,6 +38,13 @@ export const PARK_SCENE_WIDTH = 1180;
 export const PARK_SCENE_HEIGHT = 900;
 
 export const PARK_ENTRY_POINT = { x: 330, y: 760 };
+
+export const PARK_BENCH_RELAX_SPOT = {
+  id: "hilltop-bench",
+  x: 804,
+  y: 332,
+  facing: "front" as const,
+} as const;
 
 export interface ParkFishingSpot {
   id: string;

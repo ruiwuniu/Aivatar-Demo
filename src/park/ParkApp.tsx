@@ -16,6 +16,7 @@ import {
 import { renderParkScene } from "./parkRenderer";
 import {
   advanceParkSimulation,
+  forceParkBenchPreview,
   forceParkFishingPreview,
   initialParkSimulation,
   type ParkSimulationState,
@@ -31,6 +32,7 @@ import {
   recordParkMoodRecovery,
 } from "./parkStorage";
 import {
+  isParkGrassPoint,
   parkFishingSpotById,
   type ParkObjectPlacement,
 } from "./parkContent";
@@ -40,6 +42,20 @@ import {
   playParkFishingSound,
   type ParkFishingAudioBank,
 } from "./parkFishingAudio";
+import {
+  createParkAmbientAudio,
+  disposeParkAmbientAudio,
+  PARK_AMBIENT_AUDIO_VOLUME_KEY,
+  pauseParkAmbientAudio,
+  startParkAmbientAudio,
+} from "./parkAmbientAudio";
+import {
+  createParkFootstepAudio,
+  disposeParkFootstepAudio,
+  stopParkFootstepAudio,
+  updateParkFootstepAudio,
+  type ParkFootstepAudioController,
+} from "./parkFootstepAudio";
 import { measureParkRender } from "./parkPerformance";
 
 const ROOMS_URL = "http://127.0.0.1:38988/rooms";
@@ -157,6 +173,7 @@ export const ParkApp = () => {
   const invitationStartedRef = useRef(false);
   const simulationRef = useRef<ParkSimulationState | null>(null);
   const fishingAudioBankRef = useRef<ParkFishingAudioBank | null>(null);
+  const footstepAudioRef = useRef<ParkFootstepAudioController | null>(null);
   const debugPreviewRef = useRef(false);
   const debugRodRef = useRef(false);
   const lastVisitPostAtRef = useRef(0);
@@ -169,6 +186,44 @@ export const ParkApp = () => {
     return () => {
       fishingAudioBankRef.current = null;
       disposeParkFishingAudioBank(audioBank);
+    };
+  }, []);
+
+  useEffect(() => {
+    const footstepAudio = createParkFootstepAudio();
+    footstepAudioRef.current = footstepAudio;
+    return () => {
+      footstepAudioRef.current = null;
+      disposeParkFootstepAudio(footstepAudio);
+    };
+  }, []);
+
+  useEffect(() => {
+    const ambientAudio = createParkAmbientAudio();
+    const requestPlayback = () => startParkAmbientAudio(ambientAudio);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        pauseParkAmbientAudio(ambientAudio);
+      } else if (ambientAudio.wantsPlayback) {
+        startParkAmbientAudio(ambientAudio);
+      }
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === PARK_AMBIENT_AUDIO_VOLUME_KEY) requestPlayback();
+    };
+
+    requestPlayback();
+    window.addEventListener("pointerdown", requestPlayback, true);
+    window.addEventListener("keydown", requestPlayback, true);
+    window.addEventListener("storage", handleStorage);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("pointerdown", requestPlayback, true);
+      window.removeEventListener("keydown", requestPlayback, true);
+      window.removeEventListener("storage", handleStorage);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      disposeParkAmbientAudio(ambientAudio);
     };
   }, []);
 
@@ -312,12 +367,28 @@ export const ParkApp = () => {
       const debugPreviewActive = debugPreviewRef.current;
       if (simulation && currentSave && hostSlotId && (visit || debugPreviewActive)) {
         const previousFishingPose = simulation.fishingPose;
+        const previousAvatarPosition = {
+          x: simulation.avatar.x,
+          y: simulation.avatar.y,
+        };
         const result = advanceParkSimulation(simulation, elapsed, now, {
           objects: objectsRef.current,
           traits: currentSave.memory?.growth.traits ?? {},
           hasRod: debugRodRef.current || hasFishingRod(currentSave),
         });
         simulationRef.current = result.state;
+        const distanceMoved = Math.hypot(
+          result.state.avatar.x - previousAvatarPosition.x,
+          result.state.avatar.y - previousAvatarPosition.y,
+        );
+        updateParkFootstepAudio(footstepAudioRef.current, {
+          appearanceId: parkAvatarAppearance(currentSave.avatarAppearanceId),
+          distancePx: distanceMoved,
+          onGrass: isParkGrassPoint(
+            result.state.avatar.x,
+            result.state.avatar.y,
+          ),
+        });
         if (result.state.fishingPose !== previousFishingPose) {
           playParkFishingSound(
             fishingAudioBankRef.current,
@@ -364,6 +435,8 @@ export const ParkApp = () => {
             }
           }
         }
+      } else {
+        stopParkFootstepAudio(footstepAudioRef.current);
       }
 
       const renderElapsedMs = now - lastRenderAt;
@@ -391,6 +464,8 @@ export const ParkApp = () => {
             memory: activeSave?.memory,
             fishingPose: activeSimulation?.fishingPose,
             fishingPoseStartedAt: activeSimulation?.activityStartedAt,
+            benchPose: activeSimulation?.benchPose,
+            benchPoseStartedAt: activeSimulation?.activityStartedAt,
             fishingSpot: parkFishingSpotById(activeSimulation?.fishingSpotId),
             displayedFish: activeSimulation?.pendingFish,
           });
@@ -487,6 +562,37 @@ export const ParkApp = () => {
     setDebugMessage("已临时配发钓竿，角色正在前往池边；不会修改背包。");
   };
 
+  const forceDebugBench = (intent: "relax" | "read") => {
+    if (!hostSlotId) {
+      setDebugMessage("当前公园窗口没有关联角色存档。");
+      return;
+    }
+    const currentSave = readParkSaveSlot(hostSlotId) ?? saveRef.current;
+    if (!currentSave) {
+      setDebugMessage("未找到当前角色存档，无法前往长椅。");
+      return;
+    }
+    saveRef.current = currentSave;
+    setSave(currentSave);
+    const simulation = simulationRef.current ?? initialParkSimulation(
+      currentSave.parkRuntime,
+      currentSave.parkNavMemory,
+    );
+    debugPreviewRef.current = true;
+    debugRodRef.current = false;
+    simulationRef.current = forceParkBenchPreview(
+      simulation,
+      objectsRef.current,
+      performance.now(),
+      intent,
+    );
+    setDebugMessage(
+      intent === "read"
+        ? "角色正在前往山顶长椅读书；不会写入存档。"
+        : "角色正在前往山顶长椅放松；不会写入存档。",
+    );
+  };
+
   const openAnimationPreview = () => {
     if ("__TAURI_INTERNALS__" in window) {
       void import("@tauri-apps/api/core")
@@ -547,6 +653,12 @@ export const ParkApp = () => {
                 </button>
                 <button type="button" onClick={forceDebugFishing}>
                   强制钓鱼（临时钓竿）
+                </button>
+                <button type="button" onClick={() => forceDebugBench("relax")}>
+                  强制长椅放松
+                </button>
+                <button type="button" onClick={() => forceDebugBench("read")}>
+                  强制长椅读书
                 </button>
                 <button type="button" onClick={openAnimationPreview}>
                   打开角色动作预览

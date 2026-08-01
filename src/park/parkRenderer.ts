@@ -11,8 +11,11 @@ import {
   type ParkFishingSpot,
   type ParkObjectPlacement,
 } from "./parkContent";
-import { drawParkFishingAnimation } from "./parkFishingAnimation";
-import type { ParkFishingPose } from "./parkRuntime";
+import {
+  drawParkFishingAnimation,
+  resolveParkFishingVisualAvatar,
+} from "./parkFishingAnimation";
+import type { ParkBenchPose, ParkFishingPose } from "./parkRuntime";
 import type { ParkRawFishId } from "./parkProbability";
 import {
   ensureParkCloudAtlas,
@@ -1755,6 +1758,8 @@ export interface ParkRenderOptions {
   memory?: AivatarMemory;
   fishingPose?: ParkFishingPose;
   fishingPoseStartedAt?: number;
+  benchPose?: ParkBenchPose;
+  benchPoseStartedAt?: number;
   fishingSpot?: ParkFishingSpot;
   displayedFish?: ParkRawFishId;
   selectedObjectId?: string;
@@ -1779,6 +1784,19 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   const motionNowMs = options.nowMs;
   const fishingNowMs = options.fishingNowMs ?? motionNowMs;
   const fishingPoseStartedAt = options.fishingPoseStartedAt ?? fishingNowMs;
+  const benchPose = options.benchPose ?? "none";
+  const benchPoseStartedAt = options.benchPoseStartedAt ?? fishingNowMs;
+  const visualAvatar = options.avatar
+    ? resolveParkFishingVisualAvatar(
+        options.avatar,
+        options.fishingPose ?? "none",
+        fishingNowMs,
+        fishingPoseStartedAt,
+      )
+    : undefined;
+  const avatarFrame = benchPose === "read"
+    ? Math.max(0, Math.floor((fishingNowMs - benchPoseStartedAt) / 1000 * 60))
+    : options.frame;
   const timeVisual = resolveParkTimeVisual(lightingNowMs);
   const celestial = resolveParkCelestialPosition(timeVisual.hour);
   const updateDiagnostics = shouldUpdateParkDiagnostics(canvas, motionNowMs);
@@ -1913,8 +1931,8 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   drawTerrainMotion(ctx, layers, motionNowMs);
   drawPondSurface(ctx, layers, motionNowMs);
 
-  const avatarY = options.avatar?.y ?? Number.POSITIVE_INFINITY;
-  const staticOccludersInFront = options.avatar
+  const avatarY = visualAvatar?.y ?? Number.POSITIVE_INFINITY;
+  const staticOccludersInFront = visualAvatar
     ? sortedStaticOccluders(layers).filter((occluder) => occluder.depthY > avatarY)
     : [];
   if (updateDiagnostics) {
@@ -1926,11 +1944,11 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   sorted
     .filter((object) => object.y <= avatarY)
     .forEach((object) => drawReferenceObject(ctx, layers, object, options.frame));
-  if (options.avatar && options.petStats) {
+  if (visualAvatar && options.petStats) {
     drawAvatar(
       ctx,
-      options.avatar,
-      options.frame,
+      visualAvatar,
+      avatarFrame,
       options.petStats,
       { status: "idle", timestamp: new Date(options.nowMs).toISOString() },
       options.memory,
@@ -1938,7 +1956,7 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
     );
     drawParkFishingAnimation({
       ctx,
-      avatar: options.avatar,
+      avatar: visualAvatar,
       appearanceId: options.avatarAppearanceId,
       pose: options.fishingPose ?? "none",
       fishId: options.displayedFish,

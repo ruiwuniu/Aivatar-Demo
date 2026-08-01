@@ -28,6 +28,9 @@ export interface ParkFishingAnimationOptions {
 const CAST_DURATION_MS = 1200;
 const REEL_DURATION_MS = 1450;
 const BITE_DURATION_MS = 520;
+const HOOK_SHAKE_CYCLE_MS = 420;
+const REEL_FISH_EXIT_PROGRESS = 0.34;
+const REEL_FISH_SPLASH_SPAN = 0.2;
 const PARK_FISH_SPRITE_ASSETS: Record<ParkRawFishId, string> = {
   "raw-crucian-carp": "/park/fish/raw-crucian-carp-v1.png",
   "raw-bluegill": "/park/fish/raw-bluegill-v1.png",
@@ -69,6 +72,43 @@ const lerpPoint = (from: Point, to: Point, amount: number): Point => ({
   x: lerp(from.x, to.x, amount),
   y: lerp(from.y, to.y, amount),
 });
+
+const reelProgressAt = (nowMs: number, poseStartedAt: number) =>
+  clamp01((nowMs - poseStartedAt) / REEL_DURATION_MS);
+
+const reelPullStrength = (progress: number) =>
+  Math.sin(clamp01((progress - 0.04) / 0.9) * Math.PI);
+
+const resolveHookStruggle = (poseElapsedMs: number) => {
+  const strength = smoothstep(poseElapsedMs / BITE_DURATION_MS);
+  const phase = poseElapsedMs / HOOK_SHAKE_CYCLE_MS * Math.PI * 2;
+  const irregularWave =
+    (Math.sin(phase) + Math.sin(phase * 2.3 + 0.8) * 0.42) / 1.42;
+  const tug = strength * (0.42 + (Math.sin(phase + 0.65) + 1) * 0.29);
+  return {
+    x: irregularWave * strength * 3,
+    y: strength * 4 + (Math.sin(phase * 1.35 + 0.4) + 1) * strength * 2,
+    tug,
+  };
+};
+
+export const resolveParkFishingVisualAvatar = (
+  avatar: AvatarRuntime,
+  pose: ParkFishingPose,
+  nowMs: number,
+  poseStartedAt: number,
+): AvatarRuntime => {
+  if (pose !== "reel") return avatar;
+  const progress = reelProgressAt(nowMs, poseStartedAt);
+  const pull = reelPullStrength(progress);
+  if (pull <= 0.001) return avatar;
+  const waterDirection = avatar.facing === "left" ? -1 : 1;
+  return {
+    ...avatar,
+    x: avatar.x - waterDirection * Math.round(pull * 7),
+    y: avatar.y + Math.round(pull * 2),
+  };
+};
 
 const rect = (
   ctx: CanvasRenderingContext2D,
@@ -129,13 +169,23 @@ const resolveRodTip = (
     return lerpPoint(forward, resting, smoothstep((progress - 0.7) / 0.3));
   }
   if (pose === "bite") {
-    const tug = Math.sin(clamp01(poseElapsedMs / BITE_DURATION_MS) * Math.PI);
-    return { x: hand.x + 48 - tug * 6, y: hand.y - 40 + tug * 9 };
+    const struggle = resolveHookStruggle(poseElapsedMs);
+    const forwardX = frontFacing ? 48 : 48 * side;
+    return {
+      x: hand.x + forwardX - (frontFacing ? 1 : side) * struggle.tug * 9,
+      y: hand.y - 40 + struggle.tug * 10,
+    };
   }
   if (pose === "reel") {
     const progress = clamp01(poseElapsedMs / REEL_DURATION_MS);
-    const pull = Math.sin(progress * Math.PI * 5) * (1 - progress) * 4;
-    return { x: hand.x + 48 - progress * 8 + pull, y: hand.y - 47 + progress * 9 };
+    const pull = reelPullStrength(progress);
+    const forwardX = frontFacing ? 48 : 48 * side;
+    const backwardX = frontFacing ? -12 : -18 * side;
+    const vibration = Math.sin(progress * Math.PI * 8) * (1 - progress) * 1.5;
+    return {
+      x: hand.x + lerp(forwardX, backwardX, pull) + vibration,
+      y: hand.y - 47 - pull * 18,
+    };
   }
   return resting;
 };
@@ -333,16 +383,18 @@ const drawBobber = (
   poseElapsedMs: number,
 ) => {
   const idleBob = Math.sin(nowMs / 420) * 1.35;
-  const biteProgress = pose === "bite" ? clamp01(poseElapsedMs / BITE_DURATION_MS) : 0;
-  const sink = pose === "bite" ? smoothstep(biteProgress) * 9 : idleBob;
-  const y = center.y + sink;
-  if (pose !== "bite" || biteProgress < 0.68) {
-    rect(ctx, center.x - 1, y - 8, 3, 5, "#f4f0d4");
-    rect(ctx, center.x - 2, y - 3, 5, 4, "#e9584f");
-    rect(ctx, center.x - 1, y + 1, 3, 3, "#6b3a2b");
+  const struggle = pose === "bite" ? resolveHookStruggle(poseElapsedMs) : undefined;
+  const x = center.x + (struggle?.x ?? 0);
+  const y = center.y + (struggle?.y ?? idleBob);
+  rect(ctx, x - 1, y - 8, 3, 5, "#f4f0d4");
+  rect(ctx, x - 2, y - 3, 5, 4, "#e9584f");
+  rect(ctx, x - 1, y + 1, 3, 3, "#6b3a2b");
+  if (pose === "bite") {
+    if (poseElapsedMs < BITE_DURATION_MS) drawSplash(ctx, center, poseElapsedMs);
+    else drawPixelRipple(ctx, { x, y: center.y }, nowMs * 1.45, 1.08);
+  } else {
+    drawPixelRipple(ctx, center, nowMs, 0.82);
   }
-  if (pose === "bite") drawSplash(ctx, center, poseElapsedMs);
-  else drawPixelRipple(ctx, center, nowMs, 0.82);
 };
 
 const parkFishSprite = (fishId: ParkRawFishId) => {
@@ -394,6 +446,25 @@ const drawFish = (
   ctx.restore();
 };
 
+const resolveReelFishFlight = (
+  waterTarget: Point,
+  displayTarget: Point,
+  reelProgress: number,
+) => {
+  if (reelProgress < REEL_FISH_EXIT_PROGRESS) return undefined;
+  const flight = smoothstep(
+    (reelProgress - REEL_FISH_EXIT_PROGRESS) / (1 - REEL_FISH_EXIT_PROGRESS),
+  );
+  const point = lerpPoint(
+    { x: waterTarget.x, y: waterTarget.y + 16 },
+    displayTarget,
+    flight,
+  );
+  point.y -= Math.sin(flight * Math.PI) * 76;
+  point.x += Math.sin(flight * Math.PI * 2) * (1 - flight) * 5;
+  return { point, flight };
+};
+
 export const drawParkFishingAnimation = ({
   ctx,
   avatar,
@@ -423,6 +494,7 @@ export const drawParkFishingAnimation = ({
   let lineEnd = waterTarget;
   let lineSag = 5;
   let showBobber = true;
+  let reelFish: ReturnType<typeof resolveReelFishFlight>;
 
   if (pose === "cast") {
     const castProgress = clamp01(poseElapsedMs / CAST_DURATION_MS);
@@ -439,13 +511,22 @@ export const drawParkFishingAnimation = ({
     }
   } else if (pose === "reel") {
     const reelProgress = clamp01(poseElapsedMs / REEL_DURATION_MS);
-    const retrieve = smoothstep(clamp01((reelProgress - 0.18) / 0.68));
-    lineEnd = lerpPoint(waterTarget, { x: tip.x + 5, y: tip.y + 9 }, retrieve);
-    lineEnd.y -= Math.sin(retrieve * Math.PI) * 24;
-    lineSag = Math.max(0, 5 - retrieve * 5);
-    showBobber = retrieve < 0.24;
+    reelFish = fishId
+      ? resolveReelFishFlight(
+          waterTarget,
+          { x: avatarX, y: avatarY - 55 },
+          reelProgress,
+        )
+      : undefined;
+    lineEnd = reelFish?.point ?? waterTarget;
+    lineSag = Math.max(0, 5 - (reelFish?.flight ?? 0) * 5);
+    showBobber = reelProgress < REEL_FISH_EXIT_PROGRESS;
   } else if (pose === "bite") {
-    lineEnd = { x: waterTarget.x, y: waterTarget.y + smoothstep(poseElapsedMs / BITE_DURATION_MS) * 6 };
+    const struggle = resolveHookStruggle(poseElapsedMs);
+    lineEnd = {
+      x: waterTarget.x + struggle.x,
+      y: waterTarget.y + struggle.y,
+    };
     lineSag = -2;
   }
 
@@ -454,8 +535,18 @@ export const drawParkFishingAnimation = ({
     drawBobber(ctx, waterTarget, nowMs, pose, poseElapsedMs);
   } else if (pose === "reel") {
     drawPixelRipple(ctx, waterTarget, nowMs, 0.45);
+    const splashProgress = clamp01(
+      (poseElapsedMs / REEL_DURATION_MS - REEL_FISH_EXIT_PROGRESS) / REEL_FISH_SPLASH_SPAN,
+    );
+    if (splashProgress < 1) {
+      drawSplash(ctx, waterTarget, splashProgress * BITE_DURATION_MS);
+    }
   }
   drawCurvedRod(ctx, hand, tip, pose, poseElapsedMs);
+
+  if (pose === "reel" && fishId && reelFish) {
+    drawFish(ctx, fishId, reelFish.point.x, reelFish.point.y, frame);
+  }
 
   if (pose === "whistle") {
     rect(ctx, avatarX + 23, avatarY - 45, 4, 4, "#fff0a6");
@@ -466,7 +557,9 @@ export const drawParkFishingAnimation = ({
 export const PARK_FISHING_ANIMATION_MARKERS = {
   castDurationMs: CAST_DURATION_MS,
   biteDurationMs: BITE_DURATION_MS,
+  hookShakeCycleMs: HOOK_SHAKE_CYCLE_MS,
   reelDurationMs: REEL_DURATION_MS,
+  reelFishExitProgress: REEL_FISH_EXIT_PROGRESS,
   handAnchorCount: Object.keys(FISHING_HAND_ANCHORS).length,
   fishSpriteCount: Object.keys(PARK_FISH_SPRITE_ASSETS).length,
   frontCastSupported: true,
