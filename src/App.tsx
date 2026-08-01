@@ -98,6 +98,10 @@ import {
   paintingProgressRatio,
   rewardBitsForPaintingQuality,
 } from "./game/paintings";
+import {
+  GAS_OVEN_RANGE_ITEM_ID,
+  gasOvenRangeCookingFacing,
+} from "./game/gasOvenRangeSprites";
 import { useCodexStatus } from "./hooks/useCodexStatus";
 import {
   agentDisplayName,
@@ -269,7 +273,6 @@ const COLA_ITEM_ID = "cola";
 const BENTO_ITEM_ID = "bento";
 const COOKIE_ITEM_ID = "cookie";
 const FISHING_ROD_ITEM_ID = "fishing-rod";
-const GAS_OVEN_RANGE_ITEM_ID = "gas-oven-range";
 const RAW_FISH_ITEM_IDS = [
   "raw-crucian-carp",
   "raw-bluegill",
@@ -408,7 +411,7 @@ const DEFAULT_SCENE_PANEL_WIDTH =
   DEFAULT_EXPANDED_WINDOW_WIDTH - APP_HORIZONTAL_PADDING - APP_GRID_GAP - SIDE_PANEL_WIDTH;
 const COLLAPSED_WINDOW_MIN_WIDTH = DEFAULT_SCENE_PANEL_WIDTH + APP_HORIZONTAL_PADDING;
 const DEFAULT_WINDOW_HEIGHT = 520;
-const SHOW_DEBUG_CARD = false;
+const SHOW_DEBUG_CARD = true;
 const EXPANDED_WINDOW_MIN_WIDTH = 720;
 const COLLAPSED_WINDOW_CLIENT_WIDTH_GUARD = 2;
 const COLLAPSED_WINDOW_RESIZE_RETRY_DELAY_MS = 50;
@@ -440,6 +443,9 @@ const COLA_DRINK_AUDIO_SRC = "/audio/cola-drink.mp3";
 const COFFEE_DRINK_AUDIO_SRC = "/audio/coffee-drink-slurping.mp3";
 const BENTO_EAT_AUDIO_SRC = "/audio/bento-eat-munchin.mp3";
 const SLEEP_SNORE_AUDIO_SRC = "/audio/sleep-snore.mp3";
+const GAS_RANGE_IGNITE_AUDIO_SRC = "/audio/gas-range-ignite.mp3";
+const FISH_PAN_SIZZLE_AUDIO_SRC = "/audio/fish-pan-sizzle.mp3";
+const GAS_RANGE_SHUTOFF_AUDIO_SRC = "/audio/gas-range-shutoff.mp3";
 const GAME_CONSOLE_AUDIO_SOURCES = [
   "/audio/game-console-jump.ogg",
   "/audio/game-console-invincibility.ogg",
@@ -524,6 +530,11 @@ const COLA_DRINK_AFTER_CAN_OPEN_DELAY_MS = 1200;
 const COFFEE_DRINK_AUDIO_VOLUME_MULTIPLIER = 0.42;
 const BENTO_EAT_AUDIO_VOLUME_MULTIPLIER = 0.42;
 const SLEEP_SNORE_AUDIO_VOLUME_MULTIPLIER = 0.18;
+const GAS_RANGE_IGNITE_AUDIO_VOLUME_MULTIPLIER = 0.75;
+const FISH_PAN_SIZZLE_AUDIO_VOLUME_MULTIPLIER = 0.48;
+const GAS_RANGE_SHUTOFF_AUDIO_VOLUME_MULTIPLIER = 0.9;
+const FISH_PAN_SIZZLE_DELAY_MS = 550;
+const GAS_RANGE_SHUTOFF_LEAD_MS = 350;
 const AUTONOMOUS_ACTION_STUCK_SECONDS = 120;
 const DEMO_BEHAVIORS: BehaviorName[] = [
   "idle",
@@ -3817,6 +3828,15 @@ export const App = () => {
   const bentoEatAudioRef = useRef<HTMLAudioElement | null>(null);
   const bentoEatingAudioRef = useRef(false);
   const sleepSnoreAudioRef = useRef<HTMLAudioElement | null>(null);
+  const gasRangeIgniteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const fishPanSizzleAudioRef = useRef<HTMLAudioElement | null>(null);
+  const gasRangeShutoffAudioRef = useRef<HTMLAudioElement | null>(null);
+  const cookingAudioInteractionRef = useRef<{
+    key: string;
+    ignitePlayed: boolean;
+    sizzleStarted: boolean;
+    shutoffPlayed: boolean;
+  } | null>(null);
   const audioUnlockedRef = useRef(false);
   const startupSoundPlayedRef = useRef(false);
   const bgmAudioContextRef = useRef<AudioContext | null>(null);
@@ -6206,6 +6226,7 @@ export const App = () => {
                     (item) => item.id === movingPlacedItem.itemId,
                   ) ?? content.itemDefinitions[0],
                 ...placementPreview,
+                rotation: movingPlacedItem.rotation,
               }
           : null,
         selectedPlacedItem?.id,
@@ -6666,6 +6687,21 @@ export const App = () => {
     sleepSnoreAudio.volume = audioVolume;
     sleepSnoreAudioRef.current = sleepSnoreAudio;
 
+    const gasRangeIgniteAudio = new Audio(GAS_RANGE_IGNITE_AUDIO_SRC);
+    gasRangeIgniteAudio.preload = "auto";
+    gasRangeIgniteAudio.volume = audioVolume;
+    gasRangeIgniteAudioRef.current = gasRangeIgniteAudio;
+
+    const fishPanSizzleAudio = new Audio(FISH_PAN_SIZZLE_AUDIO_SRC);
+    fishPanSizzleAudio.preload = "auto";
+    fishPanSizzleAudio.volume = audioVolume;
+    fishPanSizzleAudioRef.current = fishPanSizzleAudio;
+
+    const gasRangeShutoffAudio = new Audio(GAS_RANGE_SHUTOFF_AUDIO_SRC);
+    gasRangeShutoffAudio.preload = "auto";
+    gasRangeShutoffAudio.volume = audioVolume;
+    gasRangeShutoffAudioRef.current = gasRangeShutoffAudio;
+
     const gameAudio = new Audio(gameConsoleAudioSourceRef.current);
     gameAudio.loop = true;
     gameAudio.preload = "auto";
@@ -6691,6 +6727,9 @@ export const App = () => {
       coffeeDrinkAudio.pause();
       bentoEatAudio.pause();
       sleepSnoreAudio.pause();
+      gasRangeIgniteAudio.pause();
+      fishPanSizzleAudio.pause();
+      gasRangeShutoffAudio.pause();
       if (colaDrinkAudioTimeoutRef.current !== null) {
         window.clearTimeout(colaDrinkAudioTimeoutRef.current);
         colaDrinkAudioTimeoutRef.current = null;
@@ -6712,6 +6751,10 @@ export const App = () => {
       coffeeDrinkAudioRef.current = null;
       bentoEatAudioRef.current = null;
       sleepSnoreAudioRef.current = null;
+      gasRangeIgniteAudioRef.current = null;
+      fishPanSizzleAudioRef.current = null;
+      gasRangeShutoffAudioRef.current = null;
+      cookingAudioInteractionRef.current = null;
       gameConsoleAudioRef.current = null;
       bgmAudioRef.current = null;
     };
@@ -6731,6 +6774,9 @@ export const App = () => {
       coffeeDrinkAudioRef.current,
       bentoEatAudioRef.current,
       sleepSnoreAudioRef.current,
+      gasRangeIgniteAudioRef.current,
+      fishPanSizzleAudioRef.current,
+      gasRangeShutoffAudioRef.current,
       gameConsoleAudioRef.current,
     ].forEach((audio) => {
       if (!audio) return;
@@ -6834,11 +6880,88 @@ export const App = () => {
     const isCoffeeSipping = activeBehavior === "coffee";
     const isFoodEating = activeBehavior === "bento" || activeBehavior === "cookie";
     const isSleepingForAudio = avatar.behavior === "sleep" && !avatar.actionIntent;
+    const activeCookingInteraction =
+      activeInteraction?.kind === "cook" ? activeInteraction : null;
 
     if (isGameConsoleAnimating && !gameConsoleAnimatingRef.current) {
       prepareGameConsoleAudioForNewPlay();
     }
     gameConsoleAnimatingRef.current = isGameConsoleAnimating;
+
+    if (activeCookingInteraction) {
+      const interactionKey = `${activeCookingInteraction.furnitureId}:${activeCookingInteraction.startedAt}`;
+      const elapsedMs = Math.max(
+        0,
+        performance.now() - activeCookingInteraction.startedAt,
+      );
+      const shutoffAtMs =
+        FISH_COOK_SECONDS * 1000 - GAS_RANGE_SHUTOFF_LEAD_MS;
+      if (cookingAudioInteractionRef.current?.key !== interactionKey) {
+        const previous = cookingAudioInteractionRef.current;
+        pauseAudio(fishPanSizzleAudioRef.current);
+        if (previous && !previous.shutoffPlayed) {
+          playOneShotAudio(
+            gasRangeShutoffAudioRef.current,
+            GAS_RANGE_SHUTOFF_AUDIO_VOLUME_MULTIPLIER,
+          );
+        }
+        cookingAudioInteractionRef.current = {
+          key: interactionKey,
+          ignitePlayed: false,
+          sizzleStarted: false,
+          shutoffPlayed: false,
+        };
+      }
+
+      const cookingAudio = cookingAudioInteractionRef.current;
+      if (
+        cookingAudio &&
+        canPlayAudio &&
+        !cookingAudio.ignitePlayed &&
+        elapsedMs < FISH_PAN_SIZZLE_DELAY_MS
+      ) {
+        cookingAudio.ignitePlayed = true;
+        playOneShotAudio(
+          gasRangeIgniteAudioRef.current,
+          GAS_RANGE_IGNITE_AUDIO_VOLUME_MULTIPLIER,
+        );
+      }
+      if (
+        cookingAudio &&
+        canPlayAudio &&
+        !cookingAudio.sizzleStarted &&
+        elapsedMs >= FISH_PAN_SIZZLE_DELAY_MS &&
+        elapsedMs < shutoffAtMs
+      ) {
+        cookingAudio.sizzleStarted = true;
+        playOneShotAudio(
+          fishPanSizzleAudioRef.current,
+          FISH_PAN_SIZZLE_AUDIO_VOLUME_MULTIPLIER,
+        );
+      }
+      if (
+        cookingAudio &&
+        !cookingAudio.shutoffPlayed &&
+        elapsedMs >= shutoffAtMs
+      ) {
+        cookingAudio.shutoffPlayed = true;
+        pauseAudio(fishPanSizzleAudioRef.current);
+        playOneShotAudio(
+          gasRangeShutoffAudioRef.current,
+          GAS_RANGE_SHUTOFF_AUDIO_VOLUME_MULTIPLIER,
+        );
+      }
+    } else if (cookingAudioInteractionRef.current) {
+      const previous = cookingAudioInteractionRef.current;
+      pauseAudio(fishPanSizzleAudioRef.current);
+      if (!previous.shutoffPlayed) {
+        playOneShotAudio(
+          gasRangeShutoffAudioRef.current,
+          GAS_RANGE_SHUTOFF_AUDIO_VOLUME_MULTIPLIER,
+        );
+      }
+      cookingAudioInteractionRef.current = null;
+    }
 
     if (activeFridgeFeedInteraction && canPlayAudio) {
       const interactionKey = `${activeFridgeFeedInteraction.furnitureId}:${activeFridgeFeedInteraction.startedAt}`;
@@ -8586,6 +8709,7 @@ export const App = () => {
                       (item) => item.id === movingPlacedItemRef.current?.itemId,
                     ) ?? currentContent.itemDefinitions[0],
                   ...placementPreviewRef.current,
+                  rotation: movingPlacedItemRef.current?.rotation,
                 }
             : null,
           selectedPlacedItemRef.current?.id,
@@ -9729,33 +9853,60 @@ export const App = () => {
   };
 
   const addTestSupplies = () => {
-    setSave((current) => ({
-      ...current,
-      wallet: { ...current.wallet, bits: current.wallet.bits + 500 },
-      inventory: addInventoryItem(
-        addInventoryItem(
+    setSave((current) => {
+      const rawFishId = "raw-rainbow-trout";
+      const normalizedStorage = normalizeFurnitureStorage(current.furnitureStorage);
+      const hasRawFishStorage = normalizedStorage.some(
+        (entry) => entry.furnitureId === "fridge" && entry.itemId === rawFishId,
+      );
+      const storageWithRawFish = hasRawFishStorage
+        ? normalizedStorage.map((entry) =>
+            entry.furnitureId === "fridge" && entry.itemId === rawFishId
+              ? {
+                  ...entry,
+                  capacity: 999,
+                  quantity: Math.min(999, entry.quantity + 6),
+                }
+              : entry,
+          )
+        : [
+            ...normalizedStorage,
+            {
+              furnitureId: "fridge",
+              itemId: rawFishId,
+              quantity: 6,
+              capacity: 999,
+            },
+          ];
+
+      return {
+        ...current,
+        wallet: { ...current.wallet, bits: current.wallet.bits + 500 },
+        inventory: addInventoryItem(
           addInventoryItem(
-            addInventoryItem(current.inventory, COFFEE_ITEM_ID, 6, 24),
-            COOKIE_ITEM_ID,
+            addInventoryItem(
+              addInventoryItem(current.inventory, COFFEE_ITEM_ID, 6, 24),
+              COOKIE_ITEM_ID,
+              6,
+              24,
+            ),
+            "bento",
             6,
             24,
           ),
-          "bento",
+          "cola",
           6,
           24,
         ),
-        "cola",
-        6,
-        24,
-      ),
-      furnitureStorage: addFurnitureStorageItem(
-        current.furnitureStorage,
-        TABLE_FURNITURE_ID,
-        COFFEE_ITEM_ID,
-        getTableCoffeeCapacity(current.placedItems),
-        getTableCoffeeCapacity(current.placedItems),
-      ),
-    }));
+        furnitureStorage: addFurnitureStorageItem(
+          storageWithRawFish,
+          TABLE_FURNITURE_ID,
+          COFFEE_ITEM_ID,
+          getTableCoffeeCapacity(current.placedItems),
+          getTableCoffeeCapacity(current.placedItems),
+        ),
+      };
+    });
     updateActiveInteraction({
       kind: "none",
       furnitureId: "debug",
@@ -9858,6 +10009,7 @@ export const App = () => {
                 scenePoint.x,
                 scenePoint.y,
                 moving?.id,
+                moving?.rotation ?? 0,
               )
             : false,
         });
@@ -10132,7 +10284,16 @@ export const App = () => {
   };
 
   const movePlacedItem = (item: PlacedItem, x: number, y: number) => {
-    if (!isPlacedItemPlacementValid(contentRef.current, item.itemId, x, y, item.id)) {
+    if (
+      !isPlacedItemPlacementValid(
+        contentRef.current,
+        item.itemId,
+        x,
+        y,
+        item.id,
+        item.rotation ?? 0,
+      )
+    ) {
       const itemDefinition = contentRef.current.itemDefinitions.find(
         (candidate) => candidate.id === item.itemId,
       );
@@ -10344,9 +10505,33 @@ export const App = () => {
 
   const rotatePlacedItem = () => {
     if (!selectedPlacedItem || selectedPlacedItemDefinition?.rotatable === false) return;
+    const nextRotation = ((selectedPlacedItem.rotation ?? 0) + 90) % 360;
+    if (
+      !isPlacedItemPlacementValid(
+        contentRef.current,
+        selectedPlacedItem.itemId,
+        selectedPlacedItem.x,
+        selectedPlacedItem.y,
+        selectedPlacedItem.id,
+        nextRotation,
+      )
+    ) {
+      updateActiveInteraction({
+        kind: "blocked",
+        furnitureId: "placement",
+        furnitureName: ui("action.rotate"),
+        message: ui("message.chooseMoveTarget", {
+          nameTarget: placementTargetLabel(locale, selectedPlacedItemDefinition),
+        }),
+        startedAt: performance.now(),
+        bubbleText: ui("bubble.nope"),
+      });
+      return;
+    }
+
     const rotatedItem = {
       ...selectedPlacedItem,
-      rotation: ((selectedPlacedItem.rotation ?? 0) + 90) % 360,
+      rotation: nextRotation,
     };
 
     setSave((current) => ({
@@ -10357,6 +10542,9 @@ export const App = () => {
     }));
 
     updateSelectedPlacedItem(rotatedItem);
+    if (movingPlacedItemRef.current?.id === rotatedItem.id) {
+      updateMovingPlacedItem(rotatedItem);
+    }
     updateActiveInteraction({
       kind: "none",
       furnitureId: "placement",
@@ -11035,14 +11223,17 @@ export const App = () => {
       return;
     }
     const cookedFishId = COOKED_FISH_BY_RAW_ID[rawFishId];
-    runtimeRef.current = setBehavior(
-      runtimeRef.current,
-      "brew",
-      contentRef.current,
-      FISH_COOK_SECONDS,
-      "Cooking fish",
-      { startImmediately: true },
-    );
+    runtimeRef.current = {
+      ...setBehavior(
+        runtimeRef.current,
+        "brew",
+        contentRef.current,
+        FISH_COOK_SECONDS,
+        "Cooking fish",
+        { startImmediately: true },
+      ),
+      facing: gasOvenRangeCookingFacing(placedItem.rotation),
+    };
     setAvatar(runtimeRef.current);
     const now = performance.now();
     updateActiveInteraction({

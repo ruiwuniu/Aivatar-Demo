@@ -5,6 +5,11 @@ import type {
   PlacedItem,
   RoomWindowDefinition,
 } from "../types";
+import {
+  GAS_OVEN_RANGE_ITEM_ID,
+  gasOvenRangeFootBounds,
+  gasOvenRangeVisualBounds,
+} from "./gasOvenRangeSprites";
 
 export const sceneSize = {
   width: 480,
@@ -454,6 +459,10 @@ const isFloorUnderlayItem = (itemId: string) =>
   itemId === "blue-persian-rug";
 
 export const getPlacedItemPlacementFootBounds = (item: PlacedItem) => {
+  if (item.itemId === GAS_OVEN_RANGE_ITEM_ID) {
+    return gasOvenRangeFootBounds(item);
+  }
+
   const bounds = placedItemBounds(item);
   const height = Math.min(14, Math.max(6, bounds.height * 0.24));
   const inset = Math.min(8, Math.max(0, bounds.width * 0.16));
@@ -464,6 +473,22 @@ export const getPlacedItemPlacementFootBounds = (item: PlacedItem) => {
     width: Math.max(4, bounds.width - inset * 2),
     height,
   };
+};
+
+const NAVIGATION_BLOCKING_FLOOR_ITEM_IDS = new Set([
+  "oil-easel",
+  GAS_OVEN_RANGE_ITEM_ID,
+]);
+
+export const getPlacedItemCollisionBounds = (item: PlacedItem) => {
+  if (
+    item.surfaceFurnitureId ||
+    !NAVIGATION_BLOCKING_FLOOR_ITEM_IDS.has(item.itemId)
+  ) {
+    return null;
+  }
+
+  return getPlacedItemPlacementFootBounds(item);
 };
 
 const findDesktopSurfaces = (content: AivatarContent) =>
@@ -575,6 +600,7 @@ export const isPlacedItemPlacementValid = (
   x: number,
   y: number,
   ignorePlacedItemId?: string,
+  rotation = 0,
 ) => {
   const supportsWall = itemSupportsPlacementSurface(content, itemId, "wall");
   const supportsFurnitureTop = itemSupportsPlacementSurface(
@@ -584,7 +610,7 @@ export const isPlacedItemPlacementValid = (
   );
   const supportsFloor = itemSupportsPlacementSurface(content, itemId, "floor");
   const normalized = normalizePlacedItemPoint(content, itemId, x, y);
-  const candidate = { id: "candidate", itemId, ...normalized };
+  const candidate = { id: "candidate", itemId, rotation, ...normalized };
   const candidateBounds = placedItemBounds(candidate);
   const placementKind = normalized.surfaceFurnitureId
     ? "desktop"
@@ -715,7 +741,7 @@ export const placedItemBounds = (item: PlacedItem) => {
     case "coffee-machine":
       return { x: item.x - 31, y: item.y - 48, width: 58, height: 63 };
     case "gas-oven-range":
-      return { x: item.x - 34, y: item.y - 58, width: 68, height: 66 };
+      return gasOvenRangeVisualBounds(item);
     case "coffee-cup":
       return { x: item.x - 11, y: item.y - 24, width: 28, height: 28 };
     case "terminal-monitor":

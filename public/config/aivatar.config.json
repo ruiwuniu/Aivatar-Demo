@@ -520,7 +520,7 @@
       "tags": ["furniture", "stove"],
       "placementSurfaces": ["floor"],
       "placement": "floor",
-      "rotatable": false,
+      "rotatable": true,
       "price": 680,
       "effect": { "mood": 5 }
     },
@@ -982,7 +982,7 @@
         "tags": ["furniture", "stove"],
         "placementSurfaces": ["floor"],
         "placement": "floor",
-        "rotatable": false,
+        "rotatable": true,
         "price": 680,
         "effect": { "mood": 5 }
       },

@@ -213,6 +213,32 @@ action ends.
 Aivatar uses this as a quiet looping sleep snore only while the avatar is
 actually sleeping after reaching the bed.
 
+## gas-range-ignite.mp3 and gas-range-shutoff.mp3
+
+- Source: Close Up Turning On Gas Stove Top Then Turning Off
+- Author: shelbyshark
+- Pixabay URL: https://pixabay.com/sound-effects/close-up-turning-on-gas-stove-top-then-turning-off-40491/
+- Original URL: https://freesound.org/people/shelbyshark/sounds/513888/
+- License: Pixabay Content License / original Freesound Creative Commons 0
+- Original file: `Close Up Turning On Gas Stove Top Then Turning Off.mp3`
+
+Aivatar splits the same gas-stove recording into a 2.9-second ignition clip and
+a 1-second shutoff clip. The ignition plays when fish cooking starts; the
+shutoff plays after the final pan-sizzle phase or when cooking is interrupted.
+
+## fish-pan-sizzle.mp3
+
+- Source: Pan Frying Chicken
+- Author: parkersenk
+- Pixabay URL: https://pixabay.com/sound-effects/pan-frying-chicken-46760/
+- Original URL: https://freesound.org/people/parkersenk/sounds/444475/
+- License: Pixabay Content License / original Freesound Creative Commons 0
+- Original file: `Pan Frying Chicken.wav`
+
+Aivatar uses a 7.2-second crop with a short fade-in and fade-out during the
+fish-cooking pan-toss animation. The derived clip has moderate gain compensation
+because the source recording is intentionally quiet.
+
 ## Game Console random pool
 
 Aivatar randomly chooses one of these tracks each time the Game Console play

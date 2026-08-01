@@ -28,6 +28,7 @@ import {
   getFurniturePlacementFootBounds,
   getFurnitureVisualBounds,
   getItemPlacementKind,
+  getPlacedItemCollisionBounds,
   getPlacedItemPlacementFootBounds,
   placedItemBounds,
   sceneSize,
@@ -76,6 +77,10 @@ import {
   FLOOR_SURFACE_SPRITE_WIDTH,
 } from "./floorSurfaceSprites";
 import { GAME_CONSOLE_SCREEN_REGION, GAME_CONSOLE_SPRITE_DATA } from "./gameConsoleSprites";
+import {
+  GAS_OVEN_RANGE_ITEM_ID,
+  gasOvenRangeSprite,
+} from "./gasOvenRangeSprites";
 import { RECORD_PLAYER_SPRITE_DATA } from "./recordPlayerSprites";
 import { RUG_SPRITE_DATA, type RugSpriteId } from "./rugSprites";
 import { SMALL_ITEM_SPRITE_DATA, type SmallItemSpriteId } from "./smallItemSprites";
@@ -122,6 +127,7 @@ interface PlacementPreview {
   x: number;
   y: number;
   valid: boolean;
+  rotation?: number;
 }
 
 interface WindowPlacementPreview {
@@ -1861,6 +1867,11 @@ const rectsOverlap = (
   left.y + left.height > right.y;
 
 const placedItemDepthY = (item: PlacedItem) => {
+  if (item.itemId === GAS_OVEN_RANGE_ITEM_ID) {
+    const foot = getPlacedItemPlacementFootBounds(item);
+    return foot.y + foot.height;
+  }
+
   const bounds = placedItemBounds(item);
   return bounds.y + bounds.height - Math.min(8, bounds.height * 0.2);
 };
@@ -2054,9 +2065,10 @@ const navDebugCollisionRects = (content: AivatarContent) => [
   ...content.room.furniture
     .filter((item) => item.collision)
     .map((item) => item.collision!),
-  ...(content.placedItems ?? [])
-    .filter((item) => item.itemId === "oil-easel" && !item.surfaceFurnitureId)
-    .map(getPlacedItemPlacementFootBounds),
+  ...(content.placedItems ?? []).flatMap((item) => {
+    const bounds = getPlacedItemCollisionBounds(item);
+    return bounds ? [bounds] : [];
+  }),
 ];
 
 const drawNavigationDebugOverlay = (
@@ -8002,25 +8014,252 @@ export const drawAvatar = (
   drawTraitMicroExpression(ctx, dominantTrait, avatar, x, y, frame, theme);
 };
 
+const rawFishCookingPalettes: Record<
+  string,
+  { body: string; light: string; accent: string }
+> = {
+  "raw-black-bass": { body: "#526f54", light: "#9bb870", accent: "#dbe7a0" },
+  "raw-crucian-carp": { body: "#a49773", light: "#ddd0a2", accent: "#f2e3b6" },
+  "raw-bluegill": { body: "#4f7258", light: "#91ad70", accent: "#c8d98d" },
+  "raw-yellow-perch": { body: "#a9812e", light: "#e6c45c", accent: "#ffe184" },
+  "raw-weather-loach": { body: "#71552e", light: "#b68e50", accent: "#d8b574" },
+  "raw-rainbow-trout": { body: "#718781", light: "#cbd8c4", accent: "#e7b2aa" },
+};
+
+interface FishCookingTossPose {
+  bodyOffsetX: number;
+  bodyOffsetY: number;
+  panRise: number;
+  panTilt: -1 | 0 | 1;
+  fishRise: number;
+  fishDrift: number;
+  fishAirborne: boolean;
+  fishVertical: boolean;
+}
+
+const isRawFishCookingInteraction = (
+  interaction: FurnitureInteractionState | null | undefined,
+) =>
+  interaction?.kind === "cook" &&
+  Boolean(interaction.itemId && rawFishCookingPalettes[interaction.itemId]);
+
+const fishCookingTossPose = (
+  interaction: FurnitureInteractionState,
+  avatar: AvatarRuntime,
+  frame: number,
+): FishCookingTossPose => {
+  const now =
+    typeof performance === "undefined"
+      ? interaction.startedAt + frame * (1000 / 60)
+      : performance.now();
+  const cycleProgress =
+    ((Math.max(0, now - interaction.startedAt) % 1250) + 1250) / 1250 % 1;
+  const prepare =
+    cycleProgress < 0.2 ? Math.sin((cycleProgress / 0.2) * Math.PI) : 0;
+  const launch =
+    cycleProgress >= 0.2 && cycleProgress < 0.42
+      ? Math.sin(((cycleProgress - 0.2) / 0.22) * Math.PI)
+      : 0;
+  const catchMotion =
+    cycleProgress >= 0.72 && cycleProgress < 0.9
+      ? Math.sin(((cycleProgress - 0.72) / 0.18) * Math.PI)
+      : 0;
+  const fishAirborne = cycleProgress >= 0.28 && cycleProgress < 0.72;
+  const flightProgress = fishAirborne
+    ? (cycleProgress - 0.28) / (0.72 - 0.28)
+    : 0;
+  const sideDirection =
+    avatar.facing === "left" ? -1 : avatar.facing === "right" ? 1 : 0;
+
+  return {
+    bodyOffsetX:
+      sideDirection === 0 ? 0 : -sideDirection * Math.round(launch * 2),
+    bodyOffsetY: Math.round((prepare - launch + catchMotion) * 2),
+    panRise: Math.round(launch * 3 + catchMotion),
+    panTilt:
+      cycleProgress >= 0.27 && cycleProgress < 0.43
+        ? 1
+        : cycleProgress >= 0.72 && cycleProgress < 0.84
+          ? -1
+          : 0,
+    fishRise: fishAirborne
+      ? Math.round(Math.sin(flightProgress * Math.PI) * 20)
+      : 0,
+    fishDrift: fishAirborne
+      ? Math.round(Math.sin(flightProgress * Math.PI) * 4)
+      : 0,
+    fishAirborne,
+    fishVertical:
+      fishAirborne && flightProgress >= 0.36 && flightProgress < 0.64,
+  };
+};
+
+const cookingAvatarRenderRuntime = (
+  avatar: AvatarRuntime,
+  interaction: FurnitureInteractionState | null | undefined,
+  frame: number,
+) => {
+  if (!isRawFishCookingInteraction(interaction)) {
+    return { runtime: avatar, pose: null };
+  }
+
+  const pose = fishCookingTossPose(interaction!, avatar, frame);
+  return {
+    runtime: {
+      ...avatar,
+      x: avatar.x + pose.bodyOffsetX,
+      y: avatar.y + pose.bodyOffsetY,
+    },
+    pose,
+  };
+};
+
+const drawPixelSegment = (
+  ctx: CanvasRenderingContext2D,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  thickness: number,
+  color: string,
+) => {
+  const distance = Math.max(Math.abs(toX - fromX), Math.abs(toY - fromY));
+  const steps = Math.max(1, Math.round(distance));
+  for (let step = 0; step <= steps; step += 1) {
+    const progress = step / steps;
+    drawPixelRect(
+      ctx,
+      Math.round(fromX + (toX - fromX) * progress - thickness / 2),
+      Math.round(fromY + (toY - fromY) * progress - thickness / 2),
+      thickness,
+      thickness,
+      color,
+    );
+  }
+};
+
+const drawCookingFish = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  vertical: boolean,
+  palette: { body: string; light: string; accent: string },
+  facing: AvatarRuntime["facing"],
+) => {
+  if (vertical) {
+    drawPixelRect(ctx, x - 2, y - 5, 5, 10, "#242b2b");
+    drawPixelRect(ctx, x - 1, y - 4, 3, 7, palette.body);
+    drawPixelRect(ctx, x, y - 3, 2, 4, palette.light);
+    drawPixelRect(ctx, x - 2, y + 4, 2, 3, palette.accent);
+    drawPixelRect(ctx, x + 2, y + 4, 2, 3, palette.accent);
+    return;
+  }
+
+  const fishDirection = facing === "left" || facing === "back" ? -1 : 1;
+  drawPixelRect(ctx, x - 5, y - 2, 10, 5, "#242b2b");
+  drawPixelRect(ctx, x - 4, y - 1, 7, 3, palette.body);
+  drawPixelRect(ctx, x - 2, y - 1, 4, 1, palette.light);
+  drawPixelRect(ctx, x + fishDirection * 3, y - 1, 1, 1, palette.accent);
+  drawPixelRect(ctx, x - fishDirection * 7, y - 2, 3, 2, palette.accent);
+  drawPixelRect(ctx, x - fishDirection * 7, y + 1, 3, 2, palette.accent);
+};
+
+const drawCookingPan = (
+  ctx: CanvasRenderingContext2D,
+  avatar: AvatarRuntime,
+  pose: FishCookingTossPose,
+  palette: { body: string; light: string; accent: string },
+  drawGripOnly = false,
+) => {
+  const x = Math.round(avatar.x);
+  const y = Math.round(avatar.y);
+  const facing = avatar.facing;
+  const placement =
+    facing === "left"
+      ? { panX: x - 28, panY: y - 16, gripX: x - 11, gripY: y - 14 }
+      : facing === "right"
+        ? { panX: x + 28, panY: y - 16, gripX: x + 11, gripY: y - 14 }
+        : facing === "back"
+          ? { panX: x - 6, panY: y - 36, gripX: x + 9, gripY: y - 21 }
+          : { panX: x + 6, panY: y - 3, gripX: x - 10, gripY: y - 11 };
+  const panX = placement.panX;
+  const panY = placement.panY - pose.panRise;
+  const gripX = placement.gripX;
+  const gripY = placement.gripY - Math.round(pose.panRise * 0.35);
+  const bowlEdgeX =
+    facing === "left"
+      ? panX + 8
+      : facing === "right"
+        ? panX - 8
+        : facing === "back"
+          ? panX + 5
+          : panX - 5;
+  const bowlEdgeY =
+    facing === "left" || facing === "right"
+      ? panY
+      : facing === "back"
+        ? panY + 3
+        : panY - 2;
+
+  if (!drawGripOnly) {
+    drawPixelSegment(ctx, gripX, gripY, bowlEdgeX, bowlEdgeY, 5, "#171b1d");
+    drawPixelSegment(ctx, gripX, gripY, bowlEdgeX, bowlEdgeY, 2, "#745036");
+
+    const mirroredTilt = pose.panTilt * (facing === "left" ? -1 : 1);
+    for (let segment = -1; segment <= 1; segment += 1) {
+      const segmentX = panX + segment * 6;
+      const segmentY = panY - segment * mirroredTilt;
+      drawPixelRect(ctx, segmentX - 4, segmentY - 3, 8, 6, "#171b1d");
+      drawPixelRect(ctx, segmentX - 3, segmentY - 2, 7, 3, "#384246");
+      if (segment === -1) {
+        drawPixelRect(ctx, segmentX - 2, segmentY - 1, 4, 1, "#697579");
+      }
+    }
+    drawPixelRect(ctx, panX - 6, panY + 3, 13, 2, "#22282a");
+
+    const tossDirection =
+      facing === "left" ? -1 : facing === "right" || facing === "front" ? 1 : -1;
+    drawCookingFish(
+      ctx,
+      panX + tossDirection * pose.fishDrift,
+      panY - 4 - pose.fishRise,
+      pose.fishVertical,
+      palette,
+      facing,
+    );
+  }
+
+  drawPixelRect(ctx, gripX - 3, gripY - 3, 7, 6, "#61351f");
+  drawPixelRect(ctx, gripX - 2, gripY - 3, 5, 5, "#d27b2b");
+  drawPixelRect(ctx, gripX - 1, gripY - 2, 3, 2, "#ffc15c");
+};
+
 const drawFishInteractionOverlay = (
   ctx: CanvasRenderingContext2D,
   avatar: AvatarRuntime,
   interaction: FurnitureInteractionState | null | undefined,
   frame: number,
+  renderPass: "behind-avatar" | "front-avatar",
+  cookingPose: FishCookingTossPose | null = null,
 ) => {
   if (!interaction?.itemId) return;
-  const rawFish = interaction.itemId === "raw-black-bass" || interaction.itemId === "raw-crucian-carp";
+  const rawFishPalette = rawFishCookingPalettes[interaction.itemId];
   const cookedFish = interaction.itemId === "cooked-black-bass" || interaction.itemId === "cooked-crucian-carp";
   const x = Math.round(avatar.x);
   const y = Math.round(avatar.y);
-  if (interaction.kind === "cook" && rawFish) {
-    const stir = Math.round(Math.sin(frame / 3) * 5);
-    drawPixelRect(ctx, x + 8, y - 28, 20, 4, "#30383b");
-    drawPixelRect(ctx, x + 24, y - 27, 12, 2, "#67462e");
-    drawPixelRect(ctx, x + 12 + stir, y - 43, 3, 20, "#c7b791");
+  if (interaction.kind === "cook" && rawFishPalette && cookingPose) {
+    const panBehindAvatar = avatar.facing === "back";
+    if (
+      (panBehindAvatar && renderPass === "behind-avatar") ||
+      (!panBehindAvatar && renderPass === "front-avatar")
+    ) {
+      drawCookingPan(ctx, avatar, cookingPose, rawFishPalette);
+    } else if (panBehindAvatar && renderPass === "front-avatar") {
+      drawCookingPan(ctx, avatar, cookingPose, rawFishPalette, true);
+    }
     return;
   }
-  if (interaction.kind === "feed" && cookedFish) {
+  if (renderPass === "front-avatar" && interaction.kind === "feed" && cookedFish) {
     const chew = Math.round(Math.sin(frame / 2) * 2);
     drawPixelRect(ctx, x - 14, y - 24 + chew, 29, 4, "#e4d3ad");
     drawPixelRect(ctx, x - 10, y - 30 + chew, 20, 8, "#9b512b");
@@ -9384,6 +9623,94 @@ const drawCoffeeCup = (
   }
 };
 
+const gasOvenRangeImageCache = new Map<string, HTMLImageElement>();
+
+const gasOvenRangeImage = (source: string) => {
+  const cached = gasOvenRangeImageCache.get(source);
+  if (cached) return cached;
+  if (typeof Image === "undefined") return null;
+
+  const image = new Image();
+  image.decoding = "async";
+  image.src = source;
+  gasOvenRangeImageCache.set(source, image);
+  return image;
+};
+
+const drawGasOvenRangeFlame = (
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  centerY: number,
+  frame: number,
+) => {
+  const phase = Math.floor(frame / 3) % 3;
+  const flameFrames = [
+    [
+      [-4, -1],
+      [-3, -3],
+      [-1, -4],
+      [2, -4],
+      [4, -2],
+      [4, 1],
+      [2, 3],
+      [-2, 3],
+      [-4, 1],
+    ],
+    [
+      [-4, -2],
+      [-2, -4],
+      [0, -3],
+      [3, -4],
+      [4, -1],
+      [3, 2],
+      [1, 4],
+      [-3, 3],
+      [-4, 0],
+    ],
+    [
+      [-3, -3],
+      [-1, -4],
+      [1, -3],
+      [4, -3],
+      [4, 0],
+      [3, 3],
+      [0, 3],
+      [-3, 4],
+      [-4, 1],
+    ],
+  ] as const;
+
+  ctx.save();
+  ctx.shadowColor = "rgba(70, 190, 255, 0.75)";
+  ctx.shadowBlur = 3;
+  flameFrames[phase].forEach(([offsetX, offsetY], index) => {
+    drawPixelRect(
+      ctx,
+      centerX + offsetX,
+      centerY + offsetY,
+      1,
+      index % 3 === phase ? 2 : 1,
+      index % 2 === 0 ? "#72dcff" : "#2a8fff",
+    );
+  });
+  ctx.shadowBlur = 0;
+  drawPixelRect(ctx, centerX - 1, centerY - 5 + phase, 2, 1, "#ffd36a");
+
+  for (let steam = 0; steam < 2; steam += 1) {
+    const rise = (frame + steam * 8) % 18;
+    const sway = Math.round(Math.sin((frame + steam * 5) / 4));
+    drawPixelRect(
+      ctx,
+      centerX - 2 + steam * 4 + sway,
+      centerY - 9 - rise,
+      1,
+      3,
+      `rgba(238, 244, 230, ${0.55 - rise / 45})`,
+    );
+  }
+  ctx.restore();
+};
+
 const drawGasOvenRange = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -9391,32 +9718,46 @@ const drawGasOvenRange = (
   ghost: "none" | "valid" | "invalid" = "none",
   frame = 0,
   cooking = false,
+  rotation = 0,
 ) => {
-  const tint = ghost === "invalid" ? "#c75b66" : ghost === "valid" ? "#75c48f" : null;
-  const body = tint ?? "#6f7a80";
-  drawPixelRect(ctx, x - 31, y - 45, 62, 47, "#20282d");
-  drawPixelRect(ctx, x - 28, y - 42, 56, 41, body);
-  drawPixelRect(ctx, x - 25, y - 38, 50, 12, "#303a3f");
-  [-17, 0, 17].forEach((offset) => {
-    drawPixelRect(ctx, x + offset - 6, y - 35, 12, 7, "#11191d");
-    drawPixelRect(ctx, x + offset - 3, y - 33, 6, 3, cooking ? "#4db6d6" : "#536067");
-  });
-  drawPixelRect(ctx, x - 22, y - 21, 44, 18, "#1d252a");
-  drawPixelRect(ctx, x - 18, y - 18, 36, 12, cooking ? "#e89039" : "#3b474c");
-  drawPixelRect(ctx, x - 15, y - 16, 30, 8, cooking ? "#ffd36a" : "#222d31");
-  for (let knob = -18; knob <= 18; knob += 12) {
-    drawPixelRect(ctx, x + knob - 2, y - 24, 4, 4, "#c9c9b8");
+  const sprite = gasOvenRangeSprite(rotation);
+  const spriteX = Math.round(x) + sprite.xOffset;
+  const spriteY = Math.round(y) + sprite.yOffset;
+  const image = gasOvenRangeImage(sprite.source);
+
+  ctx.save();
+  if (ghost !== "none") {
+    ctx.globalAlpha = 0.68;
   }
-  if (cooking) {
-    const lift = Math.round(Math.sin(frame / 4) * 2);
-    drawPixelRect(ctx, x - 18, y - 51 + lift, 36, 5, "#161d21");
-    drawPixelRect(ctx, x - 12, y - 55 + lift, 25, 5, "#58636a");
-    drawPixelRect(ctx, x + 16, y - 51 + lift, 17, 3, "#33251d");
-    for (let steam = 0; steam < 3; steam += 1) {
-      const rise = (frame * 2 + steam * 9) % 23;
-      drawPixelRect(ctx, x - 9 + steam * 8, y - 59 - rise, 2, 6, "rgba(238,244,230,0.6)");
-    }
+
+  if (image?.complete && image.naturalWidth > 0) {
+    const smoothing = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(image, spriteX, spriteY, sprite.width, sprite.height);
+    ctx.imageSmoothingEnabled = smoothing;
+  } else {
+    drawPixelRect(ctx, spriteX, spriteY, sprite.width, sprite.height, "#9fa394");
+    drawPixelRect(ctx, spriteX, spriteY, sprite.width, 2, "#20282d");
   }
+
+  if (ghost !== "none") {
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = ghost === "valid" ? "#ffe66d" : "#ff5c7a";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(spriteX, spriteY, sprite.width, sprite.height);
+  } else if (cooking) {
+    const burner =
+      sprite.burnerCenters[sprite.activeBurnerIndex] ??
+      sprite.burnerCenters[0];
+    drawGasOvenRangeFlame(
+      ctx,
+      spriteX + burner.x,
+      spriteY + burner.y,
+      frame,
+    );
+  }
+
+  ctx.restore();
 };
 
 const drawPlaceableItem = (
@@ -9426,6 +9767,7 @@ const drawPlaceableItem = (
   y: number,
   ghost: "none" | "valid" | "invalid" = "none",
   frame = 0,
+  rotation = 0,
   avatar?: AvatarRuntime,
   brewing = false,
   coffeeCupHasCoffee = false,
@@ -9478,8 +9820,8 @@ const drawPlaceableItem = (
     case "coffee-machine":
       drawCoffeeMachine(ctx, x, y, ghost, frame, brewing);
       return;
-    case "gas-oven-range":
-      drawGasOvenRange(ctx, x, y, ghost, frame, brewing);
+    case GAS_OVEN_RANGE_ITEM_ID:
+      drawGasOvenRange(ctx, x, y, ghost, frame, brewing, rotation);
       return;
     case "coffee-cup":
       drawCoffeeCup(ctx, x, y, ghost, coffeeCupHasCoffee, frame);
@@ -9612,7 +9954,7 @@ const drawPlacedItem = (
   const recordPlayerPlaying = isRecordPlayerActive(item, activeRecordPlayerId);
 
   if (definition.kind === "decor" || definition.kind === "furniture") {
-    if (item.rotation) {
+    if (item.rotation && definition.id !== GAS_OVEN_RANGE_ITEM_ID) {
       ctx.save();
       ctx.translate(Math.round(item.x), Math.round(item.y));
       ctx.rotate((item.rotation * Math.PI) / 180);
@@ -9623,6 +9965,7 @@ const drawPlacedItem = (
         0,
         "none",
         frame,
+        0,
         avatar,
         brewing,
         coffeeCupHasCoffee,
@@ -9645,6 +9988,7 @@ const drawPlacedItem = (
       item.y,
       "none",
       frame,
+      item.rotation ?? 0,
       avatar,
       brewing,
       coffeeCupHasCoffee,
@@ -9787,6 +10131,7 @@ const drawPlacedItems = (
       preview.y,
       preview.valid ? "valid" : "invalid",
       frame,
+      preview.rotation ?? 0,
       avatar,
     );
   }
@@ -9879,6 +10224,7 @@ const drawPlacedItemsInFrontOfForegroundFurniture = (
     itemId: placementPreview.item.id,
     x: placementPreview.x,
     y: placementPreview.y,
+    rotation: placementPreview.rotation,
   };
   const clipRects = placedItemFurnitureOverlayClipRects(
     previewItem,
@@ -9897,6 +10243,7 @@ const drawPlacedItemsInFrontOfForegroundFurniture = (
     placementPreview.y,
     placementPreview.valid ? "valid" : "invalid",
     frame,
+    placementPreview.rotation ?? 0,
     avatar,
   );
   ctx.restore();
@@ -9945,6 +10292,7 @@ const drawWallPlacedItems = (
       preview.y,
       preview.valid ? "valid" : "invalid",
       frame,
+      preview.rotation ?? 0,
       avatar,
     );
   }
@@ -12664,18 +13012,40 @@ const drawAvatarRenderLayer = (
   status: CodexStatusMessage,
   memory: AivatarMemory | undefined,
   avatarAppearanceId: AvatarAppearanceId,
+  activeInteraction?: FurnitureInteractionState | null,
 ) => {
   if (layer.kind === "primary") {
+    const cookingRender = cookingAvatarRenderRuntime(
+      layer.runtime,
+      activeInteraction,
+      frame,
+    );
+    drawFishInteractionOverlay(
+      ctx,
+      cookingRender.runtime,
+      activeInteraction,
+      frame,
+      "behind-avatar",
+      cookingRender.pose,
+    );
     drawAvatar(
       ctx,
-      layer.runtime,
+      cookingRender.runtime,
       frame,
       content.petStats,
       status,
       memory,
       avatarAppearanceId,
     );
-    drawSleepBlanketOverlay(ctx, content, layer.runtime);
+    drawSleepBlanketOverlay(ctx, content, cookingRender.runtime);
+    drawFishInteractionOverlay(
+      ctx,
+      cookingRender.runtime,
+      activeInteraction,
+      frame,
+      "front-avatar",
+      cookingRender.pose,
+    );
     return;
   }
 
@@ -12792,6 +13162,7 @@ const drawAvatarForegroundOcclusion = (
         placementPreview.y,
         placementPreview.valid ? "valid" : "invalid",
         frame,
+        placementPreview.rotation ?? 0,
         runtime,
       );
     }
@@ -12924,11 +13295,9 @@ export const renderScene = (
       status,
       memory,
       avatarAppearanceId,
+      activeInteraction,
     );
   });
-  if (primaryAvatarVisible) {
-    drawFishInteractionOverlay(ctx, avatar, activeInteraction, frame);
-  }
   drawPlacedItems(
     ctx,
     content,
@@ -12997,6 +13366,7 @@ export const renderScene = (
         surfacePreview.y,
         surfacePreview.valid ? "valid" : "invalid",
         frame,
+        surfacePreview.rotation ?? 0,
         avatar,
       );
     }
@@ -13024,6 +13394,7 @@ export const renderScene = (
         status,
         memory,
         avatarAppearanceId,
+        activeInteraction,
       );
       drawAvatarForegroundOcclusion(
         ctx,
@@ -13046,7 +13417,10 @@ export const renderScene = (
   }
   drawFloorLightOverlay(ctx, floorSurface, content, avatar);
   if (primaryAvatarVisible) {
-    if (avatar.behavior !== "sleep") {
+    if (
+      avatar.behavior !== "sleep" &&
+      activeInteraction?.kind !== "cook"
+    ) {
       if (status.status === "thinking") {
         drawCodexThinkingBubble(ctx, avatar, status, memory, uiTheme);
       } else if (activeInteraction?.bubbleText) {

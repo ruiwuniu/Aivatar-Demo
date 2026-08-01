@@ -10,7 +10,11 @@ import type {
   PlacedItem,
   PetStats,
 } from "../types";
-import { getPlacedItemPlacementFootBounds } from "./interactions";
+import { getPlacedItemCollisionBounds } from "./interactions";
+import {
+  GAS_OVEN_RANGE_ITEM_ID,
+  gasOvenRangeInteractionPoint,
+} from "./gasOvenRangeSprites";
 
 const BUILTIN_TERMINAL_PLACED_ITEM_ID = "builtin-terminal";
 const TERMINAL_MONITOR_ITEM_ID = "terminal-monitor";
@@ -467,12 +471,19 @@ export const navigationLayoutFingerprint = (content: AivatarContent) =>
       }))
       .sort((left, right) => left.id.localeCompare(right.id)),
     blockers: (content.placedItems ?? [])
-      .filter((item) => item.itemId === EASEL_ITEM_ID && !item.surfaceFurnitureId)
-      .map((item) => ({
-        id: item.id,
-        itemId: item.itemId,
-        bounds: getPlacedItemPlacementFootBounds(item),
-      }))
+      .flatMap((item) => {
+        const bounds = getPlacedItemCollisionBounds(item);
+        return bounds
+          ? [
+              {
+                id: item.id,
+                itemId: item.itemId,
+                rotation: item.rotation ?? 0,
+                bounds,
+              },
+            ]
+          : [];
+      })
       .sort((left, right) => left.id.localeCompare(right.id)),
   });
 
@@ -609,6 +620,14 @@ export const getPlacedItemInteractionStandpoints = (
   item: PlacedItem,
   content: AivatarContent,
 ): Point[] => {
+  if (item.itemId === GAS_OVEN_RANGE_ITEM_ID && !item.surfaceFurnitureId) {
+    return validStandpoints(
+      [gasOvenRangeInteractionPoint(item)],
+      content,
+      item.id,
+    );
+  }
+
   if (item.surfaceFurnitureId) {
     const surface = content.room.furniture.find(
       (furniture) => furniture.id === item.surfaceFurnitureId,
@@ -1225,14 +1244,11 @@ const collisionRectsForContent = (
   ...content.room.furniture
     .filter((item) => item.id !== ignoredId && item.collision)
     .map((item) => item.collision!),
-  ...(content.placedItems ?? [])
-    .filter(
-      (item) =>
-        item.id !== ignoredId &&
-        item.itemId === EASEL_ITEM_ID &&
-        !item.surfaceFurnitureId,
-    )
-    .map(getPlacedItemPlacementFootBounds),
+  ...(content.placedItems ?? []).flatMap((item) => {
+    if (item.id === ignoredId) return [];
+    const bounds = getPlacedItemCollisionBounds(item);
+    return bounds ? [bounds] : [];
+  }),
 ];
 
 const pointHitsCollision = (

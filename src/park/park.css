@@ -342,20 +342,18 @@
   cursor: crosshair;
 }
 
-.item-thumb-fishing-rod .item-thumb-shape,
-.item-thumb-fishing-rod .item-thumb-accent {
+.item-thumb-fishing-rod .item-thumb-shape {
   position: absolute;
-  width: 3px;
-  height: 25px;
-  transform: rotate(38deg);
-  background: #8b5a2b;
+  left: 1px;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  background: url("/icons/item-fishing-rod.png?v=1") center / 16px 16px no-repeat;
+  image-rendering: pixelated;
 }
 
 .item-thumb-fishing-rod .item-thumb-accent {
-  width: 1px;
-  height: 23px;
-  margin-left: 10px;
-  background: #d7e2cf;
+  display: none;
 }
 
 .item-thumb-cooked-black-bass .item-thumb-shape,
@@ -365,11 +363,14 @@
 .item-thumb-cooked-weather-loach .item-thumb-shape,
 .item-thumb-cooked-rainbow-trout .item-thumb-shape {
   position: absolute;
-  width: 27px;
-  height: 12px;
-  border: 2px solid #253332;
-  background: #69805c;
-  clip-path: polygon(0 24%, 72% 0, 100% 50%, 72% 100%, 0 76%, 14% 50%);
+  left: 1px;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  background: url("/icons/item-cooked-fish.png?v=1") center / 16px 16px no-repeat;
+  clip-path: none;
+  image-rendering: pixelated;
 }
 
 .item-thumb-raw-black-bass .item-thumb-shape,
@@ -380,7 +381,7 @@
 .item-thumb-raw-rainbow-trout .item-thumb-shape {
   position: absolute;
   left: -7px;
-  top: -11px;
+  top: -1px;
   width: 32px;
   height: 20px;
   background-repeat: no-repeat;
@@ -413,29 +414,17 @@
   background-image: url("/park/fish/raw-rainbow-trout-v1.png");
 }
 
-.item-thumb-cooked-black-bass .item-thumb-shape,
-.item-thumb-cooked-crucian-carp .item-thumb-shape,
-.item-thumb-cooked-bluegill .item-thumb-shape,
-.item-thumb-cooked-yellow-perch .item-thumb-shape,
-.item-thumb-cooked-weather-loach .item-thumb-shape,
-.item-thumb-cooked-rainbow-trout .item-thumb-shape {
-  border-color: #4b2c1e;
-  background: #c67b36;
-}
-
 .item-thumb-gas-oven-range .item-thumb-shape {
   position: absolute;
-  width: 26px;
-  height: 25px;
-  border: 2px solid #202b32;
-  background: #77838b;
+  left: 1px;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  background: url("/icons/item-gas-oven-range.png?v=1") center / 16px 16px no-repeat;
+  image-rendering: pixelated;
 }
 
 .item-thumb-gas-oven-range .item-thumb-accent {
-  position: absolute;
-  width: 20px;
-  height: 8px;
-  margin-top: -8px;
-  border: 2px solid #25323a;
-  background: #dc8b31;
+  display: none;
 }
