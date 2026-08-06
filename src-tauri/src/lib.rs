@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 use tauri::{path::BaseDirectory, Emitter, Manager, Size};
@@ -95,6 +95,11 @@ struct ParkWindowRequest {
 #[derive(serde::Serialize)]
 struct ParkWindowResult {
     label: String,
+}
+
+#[derive(Default)]
+struct ParkProfileWindowState {
+    hidden_by: Mutex<Option<String>>,
 }
 
 const MAX_TASK_PROMPT_CHARS: usize = 24_000;
@@ -204,6 +209,57 @@ fn attach_save_before_close_handler(window: tauri::WebviewWindow) {
             });
         }
     });
+}
+
+fn attach_main_window_restore_handler(window: tauri::WebviewWindow, app: tauri::AppHandle) {
+    let park_window_label = window.label().to_string();
+    window.on_window_event(move |event| {
+        if matches!(
+            event,
+            tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+        ) {
+            let _ = set_main_window_visibility_for_park_owner(&app, &park_window_label, true);
+        }
+    });
+}
+
+fn set_main_window_visibility_for_park_owner(
+    app: &tauri::AppHandle,
+    owner_label: &str,
+    visible: bool,
+) -> Result<(), String> {
+    let profile_state = app.state::<ParkProfileWindowState>();
+    let mut hidden_by = profile_state
+        .hidden_by
+        .lock()
+        .map_err(|_| "Could not lock the park profile window state.".to_string())?;
+    if !visible && app.get_webview_window(owner_label).is_none() {
+        return Err("The park window is no longer available.".to_string());
+    }
+    if hidden_by.as_ref().is_some_and(|owner| owner != owner_label) {
+        return Err("Another park window owns the main-window profiling state.".to_string());
+    }
+    if !visible && hidden_by.as_deref() == Some(owner_label) {
+        return Ok(());
+    }
+    if visible && hidden_by.is_none() {
+        return Ok(());
+    }
+    let main_window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Could not find the main window.".to_string())?;
+    if visible {
+        main_window
+            .show()
+            .map_err(|error| format!("Could not show the main window: {error}"))?;
+        *hidden_by = None;
+    } else {
+        main_window
+            .hide()
+            .map_err(|error| format!("Could not hide the main window: {error}"))?;
+        *hidden_by = Some(owner_label.to_string());
+    }
+    Ok(())
 }
 
 fn project_root() -> Result<std::path::PathBuf, String> {
@@ -1385,6 +1441,16 @@ fn resize_main_window_for_side_panel(
 }
 
 #[tauri::command]
+fn set_main_window_visibility_for_park_profile(
+    app: tauri::AppHandle,
+    caller: tauri::Window,
+    visible: bool,
+) -> Result<(), String> {
+    let caller_label = caller.label().to_string();
+    set_main_window_visibility_for_park_owner(&app, &caller_label, visible)
+}
+
+#[tauri::command]
 async fn open_save_slot_window(
     app: tauri::AppHandle,
     request: SaveSlotWindowRequest,
@@ -1492,11 +1558,8 @@ async fn open_park_window(
         return Ok(ParkWindowResult { label });
     }
 
-    let url = format!(
-        "./?view=park&hostSlotId={}",
-        url_component(host_slot_id)
-    );
-    tauri::WebviewWindowBuilder::new(
+    let url = format!("./?view=park&hostSlotId={}", url_component(host_slot_id));
+    let window = tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
@@ -1508,9 +1571,16 @@ async fn open_park_window(
     .maximizable(false)
     .always_on_top(false)
     .decorations(true)
-    .focused(true)
+    .focused(false)
+    .visible(false)
     .build()
     .map_err(|error| format!("Could not open park: {error}"))?;
+    attach_main_window_restore_handler(window.clone(), app.clone());
+
+    if let Err(error) = window.show().and_then(|_| window.set_focus()) {
+        let _ = window.close();
+        return Err(format!("Could not show park: {error}"));
+    }
 
     Ok(ParkWindowResult { label })
 }
@@ -1670,6 +1740,7 @@ fn write_social_room_memory(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(ParkProfileWindowState::default())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -1684,6 +1755,7 @@ pub fn run() {
             start_agent_cli,
             start_task_agent,
             resize_main_window_for_side_panel,
+            set_main_window_visibility_for_park_profile,
             open_save_slot_window,
             open_card_room_window,
             open_park_window,

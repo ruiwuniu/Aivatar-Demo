@@ -20,6 +20,7 @@
         "minHeight": 500,
         "resizable": false,
         "maximizable": false,
+        "backgroundThrottling": "throttle",
         "alwaysOnTop": false,
         "decorations": true
       }

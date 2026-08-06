@@ -45,6 +45,51 @@ const foamFringeSample = (breath, distanceSteps) => {
   const mix = distance - lower;
   return { fringeBreath, alpha, distance, lower, upper: lower + 1, mix };
 };
+const parkRenderTimesForTimestamps = (timestamps) => {
+  const renderIntervalMs = 1000 / 30;
+  const deadlineToleranceMs = 1;
+  let nextRenderAt = 0;
+  const renderedAt = [];
+  for (const now of timestamps) {
+    if (now + deadlineToleranceMs < nextRenderAt) continue;
+    renderedAt.push(now);
+    nextRenderAt = now + renderIntervalMs;
+  }
+  return renderedAt;
+};
+const parkRenderIntervalsForRafStep = (rafStepMs, rafFrames = 10_000) => {
+  const renderedAt = parkRenderTimesForTimestamps(
+    Array.from({ length: rafFrames }, (_, frameIndex) =>
+      (frameIndex + 1) * rafStepMs
+    ),
+  );
+  const intervals = renderedAt
+    .slice(1)
+    .map((timestamp, index) => timestamp - renderedAt[index]);
+  return intervals.slice(1);
+};
+const mainRoomLogicStepsForPumps = (timestamps, maxStepsPerPump = 75) => {
+  const stepMs = 1000 / 60;
+  const maxStoredBacklogMs = 30_000;
+  let lastPumpAt = timestamps[0] ?? 0;
+  let accumulatorMs = 0;
+  let totalSteps = 0;
+  for (const now of timestamps.slice(1)) {
+    const elapsedMs = Math.max(now - lastPumpAt, 0);
+    lastPumpAt = now;
+    accumulatorMs = Math.min(maxStoredBacklogMs, accumulatorMs + elapsedMs);
+    let pumpSteps = 0;
+    while (
+      accumulatorMs + 0.001 >= stepMs
+      && pumpSteps < maxStepsPerPump
+    ) {
+      accumulatorMs = Math.max(0, accumulatorMs - stepMs);
+      pumpSteps += 1;
+      totalSteps += 1;
+    }
+  }
+  return totalSteps;
+};
 const isGrass = (x, y) => {
   const left = 110 + Math.max(0, y - 235) * 0.055;
   const right = 1080 - Math.max(0, y - 235) * 0.025;
@@ -179,6 +224,9 @@ const [
   storageText,
   runtimeText,
   rendererText,
+  pondAtlasText,
+  ambientAudioText,
+  canvasSnapshotsText,
   avatarRendererText,
   performanceText,
   fishingAnimationText,
@@ -187,9 +235,11 @@ const [
   cloudAtlasText,
   typesText,
   tauriText,
+  tauriConfigText,
   groundImage,
   referenceImage,
   cloudAtlasImage,
+  pondAtlasImage,
   blackBassImage,
   crucianCarpImage,
   bluegillImage,
@@ -198,11 +248,18 @@ const [
   rainbowTroutImage,
   fishManifestText,
   fishGeneratorText,
+  pondGeneratorText,
   footstepAudioText,
+  fishingAudioText,
+  parkSfxVolumeText,
   grassStep1Audio,
   grassStep2Audio,
   grassStep3Audio,
   grassStep4Audio,
+  fishingCastAudio,
+  fishingBiteAudio,
+  fishingReelAudio,
+  fishingDisplayAudio,
 ] = await Promise.all([
   read("public/config/aivatar.config.json"),
   read("src/data/defaultContent.ts"),
@@ -215,6 +272,9 @@ const [
   read("src/park/parkStorage.ts"),
   read("src/park/parkRuntime.ts"),
   read("src/park/parkRenderer.ts"),
+  read("src/park/parkPondAtlas.ts"),
+  read("src/park/parkAmbientAudio.ts"),
+  read("src/park/parkCanvasSnapshots.ts"),
   read("src/game/renderScene.ts"),
   read("src/park/parkPerformance.ts"),
   read("src/park/parkFishingAnimation.ts"),
@@ -223,9 +283,11 @@ const [
   read("src/park/parkCloudAtlas.ts"),
   read("src/types.ts"),
   read("src-tauri/src/lib.rs"),
+  read("src-tauri/tauri.conf.json"),
   readBinary("public/park/hilltop-park-midday-ground.png"),
   readBinary("public/park/hilltop-park-reference.png"),
   readBinary("public/park/cumulonimbus-cloud-time-atlas.png"),
+  readBinary("public/park/hilltop-pond-motion-v1.png"),
   readBinary("public/park/fish/raw-black-bass-v1.png"),
   readBinary("public/park/fish/raw-crucian-carp-v1.png"),
   readBinary("public/park/fish/raw-bluegill-v1.png"),
@@ -234,11 +296,18 @@ const [
   readBinary("public/park/fish/raw-rainbow-trout-v1.png"),
   read("public/park/fish/fish-sprite-manifest.json"),
   read("scripts/generate-park-fish-sprites.py"),
+  read("scripts/generate-park-pond-atlas.py"),
   read("src/park/parkFootstepAudio.ts"),
+  read("src/park/parkFishingAudio.ts"),
+  read("src/park/parkSfxVolume.ts"),
   readBinary("public/audio/park-grass-step-1.wav"),
   readBinary("public/audio/park-grass-step-2.wav"),
   readBinary("public/audio/park-grass-step-3.wav"),
   readBinary("public/audio/park-grass-step-4.wav"),
+  readBinary("public/audio/fishing-cast.wav"),
+  readBinary("public/audio/fishing-bite.wav"),
+  readBinary("public/audio/fishing-reel.wav"),
+  readBinary("public/audio/fishing-display.wav"),
 ]);
 const seaLightingText = rendererText.slice(
   rendererText.indexOf("const drawSeaLighting"),
@@ -247,10 +316,6 @@ const seaLightingText = rendererText.slice(
 const pondSurfaceText = rendererText.slice(
   rendererText.indexOf("const drawPondSurface"),
   rendererText.indexOf("const PARK_SEA_FINE_GLINT_COUNT"),
-);
-const pondTextureText = rendererText.slice(
-  rendererText.indexOf("const PARK_POND_MORPH_FRAME_COUNT"),
-  rendererText.indexOf("const drawPixelPondRing"),
 );
 const shoreFoamMotionText = rendererText.slice(
   rendererText.indexOf("const drawShoreFoamBreath"),
@@ -263,6 +328,10 @@ const cliffFogMotionText = rendererText.slice(
 const terrainMotionText = rendererText.slice(
   rendererText.indexOf("const drawTerrainMotion"),
   rendererText.indexOf("const objectShadowCaster"),
+);
+const nativeParkOpenerText = tauriText.slice(
+  tauriText.indexOf("async fn open_park_window"),
+  tauriText.indexOf("async fn open_park_developer_window"),
 );
 const nightSkyText = rendererText.slice(
   rendererText.indexOf("type ParkNightStar"),
@@ -419,11 +488,357 @@ assert.match(rendererText, /parkFishingClock/);
 assert.match(rendererText, /parkFishingElapsedMs/);
 assert.match(parkText, /const PARK_TARGET_FPS = 30/);
 assert.match(parkText, /const PARK_RENDER_INTERVAL_MS = 1000 \/ PARK_TARGET_FPS/);
+assert.match(parkText, /const PARK_RENDER_DEADLINE_TOLERANCE_MS = 1/);
 assert.match(parkText, /frame \+= elapsed \* 60/);
 assert.match(parkText, /document\.visibilityState !== "hidden"/);
-assert.match(parkText, /renderElapsedMs >= PARK_RENDER_INTERVAL_MS/);
+assert.match(
+  parkText,
+  /now \+ PARK_RENDER_DEADLINE_TOLERANCE_MS >= nextRenderAt/,
+);
+assert.match(
+  parkText,
+  /nextRenderAt = now \+ PARK_RENDER_INTERVAL_MS/,
+);
+assert.doesNotMatch(parkText, /lastRenderAt|renderElapsedMs/);
 assert.match(parkText, /measureParkRender\(canvas, now/);
 assert.match(parkText, /frame: Math\.floor\(frame\)/);
+for (const rafStepMs of [16.666, 8.333]) {
+  const renderIntervals = parkRenderIntervalsForRafStep(rafStepMs);
+  assert(renderIntervals.length > 100, "render-deadline simulation needs a stable sample");
+  assert(
+    Math.max(...renderIntervals) < 34.5,
+    `${rafStepMs}ms rAF must not create an avoidable 50ms park frame`,
+  );
+  assert(
+    Math.min(...renderIntervals) > 32,
+    `${rafStepMs}ms rAF must remain near the 30fps deadline after warm-up`,
+  );
+}
+const longFrameRenderedAt = parkRenderTimesForTimestamps([
+  0,
+  1000 / 120,
+  2000 / 120,
+  3000 / 120,
+  4000 / 120,
+  5000 / 120,
+  6000 / 120,
+  7000 / 120,
+  8000 / 120,
+  200,
+  200 + 1000 / 120,
+  200 + 2000 / 120,
+  200 + 3000 / 120,
+  200 + 4000 / 120,
+]);
+assert.deepEqual(
+  longFrameRenderedAt.map((value) => Math.round(value * 1000) / 1000),
+  [0, 33.333, 66.667, 200, 233.333],
+  "a long park frame must render once and rebase without catch-up frames",
+);
+assert.match(
+  rendererText,
+  /export type ParkRenderProfile =[\s\S]*\| "base-only"[\s\S]*\| "no-sea-light"/,
+);
+assert.match(rendererText, /renderProfile\?: ParkRenderProfile/);
+assert.match(rendererText, /const renderProfile = options\.renderProfile \?\? "full"/);
+assert.match(rendererText, /setParkDataset\(canvas, "parkRenderProfile", renderProfile\)/);
+const renderPlanSource = rendererText.match(
+  /export const resolveParkRenderPlan = \(renderProfile = "full"\) => \{[\s\S]*?\n\};/,
+)?.[0];
+assert(renderPlanSource, "render plan resolver must be extractable for behavior checks");
+const resolveParkRenderPlanForSmoke = new Function(
+  `${renderPlanSource.replace("export const", "const")}\nreturn resolveParkRenderPlan;`,
+)();
+const fullRenderPlan = {
+  dynamicSky: true,
+  staticBase: true,
+  movingNightSky: true,
+  movingClouds: true,
+  movingCliffFog: true,
+  horizonSeaTint: true,
+  dynamicShadows: true,
+  terrainMotion: true,
+  pondSurface: true,
+  sceneActors: true,
+  shoreFoam: true,
+  timeGrade: true,
+  seaLighting: true,
+  selection: true,
+};
+assert.deepEqual(resolveParkRenderPlanForSmoke(), fullRenderPlan);
+assert.deepEqual(resolveParkRenderPlanForSmoke("full"), fullRenderPlan);
+assert.deepEqual(resolveParkRenderPlanForSmoke("base-only"), {
+  dynamicSky: true,
+  staticBase: true,
+  movingNightSky: false,
+  movingClouds: false,
+  movingCliffFog: false,
+  horizonSeaTint: false,
+  dynamicShadows: false,
+  terrainMotion: false,
+  pondSurface: false,
+  sceneActors: false,
+  shoreFoam: false,
+  timeGrade: false,
+  seaLighting: false,
+  selection: false,
+});
+assert.deepEqual(resolveParkRenderPlanForSmoke("no-ambient"), {
+  ...fullRenderPlan,
+  movingNightSky: false,
+  movingClouds: false,
+  movingCliffFog: false,
+  horizonSeaTint: false,
+  terrainMotion: false,
+  pondSurface: false,
+  shoreFoam: false,
+  seaLighting: false,
+});
+for (const [profile, effect] of [
+  ["no-clouds", "movingClouds"],
+  ["no-fog", "movingCliffFog"],
+  ["no-grass", "terrainMotion"],
+  ["no-pond", "pondSurface"],
+  ["no-foam", "shoreFoam"],
+  ["no-sea-light", "seaLighting"],
+]) {
+  assert.deepEqual(resolveParkRenderPlanForSmoke(profile), {
+    ...fullRenderPlan,
+    [effect]: false,
+  });
+}
+assert.match(rendererText, /if \(!renderPlan\.sceneActors\) return/);
+for (const disabledProfile of [
+  "no-clouds",
+  "no-fog",
+  "no-grass",
+  "no-pond",
+  "no-foam",
+  "no-sea-light",
+]) {
+  assert.match(rendererText, new RegExp(`renderProfile !== "${disabledProfile}"`));
+}
+const renderSceneSource = rendererText.slice(
+  rendererText.indexOf("export const renderParkScene"),
+);
+let previousRenderCallIndex = -1;
+for (const renderCall of [
+  "drawDynamicSky(ctx, timeVisual)",
+  "drawMovingNightSky(ctx, timeVisual, celestial, motionNowMs)",
+  "drawMovingCloudLayer(ctx, timeVisual, motionNowMs)",
+  "layers.neutralBaseWithoutDistantShoreFoamAndCliffFog",
+  "drawMovingCliffFog(ctx, layers, motionNowMs)",
+  "drawHorizonSeaTint(ctx, layers, timeVisual)",
+  "drawDynamicShadows(ctx, options.objects, celestial, timeVisual)",
+  "drawTerrainMotion(ctx, layers, motionNowMs)",
+  "drawPondSurface(ctx, layers, motionNowMs)",
+  "drawAvatar(",
+  "drawParkFishingAnimation({",
+  "drawShoreFoamBreath(",
+  "applyTimeGrade(ctx, timeVisual)",
+  "drawSeaLighting(ctx, layers, timeVisual, motionNowMs)",
+]) {
+  const renderCallIndex = renderSceneSource.indexOf(
+    renderCall,
+    previousRenderCallIndex + 1,
+  );
+  assert(renderCallIndex > previousRenderCallIndex, `${renderCall} must preserve full render order`);
+  previousRenderCallIndex = renderCallIndex;
+}
+assert.match(parkText, /const renderProfileRef = useRef<ParkRenderProfile>\("full"\)/);
+assert.match(parkText, /renderProfile: renderProfileRef\.current/);
+assert.match(parkText, /const mainWindowProfilePendingRef = useRef\(false\)/);
+assert.match(parkText, /if \(mainWindowProfilePendingRef\.current\) return/);
+assert.match(parkText, /disabled=\{mainWindowProfilePending\}/);
+assert.match(parkText, /aria-label="公园渲染剖析"/);
+assert.match(parkText, /隐藏主窗口（A\/B）/);
+assert.match(
+  parkText,
+  /let mainWindowVisibilityQueue: Promise<void> = Promise\.resolve\(\)/,
+);
+assert.match(parkText, /const queueMainWindowVisibility = \(visible: boolean\)/);
+assert.match(parkText, /mainWindowHiddenForProfileRef\.current = true/);
+assert.match(parkText, /queueMainWindowVisibility\(false\)/);
+assert.match(parkText, /void restoreMainWindowAfterPark\(false\);\s*const visit = visitRef\.current/);
+assert.match(
+  parkText,
+  /const handoffMainWindowHideRequestedRef = useRef\(false\)/,
+);
+assert.match(
+  parkText,
+  /handoffComplete[\s\S]*!handoffMainWindowHideRequestedRef\.current[\s\S]*queueMainWindowVisibility\(false\)/,
+  "the park must hide the main window only after the guest handoff completes",
+);
+assert(
+  parkText.indexOf("queueMainWindowVisibility(false)")
+    > parkText.indexOf("const handoffComplete"),
+  "the park must not request a main-window hide before observing handoffComplete",
+);
+assert.match(
+  parkText,
+  /queueMainWindowVisibility\(true\)[\s\S]*handoffMainWindowHideRequestedRef\.current = false;[\s\S]*mainWindowHiddenForProfileRef\.current = false;/,
+  "closing the park must restore the main window and clear handoff ownership",
+);
+assert.match(
+  parkText,
+  /!latest \|\| latest\.phase === "cancelled" \|\| latest\.phase === "ended"[\s\S]*await restoreMainWindowAfterPark\(\)[\s\S]*invitationStartedRef\.current = false/,
+  "a missing or terminal park visit must restore the main window before allowing another invite",
+);
+assert.doesNotMatch(
+  parkText,
+  /invoke\("set_main_window_visibility_for_park_profile", \{ visible: true \}\)/,
+  "the desktop park must not force the main room visible while it is rendering",
+);
+assert.doesNotMatch(
+  parkText,
+  /localStorage\.(?:getItem|setItem)\([^\n]*parkRenderProfile/,
+  "render profiles must remain non-persistent diagnostics",
+);
+assert.match(
+  ambientAudioText,
+  /PARK_AMBIENT_AUDIO_VOLUME_KEY = "aivatar\.parkAmbientVolume\.v1"/,
+);
+assert.match(
+  ambientAudioText,
+  /DEFAULT_PARK_AMBIENT_AUDIO_VOLUME = 0\.55/,
+);
+assert.match(ambientAudioText, /controller\.audio\.volume = parkAmbientVolume/);
+assert.doesNotMatch(
+  ambientAudioText,
+  /aivatar\.audioVolume\.v1|PARK_AMBIENT_AUDIO_VOLUME_MULTIPLIER|globalVolume/,
+  "park ambience must not be attenuated by the global SFX setting",
+);
+assert.match(appText, /const loadInitialParkAmbientAudioVolume/);
+assert.match(appText, /const \[parkAmbientAudioVolume, setParkAmbientAudioVolume\]/);
+assert.match(appText, /localStorage\.setItem\(\s*PARK_AMBIENT_AUDIO_VOLUME_KEY/);
+assert.match(appText, /parkAmbientVolumeLabel/);
+assert.match(appText, /setParkAmbientAudioVolume\(Number\(event\.target\.value\) \/ 100\)/);
+assert.match(appText, /const SHOW_DEBUG_CARD = false/);
+assert.match(appText, /\{SHOW_DEBUG_CARD \? \(/);
+assert.match(parkText, /const SHOW_PARK_DEBUG = false/);
+assert.match(parkText, /\{SHOW_PARK_DEBUG \? \(/);
+const tauriConfig = JSON.parse(tauriConfigText);
+assert.equal(
+  tauriConfig.app.windows.find((windowConfig) => windowConfig.label === "main")
+    ?.backgroundThrottling,
+  "throttle",
+  "the main WebView must remain timer-throttled instead of fully suspended when occluded",
+);
+assert.match(tauriText, /fn set_main_window_visibility_for_park_profile/);
+assert.match(tauriText, /get_webview_window\("main"\)/);
+assert.match(tauriText, /fn attach_main_window_restore_handler/);
+assert.match(tauriText, /fn set_main_window_visibility_for_park_owner/);
+assert.match(tauriText, /WindowEvent::CloseRequested \{ \.\. \} \| tauri::WindowEvent::Destroyed/);
+assert.match(tauriText, /struct ParkProfileWindowState/);
+assert.match(tauriText, /hidden_by: Mutex<Option<String>>/);
+assert.match(
+  tauriText,
+  /hidden_by\.as_ref\(\)\.is_some_and\(\|owner\| owner != owner_label\)[\s\S]*Another park window owns/,
+);
+assert.match(tauriText, /!visible && app\.get_webview_window\(owner_label\)\.is_none\(\)/);
+assert.match(tauriText, /\.manage\(ParkProfileWindowState::default\(\)\)/);
+assert.match(tauriText, /\.focused\(false\)\s*\.visible\(false\)/);
+assert.match(tauriText, /attach_main_window_restore_handler\(window\.clone\(\), app\.clone\(\)\)/);
+assert.match(
+  nativeParkOpenerText,
+  /window\.show\(\)\.and_then\(\|_\| window\.set_focus\(\)\)/,
+  "the native park opener must reveal the park without waiting for a main-window hide",
+);
+assert.doesNotMatch(
+  nativeParkOpenerText,
+  /set_main_window_visibility_for_park_owner\(&app, &label, (?:false|true)\)/,
+  "native park open must leave the main room running until the React handoff completes",
+);
+assert.match(tauriText, /set_main_window_visibility_for_park_profile,\s*open_save_slot_window/);
+assert.match(canvasSnapshotsText, /const snapshotStateByCanvas = new WeakMap/);
+assert.match(canvasSnapshotsText, /typeof createImageBitmap !== "function"/);
+assert.match(canvasSnapshotsText, /state\.pending \|\| state\.disabled \|\| state\.bitmap/);
+assert.match(canvasSnapshotsText, /return state\.bitmap \?\? canvas/);
+assert.match(rendererText, /parkCanvasSnapshotSource/);
+assert.doesNotMatch(rendererText, /invalidateParkCanvasSnapshot/);
+assert.match(rendererText, /ctx\.drawImage\(horizonTintCanvas, 0, 0\)/);
+assert.match(rendererText, /ctx\.drawImage\(\s*sprite,/);
+assert.match(rendererText, /ctx\.drawImage\(waterLightCanvas, 0, 0\)/);
+assert.doesNotMatch(
+  rendererText,
+  /pondSurfaceCanvas|pondTextureCanvas|pondCompositeCanvas/,
+  "the pond must not allocate dynamic runtime canvases",
+);
+const mainRoomAdvanceLogicText = appText.slice(
+  appText.indexOf("const advanceLogic ="),
+  appText.indexOf("const pumpLogic ="),
+);
+const mainRoomRenderText = appText.slice(
+  appText.indexOf("const renderCurrentScene ="),
+  appText.indexOf("let animation = 0", appText.indexOf("const renderCurrentScene =")),
+);
+assert.match(appText, /const awayRoomFrameRenderedRef = useRef\(false\)/);
+assert.match(appText, /const logicStepMs = 1000 \/ 60/);
+assert.match(appText, /const maxStoredLogicBacklogMs = 30_000/);
+assert.match(appText, /const maxBackgroundLogicStepsPerPump = Math\.ceil\(1250 \/ logicStepMs\)/);
+assert.match(appText, /const maxForegroundLogicStepsPerPump = 4/);
+assert.match(appText, /const staleAnimationFrameThresholdMs = 100/);
+assert.match(appText, /const pumpLogic = \(now: number, maxSteps: number\)/);
+assert.match(appText, /logicAccumulatorMs \+ 0\.001 >= logicStepMs/);
+assert.match(appText, /advanceLogic\(logicalNow, logicStepSeconds\)/);
+assert.match(appText, /const logicTimer = window\.setInterval/);
+assert.match(appText, /if \(now - lastAnimationFrameAt < staleAnimationFrameThresholdMs\) return/);
+assert.match(appText, /pumpLogic\(now, maxBackgroundLogicStepsPerPump\)/);
+assert.match(appText, /pumpLogic\(now, maxForegroundLogicStepsPerPump\)/);
+assert.match(appText, /animation = window\.requestAnimationFrame\(renderLoop\)/);
+assert.match(appText, /window\.clearInterval\(logicTimer\)/);
+assert.match(appText, /window\.cancelAnimationFrame\(animation\)/);
+assert.match(
+  mainRoomAdvanceLogicText,
+  /if \(avatarAwayRef\.current\) \{\s*syncUiMirror\(\);\s*return;/,
+  "background logic must stop home-room actions once the park owns the avatar",
+);
+assert.doesNotMatch(
+  mainRoomAdvanceLogicText,
+  /renderScene\(/,
+  "logic fallback must never paint an occluded WebView",
+);
+assert.equal(
+  (mainRoomRenderText.match(/renderScene\(/g) ?? []).length,
+  1,
+  "the rAF render path must own the only continuous main-room paint",
+);
+assert.match(mainRoomRenderText, /if \(avatarIsAway && awayRoomFrameRenderedRef\.current\) return/);
+assert.match(mainRoomRenderText, /awayRoomFrameRenderedRef\.current = avatarIsAway/);
+assert.match(
+  appText,
+  /if \(avatarAway && awayRoomFrameRenderedRef\.current\) return;/,
+);
+assert.equal(
+  mainRoomLogicStepsForPumps(
+    Array.from({ length: 61 }, (_, index) => index * (1000 / 60)),
+  ),
+  60,
+  "visible 60Hz pumps must advance exactly 60 one-sixtieth logic steps per second",
+);
+assert.equal(
+  mainRoomLogicStepsForPumps([0, 1000, 2000]),
+  120,
+  "a timer throttled to 1Hz must still compensate the full elapsed movement",
+);
+assert.equal(
+  mainRoomLogicStepsForPumps([0, 5000]),
+  75,
+  "one background wake must cap catch-up work at the approved 1.25 seconds",
+);
+assert.equal(
+  mainRoomLogicStepsForPumps([0, 5000, 5000, 5000, 5000]),
+  300,
+  "unprocessed catch-up time must remain queued instead of being permanently discarded",
+);
+assert.equal(
+  mainRoomLogicStepsForPumps(
+    [0, 5000, ...Array.from({ length: 74 }, () => 5000)],
+    4,
+  ),
+  300,
+  "rAF recovery must drain a five-second backlog gradually without losing logical time",
+);
 assert.match(performanceText, /const PARK_PERFORMANCE_WINDOW = 180/);
 assert.match(performanceText, /const performanceStateByCanvas = new WeakMap/);
 assert.match(performanceText, /parkPerfAverageRenderMs/);
@@ -582,18 +997,112 @@ for (const grassStepAudio of [
   assert.equal(grassStepAudio.subarray(0, 4).toString("ascii"), "RIFF");
   assert(grassStepAudio.length > 40_000, "grass footstep must contain a full one-shot");
 }
+for (const fishingAudio of [
+  fishingCastAudio,
+  fishingBiteAudio,
+  fishingReelAudio,
+  fishingDisplayAudio,
+]) {
+  assert.equal(fishingAudio.subarray(0, 4).toString("ascii"), "RIFF");
+  assert(fishingAudio.length > 40_000, "fishing SFX must contain a full one-shot");
+}
+assert.match(
+  parkSfxVolumeText,
+  /PARK_GLOBAL_SFX_VOLUME_KEY = "aivatar\.audioVolume\.v1"/,
+);
+assert.match(parkSfxVolumeText, /DEFAULT_PARK_GLOBAL_SFX_VOLUME = 0\.45/);
+assert.match(parkSfxVolumeText, /normalized === 0 \? 0 : Math\.sqrt\(normalized\)/);
+assert.match(parkSfxVolumeText, /new AudioContextConstructor\(\{ latencyHint: "interactive" \}\)/);
+assert.match(parkSfxVolumeText, /webkitAudioContext/);
+assert.match(parkSfxVolumeText, /return new AudioContextConstructor\(\);/);
 assert.match(
   footstepAudioText,
   /PARK_FOOTSTEP_MUTED_APPEARANCE_ID: AvatarAppearanceId =\s*"cute-ghost"/,
 );
-assert.match(footstepAudioText, /PARK_FOOTSTEP_VOLUME_MAX = 0\.07/);
+assert.match(footstepAudioText, /PARK_FOOTSTEP_VOLUME_MIN = 0\.22/);
+assert.match(footstepAudioText, /PARK_FOOTSTEP_VOLUME_MAX = 0\.28/);
 assert.match(footstepAudioText, /PARK_FOOTSTEP_DISTANCE_MIN = 18/);
 assert.match(footstepAudioText, /PARK_FOOTSTEP_DISTANCE_VARIANCE = 4/);
+assert.match(footstepAudioText, /createParkSfxAudioContext/);
+assert.match(footstepAudioText, /readParkSfxVolume/);
+assert.match(footstepAudioText, /Promise\.allSettled/);
+assert.match(footstepAudioText, /result\.status === "fulfilled"/);
+assert.match(footstepAudioText, /context\.decodeAudioData\(await response\.arrayBuffer\(\)\)/);
+assert.match(footstepAudioText, /context\.createBufferSource\(\)/);
+assert.match(footstepAudioText, /context\.createGain\(\)/);
+assert.match(footstepAudioText, /source\.connect\(gain\)/);
+assert.match(footstepAudioText, /gain\.connect\(context\.destination\)/);
+assert.match(footstepAudioText, /source\.playbackRate\.value = 0\.97 \+ Math\.random\(\) \* 0\.07/);
+assert.match(footstepAudioText, /globalVolume \* volumeMultiplier/);
+assert.match(footstepAudioText, /controller\.activeVoices\.set\(source, gain\)/);
+assert.match(footstepAudioText, /controller\.activeVoices\.clear\(\)/);
+assert.match(footstepAudioText, /controller\.disposed = true/);
+assert.match(footstepAudioText, /!controller\.disposed && context\.state !== "closed"/);
+assert.match(footstepAudioText, /new AbortController\(\)/);
+assert.match(footstepAudioText, /controller\.abortController\?\.abort\(\)/);
+assert.match(footstepAudioText, /export const resumeParkFootstepAudio/);
+assert.doesNotMatch(
+  footstepAudioText,
+  /controller\.resumePromise/,
+  "a suspended automatic footstep resume must not block the next user gesture",
+);
+assert.match(footstepAudioText, /context\.close\(\)\.catch/);
+assert.doesNotMatch(
+  footstepAudioText,
+  /HTMLAudioElement|new Audio\(|\.pause\(\)|\.currentTime\s*=|\.play\(\)/,
+  "park footsteps must not reactivate HTML media elements while the avatar walks",
+);
 assert.match(
   footstepAudioText,
   /update\.appearanceId === PARK_FOOTSTEP_MUTED_APPEARANCE_ID/,
 );
+assert.match(fishingAudioText, /createParkSfxAudioContext/);
+assert.match(fishingAudioText, /readParkSfxVolume/);
+assert.match(fishingAudioText, /cast: "\/audio\/fishing-cast\.wav"/);
+assert.match(fishingAudioText, /bite: "\/audio\/fishing-bite\.wav"/);
+assert.match(fishingAudioText, /reel: "\/audio\/fishing-reel\.wav"/);
+assert.match(fishingAudioText, /display: "\/audio\/fishing-display\.wav"/);
+assert.match(fishingAudioText, /cast: 0\.5/);
+assert.match(fishingAudioText, /bite: 0\.52/);
+assert.match(fishingAudioText, /reel: 0\.42/);
+assert.match(fishingAudioText, /display: 0\.48/);
+assert.match(fishingAudioText, /Promise\.allSettled/);
+assert.match(fishingAudioText, /context\.decodeAudioData\(await response\.arrayBuffer\(\)\)/);
+assert.match(fishingAudioText, /context\.createBufferSource\(\)/);
+assert.match(fishingAudioText, /context\.createGain\(\)/);
+assert.match(fishingAudioText, /bank\.activeVoices\.set\(source, gain\)/);
+assert.match(fishingAudioText, /bank\.lastError = audioErrorMessage/);
+assert.match(fishingAudioText, /export const resumeParkFishingAudioBank/);
+assert.match(fishingAudioText, /pendingPose: ParkFishingSoundPose \| null/);
+assert.match(fishingAudioText, /bank\.pendingPose = pose/);
+assert.match(fishingAudioText, /flushPendingParkFishingSound\(bank\)/);
+assert.doesNotMatch(
+  fishingAudioText,
+  /if \(bank\.resumePromise\) return bank\.resumePromise/,
+  "an automatic suspended resume must never block a later user-gesture retry",
+);
+assert.match(fishingAudioText, /bank\.loadState = "disposed"/);
+assert.match(fishingAudioText, /context\.close\(\)\.catch/);
+assert.doesNotMatch(
+  fishingAudioText,
+  /HTMLAudioElement|new Audio\(|\.pause\(\)|\.currentTime\s*=|\.play\(\)/,
+  "park fishing SFX must use decoded Web Audio one-shots instead of HTML media IPC",
+);
 assert.match(parkText, /updateParkFootstepAudio\(footstepAudioRef\.current/);
+assert.match(parkText, /resumeParkFootstepAudio\(footstepAudio\)/);
+assert.match(parkText, /addEventListener\("pointerdown", resumeFootsteps, true\)/);
+assert.match(parkText, /addEventListener\("keydown", resumeFootsteps, true\)/);
+assert.match(parkText, /addEventListener\("touchstart", resumeFootsteps, true\)/);
+assert.match(parkText, /removeEventListener\("pointerdown", resumeFootsteps, true\)/);
+assert.match(parkText, /removeEventListener\("keydown", resumeFootsteps, true\)/);
+assert.match(parkText, /removeEventListener\("touchstart", resumeFootsteps, true\)/);
+assert.match(parkText, /resumeParkFishingAudioBank\(audioBank\)/);
+assert.match(parkText, /addEventListener\("pointerdown", resumeFishing, true\)/);
+assert.match(parkText, /addEventListener\("keydown", resumeFishing, true\)/);
+assert.match(parkText, /addEventListener\("touchstart", resumeFishing, true\)/);
+assert.match(parkText, /removeEventListener\("pointerdown", resumeFishing, true\)/);
+assert.match(parkText, /removeEventListener\("keydown", resumeFishing, true\)/);
+assert.match(parkText, /removeEventListener\("touchstart", resumeFishing, true\)/);
 assert.match(parkText, /distancePx: distanceMoved/);
 assert.match(parkText, /onGrass: isParkGrassPoint/);
 assert.match(appText, /shouldChooseCooking\(warmth\)/);
@@ -601,7 +1110,7 @@ assert.match(appText, /consumeFurnitureStorageItem\([\s\S]*"fridge"/);
 assert.match(tauriText, /inner_size\(1180\.0, 900\.0\)/);
 assert.match(
   rendererText,
-  /ctx\.drawImage\(layers\.neutralBaseWithoutDistantShoreFoamAndCliffFog, 0, 0\)/,
+  /parkCanvasSnapshotSource\(\s*layers\.neutralBaseWithoutDistantShoreFoamAndCliffFog/,
 );
 assert.match(rendererText, /PARK_HORIZON_Y = 122/);
 assert.match(rendererText, /PARK_HORIZON_TINT_END_Y = 235/);
@@ -615,7 +1124,10 @@ assert.match(rendererText, /const lowerAlpha = 0\.14 \+ dawnBoost \* 0\.05/);
 assert.match(rendererText, /createLinearGradient/);
 assert.match(rendererText, /gradient\.addColorStop\(1, `rgba\(\$\{color\.join\(","\)\},0\)`\)/);
 assert.match(rendererText, /globalCompositeOperation = "destination-in"/);
-assert.match(rendererText, /tint\.drawImage\(layers\.seaMask, 0, 0\)/);
+assert.match(
+  rendererText,
+  /tint\.drawImage\(parkCanvasSnapshotSource\(layers\.seaMask\), 0, 0\)/,
+);
 assert.match(rendererText, /globalCompositeOperation = "soft-light"/);
 assert.match(rendererText, /drawHorizonSeaTint\(ctx, layers, timeVisual\)/);
 assert.match(rendererText, /parkHorizonTintEnd/);
@@ -639,22 +1151,26 @@ assert.match(rendererText, /const horizontal = caster\.x - celestial\.x/);
 assert.doesNotMatch(rendererText, /drawMovingCelestialBody/);
 assert.doesNotMatch(rendererText, /reflectionStrength/);
 assert.match(rendererText, /drawSeaLighting\(ctx, layers, timeVisual, motionNowMs\)/);
-assert.match(rendererText, /light\.drawImage\(layers\.seaMotionMask, 0, 0\)/);
+assert.match(
+  rendererText,
+  /light\.drawImage\(parkCanvasSnapshotSource\(layers\.seaMotionMask\), 0, 0\)/,
+);
 assert.match(rendererText, /PARK_FOG_UPDATE_INTERVAL_MS = 1000 \/ 30/);
 assert.match(rendererText, /PARK_GRASS_UPDATE_INTERVAL_MS = 1000 \/ 20/);
-assert.match(rendererText, /PARK_POND_UPDATE_INTERVAL_MS = 1000 \/ 20/);
+assert.doesNotMatch(rendererText, /PARK_POND_UPDATE_INTERVAL_MS/);
 assert.match(rendererText, /PARK_SEA_LIGHT_UPDATE_INTERVAL_MS = 1000 \/ 20/);
 assert.match(rendererText, /PARK_FOAM_UPDATE_INTERVAL_MS = 1000 \/ 24/);
 assert.match(rendererText, /PARK_DIAGNOSTIC_UPDATE_INTERVAL_MS = 250/);
 assert.match(rendererText, /const ambientUpdateDue/);
 assert.match(rendererText, /const shouldUpdateParkDiagnostics/);
-assert.match(rendererText, /const pondPatternCache = new WeakMap/);
-assert.match(rendererText, /createPattern\(textureFrame, "repeat"\)/);
-assert.match(rendererText, /pattern\.setTransform\(\{ e: startX, f: startY \}\)/);
-assert.match(rendererText, /ctx\.drawImage\(pondCompositeCanvas!, 0, 0\)/);
+assert.doesNotMatch(
+  rendererText,
+  /pondSurfaceCanvas|pondTextureCanvas|pondCompositeCanvas|pondPatternCache|createPattern\(/,
+  "the park runtime must not rebuild the pond through dynamic offscreen canvases",
+);
 assert.match(rendererText, /const sortedParkObjects/);
 assert.match(rendererText, /const sortedStaticOccluders/);
-assert.match(rendererText, /parkPondPatternCache = "repeating-canvas-pattern"/);
+assert.match(rendererText, /parkPondPatternCache = "none"/);
 assert.doesNotMatch(rendererText, /const drawReferenceMotion/);
 assert.doesNotMatch(rendererText, /const coverReferenceSun/);
 assert.doesNotMatch(rendererText, /layers\.full/);
@@ -665,73 +1181,73 @@ assert.match(rendererText, /Math\.pow\(pulse, 5\)/);
 assert.match(rendererText, /parkSeaSparkleCount/);
 assert.match(rendererText, /parkSeaSparklePhase/);
 assert.doesNotMatch(seaLightingText, /Math\.random\(\)/);
+
+assert.match(pondAtlasText, /PARK_POND_ATLAS_SOURCE = "\/park\/hilltop-pond-motion-v1\.png"/);
+assert.match(pondAtlasText, /PARK_POND_ATLAS_FRAME_WIDTH = 396/);
+assert.match(pondAtlasText, /PARK_POND_ATLAS_FRAME_HEIGHT = 443/);
+assert.match(pondAtlasText, /PARK_POND_ATLAS_FRAME_COUNT = 80/);
+assert.match(pondAtlasText, /PARK_POND_ATLAS_COLUMNS = 8/);
+assert.match(pondAtlasText, /PARK_POND_ATLAS_ROWS = 10/);
+assert.match(pondAtlasText, /PARK_POND_ATLAS_FPS = 10/);
+assert.match(pondAtlasText, /PARK_POND_ATLAS_GUTTER = 1/);
+assert.match(pondAtlasText, /image\.decoding = "async"/);
+assert.match(pondAtlasText, /image\.naturalWidth !== PARK_POND_ATLAS_WIDTH/);
+assert.match(pondAtlasText, /image\.naturalHeight !== PARK_POND_ATLAS_HEIGHT/);
+assert.match(pondAtlasText, /export const ensureParkPondAtlas/);
+assert.match(pondAtlasText, /export const getParkPondAtlas/);
+assert.match(pondAtlasText, /export const getParkPondAtlasStatus/);
+assert.match(pondAtlasText, /Math\.floor\(nowMs \/ frameDurationMs\) % PARK_POND_ATLAS_FRAME_COUNT/);
+assert.doesNotMatch(pondAtlasText, /createElement\("canvas"\)|createImageBitmap/);
+
+assert.match(rendererText, /from "\.\/parkPondAtlas"/);
 assert.match(rendererText, /const drawPondSurface/);
-assert.match(rendererText, /const PARK_POND_RIPPLES/);
-assert.match(rendererText, /PARK_POND_WAVE_PARTICLE_COUNT = 26/);
-assert.match(rendererText, /PARK_POND_GLIMMER_COUNT = 13/);
-assert.match(pondSurfaceText, /pondLargeHighlightTexture/);
-assert.match(pondSurfaceText, /pondFineHighlightTexture/);
-assert.match(pondSurfaceText, /pondLargeLowlightTexture/);
-assert.match(pondSurfaceText, /pondFineLowlightTexture/);
-assert.match(pondSurfaceText, /drawPixelPondRing/);
-assert.match(pondSurfaceText, /globalCompositeOperation = "destination-in"/);
-assert.match(pondSurfaceText, /layers\.pondInteriorMask/);
-assert.match(pondSurfaceText, /layers\.pondEdgeMask/);
-assert.match(pondSurfaceText, /layers\.pondRimMask/);
-assert.doesNotMatch(pondSurfaceText, /Math\.random\(\)/);
-assert.match(pondTextureText, /verticalScale: number/);
-assert.match(pondTextureText, /PARK_POND_MORPH_FRAME_COUNT = 8/);
-assert.match(pondTextureText, /PARK_POND_LARGE_MORPH_PERIOD_MS = 22_000/);
-assert.match(pondTextureText, /PARK_POND_FINE_MORPH_PERIOD_MS = 17_000/);
-assert.match(pondTextureText, /canvas\.height = Math\.round\(tileSize \* verticalScale\)/);
-assert.equal((pondTextureText.match(/0\.5, \[/g) ?? []).length, 4);
-assert.match(pondTextureText, /const morphX = Math\.sin/);
-assert.match(pondTextureText, /\* cellSize \* 0\.055/);
-assert.match(pondTextureText, /const morphY = Math\.cos/);
-assert.match(pondTextureText, /\* cellHeight \* 0\.085/);
-assert.match(pondTextureText, /const makePondTextureSequence/);
-assert.match(pondTextureText, /length: PARK_POND_MORPH_FRAME_COUNT/);
-assert.match(pondTextureText, /frameIndex \/ PARK_POND_MORPH_FRAME_COUNT \* Math\.PI \* 2/);
-assert.match(pondTextureText, /const morphPosition = wrappedMorphProgress \* textures\.length/);
-assert.match(pondTextureText, /const nextMorphFrame = \(morphFrame \+ 1\) % textures\.length/);
-assert.match(pondTextureText, /const morphMix = rawMorphMix \* rawMorphMix \* \(3 - 2 \* rawMorphMix\)/);
-assert.match(pondTextureText, /fillTexture\(textures\[morphFrame\]!, 1 - morphMix\)/);
-assert.match(pondTextureText, /fillTexture\(textures\[nextMorphFrame\]!, morphMix\)/);
-assert.match(pondTextureText, /730 \+ lowerOffset/);
-assert.match(pondTextureText, /731 \+ lowerOffset/);
-assert.equal((pondSurfaceText.match(/fillRect\(730, 405, 450, 495\)/g) ?? []).length, 3);
-assert.doesNotMatch(pondSurfaceText, /fillRect\(800, 405, 380, 495\)/);
-assert.match(pondTextureText, /const stripHeight = 2/);
-assert.match(pondTextureText, /const primaryWave = Math\.sin/);
-assert.match(pondTextureText, /const secondaryWave = Math\.sin/);
-assert.match(pondTextureText, /type PondTravellingHighlight/);
-assert.match(pondTextureText, /const crestWave = travellingHighlight/);
-assert.match(pondTextureText, /Math\.pow\(crestWave, travellingHighlight\.sharpness\)/);
-assert.match(pondTextureText, /const stripAlpha = Math\.min\(1, alpha \+ travellingCrest\)/);
-assert.match(pondTextureText, /const lowerOffset = Math\.floor\(waveOffset\)/);
-assert.match(pondTextureText, /const offsetMix = waveOffset - lowerOffset/);
-assert.match(pondTextureText, /stripAlpha \* \(1 - offsetMix\)/);
-assert.match(pondTextureText, /stripAlpha \* offsetMix/);
-assert.doesNotMatch(pondTextureText, /Math\.round\(waveOffset\)/);
-assert.doesNotMatch(pondTextureText, /Math\.random\(\)/);
-assert.match(pondTextureText, /\[220, 246, 235, 136\]/);
-assert.match(pondTextureText, /\[64, 111, 124, 104\]/);
-const largeHighlightCallText = pondSurfaceText.slice(
-  pondSurfaceText.indexOf("pondLargeHighlightTexture"),
-  pondSurfaceText.indexOf("pondFineHighlightTexture"),
+assert.match(pondSurfaceText, /ensureParkPondAtlas\(\)/);
+assert.match(pondSurfaceText, /const atlas = getParkPondAtlas\(\)/);
+assert.match(pondSurfaceText, /pondBounds\.x !== 784/);
+assert.match(pondSurfaceText, /pondBounds\.y !== 457/);
+assert.match(pondSurfaceText, /pondBounds\.width !== PARK_POND_ATLAS_FRAME_WIDTH/);
+assert.match(pondSurfaceText, /pondBounds\.height !== PARK_POND_ATLAS_FRAME_HEIGHT/);
+assert.match(pondSurfaceText, /const source = parkPondAtlasFrameSource\(nowMs\)/);
+assert.equal(
+  (pondSurfaceText.match(/ctx\.drawImage\(/g) ?? []).length,
+  1,
+  "each visible pond frame must use exactly one image-to-main-canvas draw",
 );
-const fineHighlightCallText = pondSurfaceText.slice(
-  pondSurfaceText.indexOf("pondFineHighlightTexture"),
-  pondSurfaceText.indexOf("// Ring particles"),
+assert.doesNotMatch(
+  pondSurfaceText,
+  /createPattern|destination-in|pondInteriorMask|pondEdgeMask|pondRimMask/,
 );
+
+assert.match(pondGeneratorText, /FRAME_WIDTH = 396/);
+assert.match(pondGeneratorText, /FRAME_HEIGHT = 443/);
+assert.match(pondGeneratorText, /FRAME_COUNT = 80/);
+assert.match(pondGeneratorText, /ATLAS_COLUMNS = 8/);
+assert.match(pondGeneratorText, /ATLAS_ROWS = 10/);
+assert.match(pondGeneratorText, /ATLAS_FPS = 10/);
+assert.match(pondGeneratorText, /ATLAS_GUTTER = 1/);
+assert.match(pondGeneratorText, /POND_STRIP_HEIGHT = 2/);
+assert.match(pondGeneratorText, /POND_TRAVELLING_HIGHLIGHT_FREQUENCY = 0\.049/);
+assert.match(pondGeneratorText, /POND_TRAVELLING_HIGHLIGHT_STRENGTH = 0\.42/);
+assert.match(pondGeneratorText, /POND_TRAVELLING_HIGHLIGHT_SHARPNESS = 9/);
 assert.match(
-  largeHighlightCallText,
-  /phase: nowMs \/ PARK_DOWNWARD_RIPPLE_PHASE_SCALE_MS/,
+  pondGeneratorText,
+  /\(min_x, min_y, width, height\) != \(784, 457, FRAME_WIDTH, FRAME_HEIGHT\)/,
 );
-assert.match(largeHighlightCallText, /frequency: PARK_DOWNWARD_RIPPLE_FREQUENCY/);
-assert.match(largeHighlightCallText, /sharpness: PARK_DOWNWARD_RIPPLE_SHARPNESS/);
-assert.match(largeHighlightCallText, /strength: 0\.42/);
-assert.doesNotMatch(fineHighlightCallText, /strength:/);
+assert.match(pondGeneratorText, /def make_pond_masks/);
+assert.match(pondGeneratorText, /def make_cellular_texture/);
+assert.match(pondGeneratorText, /def tiled_texture_layer/);
+assert.match(pondGeneratorText, /mode == "multiply"/);
+assert.match(pondGeneratorText, /mode == "screen"/);
+assert.match(pondGeneratorText, /def sampled_strip/);
+assert.match(pondGeneratorText, /opacity=1\.0 - morph_mix/);
+assert.match(pondGeneratorText, /for ripple_x, ripple_y, ripple_phase, warp_amount, warp_phase/);
+assert.match(pondGeneratorText, /particle_cycles = 2 if index % 7 <= 1 else 1/);
+assert.match(pondGeneratorText, /glimmer_cycles = 1 \+ \(1 if index % 5 == 0 else 0\)/);
+assert.match(pondGeneratorText, /surface\[\.\.\., 3\] \*= interior_mask/);
+assert.match(pondGeneratorText, /edge_layer\[\.\.\., 3\] = edge_mask/);
+assert.match(pondGeneratorText, /rim_layer\[\.\.\., 3\] = rim_mask/);
+assert.match(pondGeneratorText, /frame_index \/ FRAME_COUNT/);
+
 assert.match(rendererText, /PARK_DOWNWARD_RIPPLE_PHASE_SCALE_MS = 680/);
 assert.match(rendererText, /PARK_DOWNWARD_RIPPLE_FREQUENCY = 0\.049/);
 assert.match(rendererText, /PARK_DOWNWARD_RIPPLE_SHARPNESS = 9/);
@@ -752,32 +1268,37 @@ assert.match(terrainMotionText, /const stripHeight = 2/);
 assert.match(terrainMotionText, /const lowerOffset = Math\.floor\(lateralBend\)/);
 assert.match(terrainMotionText, /crest \* 0\.2 \* \(1 - offsetMix\)/);
 assert.match(terrainMotionText, /crest \* 0\.2 \* offsetMix/);
-assert.match(terrainMotionText, /ripple\.drawImage\(layers\.grassRippleMask, 0, 0\)/);
+assert.match(
+  terrainMotionText,
+  /ripple\.drawImage\(parkCanvasSnapshotSource\(layers\.grassRippleMask\), 0, 0\)/,
+);
 assert.doesNotMatch(terrainMotionText, /const gust/);
 assert.doesNotMatch(terrainMotionText, /Math\.random\(\)/);
 assert.doesNotMatch(rendererText, /cliffGrassSway|CliffGrassSway|CLIFF_GRASS_SWAY/);
 assert.doesNotMatch(rendererText, /ctx\.ellipse\(1118, 682, 285, 255/);
-assert.match(rendererText, /parkPondSurfaceLayerCount = "2"/);
-assert.match(rendererText, /parkPondCellVerticalScale = "0\.5"/);
-assert.match(rendererText, /parkPondWaveStripHeight = "2"/);
-assert.match(rendererText, /parkPondWaveInterpolation = "adjacent-pixel-crossfade"/);
-assert.match(rendererText, /parkPondTravellingHighlightLayer = "large-cell"/);
-assert.match(rendererText, /parkPondTravellingHighlightDirection = "toward-foreground"/);
-assert.match(rendererText, /parkPondTravellingHighlightPhase = downwardRipplePhase/);
+assert.match(rendererText, /parkPondSurfaceLayerCount = "1"/);
+assert.match(rendererText, /parkPondCellVerticalScale = "prebaked"/);
+assert.match(rendererText, /parkPondWaveInterpolation = "prebaked-loop"/);
+assert.match(rendererText, /parkPondTexturePass = "single-image-draw"/);
+assert.match(rendererText, /parkPondTextureDrawsPerUpdate = "1"/);
 assert.match(rendererText, /parkGrassRipplePhase = downwardRipplePhase/);
 assert.match(rendererText, /parkGrassRippleDirection = "toward-foreground"/);
-assert.match(rendererText, /parkGrassRippleSharedWithPond = "true"/);
+assert.match(rendererText, /parkGrassRippleSharedWithPond = "false"/);
 assert.match(rendererText, /parkGrassRippleMaskPixels/);
 assert.match(rendererText, /parkGrassRippleObstacleExclusionCount/);
-assert.match(rendererText, /parkPondFinePalette = "lightened"/);
-assert.match(rendererText, /parkPondMorphFrameCount/);
-assert.match(rendererText, /parkPondLargeMorphPeriodMs/);
-assert.match(rendererText, /parkPondFineMorphPeriodMs/);
-assert.match(rendererText, /parkPondMorphInterpolation = "cyclic-smoothstep-crossfade"/);
-assert.match(rendererText, /parkPondCoverageMinX = "730"/);
+assert.match(rendererText, /parkPondFinePalette = "prebaked-lightened"/);
+assert.match(rendererText, /parkPondMorphInterpolation = "seamless-prebaked-loop"/);
+assert.match(rendererText, /parkPondOffscreenStrategy = "prebaked-image-atlas"/);
+assert.match(rendererText, /parkPondOffscreenAreaRatio = "0\.0000"/);
+assert.match(rendererText, /parkPondSurfaceBufferPixels = "0"/);
+assert.match(rendererText, /parkPondTextureBufferPixels = "0"/);
 assert.match(rendererText, /parkPondLeftBay = "audited-seeded-water"/);
-assert.match(rendererText, /parkPondLargeMorphPhase/);
-assert.match(rendererText, /parkPondFineMorphPhase/);
+assert.match(rendererText, /parkPondSource = !pondAtlasBoundsMatch/);
+assert.match(rendererText, /"prebaked-image-atlas"/);
+assert.match(rendererText, /static-fallback-/);
+assert.match(rendererText, /parkPondAtlasFrameCount/);
+assert.match(rendererText, /parkPondAtlasFps/);
+assert.match(rendererText, /parkPondAtlasGutter/);
 assert.match(rendererText, /parkPondParticleCount/);
 assert.match(rendererText, /parkPondTimeGraded = "true"/);
 const pondDrawCallIndex = rendererText.lastIndexOf("drawPondSurface(ctx, layers, motionNowMs)");
@@ -802,9 +1323,18 @@ assert.match(rendererText, /const fringeAlpha = fringeBreath \* 0\.3/);
 assert.match(rendererText, /const fringeDistanceSteps = distanceSteps \+ fringeBreath \* 0\.75/);
 assert.match(rendererText, /segment\.directionX \* step/);
 assert.match(rendererText, /segment\.directionY \* step/);
-assert.match(rendererText, /motion\.drawImage\(layers\.shoreFoamMotionMask, 0, 0\)/);
-assert.match(rendererText, /highlight\.drawImage\(layers\.shoreFoamMotionMask, 0, 0\)/);
-assert.match(rendererText, /fringe\.drawImage\(layers\.shoreFoamMotionMask, 0, 0\)/);
+assert.match(
+  rendererText,
+  /motion\.drawImage\(\s*parkCanvasSnapshotSource\(layers\.shoreFoamMotionMask\)/,
+);
+assert.match(
+  rendererText,
+  /highlight\.drawImage\(\s*parkCanvasSnapshotSource\(layers\.shoreFoamMotionMask\)/,
+);
+assert.match(
+  rendererText,
+  /fringe\.drawImage\(\s*parkCanvasSnapshotSource\(layers\.shoreFoamMotionMask\)/,
+);
 assert.match(shoreFoamMotionText, /ctx\.globalCompositeOperation = "source-over"/);
 assert.match(shoreFoamMotionText, /ctx\.globalAlpha = nightDimming/);
 assert.match(shoreFoamMotionText, /ctx\.globalCompositeOperation = "screen"/);
@@ -817,7 +1347,7 @@ assert.match(rendererText, /parkShoreFoamFringeOffset = "0\.75"/);
 assert.match(rendererText, /parkShoreFoamTimeGraded = "true"/);
 assert.match(rendererText, /parkShoreFoamNightDimming = "0\.62"/);
 assert.match(shoreFoamMotionText, /const nightDimming = 1 - visual\.nightStrength \* 0\.62/);
-const foamDrawCallIndex = rendererText.lastIndexOf("const foamMotion = drawShoreFoamBreath");
+const foamDrawCallIndex = rendererText.lastIndexOf("? drawShoreFoamBreath(");
 const timeGradeCallIndex = rendererText.lastIndexOf("applyTimeGrade(ctx, timeVisual)");
 assert(foamDrawCallIndex >= 0, "foam draw call must exist");
 assert(timeGradeCallIndex > foamDrawCallIndex, "time grade must be applied after moving foam");
@@ -839,9 +1369,12 @@ assert.match(rendererText, /const PARK_CLOUD_LANES/);
 assert.match(rendererText, /const trackLength = PARK_SCENE_WIDTH \+ travelWidth \+ lane\.gap/);
 assert.match(rendererText, /const cycleIndex = Math\.floor\(travel \/ trackLength\)/);
 assert.match(rendererText, /phase - travelWidth - lane\.gap \/ 2 \+ \(travelWidth - drawWidth\) \/ 2/);
-assert.match(rendererText, /ctx\.drawImage\(sprite, x, lane\.y, drawWidth, drawHeight\)/);
+assert.match(
+  rendererText,
+  /ctx\.drawImage\(\s*sprite,/,
+);
 assert.match(rendererText, /ctx\.imageSmoothingEnabled = true/);
-assert.doesNotMatch(rendererText, /ctx\.drawImage\(sprite, Math\.round\(x\)/);
+assert.doesNotMatch(rendererText, /parkCanvasSnapshotSource\(sprite\)/);
 assert.doesNotMatch(rendererText, /from "\.\/parkClouds"/);
 assert.match(rendererText, /parkCloudSource = "imagegen-time-atlas"/);
 assert.match(rendererText, /scale: 0\.684/);
@@ -873,7 +1406,7 @@ assert.match(rendererText, /parkCliffFogMaxOffset/);
 assert.match(rendererText, /parkCliffFogSource = "authored-reference-layer"/);
 assert.match(
   rendererText,
-  /ctx\.drawImage\(layers\.neutralBaseWithoutDistantShoreFoamAndCliffFog, 0, 0\)/,
+  /parkCanvasSnapshotSource\(\s*layers\.neutralBaseWithoutDistantShoreFoamAndCliffFog/,
 );
 assert.match(
   cliffFogMotionText,
@@ -884,7 +1417,10 @@ assert.match(cliffFogMotionText, /motion\.imageSmoothingEnabled = true/);
 assert.doesNotMatch(cliffFogMotionText, /Math\.round\(horizontalOffset/);
 assert.doesNotMatch(cliffFogMotionText, /Math\.round\(verticalOffset/);
 assert.match(cliffFogMotionText, /motion\.globalCompositeOperation = "destination-in"/);
-assert.match(cliffFogMotionText, /motion\.drawImage\(layers\.cliffFogMotionMask, 0, 0\)/);
+assert.match(
+  cliffFogMotionText,
+  /motion\.drawImage\(\s*parkCanvasSnapshotSource\(layers\.cliffFogMotionMask\)/,
+);
 assert.doesNotMatch(cliffFogMotionText, /Math\.random\(\)/);
 const blendedCloudStart = rendererText.indexOf("const blendedCloud =");
 const blendedCloudEnd = rendererText.indexOf("const PARK_CLOUD_DRAW_REFERENCE_HEIGHT");
@@ -1032,11 +1568,14 @@ assert.match(layersText, /\[790, 620\]/);
 assert.match(layersText, /\[800, 650\]/);
 assert.match(layersText, /PARK_POND_AUDITED_SEEDS\.forEach/);
 assert.match(layersText, /const connectedPond = new Uint8Array/);
+assert.match(layerInterfaceText, /pondBounds: ParkPondBounds/);
+assert.match(layersText, /const measureMaskBounds/);
+assert.match(layersText, /const pondBounds = measureMaskBounds\(connectedPond\)/);
 assert.match(layersText, /Seeding only[\s\S]*those edges rejects isolated blue details/);
-assert.match(layersText, /pondMask: makeMaskCanvas\(connectedPond\)/);
-assert.match(layersText, /pondInteriorMask: makeMaskCanvas\(pondInterior\)/);
-assert.match(layersText, /pondEdgeMask: makeMaskCanvas\(pondEdge\)/);
-assert.match(layersText, /pondRimMask: makeMaskCanvas\(pondRim\)/);
+assert.match(layersText, /pondMask: makeMaskCanvas\(connectedPond, pondBounds\)/);
+assert.match(layersText, /pondInteriorMask: makeMaskCanvas\(pondInterior, pondBounds\)/);
+assert.match(layersText, /pondEdgeMask: makeMaskCanvas\(pondEdge, pondBounds\)/);
+assert.match(layersText, /pondRimMask: makeMaskCanvas\(pondRim, pondBounds\)/);
 assert.match(layersText, /const makeShoreFoamSegments/);
 assert.match(layersText, /if \(!band\.splitIntoComponents\)/);
 assert.match(layersText, /for \(let deltaY = -1; deltaY <= 1; deltaY \+= 1\)/);
@@ -1132,6 +1671,14 @@ assert.equal(
   "eb01111594f15522e71029b9f80f25597baba273533ec30a54fa2b59a4aba899",
   "three-state ImageGen cloud atlas must remain stable",
 );
+assert.equal(pondAtlasImage.readUInt32BE(16), 3184);
+assert.equal(pondAtlasImage.readUInt32BE(20), 4450);
+assert.equal(pondAtlasImage.readUInt8(25), 6, "pond motion atlas must remain RGBA");
+assert.equal(
+  createHash("sha256").update(pondAtlasImage).digest("hex"),
+  "cecc4276f09a39e39f9dc9524a40ebc32749f924c4727a66bb02f0780354e882",
+  "prebaked pond motion atlas must remain stable",
+);
 for (const [name, image, expectedHash] of [
   ["black bass", blackBassImage, "6cd6e5413a4d31e1ec4e702ad2c56a6cb4c1b0c532f34fc7d386f9809c3d171e"],
   ["crucian carp", crucianCarpImage, "6b8ecb86e2c718771fac0dab5720642ff0c389ce22beb4dbc93573e29a3a9084"],
@@ -1150,4 +1697,4 @@ for (const [name, image, expectedHash] of [
   );
 }
 
-console.log("Park smoke passed: static rock/shrub occluders, synchronized grass/pond ripples, ambient water, foam and cliff-fog motion, looping clouds, handoff, traits, fish, cooking, and window size markers are present.");
+console.log("Park smoke passed: static rock/shrub occluders, independent grass ripples, single-draw pond atlas, independent park ambience, foam and cliff-fog motion, looping clouds, handoff, traits, fish, cooking, and window size markers are present.");

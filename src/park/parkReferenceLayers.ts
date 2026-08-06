@@ -30,6 +30,13 @@ export interface ParkReferenceOccluder {
   opaquePixelCount: number;
 }
 
+export interface ParkPondBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface ParkShoreFoamSegment {
   id: string;
   group: ParkShoreFoamGroup;
@@ -64,6 +71,7 @@ export interface ParkReferenceLayers {
   grassRippleMask: HTMLCanvasElement;
   seaMask: HTMLCanvasElement;
   seaMotionMask: HTMLCanvasElement;
+  pondBounds: ParkPondBounds;
   pondInteriorMask: HTMLCanvasElement;
   pondEdgeMask: HTMLCanvasElement;
   pondRimMask: HTMLCanvasElement;
@@ -737,18 +745,57 @@ const makeLandExclusionMask = (
   return mask;
 };
 
-const makeMaskCanvas = (values: Uint8Array) => {
-  const canvas = newCanvas(PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+const PARK_FULL_SCENE_BOUNDS: ParkPondBounds = {
+  x: 0,
+  y: 0,
+  width: PARK_SCENE_WIDTH,
+  height: PARK_SCENE_HEIGHT,
+};
+
+const measureMaskBounds = (values: Uint8Array): ParkPondBounds => {
+  let minX = PARK_SCENE_WIDTH;
+  let minY = PARK_SCENE_HEIGHT;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < PARK_SCENE_HEIGHT; y += 1) {
+    for (let x = 0; x < PARK_SCENE_WIDTH; x += 1) {
+      if ((values[y * PARK_SCENE_WIDTH + x] ?? 0) === 0) continue;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  if (maxX < minX || maxY < minY) {
+    return { x: 0, y: 0, width: 1, height: 1 };
+  }
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+};
+
+const makeMaskCanvas = (
+  values: Uint8Array,
+  bounds: ParkPondBounds = PARK_FULL_SCENE_BOUNDS,
+) => {
+  const canvas = newCanvas(bounds.width, bounds.height);
   const ctx = canvas.getContext("2d")!;
-  const image = ctx.createImageData(PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
-  for (let index = 0; index < values.length; index += 1) {
-    const alpha = values[index] ?? 0;
-    if (alpha === 0) continue;
-    const offset = index * 4;
-    image.data[offset] = 255;
-    image.data[offset + 1] = 255;
-    image.data[offset + 2] = 255;
-    image.data[offset + 3] = alpha;
+  const image = ctx.createImageData(bounds.width, bounds.height);
+  for (let localY = 0; localY < bounds.height; localY += 1) {
+    const sourceY = bounds.y + localY;
+    for (let localX = 0; localX < bounds.width; localX += 1) {
+      const sourceX = bounds.x + localX;
+      const alpha = values[sourceY * PARK_SCENE_WIDTH + sourceX] ?? 0;
+      if (alpha === 0) continue;
+      const offset = (localY * bounds.width + localX) * 4;
+      image.data[offset] = 255;
+      image.data[offset + 1] = 255;
+      image.data[offset + 2] = 255;
+      image.data[offset + 3] = alpha;
+    }
   }
   ctx.putImageData(image, 0, 0);
   return canvas;
@@ -1596,11 +1643,13 @@ const makePondMasks = (neutralBase: HTMLCanvasElement) => {
     }
   }
 
+  const pondBounds = measureMaskBounds(connectedPond);
   return {
-    pondMask: makeMaskCanvas(connectedPond),
-    pondInteriorMask: makeMaskCanvas(pondInterior),
-    pondEdgeMask: makeMaskCanvas(pondEdge),
-    pondRimMask: makeMaskCanvas(pondRim),
+    pondBounds,
+    pondMask: makeMaskCanvas(connectedPond, pondBounds),
+    pondInteriorMask: makeMaskCanvas(pondInterior, pondBounds),
+    pondEdgeMask: makeMaskCanvas(pondEdge, pondBounds),
+    pondRimMask: makeMaskCanvas(pondRim, pondBounds),
   };
 };
 
@@ -1758,6 +1807,7 @@ const buildLayers = (
     cliffFogSegments,
   } = makeCliffFogLayers(neutralBaseWithoutDistantShoreFoam);
   const {
+    pondBounds,
     pondMask,
     pondInteriorMask,
     pondEdgeMask,
@@ -1774,6 +1824,7 @@ const buildLayers = (
     grassRippleMask,
     seaMask,
     seaMotionMask,
+    pondBounds,
     pondInteriorMask,
     pondEdgeMask,
     pondRimMask,

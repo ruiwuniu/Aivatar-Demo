@@ -140,6 +140,10 @@ import {
   reserveShopPurchaseSlot as reserveShopPurchaseSlotBase,
 } from "./shopPurchase";
 import { shouldChooseCooking } from "./park/parkProbability";
+import {
+  DEFAULT_PARK_AMBIENT_AUDIO_VOLUME,
+  PARK_AMBIENT_AUDIO_VOLUME_KEY,
+} from "./park/parkAmbientAudio";
 import type {
   AivatarContent,
   AivatarDarkTraits,
@@ -411,7 +415,7 @@ const DEFAULT_SCENE_PANEL_WIDTH =
   DEFAULT_EXPANDED_WINDOW_WIDTH - APP_HORIZONTAL_PADDING - APP_GRID_GAP - SIDE_PANEL_WIDTH;
 const COLLAPSED_WINDOW_MIN_WIDTH = DEFAULT_SCENE_PANEL_WIDTH + APP_HORIZONTAL_PADDING;
 const DEFAULT_WINDOW_HEIGHT = 520;
-const SHOW_DEBUG_CARD = true;
+const SHOW_DEBUG_CARD = false;
 const EXPANDED_WINDOW_MIN_WIDTH = 720;
 const COLLAPSED_WINDOW_CLIENT_WIDTH_GUARD = 2;
 const COLLAPSED_WINDOW_RESIZE_RETRY_DELAY_MS = 50;
@@ -663,6 +667,14 @@ const loadInitialAudioVolume = () => {
   const saved = Number(stored);
   if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
   return DEFAULT_AUDIO_VOLUME;
+};
+
+const loadInitialParkAmbientAudioVolume = () => {
+  const stored = localStorage.getItem(PARK_AMBIENT_AUDIO_VOLUME_KEY);
+  if (stored === null) return DEFAULT_PARK_AMBIENT_AUDIO_VOLUME;
+  const saved = Number(stored);
+  if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
+  return DEFAULT_PARK_AMBIENT_AUDIO_VOLUME;
 };
 
 const loadInitialGameConsoleVolume = () => {
@@ -3783,6 +3795,8 @@ export const App = () => {
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
   const [uiTheme, setUiTheme] = useState<UiThemeId>(() => loadInitialUiTheme());
   const [audioVolume, setAudioVolume] = useState(() => loadInitialAudioVolume());
+  const [parkAmbientAudioVolume, setParkAmbientAudioVolume] = useState(() =>
+    loadInitialParkAmbientAudioVolume());
   const [gameConsoleVolume, setGameConsoleVolume] = useState(() =>
     loadInitialGameConsoleVolume(),
   );
@@ -3914,6 +3928,7 @@ export const App = () => {
   const roomVisitorRef = useRef<AivatarRoomVisitor | null>(null);
   const [avatarAway, setAvatarAway] = useState(false);
   const avatarAwayRef = useRef(false);
+  const awayRoomFrameRenderedRef = useRef(false);
   const handledVisitIdsRef = useRef(new Set<string>());
   const completedVisitIdsRef = useRef(new Set<string>());
   const socialRoomMemoryRef = useRef<AivatarSocialRoomMemory | null>(null);
@@ -4038,6 +4053,11 @@ export const App = () => {
     uiCopyCache.set(key, copy);
     return copy;
   };
+  const parkAmbientVolumeLabel = locale === "zh-Hant"
+    ? "公園環境音量"
+    : locale === "zh-Hans"
+      ? "公园环境音量"
+      : "Park ambience volume";
   const configStateLabel = ui(`config.${configState}`);
   const taskCabinetStatusLabel = (status: TaskCabinetStatus) =>
     ui(`taskCabinet.status.${status}`);
@@ -6207,6 +6227,7 @@ export const App = () => {
   };
 
   useLayoutEffect(() => {
+    if (avatarAway && awayRoomFrameRenderedRef.current) return;
     if (canvasRef.current) {
       renderScene(
         canvasRef.current,
@@ -6250,6 +6271,7 @@ export const App = () => {
         localizedRoomVisitors(roomVisitor ? [roomVisitor] : [], locale),
         !avatarAway,
       );
+      awayRoomFrameRenderedRef.current = avatarAway;
     }
   }, [
     activeInteraction,
@@ -6789,6 +6811,13 @@ export const App = () => {
   }, [audioVolume]);
 
   useEffect(() => {
+    localStorage.setItem(
+      PARK_AMBIENT_AUDIO_VOLUME_KEY,
+      String(parkAmbientAudioVolume),
+    );
+  }, [parkAmbientAudioVolume]);
+
+  useEffect(() => {
     localStorage.setItem(GAME_CONSOLE_VOLUME_KEY, String(gameConsoleVolume));
     const audio = gameConsoleAudioRef.current;
     if (!audio) return;
@@ -7085,8 +7114,16 @@ export const App = () => {
   );
 
   useEffect(() => {
-    let frame = 0;
-    let previous = performance.now();
+    const logicStepMs = 1000 / 60;
+    const logicStepSeconds = logicStepMs / 1000;
+    const maxStoredLogicBacklogMs = 30_000;
+    const maxBackgroundLogicStepsPerPump = Math.ceil(1250 / logicStepMs);
+    const maxForegroundLogicStepsPerPump = 4;
+    const staleAnimationFrameThresholdMs = 100;
+    let renderFrame = 0;
+    let lastLogicPumpAt = performance.now();
+    let lastAnimationFrameAt = lastLogicPumpAt;
+    let logicAccumulatorMs = 0;
     let statAccumulator = 0;
     let sleepAccumulator = 0;
     let playAccumulator = 0;
@@ -7125,21 +7162,18 @@ export const App = () => {
       setAvatar(runtimeRef.current);
     };
 
-    const loop = (now: number) => {
+    const advanceLogic = (now: number, elapsedSeconds: number) => {
       if (stopped) return;
-      const rawElapsedSeconds = (now - previous) / 1000;
-      const elapsedSeconds = Number.isFinite(rawElapsedSeconds)
-        ? Math.min(Math.max(rawElapsedSeconds, 0), 0.08)
-        : 0;
-      previous = now;
-      frame += 1;
       statAccumulator += elapsedSeconds;
       uiAccumulator += elapsedSeconds;
+
+      if (avatarAwayRef.current) {
+        syncUiMirror();
+        return;
+      }
+      awayRoomFrameRenderedRef.current = false;
+
       const currentContent = contentRef.current;
-      const currentTableCoffeeQuantity = getTableCoffeeQuantity(
-        saveRef.current.furnitureStorage,
-        currentContent.placedItems,
-      );
       const navLayoutFingerprint = navigationLayoutFingerprint(currentContent);
       const currentStatus = statusRef.current.status;
       const currentInteraction = activeInteractionRef.current;
@@ -7178,46 +7212,6 @@ export const App = () => {
               status: "idle" as const,
             }
           : currentStatus;
-
-      if (avatarAwayRef.current) {
-        syncUiMirror();
-
-        if (canvasRef.current) {
-          renderScene(
-            canvasRef.current,
-            currentContent,
-            runtimeRef.current,
-            currentStatus,
-            frame,
-            hoveredFurnitureRef.current?.id,
-            selectedFurnitureRef.current?.id,
-            localizedInteractionBubble(activeInteractionRef.current, localeRef.current),
-            null,
-            selectedPlacedItemRef.current?.id,
-            selectedWindowRef.current?.id,
-            null,
-            null,
-            currentTableCoffeeQuantity,
-            saveRef.current.memory,
-            getWindowTimeMs(frame),
-            taskCabinetSceneCountsRef.current.activeFileCount,
-            taskCabinetSceneCountsRef.current.failedFileCount,
-            uiThemeForScene(uiThemeRef.current),
-            navDebugOverlayRef.current,
-            saveRef.current.paintingGallery,
-            activeRecordPlayerIdRef.current,
-            normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
-            localizedRoomVisitors(
-              roomVisitorRef.current ? [roomVisitorRef.current] : [],
-              localeRef.current,
-            ),
-            false,
-          );
-        }
-
-        requestAnimationFrame(loop);
-        return;
-      }
 
       const recordPlayerPlayingForSeconds = activeRecordPlayerStartedAtRef.current
         ? (now - activeRecordPlayerStartedAtRef.current) / 1000
@@ -8690,67 +8684,124 @@ export const App = () => {
         }));
       }
 
-      if (canvasRef.current) {
-        renderScene(
-          canvasRef.current,
-          currentContent,
-          runtimeRef.current,
-          currentStatus,
-          frame,
-          hoveredFurnitureRef.current?.id,
-          selectedFurnitureRef.current?.id,
-          localizedInteractionBubble(activeInteractionRef.current, localeRef.current),
-          placementPreviewRef.current && placingItemRef.current
-            ? { item: placingItemRef.current, ...placementPreviewRef.current }
-            : placementPreviewRef.current && movingPlacedItemRef.current
-              ? {
-                  item:
-                    currentContent.itemDefinitions.find(
-                      (item) => item.id === movingPlacedItemRef.current?.itemId,
-                    ) ?? currentContent.itemDefinitions[0],
-                  ...placementPreviewRef.current,
-                  rotation: movingPlacedItemRef.current?.rotation,
-                }
-            : null,
-          selectedPlacedItemRef.current?.id,
-          selectedWindowRef.current?.id,
-          windowPlacementPreviewRef.current && movingWindowRef.current
-            ? {
-                window: movingWindowRef.current,
-                ...windowPlacementPreviewRef.current,
-              }
-            : null,
-            furniturePlacementPreviewRef.current && movingFurnitureRef.current
-              ? {
-                  furniture: movingFurnitureRef.current,
-                  ...furniturePlacementPreviewRef.current,
-                }
-              : null,
-            currentTableCoffeeQuantity,
-            saveRef.current.memory,
-            getWindowTimeMs(frame),
-            taskCabinetSceneCountsRef.current.activeFileCount,
-            taskCabinetSceneCountsRef.current.failedFileCount,
-            uiThemeForScene(uiThemeRef.current),
-            navDebugOverlayRef.current,
-            saveRef.current.paintingGallery,
-            activeRecordPlayerIdRef.current,
-            normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
-            localizedRoomVisitors(
-              roomVisitorRef.current ? [roomVisitorRef.current] : [],
-              localeRef.current,
-            ),
-            !avatarAwayRef.current,
-          );
-      }
-
-      requestAnimationFrame(loop);
     };
 
-    requestAnimationFrame(loop);
+    const pumpLogic = (now: number, maxSteps: number) => {
+      if (stopped) return;
+      const rawElapsedMs = now - lastLogicPumpAt;
+      lastLogicPumpAt = now;
+      const elapsedMs = Number.isFinite(rawElapsedMs)
+        ? Math.max(rawElapsedMs, 0)
+        : 0;
+      logicAccumulatorMs = Math.min(
+        maxStoredLogicBacklogMs,
+        logicAccumulatorMs + elapsedMs,
+      );
+
+      let steps = 0;
+      while (
+        logicAccumulatorMs + 0.001 >= logicStepMs
+        && steps < maxSteps
+      ) {
+        const logicalNow = now - logicAccumulatorMs + logicStepMs;
+        advanceLogic(logicalNow, logicStepSeconds);
+        logicAccumulatorMs = Math.max(0, logicAccumulatorMs - logicStepMs);
+        steps += 1;
+        if (avatarAwayRef.current) {
+          logicAccumulatorMs = 0;
+          break;
+        }
+      }
+    };
+
+    const renderCurrentScene = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const avatarIsAway = avatarAwayRef.current;
+      if (avatarIsAway && awayRoomFrameRenderedRef.current) return;
+
+      renderFrame += 1;
+      const currentContent = contentRef.current;
+      const currentTableCoffeeQuantity = getTableCoffeeQuantity(
+        saveRef.current.furnitureStorage,
+        currentContent.placedItems,
+      );
+      renderScene(
+        canvas,
+        currentContent,
+        runtimeRef.current,
+        statusRef.current.status,
+        renderFrame,
+        hoveredFurnitureRef.current?.id,
+        selectedFurnitureRef.current?.id,
+        localizedInteractionBubble(activeInteractionRef.current, localeRef.current),
+        !avatarIsAway && placementPreviewRef.current && placingItemRef.current
+          ? { item: placingItemRef.current, ...placementPreviewRef.current }
+          : !avatarIsAway && placementPreviewRef.current && movingPlacedItemRef.current
+            ? {
+                item:
+                  currentContent.itemDefinitions.find(
+                    (item) => item.id === movingPlacedItemRef.current?.itemId,
+                  ) ?? currentContent.itemDefinitions[0],
+                ...placementPreviewRef.current,
+                rotation: movingPlacedItemRef.current?.rotation,
+              }
+            : null,
+        selectedPlacedItemRef.current?.id,
+        selectedWindowRef.current?.id,
+        !avatarIsAway && windowPlacementPreviewRef.current && movingWindowRef.current
+          ? {
+              window: movingWindowRef.current,
+              ...windowPlacementPreviewRef.current,
+            }
+          : null,
+        !avatarIsAway && furniturePlacementPreviewRef.current && movingFurnitureRef.current
+          ? {
+              furniture: movingFurnitureRef.current,
+              ...furniturePlacementPreviewRef.current,
+            }
+          : null,
+        currentTableCoffeeQuantity,
+        saveRef.current.memory,
+        getWindowTimeMs(renderFrame),
+        taskCabinetSceneCountsRef.current.activeFileCount,
+        taskCabinetSceneCountsRef.current.failedFileCount,
+        uiThemeForScene(uiThemeRef.current),
+        navDebugOverlayRef.current,
+        saveRef.current.paintingGallery,
+        activeRecordPlayerIdRef.current,
+        normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
+        localizedRoomVisitors(
+          roomVisitorRef.current ? [roomVisitorRef.current] : [],
+          localeRef.current,
+        ),
+        !avatarIsAway,
+      );
+      awayRoomFrameRenderedRef.current = avatarIsAway;
+    };
+
+    let animation = 0;
+    const renderLoop = (now: number) => {
+      if (stopped) return;
+      lastAnimationFrameAt = now;
+      pumpLogic(now, maxForegroundLogicStepsPerPump);
+      renderCurrentScene();
+      animation = window.requestAnimationFrame(renderLoop);
+    };
+    const logicTimer = window.setInterval(
+      () => {
+        const now = performance.now();
+        if (now - lastAnimationFrameAt < staleAnimationFrameThresholdMs) return;
+        pumpLogic(now, maxBackgroundLogicStepsPerPump);
+      },
+      logicStepMs,
+    );
+    animation = window.requestAnimationFrame(renderLoop);
 
     return () => {
       stopped = true;
+      window.clearInterval(logicTimer);
+      window.cancelAnimationFrame(animation);
     };
   }, []);
 
@@ -13529,6 +13580,30 @@ export const App = () => {
                   onKeyDown={unlockAppAudio}
                   onChange={(event) => setAudioVolume(Number(event.target.value) / 100)}
                   aria-label={ui("audio.title")}
+                />
+              </label>
+
+              <label className="audio-control">
+                <span>
+                  {parkAmbientVolumeLabel}
+                  <b>
+                    {parkAmbientAudioVolume <= 0
+                      ? ui("audio.muted")
+                      : `${Math.round(parkAmbientAudioVolume * 100)}%`}
+                  </b>
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={Math.round(parkAmbientAudioVolume * 100)}
+                  onPointerDown={unlockAppAudio}
+                  onKeyDown={unlockAppAudio}
+                  onChange={(event) =>
+                    setParkAmbientAudioVolume(Number(event.target.value) / 100)
+                  }
+                  aria-label={parkAmbientVolumeLabel}
                 />
               </label>
 

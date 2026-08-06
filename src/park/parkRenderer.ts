@@ -32,6 +32,23 @@ import {
   type ParkReferenceLayers,
   type ParkReferenceShadowCaster,
 } from "./parkReferenceLayers";
+import { parkCanvasSnapshotSource } from "./parkCanvasSnapshots";
+import {
+  ensureParkPondAtlas,
+  getParkPondAtlas,
+  getParkPondAtlasStatus,
+  parkPondAtlasFrameSource,
+  PARK_POND_ATLAS_COLUMNS,
+  PARK_POND_ATLAS_FPS,
+  PARK_POND_ATLAS_FRAME_COUNT,
+  PARK_POND_ATLAS_FRAME_HEIGHT,
+  PARK_POND_ATLAS_FRAME_WIDTH,
+  PARK_POND_ATLAS_GUTTER,
+  PARK_POND_ATLAS_HEIGHT,
+  PARK_POND_ATLAS_ROWS,
+  PARK_POND_ATLAS_SOURCE,
+  PARK_POND_ATLAS_WIDTH,
+} from "./parkPondAtlas";
 
 const rect = (
   ctx: CanvasRenderingContext2D,
@@ -431,7 +448,7 @@ const drawHorizonSeaTint = (
       PARK_HORIZON_TINT_END_Y - PARK_HORIZON_Y,
     );
     tint.globalCompositeOperation = "destination-in";
-    tint.drawImage(layers.seaMask, 0, 0);
+    tint.drawImage(parkCanvasSnapshotSource(layers.seaMask), 0, 0);
     tint.globalCompositeOperation = "source-over";
   }
   ctx.save();
@@ -594,10 +611,10 @@ const blendedCloud = (
   const ctx = canvas.getContext("2d")!;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(style.variants[blend.from], 0, 0);
+  ctx.drawImage(parkCanvasSnapshotSource(style.variants[blend.from]), 0, 0);
   if (blend.to !== blend.from && quantizedMix > 0) {
     ctx.globalAlpha = quantizedMix;
-    ctx.drawImage(style.variants[blend.to], 0, 0);
+    ctx.drawImage(parkCanvasSnapshotSource(style.variants[blend.to]), 0, 0);
     ctx.globalAlpha = 1;
   }
   if (quantizedNight > 0) {
@@ -665,7 +682,13 @@ const drawMovingCloudLayer = (
     const x = phase - travelWidth - lane.gap / 2 + (travelWidth - drawWidth) / 2;
     if (x + drawWidth <= 0 || x >= PARK_SCENE_WIDTH) return;
     ctx.globalAlpha = lane.alpha;
-    ctx.drawImage(sprite, x, lane.y, drawWidth, drawHeight);
+    ctx.drawImage(
+      sprite,
+      x,
+      lane.y,
+      drawWidth,
+      drawHeight,
+    );
   });
   ctx.restore();
 };
@@ -704,14 +727,18 @@ const drawMovingCliffFog = (
         + (Math.sin(phase * 0.61 + index * 0.83) * 0.5 + 0.5) * 0.06;
       motion.globalAlpha = segment.alpha * breath;
       motion.drawImage(
-        segment.canvas,
+        parkCanvasSnapshotSource(segment.canvas),
         segment.x + horizontalOffset,
         segment.y + verticalOffset,
       );
     });
     motion.globalAlpha = 1;
     motion.globalCompositeOperation = "destination-in";
-    motion.drawImage(layers.cliffFogMotionMask, 0, 0);
+    motion.drawImage(
+      parkCanvasSnapshotSource(layers.cliffFogMotionMask),
+      0,
+      0,
+    );
     motion.globalCompositeOperation = "source-over";
   }
   ctx.drawImage(cliffFogMotionCanvas, 0, 0);
@@ -763,7 +790,7 @@ const drawTerrainMotion = (
       ripple.globalCompositeOperation = "source-over";
       ripple.globalAlpha = crest * 0.2 * (1 - offsetMix);
       ripple.drawImage(
-        layers.neutralBase,
+        parkCanvasSnapshotSource(layers.neutralBase),
         0,
         y,
         PARK_SCENE_WIDTH,
@@ -775,7 +802,7 @@ const drawTerrainMotion = (
       );
       ripple.globalAlpha = crest * 0.2 * offsetMix;
       ripple.drawImage(
-        layers.neutralBase,
+        parkCanvasSnapshotSource(layers.neutralBase),
         0,
         y,
         PARK_SCENE_WIDTH,
@@ -792,7 +819,7 @@ const drawTerrainMotion = (
     }
     ripple.globalAlpha = 1;
     ripple.globalCompositeOperation = "destination-in";
-    ripple.drawImage(layers.grassRippleMask, 0, 0);
+    ripple.drawImage(parkCanvasSnapshotSource(layers.grassRippleMask), 0, 0);
     ripple.globalCompositeOperation = "source-over";
   }
   ctx.save();
@@ -864,25 +891,15 @@ let grassRippleCanvas: HTMLCanvasElement | null = null;
 let shoreFoamMotionCanvas: HTMLCanvasElement | null = null;
 let shoreFoamHighlightCanvas: HTMLCanvasElement | null = null;
 let shoreFoamFringeCanvas: HTMLCanvasElement | null = null;
-let pondSurfaceCanvas: HTMLCanvasElement | null = null;
-let pondTextureCanvas: HTMLCanvasElement | null = null;
-let pondCompositeCanvas: HTMLCanvasElement | null = null;
-let pondLargeHighlightTextures: HTMLCanvasElement[] | null = null;
-let pondLargeLowlightTextures: HTMLCanvasElement[] | null = null;
-let pondFineHighlightTextures: HTMLCanvasElement[] | null = null;
-let pondFineLowlightTextures: HTMLCanvasElement[] | null = null;
-const pondPatternCache = new WeakMap<HTMLCanvasElement, CanvasPattern>();
 
 const PARK_FOG_UPDATE_INTERVAL_MS = 1000 / 30;
 const PARK_GRASS_UPDATE_INTERVAL_MS = 1000 / 20;
-const PARK_POND_UPDATE_INTERVAL_MS = 1000 / 20;
 const PARK_SEA_LIGHT_UPDATE_INTERVAL_MS = 1000 / 20;
 const PARK_FOAM_UPDATE_INTERVAL_MS = 1000 / 24;
 const PARK_DIAGNOSTIC_UPDATE_INTERVAL_MS = 250;
 
 let lastCliffFogUpdateAt = Number.NEGATIVE_INFINITY;
 let lastGrassRippleUpdateAt = Number.NEGATIVE_INFINITY;
-let lastPondSurfaceUpdateAt = Number.NEGATIVE_INFINITY;
 let lastSeaLightUpdateAt = Number.NEGATIVE_INFINITY;
 let lastSeaLightVisualKey = "";
 let lastFoamUpdateAt = Number.NEGATIVE_INFINITY;
@@ -934,418 +951,41 @@ const shouldUpdateParkDiagnostics = (
   return true;
 };
 
-type PondTextureColor = readonly [number, number, number, number];
-
-const PARK_POND_MORPH_FRAME_COUNT = 8;
-const PARK_POND_LARGE_MORPH_PERIOD_MS = 22_000;
-const PARK_POND_FINE_MORPH_PERIOD_MS = 17_000;
-
-type PondTravellingHighlight = {
-  phase: number;
-  frequency: number;
-  strength: number;
-  sharpness: number;
-};
-
-const pondHash = (x: number, y: number, salt: number) => {
-  let value = Math.imul(x ^ salt, 0x45d9f3b) ^ Math.imul(y + salt, 0x119de1f3);
-  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
-  return (value ^ (value >>> 16)) >>> 0;
-};
-
-const makePondCellularTexture = (
-  tileSize: number,
-  cellSize: number,
-  salt: number,
-  verticalScale: number,
-  color: PondTextureColor,
-  morphPhase: number,
-) => {
-  const canvas = document.createElement("canvas");
-  canvas.width = tileSize;
-  canvas.height = Math.round(tileSize * verticalScale);
-  const ctx = canvas.getContext("2d")!;
-  const image = ctx.createImageData(canvas.width, canvas.height);
-  const cellHeight = Math.max(4, Math.round(cellSize * verticalScale));
-  const cellCountX = Math.round(canvas.width / cellSize);
-  const cellCountY = Math.round(canvas.height / cellHeight);
-  const wrapCellX = (value: number) => ((value % cellCountX) + cellCountX) % cellCountX;
-  const wrapCellY = (value: number) => ((value % cellCountY) + cellCountY) % cellCountY;
-
-  for (let y = 0; y < canvas.height; y += 1) {
-    for (let x = 0; x < canvas.width; x += 1) {
-      const baseCellX = Math.floor(x / cellSize);
-      const baseCellY = Math.floor(y / cellHeight);
-      let nearest = Number.POSITIVE_INFINITY;
-      let secondNearest = Number.POSITIVE_INFINITY;
-      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
-        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-          const cellX = baseCellX + offsetX;
-          const cellY = baseCellY + offsetY;
-          const wrappedX = wrapCellX(cellX);
-          const wrappedY = wrapCellY(cellY);
-          const hashX = pondHash(wrappedX, wrappedY, salt);
-          const hashY = pondHash(wrappedX, wrappedY, salt ^ 0x9e3779b9);
-          const morphX = Math.sin(
-            morphPhase + wrappedX * 1.91 + wrappedY * 0.73 + salt * 0.00011,
-          ) * cellSize * 0.055;
-          const morphY = Math.cos(
-            morphPhase + wrappedX * 0.64 - wrappedY * 1.37 + salt * 0.00017,
-          ) * cellHeight * 0.085;
-          const centerX = (cellX + 0.22 + (hashX % 560) / 1000) * cellSize + morphX;
-          const centerY = (cellY + 0.22 + (hashY % 560) / 1000) * cellHeight + morphY;
-          const deltaX = x - centerX;
-          const deltaY = (y - centerY) / verticalScale;
-          const distance = deltaX * deltaX + deltaY * deltaY;
-          if (distance < nearest) {
-            secondNearest = nearest;
-            nearest = distance;
-          } else if (distance < secondNearest) {
-            secondNearest = distance;
-          }
-        }
-      }
-      const boundaryDistance = secondNearest - nearest;
-      const lineWidth = cellSize * 1.7;
-      if (boundaryDistance > lineWidth) continue;
-      const brokenContour = pondHash(x >> 1, y >> 1, salt ^ 0x85ebca6b) % 17;
-      if (brokenContour === 0) continue;
-      const strength = 1 - boundaryDistance / lineWidth;
-      const offset = (y * canvas.width + x) * 4;
-      image.data[offset] = color[0];
-      image.data[offset + 1] = color[1];
-      image.data[offset + 2] = color[2];
-      image.data[offset + 3] = Math.round(color[3] * (strength > 0.58 ? 1 : 0.55));
-    }
-  }
-  ctx.putImageData(image, 0, 0);
-  return canvas;
-};
-
-const makePondTextureSequence = (
-  tileSize: number,
-  cellSize: number,
-  salt: number,
-  verticalScale: number,
-  color: PondTextureColor,
-) => Array.from(
-  { length: PARK_POND_MORPH_FRAME_COUNT },
-  (_, frameIndex) => makePondCellularTexture(
-    tileSize,
-    cellSize,
-    salt,
-    verticalScale,
-    color,
-    frameIndex / PARK_POND_MORPH_FRAME_COUNT * Math.PI * 2,
-  ),
-);
-
-const ensurePondTextures = () => {
-  if (!pondSurfaceCanvas) {
-    pondSurfaceCanvas = document.createElement("canvas");
-    pondSurfaceCanvas.width = PARK_SCENE_WIDTH;
-    pondSurfaceCanvas.height = PARK_SCENE_HEIGHT;
-  }
-  if (!pondTextureCanvas) {
-    pondTextureCanvas = document.createElement("canvas");
-    pondTextureCanvas.width = PARK_SCENE_WIDTH;
-    pondTextureCanvas.height = PARK_SCENE_HEIGHT;
-  }
-  if (!pondCompositeCanvas) {
-    pondCompositeCanvas = document.createElement("canvas");
-    pondCompositeCanvas.width = PARK_SCENE_WIDTH;
-    pondCompositeCanvas.height = PARK_SCENE_HEIGHT;
-  }
-  pondLargeHighlightTextures ??= makePondTextureSequence(224, 28, 0x1374, 0.5, [167, 226, 216, 190]);
-  pondLargeLowlightTextures ??= makePondTextureSequence(224, 28, 0x1374, 0.5, [8, 47, 72, 158]);
-  pondFineHighlightTextures ??= makePondTextureSequence(168, 14, 0x5b21, 0.5, [220, 246, 235, 136]);
-  pondFineLowlightTextures ??= makePondTextureSequence(168, 14, 0x5b21, 0.5, [64, 111, 124, 104]);
-};
-
-const drawTiledPondTexture = (
-  ctx: CanvasRenderingContext2D,
-  textures: readonly HTMLCanvasElement[],
-  offsetX: number,
-  offsetY: number,
-  alpha: number,
-  wavePhase: number,
-  waveAmplitude: number,
-  waveFrequency: number,
-  morphProgress: number,
-  travellingHighlight?: PondTravellingHighlight,
-) => {
-  const texture = textures[0]!;
-  const textureLayer = pondTextureCanvas!.getContext("2d")!;
-  textureLayer.setTransform(1, 0, 0, 1, 0, 0);
-  textureLayer.clearRect(730, 405, 450, PARK_SCENE_HEIGHT - 405);
-  textureLayer.imageSmoothingEnabled = false;
-  const startX = -texture.width + ((offsetX % texture.width) + texture.width) % texture.width;
-  const startY = 405 - texture.height + ((offsetY % texture.height) + texture.height) % texture.height;
-  const wrappedMorphProgress = ((morphProgress % 1) + 1) % 1;
-  const morphPosition = wrappedMorphProgress * textures.length;
-  const morphFrame = Math.floor(morphPosition) % textures.length;
-  const nextMorphFrame = (morphFrame + 1) % textures.length;
-  const rawMorphMix = morphPosition - Math.floor(morphPosition);
-  const morphMix = rawMorphMix * rawMorphMix * (3 - 2 * rawMorphMix);
-  const fillTexture = (textureFrame: HTMLCanvasElement, textureAlpha: number) => {
-    let pattern = pondPatternCache.get(textureFrame);
-    if (!pattern) {
-      pattern = textureLayer.createPattern(textureFrame, "repeat") ?? undefined;
-      if (!pattern) return;
-      pondPatternCache.set(textureFrame, pattern);
-    }
-    pattern.setTransform({ e: startX, f: startY });
-    textureLayer.globalAlpha = textureAlpha;
-    textureLayer.fillStyle = pattern;
-    textureLayer.fillRect(730, 405, 450, PARK_SCENE_HEIGHT - 405);
-  };
-  fillTexture(textures[morphFrame]!, 1 - morphMix);
-  fillTexture(textures[nextMorphFrame]!, morphMix);
-  textureLayer.globalAlpha = 1;
-
-  // Deform the tiled field in two-pixel horizontal ribbons. Blending the two
-  // neighbouring integer offsets keeps the pixel art crisp without snapping,
-  // while the secondary sine prevents the surface from moving as one rigid net.
-  const stripHeight = 2;
-  for (let y = 405; y < PARK_SCENE_HEIGHT; y += stripHeight) {
-    const primaryWave = Math.sin(y * waveFrequency + wavePhase) * waveAmplitude;
-    const secondaryWave = Math.sin(y * waveFrequency * 0.47 - wavePhase * 0.73)
-      * waveAmplitude * 0.36;
-    const waveOffset = primaryWave + secondaryWave;
-    const crestWave = travellingHighlight
-      ? 0.5 + Math.sin(y * travellingHighlight.frequency - travellingHighlight.phase) * 0.5
-      : 0;
-    const travellingCrest = travellingHighlight
-      ? Math.pow(crestWave, travellingHighlight.sharpness) * travellingHighlight.strength
-      : 0;
-    const stripAlpha = Math.min(1, alpha + travellingCrest);
-    const lowerOffset = Math.floor(waveOffset);
-    const offsetMix = waveOffset - lowerOffset;
-    const height = Math.min(stripHeight, PARK_SCENE_HEIGHT - y);
-    ctx.globalAlpha = stripAlpha * (1 - offsetMix);
-    ctx.drawImage(
-      pondTextureCanvas!,
-      730,
-      y,
-      450,
-      height,
-      730 + lowerOffset,
-      y,
-      450,
-      height,
-    );
-    ctx.globalAlpha = stripAlpha * offsetMix;
-    ctx.drawImage(
-      pondTextureCanvas!,
-      730,
-      y,
-      450,
-      height,
-      731 + lowerOffset,
-      y,
-      450,
-      height,
-    );
-  }
-};
-
-const drawPixelPondRing = (
-  ctx: CanvasRenderingContext2D,
-  centerX: number,
-  centerY: number,
-  radiusX: number,
-  radiusY: number,
-) => {
-  for (let x = -radiusX; x <= radiusX; x += 2) {
-    const normalizedX = x / Math.max(1, radiusX);
-    const y = Math.round(radiusY * Math.sqrt(Math.max(0, 1 - normalizedX * normalizedX)));
-    ctx.fillRect(Math.round(centerX + x), Math.round(centerY - y), 3, 1);
-    if (y > 1) ctx.fillRect(Math.round(centerX + x), Math.round(centerY + y), 3, 1);
-  }
-};
-
-const PARK_POND_RIPPLES = [
-  { x: 1102, y: 548, periodMs: 7600, phase: 0.1 },
-  { x: 1018, y: 674, periodMs: 9100, phase: 0.46 },
-  { x: 1128, y: 786, periodMs: 8300, phase: 0.73 },
-  { x: 950, y: 824, periodMs: 10_200, phase: 0.31 },
-] as const;
-const PARK_POND_WAVE_PARTICLE_COUNT = 26;
-const PARK_POND_GLIMMER_COUNT = 13;
-
 const drawPondSurface = (
   ctx: CanvasRenderingContext2D,
   layers: ParkReferenceLayers,
   nowMs: number,
 ) => {
-  ensurePondTextures();
+  ensureParkPondAtlas();
+  const atlas = getParkPondAtlas();
+  const { pondBounds } = layers;
   if (
-    !ambientUpdateDue(
-      nowMs,
-      lastPondSurfaceUpdateAt,
-      PARK_POND_UPDATE_INTERVAL_MS,
-    )
+    !atlas
+    || pondBounds.x !== 784
+    || pondBounds.y !== 457
+    || pondBounds.width !== PARK_POND_ATLAS_FRAME_WIDTH
+    || pondBounds.height !== PARK_POND_ATLAS_FRAME_HEIGHT
   ) {
-    ctx.drawImage(pondCompositeCanvas!, 0, 0);
     return;
   }
-  lastPondSurfaceUpdateAt = advanceAmbientUpdateAt(
-    nowMs,
-    lastPondSurfaceUpdateAt,
-    PARK_POND_UPDATE_INTERVAL_MS,
+  const source = parkPondAtlasFrameSource(nowMs);
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    atlas,
+    source.x,
+    source.y,
+    PARK_POND_ATLAS_FRAME_WIDTH,
+    PARK_POND_ATLAS_FRAME_HEIGHT,
+    pondBounds.x,
+    pondBounds.y,
+    pondBounds.width,
+    pondBounds.height,
   );
-  const output = pondCompositeCanvas!.getContext("2d")!;
-  output.setTransform(1, 0, 0, 1, 0, 0);
-  output.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
-  output.imageSmoothingEnabled = false;
-  const surface = pondSurfaceCanvas!.getContext("2d")!;
-  surface.setTransform(1, 0, 0, 1, 0, 0);
-  surface.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
-  surface.imageSmoothingEnabled = false;
-
-  // Flat colour and land shadow establish depth before the two independently
-  // drifting cellular layers reproduce the reference shader's surface flow.
-  surface.globalCompositeOperation = "source-over";
-  surface.globalAlpha = 0.13;
-  surface.fillStyle = "#207f96";
-  surface.fillRect(730, 405, 450, 495);
-
-  const largeWobbleX = Math.sin(nowMs / 7800) * 2;
-  const largeWobbleY = Math.sin(nowMs / 10_400 + 0.8) * 1.5;
-  const fineWobbleX = Math.sin(nowMs / 5100 + 1.4) * 1.5;
-  const fineWobbleY = Math.sin(nowMs / 6800 + 2.1);
-  surface.globalCompositeOperation = "multiply";
-  drawTiledPondTexture(
-    surface,
-    pondLargeLowlightTextures!,
-    nowMs * 0.0018 + largeWobbleX,
-    nowMs * 0.00055 + largeWobbleY,
-    0.28,
-    nowMs / 1900,
-    4.2,
-    0.038,
-    nowMs / PARK_POND_LARGE_MORPH_PERIOD_MS,
-  );
-  drawTiledPondTexture(
-    surface,
-    pondFineLowlightTextures!,
-    -nowMs * 0.0025 + fineWobbleX,
-    nowMs * 0.0011 + fineWobbleY,
-    0.18,
-    nowMs / 1450 + 1.3,
-    2.6,
-    0.061,
-    nowMs / PARK_POND_FINE_MORPH_PERIOD_MS,
-  );
-  surface.globalCompositeOperation = "screen";
-  drawTiledPondTexture(
-    surface,
-    pondLargeHighlightTextures!,
-    nowMs * 0.0018 + largeWobbleX + 2,
-    nowMs * 0.00055 + largeWobbleY - 1,
-    0.32,
-    nowMs / 2100 + 0.7,
-    3.7,
-    0.036,
-    nowMs / PARK_POND_LARGE_MORPH_PERIOD_MS,
-    {
-      phase: nowMs / PARK_DOWNWARD_RIPPLE_PHASE_SCALE_MS,
-      frequency: PARK_DOWNWARD_RIPPLE_FREQUENCY,
-      strength: 0.42,
-      sharpness: PARK_DOWNWARD_RIPPLE_SHARPNESS,
-    },
-  );
-  drawTiledPondTexture(
-    surface,
-    pondFineHighlightTextures!,
-    -nowMs * 0.0025 + fineWobbleX - 1,
-    nowMs * 0.0011 + fineWobbleY + 1,
-    0.2,
-    nowMs / 1250 + 2.1,
-    2.3,
-    0.066,
-    nowMs / PARK_POND_FINE_MORPH_PERIOD_MS,
-  );
-
-  // Ring particles expand and fade at separate rhythms, so the pond never
-  // pulses as a single synchronized sheet.
-  surface.globalCompositeOperation = "screen";
-  surface.fillStyle = "#a6ded3";
-  PARK_POND_RIPPLES.forEach((ripple) => {
-    const phase = (nowMs / ripple.periodMs + ripple.phase) % 1;
-    const life = smootherstep(Math.min(1, phase / 0.18))
-      * (1 - smootherstep(Math.max(0, (phase - 0.55) / 0.45)));
-    surface.globalAlpha = life * 0.3;
-    drawPixelPondRing(
-      surface,
-      ripple.x,
-      ripple.y,
-      5 + Math.round(phase * 34),
-      2 + Math.round(phase * 10),
-    );
-  });
-
-  // Short drifting wave particles and sparse glimmers provide the final two
-  // shader passes without introducing frame-random flicker.
-  for (let index = 0; index < PARK_POND_WAVE_PARTICLE_COUNT; index += 1) {
-    const periodMs = 5200 + (index % 7) * 610;
-    const phase = (nowMs / periodMs + (pondHash(index, 19, 0x4ca7) % 1000) / 1000) % 1;
-    const x = 846 + ((index * 83 + index * index * 17) % 346) + Math.sin(phase * Math.PI * 2) * 4;
-    const y = 452 + ((index * 137 + 31) % 444) - phase * 6;
-    const pulse = Math.sin(phase * Math.PI);
-    surface.globalAlpha = pulse * 0.24;
-    surface.fillStyle = index % 4 === 0 ? "#d5eee0" : "#83c8c8";
-    surface.fillRect(Math.round(x), Math.round(y), 2 + (index % 5), 1);
-  }
-  for (let index = 0; index < PARK_POND_GLIMMER_COUNT; index += 1) {
-    const phase = nowMs / (2400 + (index % 5) * 390) + index * 1.79;
-    const pulse = Math.pow(0.5 + Math.sin(phase) * 0.5, 6);
-    if (pulse < 0.14) continue;
-    const x = 868 + ((index * 149 + 23) % 320);
-    const y = 472 + ((index * 193 + 71) % 418);
-    surface.globalAlpha = pulse * 0.58;
-    surface.fillStyle = "#e6f4d7";
-    surface.fillRect(x - 3, y, 7, 1);
-    surface.fillRect(x, y - 2, 1, 5);
-  }
-
-  surface.globalCompositeOperation = "destination-in";
-  surface.globalAlpha = 1;
-  surface.drawImage(layers.pondInteriorMask, 0, 0);
-  output.save();
-  output.globalCompositeOperation = "source-over";
-  output.drawImage(pondSurfaceCanvas!, 0, 0);
-  output.restore();
-
-  // Darken the bank-facing water, then restore a one-pixel inner land edge.
-  // Both masks are derived from the exact connected pond component.
-  surface.globalCompositeOperation = "source-over";
-  surface.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
-  surface.globalAlpha = 1;
-  surface.fillStyle = "#083e59";
-  surface.fillRect(730, 405, 450, 495);
-  surface.globalCompositeOperation = "destination-in";
-  surface.drawImage(layers.pondEdgeMask, 0, 0);
-  output.save();
-  output.globalCompositeOperation = "multiply";
-  output.globalAlpha = 0.32;
-  output.drawImage(pondSurfaceCanvas!, 0, 0);
-  output.restore();
-
-  surface.globalCompositeOperation = "source-over";
-  surface.clearRect(0, 0, PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
-  surface.fillStyle = "#b8ddc8";
-  surface.fillRect(730, 405, 450, 495);
-  surface.globalCompositeOperation = "destination-in";
-  surface.drawImage(layers.pondRimMask, 0, 0);
-  output.save();
-  output.globalCompositeOperation = "screen";
-  output.globalAlpha = 0.16;
-  output.drawImage(pondSurfaceCanvas!, 0, 0);
-  output.restore();
-  ctx.drawImage(pondCompositeCanvas!, 0, 0);
+  ctx.restore();
 };
-
 const PARK_SEA_FINE_GLINT_COUNT = 260;
 const PARK_SEA_WAVE_GLINT_COUNT = 104;
 const PARK_SEA_SPARKLE_COUNT = 34;
@@ -1490,7 +1130,7 @@ const drawSeaLighting = (
 
     light.globalCompositeOperation = "destination-in";
     light.globalAlpha = 1;
-    light.drawImage(layers.seaMotionMask, 0, 0);
+    light.drawImage(parkCanvasSnapshotSource(layers.seaMotionMask), 0, 0);
     light.globalCompositeOperation = "source-over";
   }
   ctx.save();
@@ -1515,7 +1155,7 @@ const drawShoreFoamBreath = (
     ctx.save();
     ctx.globalCompositeOperation = "screen";
     ctx.globalAlpha = alpha * nightDimming;
-    ctx.drawImage(mask, 0, 0);
+    ctx.drawImage(parkCanvasSnapshotSource(mask), 0, 0);
     ctx.restore();
   };
 
@@ -1587,7 +1227,7 @@ const drawShoreFoamBreath = (
       if (alpha <= 0.001) return;
       target.globalAlpha = alpha;
       target.drawImage(
-        segment.canvas,
+        parkCanvasSnapshotSource(segment.canvas),
         segment.x + segment.directionX * step,
         segment.y + segment.directionY * step,
       );
@@ -1613,13 +1253,25 @@ const drawShoreFoamBreath = (
     // The mask contains connected water plus the audited authored foam pixels.
     // Both interpolated integer positions therefore remain off cliffs/islands.
     motion.globalCompositeOperation = "destination-in";
-    motion.drawImage(layers.shoreFoamMotionMask, 0, 0);
+    motion.drawImage(
+      parkCanvasSnapshotSource(layers.shoreFoamMotionMask),
+      0,
+      0,
+    );
     motion.globalCompositeOperation = "source-over";
     highlight.globalCompositeOperation = "destination-in";
-    highlight.drawImage(layers.shoreFoamMotionMask, 0, 0);
+    highlight.drawImage(
+      parkCanvasSnapshotSource(layers.shoreFoamMotionMask),
+      0,
+      0,
+    );
     highlight.globalCompositeOperation = "source-over";
     fringe.globalCompositeOperation = "destination-in";
-    fringe.drawImage(layers.shoreFoamMotionMask, 0, 0);
+    fringe.drawImage(
+      parkCanvasSnapshotSource(layers.shoreFoamMotionMask),
+      0,
+      0,
+    );
     fringe.globalCompositeOperation = "source-over";
     cachedFoamMotion = { interpolatingSegments, breathingFringeSegments };
   }
@@ -1654,7 +1306,7 @@ const drawReferenceObject = (
   if (!stamp) return;
   const sway = object.kind === "tree" ? Math.round(Math.sin(frame / 31 + object.x * 0.01) * 2) : 0;
   ctx.drawImage(
-    stamp.canvas,
+    parkCanvasSnapshotSource(stamp.canvas),
     Math.round(object.x - stamp.anchorX + sway),
     Math.round(object.y - stamp.anchorY),
   );
@@ -1688,7 +1340,11 @@ const drawReferenceOccluder = (
   ctx: CanvasRenderingContext2D,
   occluder: ParkReferenceOccluder,
 ) => {
-  ctx.drawImage(occluder.canvas, occluder.x, occluder.y);
+  ctx.drawImage(
+    parkCanvasSnapshotSource(occluder.canvas),
+    occluder.x,
+    occluder.y,
+  );
 };
 
 const applyTimeGrade = (ctx: CanvasRenderingContext2D, visual: ParkTimeVisual) => {
@@ -1719,7 +1375,11 @@ const drawCelestialLayer = (
     const y = 102 - Math.sin(progress * Math.PI) * 78;
     ctx.save();
     ctx.globalAlpha = 0.75 + Math.sin(progress * Math.PI) * 0.2;
-    ctx.drawImage(layers.sun.canvas, Math.round(x - layers.sun.anchorX), Math.round(y - layers.sun.anchorY));
+    ctx.drawImage(
+      parkCanvasSnapshotSource(layers.sun.canvas),
+      Math.round(x - layers.sun.anchorX),
+      Math.round(y - layers.sun.anchorY),
+    );
     ctx.restore();
   }
 
@@ -1747,6 +1407,44 @@ const drawCelestialLayer = (
   ctx.restore();
 };
 
+export type ParkRenderProfile =
+  | "full"
+  | "base-only"
+  | "no-ambient"
+  | "no-clouds"
+  | "no-fog"
+  | "no-grass"
+  | "no-pond"
+  | "no-foam"
+  | "no-sea-light";
+
+export const resolveParkRenderPlan = (renderProfile = "full") => {
+  const baseOnly = renderProfile === "base-only";
+  const ambientDisabled = renderProfile === "no-ambient";
+  return {
+    dynamicSky: true,
+    staticBase: true,
+    movingNightSky: !baseOnly && !ambientDisabled,
+    movingClouds:
+      !baseOnly && !ambientDisabled && renderProfile !== "no-clouds",
+    movingCliffFog:
+      !baseOnly && !ambientDisabled && renderProfile !== "no-fog",
+    horizonSeaTint: !baseOnly && !ambientDisabled,
+    dynamicShadows: !baseOnly,
+    terrainMotion:
+      !baseOnly && !ambientDisabled && renderProfile !== "no-grass",
+    pondSurface:
+      !baseOnly && !ambientDisabled && renderProfile !== "no-pond",
+    sceneActors: !baseOnly,
+    shoreFoam:
+      !baseOnly && !ambientDisabled && renderProfile !== "no-foam",
+    timeGrade: !baseOnly,
+    seaLighting:
+      !baseOnly && !ambientDisabled && renderProfile !== "no-sea-light",
+    selection: !baseOnly,
+  };
+};
+
 export interface ParkRenderOptions {
   nowMs: number;
   fishingNowMs?: number;
@@ -1763,6 +1461,7 @@ export interface ParkRenderOptions {
   fishingSpot?: ParkFishingSpot;
   displayedFish?: ParkRawFishId;
   selectedObjectId?: string;
+  renderProfile?: ParkRenderProfile;
 }
 
 export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOptions) => {
@@ -1799,7 +1498,10 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
     : options.frame;
   const timeVisual = resolveParkTimeVisual(lightingNowMs);
   const celestial = resolveParkCelestialPosition(timeVisual.hour);
+  const renderProfile = options.renderProfile ?? "full";
+  const renderPlan = resolveParkRenderPlan(renderProfile);
   const updateDiagnostics = shouldUpdateParkDiagnostics(canvas, motionNowMs);
+  setParkDataset(canvas, "parkRenderProfile", renderProfile);
   setParkDataset(
     canvas,
     "parkFishingClock",
@@ -1842,47 +1544,75 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   canvas.dataset.parkPondInteriorMaskPixels = String(layers.pondInteriorMaskPixels);
   canvas.dataset.parkPondEdgeMaskPixels = String(layers.pondEdgeMaskPixels);
   canvas.dataset.parkPondRimMaskPixels = String(layers.pondRimMaskPixels);
-  canvas.dataset.parkPondSurfaceLayerCount = "2";
-  canvas.dataset.parkPondCellVerticalScale = "0.5";
-  canvas.dataset.parkPondWaveStripHeight = "2";
-  canvas.dataset.parkPondWaveInterpolation = "adjacent-pixel-crossfade";
-  canvas.dataset.parkPondTravellingHighlightLayer = "large-cell";
-  canvas.dataset.parkPondTravellingHighlightDirection = "toward-foreground";
+  const pondAtlasStatus = getParkPondAtlasStatus();
+  const pondAtlasFrame = parkPondAtlasFrameSource(motionNowMs);
+  const pondAtlasBoundsMatch = layers.pondBounds.x === 784
+    && layers.pondBounds.y === 457
+    && layers.pondBounds.width === PARK_POND_ATLAS_FRAME_WIDTH
+    && layers.pondBounds.height === PARK_POND_ATLAS_FRAME_HEIGHT;
+  canvas.dataset.parkPondBounds = [
+    layers.pondBounds.x,
+    layers.pondBounds.y,
+    layers.pondBounds.width,
+    layers.pondBounds.height,
+  ].join(",");
+  canvas.dataset.parkPondSurfaceBufferPixels = "0";
+  canvas.dataset.parkPondTextureBufferPixels = "0";
+  canvas.dataset.parkPondOffscreenPixels = "0";
+  canvas.dataset.parkPondOffscreenFullPixels = String(
+    PARK_SCENE_WIDTH * PARK_SCENE_HEIGHT * 3,
+  );
+  canvas.dataset.parkPondOffscreenAreaRatio = "0.0000";
+  canvas.dataset.parkPondOffscreenStrategy = "prebaked-image-atlas";
+  canvas.dataset.parkPondSurfaceLayerCount = "1";
+  canvas.dataset.parkPondCellVerticalScale = "prebaked";
+  canvas.dataset.parkPondWaveStripHeight = "0";
+  canvas.dataset.parkPondWaveInterpolation = "prebaked-loop";
+  canvas.dataset.parkPondTexturePass = "single-image-draw";
+  canvas.dataset.parkPondTextureDrawsPerUpdate = "1";
   const downwardRipplePhase = (
     (motionNowMs % PARK_DOWNWARD_RIPPLE_PERIOD_MS) / PARK_DOWNWARD_RIPPLE_PERIOD_MS
   ).toFixed(3);
-  canvas.dataset.parkPondTravellingHighlightPhase = downwardRipplePhase;
-  canvas.dataset.parkPondTravellingHighlightPeriodMs =
-    PARK_DOWNWARD_RIPPLE_PERIOD_MS.toFixed(2);
   canvas.dataset.parkGrassRipplePhase = downwardRipplePhase;
   canvas.dataset.parkGrassRipplePeriodMs = PARK_DOWNWARD_RIPPLE_PERIOD_MS.toFixed(2);
   canvas.dataset.parkGrassRippleDirection = "toward-foreground";
-  canvas.dataset.parkGrassRippleSharedWithPond = "true";
+  canvas.dataset.parkGrassRippleSharedWithPond = "false";
   canvas.dataset.parkGrassRippleFrequency = String(PARK_DOWNWARD_RIPPLE_FREQUENCY);
   canvas.dataset.parkGrassRippleMaskPixels = String(layers.grassRippleMaskPixels);
   canvas.dataset.parkGrassRippleObstacleExclusionCount = String(
     layers.grassRippleObstacleExclusionCount,
   );
-  canvas.dataset.parkPondFinePalette = "lightened";
-  canvas.dataset.parkPondMorphFrameCount = String(PARK_POND_MORPH_FRAME_COUNT);
-  canvas.dataset.parkPondLargeMorphPeriodMs = String(PARK_POND_LARGE_MORPH_PERIOD_MS);
-  canvas.dataset.parkPondFineMorphPeriodMs = String(PARK_POND_FINE_MORPH_PERIOD_MS);
-  canvas.dataset.parkPondMorphInterpolation = "cyclic-smoothstep-crossfade";
-  canvas.dataset.parkPondCoverageMinX = "730";
-  canvas.dataset.parkPondLeftBay = "audited-seeded-water";
-  canvas.dataset.parkPondLargeMorphPhase = (
-    (motionNowMs % PARK_POND_LARGE_MORPH_PERIOD_MS) / PARK_POND_LARGE_MORPH_PERIOD_MS
-  ).toFixed(3);
-  canvas.dataset.parkPondFineMorphPhase = (
-    (motionNowMs % PARK_POND_FINE_MORPH_PERIOD_MS) / PARK_POND_FINE_MORPH_PERIOD_MS
-  ).toFixed(3);
-  canvas.dataset.parkPondRippleCount = String(PARK_POND_RIPPLES.length);
-  canvas.dataset.parkPondParticleCount = String(
-    PARK_POND_WAVE_PARTICLE_COUNT + PARK_POND_GLIMMER_COUNT,
+  canvas.dataset.parkPondFinePalette = "prebaked-lightened";
+  canvas.dataset.parkPondMorphFrameCount = String(PARK_POND_ATLAS_FRAME_COUNT);
+  canvas.dataset.parkPondLargeMorphPeriodMs = String(
+    PARK_POND_ATLAS_FRAME_COUNT / PARK_POND_ATLAS_FPS * 1000,
   );
-  canvas.dataset.parkPondRipplePhase = ((motionNowMs % 10_200) / 10_200).toFixed(3);
+  canvas.dataset.parkPondFineMorphPeriodMs = canvas.dataset.parkPondLargeMorphPeriodMs;
+  canvas.dataset.parkPondMorphInterpolation = "seamless-prebaked-loop";
+  canvas.dataset.parkPondCoverageMinX = String(layers.pondBounds.x);
+  canvas.dataset.parkPondLeftBay = "audited-seeded-water";
+  const pondAtlasPhase = (pondAtlasFrame.frame / PARK_POND_ATLAS_FRAME_COUNT).toFixed(3);
+  canvas.dataset.parkPondLargeMorphPhase = pondAtlasPhase;
+  canvas.dataset.parkPondFineMorphPhase = pondAtlasPhase;
+  canvas.dataset.parkPondRippleCount = "4";
+  canvas.dataset.parkPondParticleCount = "39";
+  canvas.dataset.parkPondRipplePhase = pondAtlasPhase;
   canvas.dataset.parkPondTimeGraded = "true";
-  canvas.dataset.parkPondSource = "layered-cellular-canvas";
+  canvas.dataset.parkPondSource = !pondAtlasBoundsMatch
+    ? "static-fallback-bounds"
+    : pondAtlasStatus === "ready"
+      ? "prebaked-image-atlas"
+      : `static-fallback-${pondAtlasStatus}`;
+  canvas.dataset.parkPondAtlasAsset = PARK_POND_ATLAS_SOURCE;
+  canvas.dataset.parkPondAtlasStatus = pondAtlasStatus;
+  canvas.dataset.parkPondAtlasFrame = String(pondAtlasFrame.frame);
+  canvas.dataset.parkPondAtlasFrameCount = String(PARK_POND_ATLAS_FRAME_COUNT);
+  canvas.dataset.parkPondAtlasFps = String(PARK_POND_ATLAS_FPS);
+  canvas.dataset.parkPondAtlasColumns = String(PARK_POND_ATLAS_COLUMNS);
+  canvas.dataset.parkPondAtlasRows = String(PARK_POND_ATLAS_ROWS);
+  canvas.dataset.parkPondAtlasGutter = String(PARK_POND_ATLAS_GUTTER);
+  canvas.dataset.parkPondAtlasWidth = String(PARK_POND_ATLAS_WIDTH);
+  canvas.dataset.parkPondAtlasHeight = String(PARK_POND_ATLAS_HEIGHT);
   canvas.dataset.parkStaticOccluderCount = String(layers.staticOccluders.length);
   canvas.dataset.parkStaticOccluderIds = layers.staticOccluders
     .map((occluder) => occluder.id)
@@ -1915,21 +1645,46 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   ).toFixed(3);
   canvas.dataset.parkAmbientFogFps = "30";
   canvas.dataset.parkAmbientGrassFps = "20";
-  canvas.dataset.parkAmbientPondFps = "20";
+  canvas.dataset.parkAmbientPondFps = String(PARK_POND_ATLAS_FPS);
   canvas.dataset.parkAmbientSeaLightFps = "20";
   canvas.dataset.parkAmbientFoamFps = "24";
   canvas.dataset.parkDiagnosticsIntervalMs = String(PARK_DIAGNOSTIC_UPDATE_INTERVAL_MS);
-  canvas.dataset.parkPondPatternCache = "repeating-canvas-pattern";
+  canvas.dataset.parkPondPatternCache = "none";
   }
-  drawDynamicSky(ctx, timeVisual);
-  drawMovingNightSky(ctx, timeVisual, celestial, motionNowMs);
-  drawMovingCloudLayer(ctx, timeVisual, motionNowMs);
-  ctx.drawImage(layers.neutralBaseWithoutDistantShoreFoamAndCliffFog, 0, 0);
-  drawMovingCliffFog(ctx, layers, motionNowMs);
-  drawHorizonSeaTint(ctx, layers, timeVisual);
-  drawDynamicShadows(ctx, options.objects, celestial, timeVisual);
-  drawTerrainMotion(ctx, layers, motionNowMs);
-  drawPondSurface(ctx, layers, motionNowMs);
+  if (renderPlan.dynamicSky) {
+    drawDynamicSky(ctx, timeVisual);
+  }
+  if (renderPlan.movingNightSky) {
+    drawMovingNightSky(ctx, timeVisual, celestial, motionNowMs);
+  }
+  if (renderPlan.movingClouds) {
+    drawMovingCloudLayer(ctx, timeVisual, motionNowMs);
+  }
+  if (renderPlan.staticBase) {
+    ctx.drawImage(
+      parkCanvasSnapshotSource(
+        layers.neutralBaseWithoutDistantShoreFoamAndCliffFog,
+      ),
+      0,
+      0,
+    );
+  }
+  if (!renderPlan.sceneActors) return;
+  if (renderPlan.movingCliffFog) {
+    drawMovingCliffFog(ctx, layers, motionNowMs);
+  }
+  if (renderPlan.horizonSeaTint) {
+    drawHorizonSeaTint(ctx, layers, timeVisual);
+  }
+  if (renderPlan.dynamicShadows) {
+    drawDynamicShadows(ctx, options.objects, celestial, timeVisual);
+  }
+  if (renderPlan.terrainMotion) {
+    drawTerrainMotion(ctx, layers, motionNowMs);
+  }
+  if (renderPlan.pondSurface) {
+    drawPondSurface(ctx, layers, motionNowMs);
+  }
 
   const avatarY = visualAvatar?.y ?? Number.POSITIVE_INFINITY;
   const staticOccludersInFront = visualAvatar
@@ -1973,15 +1728,21 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
     .forEach((occluder) => drawReferenceOccluder(ctx, occluder));
 
   const shoreFoamBreath = resolveShoreFoamBreath(motionNowMs);
-  const foamMotion = drawShoreFoamBreath(
-    ctx,
-    layers,
-    timeVisual,
-    shoreFoamBreath,
-    motionNowMs,
-  );
-  applyTimeGrade(ctx, timeVisual);
-  drawSeaLighting(ctx, layers, timeVisual, motionNowMs);
+  const foamMotion = renderPlan.shoreFoam
+    ? drawShoreFoamBreath(
+        ctx,
+        layers,
+        timeVisual,
+        shoreFoamBreath,
+        motionNowMs,
+      )
+    : { interpolatingSegments: 0, breathingFringeSegments: 0 };
+  if (renderPlan.timeGrade) {
+    applyTimeGrade(ctx, timeVisual);
+  }
+  if (renderPlan.seaLighting) {
+    drawSeaLighting(ctx, layers, timeVisual, motionNowMs);
+  }
   if (updateDiagnostics) {
   canvas.dataset.parkShoreFoamBreath = cachedFoamBreath.toFixed(3);
   canvas.dataset.parkShoreFoamInterpolatingSegments = String(foamMotion.interpolatingSegments);
@@ -1994,7 +1755,7 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   canvas.dataset.parkShoreFoamMotionPhase = ((motionNowMs % 12_400) / 12_400).toFixed(3);
   }
 
-  if (options.selectedObjectId) {
+  if (renderPlan.selection && options.selectedObjectId) {
     const selected = options.objects.find((object) => object.id === options.selectedObjectId);
     if (selected) {
       ctx.strokeStyle = "#ffe66d";
