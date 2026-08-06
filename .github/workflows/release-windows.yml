@@ -6,7 +6,7 @@ on:
       tag:
         description: GitHub release tag to upload Windows installers to.
         required: true
-        default: v0.3.0
+        default: v0.4.0
       ref:
         description: Git ref to build.
         required: true
@@ -89,7 +89,7 @@ jobs:
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
             windows-release-checksums.json
 
-      - name: Upload installers to GitHub Release
+      - name: Upload release assets to GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -103,6 +103,7 @@ jobs:
           if ($assets.Count -eq 0) {
             throw "No Windows installer assets found under $bundleRoot."
           }
+          $assets += Get-Item -Path "windows-release-checksums.json"
           foreach ($asset in $assets) {
             gh release upload $env:RELEASE_TAG $asset.FullName --repo $env:GITHUB_REPOSITORY --clobber
           }
