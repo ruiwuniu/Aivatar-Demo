@@ -18,6 +18,7 @@ import {
 } from "./parkFishingAudio";
 import {
   drawParkFishingAnimation,
+  resolveParkFishingGrip,
   resolveParkFishingVisualAvatar,
 } from "./parkFishingAnimation";
 import type { ParkRawFishId } from "./parkProbability";
@@ -237,17 +238,17 @@ export const ParkAnimationPreviewApp = () => {
         now,
         poseStartedAt,
       );
-      drawAvatar(
-        ctx,
-        avatar,
-        avatarFrame,
-        PREVIEW_STATS,
-        { status: "idle", timestamp: new Date().toISOString() },
-        undefined,
-        appearanceId,
-      );
-
-      drawParkFishingAnimation({
+      const crayfishGrip = appearanceId === "cute-crayfish"
+        ? resolveParkFishingGrip(
+            avatar,
+            appearanceId,
+            fishingPose,
+            frame,
+            now,
+            poseStartedAt,
+          )
+        : undefined;
+      const drawFishing = () => drawParkFishingAnimation({
         ctx,
         avatar,
         appearanceId,
@@ -261,6 +262,18 @@ export const ParkAnimationPreviewApp = () => {
         poseStartedAt,
         spot: PREVIEW_SPOT,
       });
+      if (crayfishGrip) drawFishing();
+      drawAvatar(
+        ctx,
+        avatar,
+        avatarFrame,
+        PREVIEW_STATS,
+        { status: "idle", timestamp: new Date().toISOString() },
+        undefined,
+        appearanceId,
+        { heldPropGrip: crayfishGrip },
+      );
+      if (!crayfishGrip) drawFishing();
 
       canvas.dataset.previewBehavior = behavior;
       canvas.dataset.previewFishingPose = fishingPose;

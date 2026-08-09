@@ -8482,8 +8482,13 @@ export const App = () => {
         }
       }
 
+      const cookingInteractionInFlight =
+        pendingWorldInteractionRef.current?.kind === "cook" ||
+        activeInteractionRef.current?.kind === "cook";
+
       if (
         runtimeActionBehavior(runtimeRef.current) === "brew" &&
+        !cookingInteractionInFlight &&
         now >= autonomousCoffeeCooldownUntilRef.current &&
         !isHighPriorityStatus(currentStatus) &&
         currentContent.placedItems?.some((item) => item.itemId === COFFEE_MACHINE_ITEM_ID)

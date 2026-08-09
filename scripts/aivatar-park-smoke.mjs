@@ -633,7 +633,6 @@ for (const renderCall of [
   "drawTerrainMotion(ctx, layers, motionNowMs)",
   "drawPondSurface(ctx, layers, motionNowMs)",
   "drawAvatar(",
-  "drawParkFishingAnimation({",
   "drawShoreFoamBreath(",
   "applyTimeGrade(ctx, timeVisual)",
   "drawSeaLighting(ctx, layers, timeVisual, motionNowMs)",
@@ -715,7 +714,7 @@ assert.match(appText, /parkAmbientVolumeLabel/);
 assert.match(appText, /setParkAmbientAudioVolume\(Number\(event\.target\.value\) \/ 100\)/);
 assert.match(appText, /const SHOW_DEBUG_CARD = false/);
 assert.match(appText, /\{SHOW_DEBUG_CARD \? \(/);
-assert.match(parkText, /const SHOW_PARK_DEBUG = false/);
+assert.match(parkText, /const SHOW_PARK_DEBUG = true/);
 assert.match(parkText, /\{SHOW_PARK_DEBUG \? \(/);
 const tauriConfig = JSON.parse(tauriConfigText);
 assert.equal(
@@ -872,6 +871,34 @@ assert.match(
 );
 assert.match(fishingAnimationText, /handAnchorCount: Object\.keys\(FISHING_HAND_ANCHORS\)\.length/);
 assert.match(fishingAnimationText, /frontCastSupported: true/);
+assert.match(
+  fishingAnimationText,
+  /"cute-crayfish": \{ x: 16, y: -18, frontX: 10, frontY: -18, followsBodyBob: true \}/,
+  "the crayfish side and front rod anchors must stay in front of its chest",
+);
+assert.doesNotMatch(fishingAnimationText, /drawCrayfishRodGrip/);
+assert.match(
+  fishingAnimationText,
+  /export const resolveParkFishingGrip/,
+  "the fishing layer must expose one shared rod grip for the avatar claw",
+);
+assert.match(fishingAnimationText, /crayfishUsesAvatarClaw: true/);
+assert.match(avatarRendererText, /heldPropGrip\?: AvatarHeldPropGrip/);
+assert.match(avatarRendererText, /if \(heldPropGrip\) \{/);
+assert.match(avatarRendererText, /clawRotation: grip\.angle/);
+assert.match(avatarRendererText, /const supportGripDistance = 10/);
+assert.match(avatarRendererText, /const supportClaw = fishingClawPose/);
+assert.match(avatarRendererText, /return \[supportClaw, leadClaw\]/);
+assert.match(
+  fishingAnimationText,
+  /appearanceId === "cute-crayfish" \? 20 : 13/,
+  "the crayfish rod handle must provide room for both native claws",
+);
+assert.match(rendererText, /if \(crayfishGrip\) drawFishing\(\);/);
+assert.match(rendererText, /\{ heldPropGrip: crayfishGrip \}/);
+assert.match(rendererText, /if \(!crayfishGrip\) drawFishing\(\);/);
+assert.match(animationPreviewText, /resolveParkFishingGrip/);
+assert.match(animationPreviewText, /\{ heldPropGrip: crayfishGrip \}/);
 assert.match(fishingAnimationText, /quadraticCurveTo\(control\.x, control\.y, tip\.x, tip\.y\)/);
 assert.match(fishingAnimationText, /const drawPixelRipple/);
 assert.match(fishingAnimationText, /const drawSplash/);
@@ -1106,6 +1133,26 @@ assert.match(parkText, /removeEventListener\("touchstart", resumeFishing, true\)
 assert.match(parkText, /distancePx: distanceMoved/);
 assert.match(parkText, /onGrass: isParkGrassPoint/);
 assert.match(appText, /shouldChooseCooking\(warmth\)/);
+assert.match(
+  appText,
+  /const cookingInteractionInFlight =\s*pendingWorldInteractionRef\.current\?\.kind === "cook" \|\|\s*activeInteractionRef\.current\?\.kind === "cook";/,
+  "pending or active cooking must reserve the shared brew behavior from autonomous coffee",
+);
+assert.match(
+  appText,
+  /runtimeActionBehavior\(runtimeRef\.current\) === "brew" &&\s*!cookingInteractionInFlight &&/,
+  "autonomous coffee must not run while cooking owns the shared brew behavior",
+);
+assert.match(
+  avatarRendererText,
+  /const shouldRestorePlacedItemOverFurniture = \(\s*item: PlacedItem,\s*furniture: FurnitureDefinition,\s*\) =>[\s\S]*?\(item\.itemId === "oil-easel" && furniture\.id === "bed"\);/,
+  "an Oil Easel at the foot of the bed must be restored above bed-family occlusion redraws",
+);
+assert.match(
+  avatarRendererText,
+  /\.filter\(\(furniture\) => shouldRestorePlacedItemOverFurniture\(item, furniture\)\)\s*\.filter\(\(furniture\) => itemDepth >= furnitureDepthY\(furniture\)\)/,
+  "bed-family easel restoration must retain the existing item-versus-furniture depth gate",
+);
 assert.match(appText, /consumeFurnitureStorageItem\([\s\S]*"fridge"/);
 assert.match(tauriText, /inner_size\(1180\.0, 900\.0\)/);
 assert.match(
@@ -1416,6 +1463,17 @@ assert.match(cliffFogMotionText, /phase \* 0\.73 \+ index \* 1\.37/);
 assert.match(cliffFogMotionText, /motion\.imageSmoothingEnabled = true/);
 assert.doesNotMatch(cliffFogMotionText, /Math\.round\(horizontalOffset/);
 assert.doesNotMatch(cliffFogMotionText, /Math\.round\(verticalOffset/);
+assert.match(rendererText, /const PARK_CLIFF_FOG_UNDERLAY_ALPHA = 0\.94/);
+assert.match(cliffFogMotionText, /motion\.globalCompositeOperation = "destination-over"/);
+assert.match(
+  cliffFogMotionText,
+  /motion\.globalAlpha = segment\.alpha \* PARK_CLIFF_FOG_UNDERLAY_ALPHA/,
+);
+assert.match(
+  cliffFogMotionText,
+  /parkCanvasSnapshotSource\(segment\.canvas\),\s*segment\.x,\s*segment\.y/,
+  "the authored fog pattern must fill the area revealed behind the moving bank",
+);
 assert.match(cliffFogMotionText, /motion\.globalCompositeOperation = "destination-in"/);
 assert.match(
   cliffFogMotionText,

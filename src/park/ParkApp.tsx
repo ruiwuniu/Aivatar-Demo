@@ -73,7 +73,7 @@ const PARK_SYNC_MS = 650;
 const PARK_TARGET_FPS = 30;
 const PARK_RENDER_INTERVAL_MS = 1000 / PARK_TARGET_FPS;
 const PARK_RENDER_DEADLINE_TOLERANCE_MS = 1;
-const SHOW_PARK_DEBUG = false;
+const SHOW_PARK_DEBUG = true;
 let mainWindowVisibilityQueue: Promise<void> = Promise.resolve();
 
 const queueMainWindowVisibility = (visible: boolean) => {

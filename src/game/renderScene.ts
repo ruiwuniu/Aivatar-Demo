@@ -1876,8 +1876,13 @@ const placedItemDepthY = (item: PlacedItem) => {
   return bounds.y + bounds.height - Math.min(8, bounds.height * 0.2);
 };
 
-const shouldRestorePlacedItemOverFurniture = (furniture: FurnitureDefinition) =>
-  furniture.id === "table" || furniture.id === "file-cabinet";
+const shouldRestorePlacedItemOverFurniture = (
+  item: PlacedItem,
+  furniture: FurnitureDefinition,
+) =>
+  furniture.id === "table" ||
+  furniture.id === "file-cabinet" ||
+  (item.itemId === "oil-easel" && furniture.id === "bed");
 
 const rowsVisualBounds = (
   item: FurnitureDefinition,
@@ -1936,7 +1941,7 @@ const placedItemFurnitureOverlayClipRects = (
   const itemBounds = placedItemBounds(item);
   const itemDepth = placedItemDepthY(item);
   return foregroundFurniture
-    .filter(shouldRestorePlacedItemOverFurniture)
+    .filter((furniture) => shouldRestorePlacedItemOverFurniture(item, furniture))
     .filter((furniture) => itemDepth >= furnitureDepthY(furniture))
     .flatMap((furniture) => [
       foregroundFurnitureOverlayBounds(furniture),
@@ -4537,6 +4542,16 @@ const drawDemoSparkAvatar = (
   drawTraitMicroExpression(ctx, dominantTrait, avatar, x, y, frame, theme);
 };
 
+export interface AvatarHeldPropGrip {
+  x: number;
+  y: number;
+  angle: number;
+}
+
+export interface AvatarDrawOptions {
+  heldPropGrip?: AvatarHeldPropGrip;
+}
+
 const drawCuteCrayfishAvatar = (
   ctx: CanvasRenderingContext2D,
   avatar: AvatarRuntime,
@@ -4546,6 +4561,7 @@ const drawCuteCrayfishAvatar = (
   wiggle: number,
   theme: (typeof traitVisualThemes)[DominantTrait],
   dominantTrait: DominantTrait,
+  heldPropGrip?: AvatarHeldPropGrip,
 ) => {
   const facing = avatar.facing;
   const sideDirection = facing === "left" ? -1 : 1;
@@ -4838,6 +4854,62 @@ const drawCuteCrayfishAvatar = (
       avatar.behavior === "phone" ||
       avatar.behavior === "fetch_task_file" ||
       avatar.behavior === "carry_task_file";
+
+    if (heldPropGrip) {
+      const front = facing === "front";
+      const side = facing === "left" ? -1 : 1;
+      const clawReach = 11;
+      const supportGripDistance = 10;
+      const rodX = Math.cos(heldPropGrip.angle);
+      const rodY = Math.sin(heldPropGrip.angle);
+      const supportGrip: AvatarHeldPropGrip = {
+        x: heldPropGrip.x - rodX * supportGripDistance,
+        y: heldPropGrip.y - rodY * supportGripDistance,
+        angle: heldPropGrip.angle,
+      };
+      const fishingClawPose = (
+        grip: AvatarHeldPropGrip,
+        shoulderX: number,
+        shoulderY: number,
+        bend: number,
+      ): CrayfishClawPose => {
+        const wristX = Math.round(grip.x - rodX * clawReach);
+        const wristY = Math.round(grip.y - rodY * clawReach);
+        const jointX = Math.round(
+          shoulderX + (wristX - shoulderX) * 0.55 - rodY * bend,
+        );
+        const jointY = Math.round(
+          shoulderY + (wristY - shoulderY) * 0.55 + rodX * bend,
+        );
+        return {
+          armScale: 1,
+          shoulderX,
+          shoulderY,
+          jointX,
+          jointY,
+          wristX,
+          wristY,
+          clawX: wristX,
+          clawY: wristY,
+          direction: 1,
+          clawRotation: grip.angle,
+          open: false,
+        };
+      };
+      const leadClaw = fishingClawPose(
+        heldPropGrip,
+        front ? frontRightShoulderX : x + side * 13,
+        front ? frontShoulderY : y - 23,
+        4,
+      );
+      const supportClaw = fishingClawPose(
+        supportGrip,
+        front ? frontLeftShoulderX : x - side * 11,
+        front ? frontShoulderY : y - 18,
+        -4,
+      );
+      return [supportClaw, leadClaw];
+    }
 
     if (facing === "left" || facing === "right") {
       const side = facing === "left" ? -1 : 1;
@@ -7850,6 +7922,7 @@ export const drawAvatar = (
   status: CodexStatusMessage,
   memory?: AivatarMemory,
   appearanceId: AvatarAppearanceId = "octopus",
+  options: AvatarDrawOptions = {},
 ) => {
   const bob = avatar.behavior === "sleep" ? 1 : Math.sin(frame / 12) * 2;
   const wiggle = Math.round(Math.sin(frame / 8) * 2);
@@ -7938,7 +8011,17 @@ export const drawAvatar = (
   }
 
   if (appearanceId === "cute-crayfish") {
-    drawCuteCrayfishAvatar(ctx, avatar, frame, x, y, wiggle, theme, dominantTrait);
+    drawCuteCrayfishAvatar(
+      ctx,
+      avatar,
+      frame,
+      x,
+      y,
+      wiggle,
+      theme,
+      dominantTrait,
+      options.heldPropGrip,
+    );
     return;
   }
 

@@ -56,7 +56,7 @@ const FISHING_HAND_ANCHORS: Record<AvatarAppearanceId, FishingHandAnchor> = {
   octopus: { x: 18, y: 4, frontX: 11, frontY: 5, followsBodyBob: true },
   "demo-spark": { x: 18, y: -3, frontX: 10, frontY: -1, followsBodyBob: true },
   "mood-slime": { x: 18, y: -3, frontX: 10, frontY: -1, followsBodyBob: true },
-  "cute-crayfish": { x: 22, y: -5, frontX: 13, frontY: -2, followsBodyBob: true },
+  "cute-crayfish": { x: 16, y: -18, frontX: 10, frontY: -18, followsBodyBob: true },
   "cute-ghost": { x: 22, y: -10, frontX: 12, frontY: -7, followsBodyBob: true },
   "cute-penguin": { x: 19, y: -10, frontX: 10, frontY: -7, followsBodyBob: false },
   "wave-lizard": { x: 20, y: -12, frontX: 11, frontY: -9, followsBodyBob: true },
@@ -190,6 +190,29 @@ const resolveRodTip = (
   return resting;
 };
 
+export const resolveParkFishingGrip = (
+  avatar: AvatarRuntime,
+  appearanceId: AvatarAppearanceId,
+  pose: ParkFishingPose,
+  frame: number,
+  nowMs: number,
+  poseStartedAt: number,
+) => {
+  if (pose === "none" || pose === "display") return undefined;
+  const hand = resolveHand(avatar, appearanceId, frame);
+  const tip = resolveRodTip(
+    hand,
+    pose,
+    Math.max(0, nowMs - poseStartedAt),
+    avatar.facing,
+  );
+  return {
+    x: hand.x,
+    y: hand.y,
+    angle: Math.atan2(tip.y - hand.y, tip.x - hand.x),
+  };
+};
+
 const quadraticPoint = (
   start: Point,
   control: Point,
@@ -244,6 +267,7 @@ const drawCurvedRod = (
   tip: Point,
   pose: ParkFishingPose,
   poseElapsedMs: number,
+  handleLength = 13,
 ) => {
   const distance = Math.hypot(tip.x - hand.x, tip.y - hand.y);
   const tension =
@@ -273,8 +297,8 @@ const drawCurvedRod = (
 
   const handleAngle = Math.atan2(tip.y - hand.y, tip.x - hand.x);
   const gripEnd = {
-    x: hand.x - Math.cos(handleAngle) * 13,
-    y: hand.y - Math.sin(handleAngle) * 13,
+    x: hand.x - Math.cos(handleAngle) * handleLength,
+    y: hand.y - Math.sin(handleAngle) * handleLength,
   };
   ctx.save();
   ctx.strokeStyle = "#33231c";
@@ -542,7 +566,14 @@ export const drawParkFishingAnimation = ({
       drawSplash(ctx, waterTarget, splashProgress * BITE_DURATION_MS);
     }
   }
-  drawCurvedRod(ctx, hand, tip, pose, poseElapsedMs);
+  drawCurvedRod(
+    ctx,
+    hand,
+    tip,
+    pose,
+    poseElapsedMs,
+    appearanceId === "cute-crayfish" ? 20 : 13,
+  );
 
   if (pose === "reel" && fishId && reelFish) {
     drawFish(ctx, fishId, reelFish.point.x, reelFish.point.y, frame);
@@ -563,4 +594,5 @@ export const PARK_FISHING_ANIMATION_MARKERS = {
   handAnchorCount: Object.keys(FISHING_HAND_ANCHORS).length,
   fishSpriteCount: Object.keys(PARK_FISH_SPRITE_ASSETS).length,
   frontCastSupported: true,
+  crayfishUsesAvatarClaw: true,
 } as const;

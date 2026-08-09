@@ -13,6 +13,7 @@ import {
 } from "./parkContent";
 import {
   drawParkFishingAnimation,
+  resolveParkFishingGrip,
   resolveParkFishingVisualAvatar,
 } from "./parkFishingAnimation";
 import type { ParkBenchPose, ParkFishingPose } from "./parkRuntime";
@@ -693,6 +694,8 @@ const drawMovingCloudLayer = (
   ctx.restore();
 };
 
+const PARK_CLIFF_FOG_UNDERLAY_ALPHA = 0.94;
+
 const drawMovingCliffFog = (
   ctx: CanvasRenderingContext2D,
   layers: ParkReferenceLayers,
@@ -730,6 +733,15 @@ const drawMovingCliffFog = (
         parkCanvasSnapshotSource(segment.canvas),
         segment.x + horizontalOffset,
         segment.y + verticalOffset,
+      );
+    });
+    motion.globalCompositeOperation = "destination-over";
+    layers.cliffFogSegments.forEach((segment) => {
+      motion.globalAlpha = segment.alpha * PARK_CLIFF_FOG_UNDERLAY_ALPHA;
+      motion.drawImage(
+        parkCanvasSnapshotSource(segment.canvas),
+        segment.x,
+        segment.y,
       );
     });
     motion.globalAlpha = 1;
@@ -1700,6 +1712,29 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
     .filter((object) => object.y <= avatarY)
     .forEach((object) => drawReferenceObject(ctx, layers, object, options.frame));
   if (visualAvatar && options.petStats) {
+    const fishingPose = options.fishingPose ?? "none";
+    const crayfishGrip = options.avatarAppearanceId === "cute-crayfish"
+      ? resolveParkFishingGrip(
+          visualAvatar,
+          "cute-crayfish",
+          fishingPose,
+          options.frame,
+          fishingNowMs,
+          fishingPoseStartedAt,
+        )
+      : undefined;
+    const drawFishing = () => drawParkFishingAnimation({
+      ctx,
+      avatar: visualAvatar,
+      appearanceId: options.avatarAppearanceId,
+      pose: fishingPose,
+      fishId: options.displayedFish,
+      frame: options.frame,
+      nowMs: fishingNowMs,
+      poseStartedAt: fishingPoseStartedAt,
+      spot: options.fishingSpot,
+    });
+    if (crayfishGrip) drawFishing();
     drawAvatar(
       ctx,
       visualAvatar,
@@ -1708,18 +1743,9 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
       { status: "idle", timestamp: new Date(options.nowMs).toISOString() },
       options.memory,
       options.avatarAppearanceId,
+      { heldPropGrip: crayfishGrip },
     );
-    drawParkFishingAnimation({
-      ctx,
-      avatar: visualAvatar,
-      appearanceId: options.avatarAppearanceId,
-      pose: options.fishingPose ?? "none",
-      fishId: options.displayedFish,
-      frame: options.frame,
-      nowMs: fishingNowMs,
-      poseStartedAt: fishingPoseStartedAt,
-      spot: options.fishingSpot,
-    });
+    if (!crayfishGrip) drawFishing();
   }
   sorted
     .filter((object) => object.y > avatarY)
