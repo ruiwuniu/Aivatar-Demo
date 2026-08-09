@@ -2,6 +2,7 @@ export interface ParkAmbientAudioController {
   audio: HTMLAudioElement;
   playPending: boolean;
   wantsPlayback: boolean;
+  weatherGain: number;
 }
 
 export const PARK_AMBIENT_AUDIO_VOLUME_KEY = "aivatar.parkAmbientVolume.v1";
@@ -9,21 +10,43 @@ export const DEFAULT_PARK_AMBIENT_AUDIO_VOLUME = 0.55;
 
 const PARK_AMBIENT_AUDIO_SOURCE = "/audio/park-sea-cliff-ambience.ogg";
 
-const readParkAmbientAudioVolume = () => {
-  const stored = Number.parseFloat(
-    localStorage.getItem(PARK_AMBIENT_AUDIO_VOLUME_KEY) ?? "",
-  );
-  return Number.isFinite(stored)
-    ? Math.max(0, Math.min(1, stored))
-    : DEFAULT_PARK_AMBIENT_AUDIO_VOLUME;
+export const readParkAmbientAudioVolume = () => {
+  try {
+    const stored = Number.parseFloat(
+      localStorage.getItem(PARK_AMBIENT_AUDIO_VOLUME_KEY) ?? "",
+    );
+    return Number.isFinite(stored)
+      ? Math.max(0, Math.min(1, stored))
+      : DEFAULT_PARK_AMBIENT_AUDIO_VOLUME;
+  } catch {
+    return DEFAULT_PARK_AMBIENT_AUDIO_VOLUME;
+  }
 };
 
 const applyParkAmbientAudioVolume = (
   controller: ParkAmbientAudioController,
 ) => {
   const parkAmbientVolume = readParkAmbientAudioVolume();
-  controller.audio.volume = parkAmbientVolume;
+  controller.audio.volume = parkAmbientVolume * controller.weatherGain;
   return parkAmbientVolume;
+};
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+export const resolveParkAmbientWeatherGain = (rainAmount: number) => {
+  const progress = clamp01((rainAmount - 0.08) / (1 - 0.08));
+  const eased = progress * progress * (3 - 2 * progress);
+  return 1 - eased * 0.35;
+};
+
+export const updateParkAmbientAudioWeather = (
+  controller: ParkAmbientAudioController | null,
+  rainAmount: number,
+) => {
+  if (!controller) return 1;
+  controller.weatherGain = resolveParkAmbientWeatherGain(rainAmount);
+  applyParkAmbientAudioVolume(controller);
+  return controller.weatherGain;
 };
 
 export const createParkAmbientAudio = (): ParkAmbientAudioController => {
@@ -35,6 +58,7 @@ export const createParkAmbientAudio = (): ParkAmbientAudioController => {
     audio,
     playPending: false,
     wantsPlayback: false,
+    weatherGain: 1,
   };
   applyParkAmbientAudioVolume(controller);
   return controller;

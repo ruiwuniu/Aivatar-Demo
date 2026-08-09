@@ -392,3 +392,46 @@ Player BGM track.
 
 Aivatar uses this synth-style Chopin Fantaisie-Impromptu Op. 66 rendering as a
 Record Player BGM track.
+
+## Park weather audio
+
+The park weather mix uses three independent thunder-free rain loops. Their
+gains follow the continuous rain amount: fine rain enters first, grass/water
+surface impacts enter next, and the dense downpour layer fades in for heavy
+rain. The existing sea-cliff ambience remains audible but is ducked by at most
+35% as rain strengthens.
+
+### Rain layers
+
+- Runtime files:
+  - `weather-samples/rain-layer-fine-candidate.ogg`
+  - `weather-samples/rain-layer-surface-candidate.ogg`
+  - `weather-samples/rain-layer-downpour-candidate.ogg`
+- Source: Rain (loopable)
+- Author: Ylmir
+- URL: https://opengameart.org/content/rain-loopable
+- License: CC0 1.0 Universal
+- Original archive: `Rain OGG.zip`
+- Original files: `4.ogg`, `3.ogg`, and `2.ogg`
+
+The selected stereo Ogg Vorbis recordings remain unmodified.
+
+### Thunder distance variants
+
+- Runtime files:
+  - `weather-samples/thunder-distant-candidate.wav`
+  - `weather-samples/thunder-medium-candidate.wav`
+  - `weather-samples/thunder-near-candidate.wav`
+- Source: 100 CC0 SFX #2
+- Author: rubberduck
+- URL: https://opengameart.org/content/100-cc0-sfx-2
+- License: CC0 1.0 Universal
+- Original archive: `sfx_100_v2.zip`
+- Original file: `sfx100v2_thunder_01.ogg`
+
+All three 48 kHz stereo WAV files derive from the same original recording.
+The distant version is quieter and low-pass filtered with a longer multi-tap
+tail, the medium version has moderate filtering and reflections, and the near
+version retains more high-frequency detail with a short early reflection.
+Thunder is scheduled separately from the rain loops and only plays during the
+storm rain level.

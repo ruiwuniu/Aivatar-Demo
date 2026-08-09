@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import ts from "typescript";
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
@@ -224,8 +225,11 @@ const [
   storageText,
   runtimeText,
   rendererText,
+  weatherText,
+  weatherRendererText,
   pondAtlasText,
   ambientAudioText,
+  weatherAudioText,
   canvasSnapshotsText,
   avatarRendererText,
   performanceText,
@@ -238,6 +242,7 @@ const [
   tauriConfigText,
   groundImage,
   referenceImage,
+  weatherBackdropMaskImage,
   cloudAtlasImage,
   pondAtlasImage,
   blackBassImage,
@@ -260,6 +265,12 @@ const [
   fishingBiteAudio,
   fishingReelAudio,
   fishingDisplayAudio,
+  rainFineAudio,
+  rainSurfaceAudio,
+  rainDownpourAudio,
+  thunderDistantAudio,
+  thunderMediumAudio,
+  thunderNearAudio,
 ] = await Promise.all([
   read("public/config/aivatar.config.json"),
   read("src/data/defaultContent.ts"),
@@ -272,8 +283,11 @@ const [
   read("src/park/parkStorage.ts"),
   read("src/park/parkRuntime.ts"),
   read("src/park/parkRenderer.ts"),
+  read("src/park/parkWeather.ts"),
+  read("src/park/parkWeatherRenderer.ts"),
   read("src/park/parkPondAtlas.ts"),
   read("src/park/parkAmbientAudio.ts"),
+  read("src/park/parkWeatherAudio.ts"),
   read("src/park/parkCanvasSnapshots.ts"),
   read("src/game/renderScene.ts"),
   read("src/park/parkPerformance.ts"),
@@ -286,6 +300,7 @@ const [
   read("src-tauri/tauri.conf.json"),
   readBinary("public/park/hilltop-park-midday-ground.png"),
   readBinary("public/park/hilltop-park-reference.png"),
+  readBinary("public/park/hilltop-park-weather-backdrop-mask.png"),
   readBinary("public/park/cumulonimbus-cloud-time-atlas.png"),
   readBinary("public/park/hilltop-pond-motion-v1.png"),
   readBinary("public/park/fish/raw-black-bass-v1.png"),
@@ -308,10 +323,32 @@ const [
   readBinary("public/audio/fishing-bite.wav"),
   readBinary("public/audio/fishing-reel.wav"),
   readBinary("public/audio/fishing-display.wav"),
+  readBinary("public/audio/weather-samples/rain-layer-fine-candidate.ogg"),
+  readBinary("public/audio/weather-samples/rain-layer-surface-candidate.ogg"),
+  readBinary("public/audio/weather-samples/rain-layer-downpour-candidate.ogg"),
+  readBinary("public/audio/weather-samples/thunder-distant-candidate.wav"),
+  readBinary("public/audio/weather-samples/thunder-medium-candidate.wav"),
+  readBinary("public/audio/weather-samples/thunder-near-candidate.wav"),
 ]);
 const seaLightingText = rendererText.slice(
   rendererText.indexOf("const drawSeaLighting"),
   rendererText.indexOf("const drawShoreFoamBreath"),
+);
+const weatherSeaHazeText = weatherRendererText.slice(
+  weatherRendererText.indexOf("export const drawParkWeatherSeaHaze"),
+  weatherRendererText.indexOf("const drawRainField"),
+);
+const weatherStormCloudText = weatherRendererText.slice(
+  weatherRendererText.indexOf("const stormCloudSprite"),
+  weatherRendererText.indexOf("export const drawParkWeatherSky"),
+);
+const weatherSkyText = weatherRendererText.slice(
+  weatherRendererText.indexOf("export const drawParkWeatherSky"),
+  weatherRendererText.indexOf("export const drawParkWeatherSeaHaze"),
+);
+const weatherRainFieldText = weatherRendererText.slice(
+  weatherRendererText.indexOf("const drawRainField"),
+  weatherRendererText.indexOf("export const drawParkRainBack"),
 );
 const pondSurfaceText = rendererText.slice(
   rendererText.indexOf("const drawPondSurface"),
@@ -337,6 +374,384 @@ const nightSkyText = rendererText.slice(
   rendererText.indexOf("type ParkNightStar"),
   rendererText.indexOf("type ParkCloudVariantBlend"),
 );
+const weatherJavaScript = ts.transpileModule(weatherText, {
+  compilerOptions: {
+    module: ts.ModuleKind.ES2022,
+    target: ts.ScriptTarget.ES2022,
+  },
+}).outputText;
+const weatherModule = await import(
+  `data:text/javascript;base64,${Buffer.from(weatherJavaScript).toString("base64")}`
+);
+const {
+  PARK_WEATHER_ACCELERATED_CYCLE_MS,
+  PARK_WEATHER_MAX_RAIN_DURATION_MS,
+  PARK_WEATHER_MIN_CLEAR_GAP_MS,
+  PARK_WEATHER_MIN_HEAVY_DURATION_MS,
+  PARK_WEATHER_MIN_MODERATE_DURATION_MS,
+  PARK_WEATHER_MIN_RAIN_DURATION_MS,
+  PARK_WEATHER_MIN_STORM_DURATION_MS,
+  createParkWeeklyWeatherSchedule,
+  createParkWeatherRuntime,
+  resolveParkWeather,
+  setParkWeatherDebugMode,
+} = weatherModule;
+const weatherSeed = "park-smoke-slot";
+const firstWeatherWeek = new Date(2026, 0, 5, 12, 0, 0, 0);
+const scheduledEventsForWeatherSmoke = [];
+for (let weekIndex = 0; weekIndex < 16; weekIndex += 1) {
+  const timestamp = new Date(firstWeatherWeek);
+  timestamp.setDate(timestamp.getDate() + weekIndex * 7);
+  const schedule = createParkWeeklyWeatherSchedule(weatherSeed, timestamp.getTime());
+  const repeatedSchedule = createParkWeeklyWeatherSchedule(weatherSeed, timestamp.getTime());
+  assert.deepEqual(schedule, repeatedSchedule, "weekly rain schedule must survive reloads");
+  assert.equal(schedule.events.length, 2, "every local week must choose exactly two rain days");
+  assert.equal(
+    new Set(schedule.events.map((event) => event.localDayIndex)).size,
+    2,
+    "weekly rainy days must be unique",
+  );
+  scheduledEventsForWeatherSmoke.push(...schedule.events);
+  for (const event of schedule.events) {
+    assert(event.rainDurationMs >= PARK_WEATHER_MIN_RAIN_DURATION_MS);
+    assert(event.rainDurationMs <= PARK_WEATHER_MAX_RAIN_DURATION_MS);
+    assert.equal(event.rainEndMs - event.rainStartMs, event.rainDurationMs);
+    const localDay = new Date(event.dayStartMs).toDateString();
+    assert.equal(new Date(event.gatheringStartMs).toDateString(), localDay);
+    assert.equal(new Date(event.rainStartMs).toDateString(), localDay);
+    assert.equal(new Date(event.rainEndMs - 1).toDateString(), localDay);
+    assert.equal(new Date(event.clearingEndMs).toDateString(), localDay);
+    assert(
+      event.gatheringStartMs - event.dayStartMs >= PARK_WEATHER_MIN_CLEAR_GAP_MS,
+      "each rainy day must reserve the cross-day clear-weather gap before clouds gather",
+    );
+    assert(event.gatheringStartMs < event.rainStartMs);
+    assert(event.rainStartMs < event.rainEndMs);
+    assert(event.rainEndMs < event.clearingEndMs);
+  }
+}
+scheduledEventsForWeatherSmoke.sort(
+  (left, right) => left.gatheringStartMs - right.gatheringStartMs,
+);
+for (let index = 1; index < scheduledEventsForWeatherSmoke.length; index += 1) {
+  const previous = scheduledEventsForWeatherSmoke[index - 1];
+  const current = scheduledEventsForWeatherSmoke[index];
+  assert(
+    current.gatheringStartMs - previous.clearingEndMs >= PARK_WEATHER_MIN_CLEAR_GAP_MS,
+    "consecutive weather events must retain at least ten clear minutes",
+  );
+}
+const rainLevelForWeatherSmoke = (amount) => {
+  if (amount < 0.035) return "clear";
+  if (amount < 0.18) return "sprinkle";
+  if (amount < 0.4) return "light";
+  if (amount < 0.64) return "moderate";
+  if (amount < 0.88) return "heavy";
+  return "storm";
+};
+const rainAmountForWeatherSmoke = (event, offsetMs) => {
+  const keyframes = event.intensityKeyframes;
+  const elapsed = Math.max(0, Math.min(event.rainDurationMs, offsetMs));
+  const rightIndex = Math.max(
+    1,
+    keyframes.findIndex((keyframe) => elapsed <= keyframe.offsetMs),
+  );
+  const left = keyframes[rightIndex - 1] ?? keyframes[0];
+  const right = keyframes[rightIndex] ?? keyframes[keyframes.length - 1];
+  const progress = clamp01(
+    (elapsed - left.offsetMs) / Math.max(1, right.offsetMs - left.offsetMs),
+  );
+  const eased = progress * progress * (3 - 2 * progress);
+  return left.amount + (right.amount - left.amount) * eased;
+};
+const minimumWeatherRunMs = new Map([
+  ["moderate", PARK_WEATHER_MIN_MODERATE_DURATION_MS],
+  ["heavy", PARK_WEATHER_MIN_HEAVY_DURATION_MS],
+  ["storm", PARK_WEATHER_MIN_STORM_DURATION_MS],
+]);
+const validatedWeatherRuns = new Map([
+  ["moderate", 0],
+  ["heavy", 0],
+  ["storm", 0],
+]);
+for (const event of scheduledEventsForWeatherSmoke) {
+  let activeLevel = rainLevelForWeatherSmoke(rainAmountForWeatherSmoke(event, 0));
+  let activeRunStartedAtMs = 0;
+  const offsets = [];
+  for (let offsetMs = 1000; offsetMs < event.rainDurationMs; offsetMs += 1000) {
+    offsets.push(offsetMs);
+  }
+  offsets.push(event.rainDurationMs);
+  for (const offsetMs of offsets) {
+    const nextLevel = rainLevelForWeatherSmoke(
+      rainAmountForWeatherSmoke(event, offsetMs),
+    );
+    if (nextLevel === activeLevel) continue;
+    const minimumDurationMs = minimumWeatherRunMs.get(activeLevel);
+    if (minimumDurationMs !== undefined) {
+      assert(
+        offsetMs - activeRunStartedAtMs >= minimumDurationMs,
+        `${activeLevel} rain runs must satisfy their minimum duration`,
+      );
+      validatedWeatherRuns.set(activeLevel, validatedWeatherRuns.get(activeLevel) + 1);
+    }
+    activeLevel = nextLevel;
+    activeRunStartedAtMs = offsetMs;
+  }
+}
+for (const [level, count] of validatedWeatherRuns) {
+  assert(count > 0, `weather schedule smoke must exercise ${level} rain`);
+}
+const automaticRuntime = createParkWeatherRuntime(weatherSeed, firstWeatherWeek.getTime());
+const automaticSchedule = createParkWeeklyWeatherSchedule(
+  weatherSeed,
+  firstWeatherWeek.getTime(),
+);
+const automaticEvent = automaticSchedule.events[0];
+assert.equal(
+  resolveParkWeather(automaticRuntime, automaticEvent.gatheringStartMs - 1).phase,
+  "clear",
+);
+assert.equal(
+  resolveParkWeather(
+    automaticRuntime,
+    Math.round((automaticEvent.gatheringStartMs + automaticEvent.rainStartMs) / 2),
+  ).phase,
+  "gathering",
+);
+assert.equal(
+  resolveParkWeather(automaticRuntime, automaticEvent.rainStartMs + 1).phase,
+  "raining",
+);
+assert.equal(
+  resolveParkWeather(automaticRuntime, automaticEvent.rainEndMs - 1).phase,
+  "tapering",
+);
+assert.equal(
+  resolveParkWeather(
+    automaticRuntime,
+    Math.round((automaticEvent.rainEndMs + automaticEvent.clearingEndMs) / 2),
+  ).phase,
+  "clearing",
+);
+assert.equal(
+  resolveParkWeather(automaticRuntime, automaticEvent.clearingEndMs).phase,
+  "clear",
+);
+const staticWeatherExpectations = new Map([
+  ["clear", ["clear", "clear"]],
+  ["gathering", ["gathering", "clear"]],
+  ["sprinkle", ["raining", "sprinkle"]],
+  ["light", ["raining", "light"]],
+  ["moderate", ["raining", "moderate"]],
+  ["heavy", ["raining", "heavy"]],
+  ["storm", ["raining", "storm"]],
+  ["tapering", ["tapering", "light"]],
+  ["clearing", ["clearing", "clear"]],
+]);
+for (const [mode, [expectedPhase, expectedLevel]] of staticWeatherExpectations) {
+  const runtime = createParkWeatherRuntime(weatherSeed, 0);
+  setParkWeatherDebugMode(runtime, mode, 0);
+  const frame = resolveParkWeather(runtime, 1234);
+  assert.equal(frame.phase, expectedPhase);
+  assert.equal(frame.rainLevel, expectedLevel);
+  assert.equal(frame.debugMode, mode);
+}
+const acceleratedRuntime = createParkWeatherRuntime(weatherSeed, 0);
+setParkWeatherDebugMode(acceleratedRuntime, "accelerated-cycle", 0);
+for (const [atMs, expectedPhase, expectedLevel] of [
+  [0, "clear", "clear"],
+  [3001, "gathering", "clear"],
+  [14_001, "raining", "sprinkle"],
+  [20_001, "raining", "light"],
+  [27_001, "raining", "moderate"],
+  [34_001, "raining", "heavy"],
+  [42_001, "raining", "storm"],
+  [48_001, "tapering", "heavy"],
+  [58_001, "clearing", "clear"],
+  [PARK_WEATHER_ACCELERATED_CYCLE_MS, "clear", "clear"],
+]) {
+  const frame = resolveParkWeather(acceleratedRuntime, atMs);
+  assert.equal(frame.phase, expectedPhase, `accelerated weather phase at ${atMs}ms`);
+  assert.equal(frame.rainLevel, expectedLevel, `accelerated rain level at ${atMs}ms`);
+}
+assert.doesNotMatch(weatherText, /Math\.random\(\)/);
+assert.doesNotMatch(weatherRendererText, /Math\.random\(\)/);
+assert.match(weatherRendererText, /getParkCloudAtlasStyles\(\)\.slice\(0, 3\)/);
+assert.equal(
+  weatherStormCloudText.match(/globalCompositeOperation = "source-atop"/g)?.length,
+  2,
+  "both storm-cloud tint passes must stay inside the cloud alpha silhouette",
+);
+assert.doesNotMatch(
+  weatherStormCloudText,
+  /globalCompositeOperation = "screen"/,
+  "storm-cloud highlights must not paint a rectangular screen-blend backdrop",
+);
+assert.match(weatherRendererText, /const PARK_STORM_CLOUD_FADE_RANGES =/);
+assert.match(weatherSkyText, /const lanePresence = smoothstepRange\(cover,/);
+assert.match(weatherSkyText, /\* lanePresence/);
+assert.doesNotMatch(
+  weatherSkyText,
+  /const laneCount = cover/,
+  "storm-cloud lanes must fade continuously instead of switching at cover thresholds",
+);
+assert.match(weatherRendererText, /const resolveParkRainColor =/);
+assert.match(
+  weatherRendererText,
+  /const nightColor = foreground \? \[112, 135, 158\] : \[88, 108, 132\]/,
+);
+assert.match(weatherRendererText, /\* \(1 - night \* 0\.25\)/);
+assert.match(weatherRendererText, /const PARK_WEATHER_HAZE_TOP_Y = 0/);
+assert.match(weatherSeaHazeText, /parkCanvasSnapshotSource\(layers\.weatherBackdropMask\)/);
+assert.match(weatherSeaHazeText, /PARK_SCENE_HEIGHT - PARK_WEATHER_HAZE_TOP_Y/);
+assert.match(weatherSeaHazeText, /haze\.drawImage\(backdropMask, 0, 0\)/);
+assert.doesNotMatch(
+  weatherRendererText,
+  /PARK_WEATHER_FOREGROUND_CLIFF_POLYGON|PARK_WEATHER_HAZE_MASK_SCALE|mask\.lineTo/,
+  "weather haze must use the audited full-resolution raster mask",
+);
+assert.match(weatherRendererText, /layers\.pondInteriorMask/);
+assert.match(weatherRendererText, /layers\.grassRippleMask/);
+assert.match(weatherRendererText, /WEATHER_SURFACE_UPDATE_INTERVAL_MS = 1000 \/ 20/);
+assert.match(weatherRendererText, /MAX_POND_RIPPLES = 68/);
+assert.match(weatherRendererText, /MAX_POND_RIPPLES \* weather\.pondImpact/);
+assert.match(weatherRendererText, /MAX_GRASS_SPLASHES = 172/);
+assert.match(weatherRendererText, /MAX_GRASS_SPLASHES \* weather\.grassSplash/);
+assert.match(weatherRendererText, /const PARK_RAIN_SPRITE_PHASE_COUNT = 25/);
+assert.match(weatherRendererText, /const PARK_RAIN_BACK_SEEDS = makeRainParticleSeeds/);
+assert.match(weatherRendererText, /const PARK_RAIN_FRONT_SEEDS = makeRainParticleSeeds/);
+assert.match(weatherRainFieldText, /const sprite = rainLineSprite\(/);
+assert.match(weatherRainFieldText, /ctx\.drawImage\(/);
+assert.doesNotMatch(
+  weatherRainFieldText,
+  /for \(let step = 0; step < length; step \+= 2\)/,
+  "per-frame rain drawing must reuse cached line sprites instead of repainting every segment",
+);
+assert.match(weatherRendererText, /const PARK_GRASS_SPLASH_MIN_X = 109/);
+assert.match(weatherRendererText, /const PARK_GRASS_SPLASH_MIN_Y = 225/);
+assert.match(weatherRendererText, /const PARK_GRASS_SPLASH_MAX_X = 1075/);
+assert.match(weatherRendererText, /const PARK_GRASS_SPLASH_MAX_Y = 842/);
+assert.match(
+  weatherRendererText,
+  /makeCanvas\(PARK_GRASS_SPLASH_WIDTH, PARK_GRASS_SPLASH_HEIGHT\)/,
+);
+assert.match(
+  weatherRendererText,
+  /ctx\.drawImage\(grassSplashCanvas, PARK_GRASS_SPLASH_MIN_X, PARK_GRASS_SPLASH_MIN_Y\)/,
+);
+assert.match(weatherRendererText, /if \(cycle > 0\.55\) continue/);
+assert.match(weatherRendererText, /0\.32 \+ weather\.grassSplash \* 0\.58/);
+assert.match(weatherRendererText, /rise \* \(3 \+ weather\.grassSplash \* 5\)/);
+assert.match(weatherRendererText, /grass\.fillRect\(drawX - 3, drawY, 3, 2\)/);
+assert.match(weatherRendererText, /grass\.fillRect\(drawX \+ 2, drawY - 1, 3, 2\)/);
+assert.match(weatherRendererText, /weather\.grassSplash > 0\.38/);
+assert.match(weatherRendererText, /weather\.seaVisibility/);
+assert.match(
+  weatherRendererText,
+  /const progress = clamp01\(\(amount - 0\.52\) \/ \(0\.76 - 0\.52\)\)/,
+);
+assert.match(
+  weatherRendererText,
+  /\{ amount: 0\.52, multiplier: 2 \}/,
+);
+assert.match(
+  weatherRendererText,
+  /\{ amount: 0\.76, multiplier: 4 \}/,
+);
+assert.match(
+  weatherRendererText,
+  /\{ amount: 1, multiplier: 10 \}/,
+);
+assert.match(
+  weatherRendererText,
+  /leftLength \+ \(rightLength - leftLength\) \* eased/,
+);
+const smoothRainProgressForSmoke = (amount, start, end) => {
+  const progress = clamp01((amount - start) / (end - start));
+  return progress * progress * (3 - 2 * progress);
+};
+const rainLengthAnchorsForSmoke = [
+  { amount: 0, multiplier: 1 },
+  { amount: 0.09, multiplier: 1 },
+  { amount: 0.28, multiplier: 1 },
+  { amount: 0.52, multiplier: 2 },
+  { amount: 0.76, multiplier: 4 },
+  { amount: 1, multiplier: 10 },
+];
+const rainDensityMultiplierForSmoke = (amount) =>
+  1 + smoothRainProgressForSmoke(amount, 0.52, 0.76);
+const rainLengthForSmoke = (amount, foreground) => {
+  const normalizedAmount = clamp01(amount);
+  const rightIndex = Math.max(
+    1,
+    rainLengthAnchorsForSmoke.findIndex((anchor) => normalizedAmount <= anchor.amount),
+  );
+  const left = rainLengthAnchorsForSmoke[rightIndex - 1];
+  const right = rainLengthAnchorsForSmoke[rightIndex];
+  const eased = smoothRainProgressForSmoke(normalizedAmount, left.amount, right.amount);
+  const baseLengthAt = (anchor) => Math.round(
+    (foreground ? 7 : 4) + anchor.amount * (foreground ? 10 : 7),
+  ) * anchor.multiplier;
+  return Math.round(baseLengthAt(left) + (baseLengthAt(right) - baseLengthAt(left)) * eased);
+};
+const rainMetricsForSmoke = (amount) => {
+  const densityMultiplier = rainDensityMultiplierForSmoke(amount);
+  return {
+    backDrops: Math.round(280 * amount * densityMultiplier),
+    frontDrops: Math.round(170 * amount * densityMultiplier),
+    backLength: rainLengthForSmoke(amount, false),
+    frontLength: rainLengthForSmoke(amount, true),
+  };
+};
+assert.deepEqual(rainMetricsForSmoke(0.52), {
+  backDrops: 146,
+  frontDrops: 88,
+  backLength: 16,
+  frontLength: 24,
+});
+assert.deepEqual(rainMetricsForSmoke(0.76), {
+  backDrops: 426,
+  frontDrops: 258,
+  backLength: 36,
+  frontLength: 60,
+});
+assert.deepEqual(rainMetricsForSmoke(1), {
+  backDrops: 560,
+  frontDrops: 340,
+  backLength: 110,
+  frontLength: 170,
+});
+const rainSpritePhaseKeyForSmoke = (x) => Math.round(
+  (x - Math.floor(x)) * 25 + 1e-12,
+);
+for (let sample = -5000; sample <= 5000; sample += 1) {
+  const x = sample / 1000;
+  const phaseKey = rainSpritePhaseKeyForSmoke(x);
+  for (let step = 0; step < 170; step += 2) {
+    const cachedX = Math.floor(x) + Math.round(phaseKey / 25 + step * 0.34);
+    const originalX = Math.round(x + step * 0.34);
+    assert.equal(
+      Math.abs(cachedX - originalX),
+      0,
+      `cached rain sprite must preserve segment x at ${x}/${step}`,
+    );
+  }
+}
+for (const threshold of [0.09, 0.28, 0.52, 0.76]) {
+  const before = rainDensityMultiplierForSmoke(threshold - 1e-7);
+  const after = rainDensityMultiplierForSmoke(threshold + 1e-7);
+  assert(Math.abs(after - before) < 1e-5, `rain density must be continuous at ${threshold}`);
+}
+let previousRainMetrics = rainMetricsForSmoke(0);
+for (let step = 1; step <= 1000; step += 1) {
+  const currentRainMetrics = rainMetricsForSmoke(step / 1000);
+  assert(currentRainMetrics.backDrops >= previousRainMetrics.backDrops);
+  assert(currentRainMetrics.frontDrops >= previousRainMetrics.frontDrops);
+  assert(currentRainMetrics.backLength >= previousRainMetrics.backLength);
+  assert(currentRainMetrics.frontLength >= previousRainMetrics.frontLength);
+  previousRainMetrics = currentRainMetrics;
+}
 const layerInterfaceText = layersText.slice(
   layersText.indexOf("export interface ParkReferenceLayers"),
   layersText.indexOf("export interface ParkReferenceShadowCaster"),
@@ -474,7 +889,8 @@ assert.match(
   /activity: "wait"[\s\S]{0,220}?facing: "right"[\s\S]{0,120}?activityLabel: "Fishing"/,
 );
 assert.match(rendererText, /drawParkFishingAnimation/);
-assert.match(parkText, /nowMs: Date\.now\(\),\s*fishingNowMs: now,/);
+assert.match(parkText, /const calendarNowMs = Date\.now\(\)/);
+assert.match(parkText, /nowMs: calendarNowMs,\s*fishingNowMs: now,/);
 assert.match(rendererText, /fishingNowMs\?: number/);
 assert.match(
   rendererText,
@@ -554,6 +970,8 @@ const fullRenderPlan = {
   staticBase: true,
   movingNightSky: true,
   movingClouds: true,
+  weatherSky: true,
+  weatherEffects: true,
   movingCliffFog: true,
   horizonSeaTint: true,
   dynamicShadows: true,
@@ -572,6 +990,8 @@ assert.deepEqual(resolveParkRenderPlanForSmoke("base-only"), {
   staticBase: true,
   movingNightSky: false,
   movingClouds: false,
+  weatherSky: false,
+  weatherEffects: false,
   movingCliffFog: false,
   horizonSeaTint: false,
   dynamicShadows: false,
@@ -587,6 +1007,8 @@ assert.deepEqual(resolveParkRenderPlanForSmoke("no-ambient"), {
   ...fullRenderPlan,
   movingNightSky: false,
   movingClouds: false,
+  weatherSky: false,
+  weatherEffects: false,
   movingCliffFog: false,
   horizonSeaTint: false,
   terrainMotion: false,
@@ -594,8 +1016,12 @@ assert.deepEqual(resolveParkRenderPlanForSmoke("no-ambient"), {
   shoreFoam: false,
   seaLighting: false,
 });
+assert.deepEqual(resolveParkRenderPlanForSmoke("no-clouds"), {
+  ...fullRenderPlan,
+  movingClouds: false,
+  weatherSky: false,
+});
 for (const [profile, effect] of [
-  ["no-clouds", "movingClouds"],
   ["no-fog", "movingCliffFog"],
   ["no-grass", "terrainMotion"],
   ["no-pond", "pondSurface"],
@@ -626,16 +1052,22 @@ for (const renderCall of [
   "drawDynamicSky(ctx, timeVisual)",
   "drawMovingNightSky(ctx, timeVisual, celestial, motionNowMs)",
   "drawMovingCloudLayer(ctx, timeVisual, motionNowMs)",
+  "drawParkWeatherSky(ctx, weather, motionNowMs)",
   "layers.neutralBaseWithoutDistantShoreFoamAndCliffFog",
   "drawMovingCliffFog(ctx, layers, motionNowMs)",
   "drawHorizonSeaTint(ctx, layers, timeVisual)",
-  "drawDynamicShadows(ctx, options.objects, celestial, timeVisual)",
+  "drawParkWeatherSeaHaze(ctx, layers, weather)",
+  "drawDynamicShadows(ctx, options.objects, celestial, timeVisual, weather)",
   "drawTerrainMotion(ctx, layers, motionNowMs)",
   "drawPondSurface(ctx, layers, motionNowMs)",
+  "drawParkRainBack(ctx, weather, motionNowMs, timeVisual.nightStrength)",
+  "drawParkRainSurfaceEffects(ctx, layers, weather, motionNowMs, {",
   "drawAvatar(",
   "drawShoreFoamBreath(",
   "applyTimeGrade(ctx, timeVisual)",
-  "drawSeaLighting(ctx, layers, timeVisual, motionNowMs)",
+  "applyParkWeatherGrade(ctx, weather)",
+  "drawSeaLighting(ctx, layers, timeVisual, weather, motionNowMs)",
+  "drawParkRainForeground(ctx, weather, motionNowMs, timeVisual.nightStrength)",
 ]) {
   const renderCallIndex = renderSceneSource.indexOf(
     renderCall,
@@ -701,12 +1133,79 @@ assert.match(
   ambientAudioText,
   /DEFAULT_PARK_AMBIENT_AUDIO_VOLUME = 0\.55/,
 );
-assert.match(ambientAudioText, /controller\.audio\.volume = parkAmbientVolume/);
+assert.match(
+  ambientAudioText,
+  /controller\.audio\.volume = parkAmbientVolume \* controller\.weatherGain/,
+);
+assert.match(ambientAudioText, /return 1 - eased \* 0\.35/);
+assert.match(ambientAudioText, /updateParkAmbientAudioWeather/);
 assert.doesNotMatch(
   ambientAudioText,
   /aivatar\.audioVolume\.v1|PARK_AMBIENT_AUDIO_VOLUME_MULTIPLIER|globalVolume/,
   "park ambience must not be attenuated by the global SFX setting",
 );
+for (const source of [
+  "rain-layer-fine-candidate.ogg",
+  "rain-layer-surface-candidate.ogg",
+  "rain-layer-downpour-candidate.ogg",
+  "thunder-distant-candidate.wav",
+  "thunder-medium-candidate.wav",
+  "thunder-near-candidate.wav",
+]) {
+  assert.match(weatherAudioText, new RegExp(source.replace(".", "\\.")));
+}
+assert.match(weatherAudioText, /fine: smoothRange\(amount, 0\.015, 0\.22\) \* 0\.44/);
+assert.match(weatherAudioText, /surface: smoothRange\(amount, 0\.08, 0\.68\) \* 0\.48/);
+assert.match(weatherAudioText, /downpour: smoothRange\(amount, 0\.42, 1\) \* 0\.62/);
+assert.match(weatherAudioText, /target >= controller\.smoothedRainAmount \? 2500 : 4000/);
+assert.match(weatherAudioText, /audio\.preload = "auto"[\s\S]*audio\.load\(\)/);
+assert.match(weatherAudioText, /PARK_THUNDER_TAIL_GUARD_MS = 7_000/);
+assert.match(weatherAudioText, /controller\.thunderBusyUntilMs = nowMs \+ PARK_THUNDER_TAIL_GUARD_MS/);
+assert.match(weatherAudioText, /!audio\.paused && !audio\.ended/);
+assert.match(weatherAudioText, /PARK_THUNDER_BUSY_RECHECK_MS = 250/);
+assert.match(
+  weatherAudioText,
+  /controller\.thunderBusyUntilMs \?\? nowMs\)[\s\S]*thunderIntervalMs\(controller, weather\.debugMode, false\)/,
+);
+assert.match(weatherAudioText, /18_000 \+ random \* 37_000/);
+assert.match(weatherAudioText, /firstInStorm[\s\S]*2000 \+ random \* 2000/);
+assert.match(weatherAudioText, /random < 0\.55/);
+assert.match(weatherAudioText, /random < 0\.87/);
+assert.match(
+  weatherAudioText,
+  /weather\.rainLevel === "storm" && weather\.rainAmount >= 0\.86/,
+);
+assert.doesNotMatch(
+  weatherAudioText,
+  /aivatar\.audioVolume\.v1|PARK_GLOBAL_SFX_VOLUME_KEY/,
+  "weather ambience must follow the park ambience volume instead of global SFX",
+);
+const weatherAudioSmoothRange = (value, start, end) => {
+  const progress = clamp01((value - start) / (end - start));
+  return progress * progress * (3 - 2 * progress);
+};
+const weatherAudioMixForSmoke = (amount) => ({
+  fine: weatherAudioSmoothRange(amount, 0.015, 0.22) * 0.44,
+  surface: weatherAudioSmoothRange(amount, 0.08, 0.68) * 0.48,
+  downpour: weatherAudioSmoothRange(amount, 0.42, 1) * 0.62,
+});
+assert.deepEqual(weatherAudioMixForSmoke(0), { fine: 0, surface: 0, downpour: 0 });
+assert.deepEqual(weatherAudioMixForSmoke(1), { fine: 0.44, surface: 0.48, downpour: 0.62 });
+let previousWeatherAudioMix = weatherAudioMixForSmoke(0);
+for (let step = 1; step <= 1000; step += 1) {
+  const currentWeatherAudioMix = weatherAudioMixForSmoke(step / 1000);
+  assert(currentWeatherAudioMix.fine >= previousWeatherAudioMix.fine);
+  assert(currentWeatherAudioMix.surface >= previousWeatherAudioMix.surface);
+  assert(currentWeatherAudioMix.downpour >= previousWeatherAudioMix.downpour);
+  previousWeatherAudioMix = currentWeatherAudioMix;
+}
+assert.match(parkText, /createParkWeatherAudio/);
+assert.match(parkText, /startParkWeatherAudio\(weatherAudio\)/);
+assert.match(parkText, /pauseParkWeatherAudio\(weatherAudio\)/);
+assert.match(parkText, /disposeParkWeatherAudio\(weatherAudio\)/);
+assert.match(parkText, /updateParkWeatherAudio\([\s\S]*weatherAudioRef\.current/);
+assert.match(parkText, /updateParkAmbientAudioWeather\([\s\S]*ambientAudioRef\.current/);
+assert.match(parkText, /parkWeatherAudioThunderInMs/);
 assert.match(appText, /const loadInitialParkAmbientAudioVolume/);
 assert.match(appText, /const \[parkAmbientAudioVolume, setParkAmbientAudioVolume\]/);
 assert.match(appText, /localStorage\.setItem\(\s*PARK_AMBIENT_AUDIO_VOLUME_KEY/);
@@ -714,7 +1213,7 @@ assert.match(appText, /parkAmbientVolumeLabel/);
 assert.match(appText, /setParkAmbientAudioVolume\(Number\(event\.target\.value\) \/ 100\)/);
 assert.match(appText, /const SHOW_DEBUG_CARD = false/);
 assert.match(appText, /\{SHOW_DEBUG_CARD \? \(/);
-assert.match(parkText, /const SHOW_PARK_DEBUG = true/);
+assert.match(parkText, /const SHOW_PARK_DEBUG = false/);
 assert.match(parkText, /\{SHOW_PARK_DEBUG \? \(/);
 const tauriConfig = JSON.parse(tauriConfigText);
 assert.equal(
@@ -957,6 +1456,31 @@ assert.match(parkText, /label: "夜晚 22:30", hour: 22\.5/);
 assert.match(parkText, /url\.searchParams\.delete\("parkHour"\)/);
 assert.match(parkText, /url\.searchParams\.set\("parkHour", String\(hour\)\)/);
 assert.match(parkText, /aria-label="公园时间预览"/);
+assert.match(parkText, /aria-label="公园天气预览"/);
+for (const weatherPreviewLabel of [
+  "自动天气",
+  "晴天",
+  "乌云聚集",
+  "零星雨滴",
+  "小雨",
+  "中雨",
+  "大雨",
+  "暴雨",
+  "雨势减弱",
+  "雨后放晴",
+  "60 秒完整雨程",
+]) {
+  assert.match(parkText, new RegExp(weatherPreviewLabel));
+}
+assert.match(parkText, /createParkWeatherRuntime/);
+assert.match(parkText, /resolveParkWeather/);
+assert.match(parkText, /setParkWeatherDebugMode/);
+assert.match(parkText, /weather,\s*\}\);/);
+assert.doesNotMatch(
+  parkText,
+  /localStorage\.(?:getItem|setItem)\([^\n]*WeatherDebugMode/,
+  "manual weather previews must not persist",
+);
 assert.match(parkText, /aria-label="公园角色预览"/);
 assert.match(parkText, /强制召唤角色/);
 assert.match(parkText, /强制钓鱼（临时钓竿）/);
@@ -1032,6 +1556,15 @@ for (const fishingAudio of [
 ]) {
   assert.equal(fishingAudio.subarray(0, 4).toString("ascii"), "RIFF");
   assert(fishingAudio.length > 40_000, "fishing SFX must contain a full one-shot");
+}
+for (const rainAudio of [rainFineAudio, rainSurfaceAudio, rainDownpourAudio]) {
+  assert.equal(rainAudio.subarray(0, 4).toString("ascii"), "OggS");
+  assert(rainAudio.length > 500_000, "rain layer must contain a full ambience loop");
+}
+for (const thunderAudio of [thunderDistantAudio, thunderMediumAudio, thunderNearAudio]) {
+  assert.equal(thunderAudio.subarray(0, 4).toString("ascii"), "RIFF");
+  assert.equal(thunderAudio.subarray(8, 12).toString("ascii"), "WAVE");
+  assert(thunderAudio.length > 1_000_000, "thunder candidate must retain its rolling tail");
 }
 assert.match(
   parkSfxVolumeText,
@@ -1197,7 +1730,10 @@ assert.match(rendererText, /resolveParkCelestialPosition\(timeVisual\.hour\)/);
 assert.match(rendererText, /const horizontal = caster\.x - celestial\.x/);
 assert.doesNotMatch(rendererText, /drawMovingCelestialBody/);
 assert.doesNotMatch(rendererText, /reflectionStrength/);
-assert.match(rendererText, /drawSeaLighting\(ctx, layers, timeVisual, motionNowMs\)/);
+assert.match(
+  rendererText,
+  /drawSeaLighting\(ctx, layers, timeVisual, weather, motionNowMs\)/,
+);
 assert.match(
   rendererText,
   /light\.drawImage\(parkCanvasSnapshotSource\(layers\.seaMotionMask\), 0, 0\)/,
@@ -1504,9 +2040,14 @@ for (const hour of [0, 6.5, 12.2, 18.3, 21]) {
 }
 assert.match(layersText, /PARK_REFERENCE_ASSET = "\/park\/hilltop-park-midday-ground\.png"/);
 assert.match(layersText, /PARK_REFERENCE_STAMP_ASSET = "\/park\/hilltop-park-reference\.png"/);
+assert.match(
+  layersText,
+  /PARK_WEATHER_BACKDROP_MASK_ASSET = "\/park\/hilltop-park-weather-backdrop-mask\.png"/,
+);
 assert.match(layersText, /PARK_REFERENCE_SOURCE_WIDTH = 1435/);
 assert.match(layersText, /PARK_REFERENCE_SOURCE_HEIGHT = 1095/);
-assert.match(layersText, /buildLayers\(image, stampImage\)/);
+assert.match(layersText, /buildLayers\(image, stampImage, weatherBackdropImage\)/);
+assert.match(layerInterfaceText, /weatherBackdropMask: HTMLCanvasElement/);
 assert.doesNotMatch(layerInterfaceText, /full: HTMLCanvasElement/);
 assert.doesNotMatch(
   layerInterfaceText,
@@ -1721,6 +2262,14 @@ assert.equal(
   "9a2974b347735b1c20d91fd0b7574a7cd41cb3a813f0ee5801fb57692ccb25a7",
   "park reference asset must remain byte-identical to the approved ImageGen output",
 );
+assert.equal(weatherBackdropMaskImage.readUInt32BE(16), 1180);
+assert.equal(weatherBackdropMaskImage.readUInt32BE(20), 900);
+assert.equal(weatherBackdropMaskImage.readUInt8(25), 6, "weather backdrop mask must remain RGBA");
+assert.equal(
+  createHash("sha256").update(weatherBackdropMaskImage).digest("hex"),
+  "380b976318d0bbc6c97c43dc86f22f7c3ffcc884884e39cb208363967857b1d7",
+  "pixel-audited weather backdrop mask must remain stable",
+);
 assert.equal(cloudAtlasImage.readUInt32BE(16), 1254);
 assert.equal(cloudAtlasImage.readUInt32BE(20), 1254);
 assert.equal(cloudAtlasImage.readUInt8(25), 2, "black-key cloud atlas must remain RGB");
@@ -1755,4 +2304,4 @@ for (const [name, image, expectedHash] of [
   );
 }
 
-console.log("Park smoke passed: static rock/shrub occluders, independent grass ripples, single-draw pond atlas, independent park ambience, foam and cliff-fog motion, looping clouds, handoff, traits, fish, cooking, and window size markers are present.");
+console.log("Park smoke passed: deterministic two-day weekly rain scheduling, staged weather previews, layered rain ambience and storm thunder, weather-scaled sea haze/pond ripples/grass splashes, static rock/shrub occluders, independent grass ripples, single-draw pond atlas, independent park ambience, foam and cliff-fog motion, looping clouds, handoff, traits, fish, cooking, and window size markers are present.");

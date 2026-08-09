@@ -50,6 +50,19 @@ import {
   PARK_POND_ATLAS_SOURCE,
   PARK_POND_ATLAS_WIDTH,
 } from "./parkPondAtlas";
+import {
+  applyParkWeatherGrade,
+  drawParkRainBack,
+  drawParkRainForeground,
+  drawParkRainSurfaceEffects,
+  drawParkWeatherSeaHaze,
+  drawParkWeatherSky,
+  resolveParkWeatherRenderCounts,
+} from "./parkWeatherRenderer";
+import {
+  CLEAR_PARK_WEATHER_FRAME,
+  type ParkWeatherFrame,
+} from "./parkWeather";
 
 const rect = (
   ctx: CanvasRenderingContext2D,
@@ -857,6 +870,7 @@ const drawProjectedShadow = (
   caster: ParkReferenceShadowCaster,
   celestial: ParkCelestialPosition,
   visual: ParkTimeVisual,
+  weather: ParkWeatherFrame,
 ) => {
   const horizontal = caster.x - celestial.x;
   const horizontalDirection = horizontal / Math.max(160, Math.abs(horizontal));
@@ -869,7 +883,10 @@ const drawProjectedShadow = (
   ctx.fillStyle = celestial.kind === "sun"
     ? rgbColor(visual.cloudShadow)
     : "#283852";
-  ctx.globalAlpha = caster.strength * celestial.strength * (celestial.kind === "sun" ? 0.46 : 0.2);
+  ctx.globalAlpha = caster.strength
+    * celestial.strength
+    * (celestial.kind === "sun" ? 0.46 : 0.2)
+    * (1 - weather.cloudCover * 0.88);
   for (let step = 0; step <= steps; step += 1) {
     const amount = step / steps;
     const centerX = caster.x + distanceX * amount;
@@ -890,11 +907,12 @@ const drawDynamicShadows = (
   objects: ParkObjectPlacement[],
   celestial: ParkCelestialPosition,
   visual: ParkTimeVisual,
+  weather: ParkWeatherFrame,
 ) => {
   PARK_REFERENCE_SHADOW_CASTERS.forEach((caster) =>
-    drawProjectedShadow(ctx, caster, celestial, visual));
+    drawProjectedShadow(ctx, caster, celestial, visual, weather));
   objects.forEach((object) =>
-    drawProjectedShadow(ctx, objectShadowCaster(object), celestial, visual));
+    drawProjectedShadow(ctx, objectShadowCaster(object), celestial, visual, weather));
 };
 
 let waterLightCanvas: HTMLCanvasElement | null = null;
@@ -1020,6 +1038,7 @@ const drawSeaLighting = (
   ctx: CanvasRenderingContext2D,
   layers: ParkReferenceLayers,
   visual: ParkTimeVisual,
+  weather: ParkWeatherFrame,
   nowMs: number,
 ) => {
   if (!waterLightCanvas) {
@@ -1027,7 +1046,10 @@ const drawSeaLighting = (
     waterLightCanvas.width = PARK_SCENE_WIDTH;
     waterLightCanvas.height = PARK_SCENE_HEIGHT;
   }
-  const visualKey = `${visual.reflection.join(",")}/${visual.nightStrength.toFixed(3)}`;
+  const visualKey = [
+    visual.reflection.join(","),
+    visual.nightStrength.toFixed(3),
+  ].join("/");
   if (
     ambientUpdateDue(
       nowMs,
@@ -1147,7 +1169,7 @@ const drawSeaLighting = (
   }
   ctx.save();
   ctx.globalCompositeOperation = "screen";
-  ctx.globalAlpha = 1 - visual.nightStrength * 0.32;
+  ctx.globalAlpha = (1 - visual.nightStrength * 0.32) * weather.seaVisibility;
   ctx.drawImage(waterLightCanvas, 0, 0);
   ctx.restore();
 };
@@ -1439,6 +1461,9 @@ export const resolveParkRenderPlan = (renderProfile = "full") => {
     movingNightSky: !baseOnly && !ambientDisabled,
     movingClouds:
       !baseOnly && !ambientDisabled && renderProfile !== "no-clouds",
+    weatherSky:
+      !baseOnly && !ambientDisabled && renderProfile !== "no-clouds",
+    weatherEffects: !baseOnly && !ambientDisabled,
     movingCliffFog:
       !baseOnly && !ambientDisabled && renderProfile !== "no-fog",
     horizonSeaTint: !baseOnly && !ambientDisabled,
@@ -1474,6 +1499,7 @@ export interface ParkRenderOptions {
   displayedFish?: ParkRawFishId;
   selectedObjectId?: string;
   renderProfile?: ParkRenderProfile;
+  weather?: ParkWeatherFrame;
 }
 
 export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOptions) => {
@@ -1512,6 +1538,8 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   const celestial = resolveParkCelestialPosition(timeVisual.hour);
   const renderProfile = options.renderProfile ?? "full";
   const renderPlan = resolveParkRenderPlan(renderProfile);
+  const weather = options.weather ?? CLEAR_PARK_WEATHER_FRAME;
+  const weatherCounts = resolveParkWeatherRenderCounts(weather);
   const updateDiagnostics = shouldUpdateParkDiagnostics(canvas, motionNowMs);
   setParkDataset(canvas, "parkRenderProfile", renderProfile);
   setParkDataset(
@@ -1526,6 +1554,20 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
     Math.max(0, fishingNowMs - fishingPoseStartedAt).toFixed(1),
   );
   if (updateDiagnostics) {
+  canvas.dataset.parkWeatherPhase = weather.phase;
+  canvas.dataset.parkRainLevel = weather.rainLevel;
+  canvas.dataset.parkRainAmount = weather.rainAmount.toFixed(3);
+  canvas.dataset.parkCloudCover = weather.cloudCover.toFixed(3);
+  canvas.dataset.parkSeaVisibility = weather.seaVisibility.toFixed(3);
+  canvas.dataset.parkWeatherRemainingMs = String(Math.round(weather.remainingMs));
+  canvas.dataset.parkWeatherEventId = weather.eventId ?? "none";
+  canvas.dataset.parkWeatherRainDay = String(weather.isScheduledRainDay);
+  canvas.dataset.parkWeatherDebugMode = weather.debugMode;
+  canvas.dataset.parkWeatherBackDrops = String(weatherCounts.backDrops);
+  canvas.dataset.parkWeatherFrontDrops = String(weatherCounts.frontDrops);
+  canvas.dataset.parkWeatherPondRipples = String(weatherCounts.pondRipples);
+  canvas.dataset.parkWeatherGrassSplashes = String(weatherCounts.grassSplashes);
+  canvas.dataset.parkWeatherSurfaceFps = "20";
   canvas.dataset.parkHour = timeVisual.hour.toFixed(3);
   canvas.dataset.parkCelestial = celestial.kind;
   canvas.dataset.parkCelestialX = celestial.x.toFixed(2);
@@ -1672,6 +1714,9 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   if (renderPlan.movingClouds) {
     drawMovingCloudLayer(ctx, timeVisual, motionNowMs);
   }
+  if (renderPlan.weatherSky) {
+    drawParkWeatherSky(ctx, weather, motionNowMs);
+  }
   if (renderPlan.staticBase) {
     ctx.drawImage(
       parkCanvasSnapshotSource(
@@ -1688,14 +1733,24 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   if (renderPlan.horizonSeaTint) {
     drawHorizonSeaTint(ctx, layers, timeVisual);
   }
+  if (renderPlan.weatherEffects) {
+    drawParkWeatherSeaHaze(ctx, layers, weather);
+  }
   if (renderPlan.dynamicShadows) {
-    drawDynamicShadows(ctx, options.objects, celestial, timeVisual);
+    drawDynamicShadows(ctx, options.objects, celestial, timeVisual, weather);
   }
   if (renderPlan.terrainMotion) {
     drawTerrainMotion(ctx, layers, motionNowMs);
   }
   if (renderPlan.pondSurface) {
     drawPondSurface(ctx, layers, motionNowMs);
+  }
+  if (renderPlan.weatherEffects) {
+    drawParkRainBack(ctx, weather, motionNowMs, timeVisual.nightStrength);
+    drawParkRainSurfaceEffects(ctx, layers, weather, motionNowMs, {
+      pond: renderPlan.pondSurface,
+      grass: renderPlan.terrainMotion,
+    });
   }
 
   const avatarY = visualAvatar?.y ?? Number.POSITIVE_INFINITY;
@@ -1766,8 +1821,14 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
   if (renderPlan.timeGrade) {
     applyTimeGrade(ctx, timeVisual);
   }
+  if (renderPlan.weatherEffects) {
+    applyParkWeatherGrade(ctx, weather);
+  }
   if (renderPlan.seaLighting) {
-    drawSeaLighting(ctx, layers, timeVisual, motionNowMs);
+    drawSeaLighting(ctx, layers, timeVisual, weather, motionNowMs);
+  }
+  if (renderPlan.weatherEffects) {
+    drawParkRainForeground(ctx, weather, motionNowMs, timeVisual.nightStrength);
   }
   if (updateDiagnostics) {
   canvas.dataset.parkShoreFoamBreath = cachedFoamBreath.toFixed(3);

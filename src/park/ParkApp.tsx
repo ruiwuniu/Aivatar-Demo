@@ -53,7 +53,17 @@ import {
   PARK_AMBIENT_AUDIO_VOLUME_KEY,
   pauseParkAmbientAudio,
   startParkAmbientAudio,
+  updateParkAmbientAudioWeather,
+  type ParkAmbientAudioController,
 } from "./parkAmbientAudio";
+import {
+  createParkWeatherAudio,
+  disposeParkWeatherAudio,
+  pauseParkWeatherAudio,
+  startParkWeatherAudio,
+  updateParkWeatherAudio,
+  type ParkWeatherAudioController,
+} from "./parkWeatherAudio";
 import {
   createParkFootstepAudio,
   disposeParkFootstepAudio,
@@ -63,6 +73,14 @@ import {
   type ParkFootstepAudioController,
 } from "./parkFootstepAudio";
 import { measureParkRender } from "./parkPerformance";
+import {
+  createParkWeatherRuntime,
+  resolveParkWeather,
+  setParkWeatherDebugMode,
+  type ParkWeatherDebugMode,
+  type ParkWeatherFrame,
+  type ParkWeatherRuntime,
+} from "./parkWeather";
 
 const ROOMS_URL = "http://127.0.0.1:38988/rooms";
 const VISIT_INVITE_URL = "http://127.0.0.1:38988/visits/invite";
@@ -73,7 +91,7 @@ const PARK_SYNC_MS = 650;
 const PARK_TARGET_FPS = 30;
 const PARK_RENDER_INTERVAL_MS = 1000 / PARK_TARGET_FPS;
 const PARK_RENDER_DEADLINE_TOLERANCE_MS = 1;
-const SHOW_PARK_DEBUG = true;
+const SHOW_PARK_DEBUG = false;
 let mainWindowVisibilityQueue: Promise<void> = Promise.resolve();
 
 const queueMainWindowVisibility = (visible: boolean) => {
@@ -107,6 +125,50 @@ const PARK_RENDER_PROFILES: ReadonlyArray<{
   { id: "no-foam", label: "无浪花" },
   { id: "no-sea-light", label: "无海面光" },
 ];
+const PARK_WEATHER_PREVIEWS: ReadonlyArray<{
+  id: ParkWeatherDebugMode;
+  label: string;
+}> = [
+  { id: "automatic", label: "自动天气" },
+  { id: "clear", label: "晴天" },
+  { id: "gathering", label: "乌云聚集" },
+  { id: "sprinkle", label: "零星雨滴" },
+  { id: "light", label: "小雨" },
+  { id: "moderate", label: "中雨" },
+  { id: "heavy", label: "大雨" },
+  { id: "storm", label: "暴雨" },
+  { id: "tapering", label: "雨势减弱" },
+  { id: "clearing", label: "雨后放晴" },
+  { id: "accelerated-cycle", label: "60 秒完整雨程" },
+];
+
+const formatWeatherDuration = (durationMs: number) => {
+  if (durationMs <= 0) return "";
+  if (durationMs < 120_000) return `${Math.ceil(durationMs / 1000)} 秒`;
+  const totalMinutes = Math.ceil(durationMs / 60_000);
+  if (totalMinutes < 60) return `${totalMinutes} 分钟`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours} 小时 ${minutes} 分钟` : `${hours} 小时`;
+};
+
+const formatWeatherReadout = (weather: ParkWeatherFrame) => {
+  const remaining = formatWeatherDuration(weather.remainingMs);
+  const remainingLabel = remaining
+    ? weather.phase === "clear"
+      ? ` · 距下次天气 ${remaining}`
+      : ` · 本阶段剩余 ${remaining}`
+    : "";
+  const rainDay = weather.debugMode === "automatic"
+    ? ` · 今日${weather.isScheduledRainDay ? "为雨日" : "无自然降雨"}`
+    : " · 手动预览";
+  return [
+    weather.label,
+    `雨量 ${Math.round(weather.rainAmount * 100)}%`,
+    `云量 ${Math.round(weather.cloudCover * 100)}%`,
+    `海面能见度 ${Math.round(weather.seaVisibility * 100)}%`,
+  ].join(" · ") + rainDay + remainingLabel;
+};
 
 const initialHostSlotId = () =>
   new URLSearchParams(window.location.search).get("hostSlotId")?.trim() || null;
@@ -196,6 +258,16 @@ export const ParkApp = () => {
   const [activeRenderProfile, setActiveRenderProfile] =
     useState<ParkRenderProfile>("full");
   const renderProfileRef = useRef<ParkRenderProfile>("full");
+  const [activeWeatherDebugMode, setActiveWeatherDebugMode] =
+    useState<ParkWeatherDebugMode>("automatic");
+  const [weatherReadout, setWeatherReadout] = useState("天气状态计算中…");
+  const weatherRuntimeRef = useRef<ParkWeatherRuntime | null>(null);
+  if (!weatherRuntimeRef.current) {
+    weatherRuntimeRef.current = createParkWeatherRuntime(
+      hostSlotId ?? "park-preview",
+      Date.now(),
+    );
+  }
   const [mainWindowHiddenForProfile, setMainWindowHiddenForProfile] =
     useState(false);
   const mainWindowHiddenForProfileRef = useRef(false);
@@ -218,11 +290,14 @@ export const ParkApp = () => {
   const simulationRef = useRef<ParkSimulationState | null>(null);
   const fishingAudioBankRef = useRef<ParkFishingAudioBank | null>(null);
   const footstepAudioRef = useRef<ParkFootstepAudioController | null>(null);
+  const ambientAudioRef = useRef<ParkAmbientAudioController | null>(null);
+  const weatherAudioRef = useRef<ParkWeatherAudioController | null>(null);
   const debugPreviewRef = useRef(false);
   const debugRodRef = useRef(false);
   const lastVisitPostAtRef = useRef(0);
   const lastPersistAtRef = useRef(0);
   const lastMoodAtRef = useRef(0);
+  const lastWeatherUiAtRef = useRef(Number.NEGATIVE_INFINITY);
 
   const restoreMainWindowAfterPark = async (updateUi = true) => {
     if (!mainWindowHiddenForProfileRef.current) {
@@ -283,12 +358,19 @@ export const ParkApp = () => {
 
   useEffect(() => {
     const ambientAudio = createParkAmbientAudio();
-    const requestPlayback = () => startParkAmbientAudio(ambientAudio);
+    const weatherAudio = createParkWeatherAudio();
+    ambientAudioRef.current = ambientAudio;
+    weatherAudioRef.current = weatherAudio;
+    const requestPlayback = () => {
+      startParkAmbientAudio(ambientAudio);
+      startParkWeatherAudio(weatherAudio);
+    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         pauseParkAmbientAudio(ambientAudio);
+        pauseParkWeatherAudio(weatherAudio);
       } else if (ambientAudio.wantsPlayback) {
-        startParkAmbientAudio(ambientAudio);
+        requestPlayback();
       }
     };
     const handleStorage = (event: StorageEvent) => {
@@ -298,15 +380,20 @@ export const ParkApp = () => {
     requestPlayback();
     window.addEventListener("pointerdown", requestPlayback, true);
     window.addEventListener("keydown", requestPlayback, true);
+    window.addEventListener("touchstart", requestPlayback, true);
     window.addEventListener("storage", handleStorage);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       window.removeEventListener("pointerdown", requestPlayback, true);
       window.removeEventListener("keydown", requestPlayback, true);
+      window.removeEventListener("touchstart", requestPlayback, true);
       window.removeEventListener("storage", handleStorage);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      ambientAudioRef.current = null;
+      weatherAudioRef.current = null;
       disposeParkAmbientAudio(ambientAudio);
+      disposeParkWeatherAudio(weatherAudio);
     };
   }, []);
 
@@ -552,9 +639,35 @@ export const ParkApp = () => {
         }
         const activeSimulation = simulationRef.current;
         const activeSave = saveRef.current;
+        const calendarNowMs = Date.now();
+        const weather = resolveParkWeather(
+          weatherRuntimeRef.current!,
+          calendarNowMs,
+        );
+        const seaAmbientGain = updateParkAmbientAudioWeather(
+          ambientAudioRef.current,
+          weather.rainAmount,
+        );
+        const weatherAudio = updateParkWeatherAudio(
+          weatherAudioRef.current,
+          weather,
+          now,
+        );
+        canvas.dataset.parkWeatherAudioRain = weatherAudio.rainAmount.toFixed(3);
+        canvas.dataset.parkWeatherAudioFine = weatherAudio.fineVolume.toFixed(3);
+        canvas.dataset.parkWeatherAudioSurface = weatherAudio.surfaceVolume.toFixed(3);
+        canvas.dataset.parkWeatherAudioDownpour = weatherAudio.downpourVolume.toFixed(3);
+        canvas.dataset.parkWeatherAudioSeaGain = seaAmbientGain.toFixed(3);
+        canvas.dataset.parkWeatherAudioThunderInMs = weatherAudio.nextThunderInMs === null
+          ? ""
+          : Math.round(weatherAudio.nextThunderInMs).toString();
+        if (now - lastWeatherUiAtRef.current >= 500) {
+          lastWeatherUiAtRef.current = now;
+          setWeatherReadout(formatWeatherReadout(weather));
+        }
         measureParkRender(canvas, now, () => {
           renderParkScene(canvas, {
-            nowMs: Date.now(),
+            nowMs: calendarNowMs,
             fishingNowMs: now,
             frame: Math.floor(frame),
             objects: objectsRef.current,
@@ -569,6 +682,7 @@ export const ParkApp = () => {
             fishingSpot: parkFishingSpotById(activeSimulation?.fishingSpotId),
             displayedFish: activeSimulation?.pendingFish,
             renderProfile: renderProfileRef.current,
+            weather,
           });
         });
       }
@@ -623,6 +737,16 @@ export const ParkApp = () => {
     setActiveRenderProfile(profile);
     const label = PARK_RENDER_PROFILES.find((option) => option.id === profile)?.label;
     setDebugMessage(`渲染剖析：${label ?? profile}；此选择不会写入存档。`);
+  };
+
+  const selectWeatherPreview = (mode: ParkWeatherDebugMode) => {
+    const nowMs = Date.now();
+    setParkWeatherDebugMode(weatherRuntimeRef.current!, mode, nowMs);
+    setActiveWeatherDebugMode(mode);
+    const weather = resolveParkWeather(weatherRuntimeRef.current!, nowMs);
+    setWeatherReadout(formatWeatherReadout(weather));
+    const label = PARK_WEATHER_PREVIEWS.find((option) => option.id === mode)?.label;
+    setDebugMessage(`天气预览：${label ?? mode}；此选择不会写入存档。`);
   };
 
   const toggleMainWindowForProfile = async () => {
@@ -791,6 +915,28 @@ export const ParkApp = () => {
                     );
                   })}
                 </div>
+              </section>
+              <section className="park-debug-section" aria-label="公园天气预览">
+                <span className="park-debug-label">天气预览</span>
+                <div className="park-debug-buttons">
+                  {PARK_WEATHER_PREVIEWS.map((option) => {
+                    const isActive = option.id === activeWeatherDebugMode;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={isActive ? "active" : undefined}
+                        aria-pressed={isActive}
+                        onClick={() => selectWeatherPreview(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="park-debug-message" aria-live="polite">
+                  {weatherReadout}
+                </p>
               </section>
               <section className="park-debug-section" aria-label="公园渲染剖析">
                 <span className="park-debug-label">渲染剖析</span>

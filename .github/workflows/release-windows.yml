@@ -6,7 +6,7 @@ on:
       tag:
         description: GitHub release tag to upload Windows installers to.
         required: true
-        default: v0.4.0
+        default: v0.4.1
       ref:
         description: Git ref to build.
         required: true

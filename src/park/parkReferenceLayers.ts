@@ -8,6 +8,7 @@ import {
 
 export const PARK_REFERENCE_ASSET = "/park/hilltop-park-midday-ground.png";
 export const PARK_REFERENCE_STAMP_ASSET = "/park/hilltop-park-reference.png";
+export const PARK_WEATHER_BACKDROP_MASK_ASSET = "/park/hilltop-park-weather-backdrop-mask.png";
 export const PARK_REFERENCE_SOURCE_WIDTH = 1435;
 export const PARK_REFERENCE_SOURCE_HEIGHT = 1095;
 const PARK_REFERENCE_STAMP_SOURCE_WIDTH = 1436;
@@ -66,6 +67,7 @@ export interface ParkCliffFogSegment {
 export interface ParkReferenceLayers {
   neutralBase: HTMLCanvasElement;
   neutralBaseWithoutDistantShoreFoamAndCliffFog: HTMLCanvasElement;
+  weatherBackdropMask: HTMLCanvasElement;
   cliffFogMotionMask: HTMLCanvasElement;
   cliffFogSegments: ParkCliffFogSegment[];
   grassRippleMask: HTMLCanvasElement;
@@ -82,6 +84,7 @@ export interface ParkReferenceLayers {
   staticOccluders: ParkReferenceOccluder[];
   sun: ParkReferenceStamp;
   seaMaskPixels: number;
+  weatherBackdropMaskPixels: number;
   seaMotionMaskPixels: number;
   pondMaskPixels: number;
   pondInteriorMaskPixels: number;
@@ -1752,6 +1755,7 @@ const makeGrassRippleMask = (
 const buildLayers = (
   image: HTMLImageElement,
   stampImage: HTMLImageElement,
+  weatherBackdropImage: HTMLImageElement,
 ): ParkReferenceLayers | null => {
   const full = newCanvas(PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
   const ctx = full.getContext("2d", { willReadFrequently: true });
@@ -1778,6 +1782,17 @@ const buildLayers = (
     0,
     PARK_REFERENCE_STAMP_SOURCE_WIDTH,
     PARK_REFERENCE_STAMP_SOURCE_HEIGHT,
+    0,
+    0,
+    PARK_SCENE_WIDTH,
+    PARK_SCENE_HEIGHT,
+  );
+  const weatherBackdropMask = newCanvas(PARK_SCENE_WIDTH, PARK_SCENE_HEIGHT);
+  const weatherBackdropContext = weatherBackdropMask.getContext("2d");
+  if (!weatherBackdropContext) return null;
+  weatherBackdropContext.imageSmoothingEnabled = false;
+  weatherBackdropContext.drawImage(
+    weatherBackdropImage,
     0,
     0,
     PARK_SCENE_WIDTH,
@@ -1819,6 +1834,7 @@ const buildLayers = (
   return {
     neutralBase,
     neutralBaseWithoutDistantShoreFoamAndCliffFog,
+    weatherBackdropMask,
     cliffFogMotionMask,
     cliffFogSegments,
     grassRippleMask,
@@ -1835,6 +1851,7 @@ const buildLayers = (
     staticOccluders,
     sun: makeSunStamp(stampFull),
     seaMaskPixels: countOpaquePixels(seaMask),
+    weatherBackdropMaskPixels: countOpaquePixels(weatherBackdropMask),
     seaMotionMaskPixels: countOpaquePixels(seaMotionMask),
     pondMaskPixels: countOpaquePixels(pondMask),
     pondInteriorMaskPixels: countOpaquePixels(pondInteriorMask),
@@ -1870,8 +1887,9 @@ export const ensureParkReferenceLayers = () => {
   void Promise.all([
     loadImage(PARK_REFERENCE_ASSET),
     loadImage(PARK_REFERENCE_STAMP_ASSET),
-  ]).then(([image, stampImage]) => {
-    cachedLayers = buildLayers(image, stampImage);
+    loadImage(PARK_WEATHER_BACKDROP_MASK_ASSET),
+  ]).then(([image, stampImage, weatherBackdropImage]) => {
+    cachedLayers = buildLayers(image, stampImage, weatherBackdropImage);
     window.dispatchEvent(new CustomEvent("aivatar:park-reference-ready"));
   }).catch(() => {
     loadingStarted = false;
