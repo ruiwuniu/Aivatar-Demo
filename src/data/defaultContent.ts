@@ -431,6 +431,7 @@ export const defaultContent: AivatarContent = {
       kind: "ingredient",
       tags: ["raw-fish"],
       price: 0,
+      sellPrice: 10,
     },
     {
       id: "raw-crucian-carp",
@@ -438,6 +439,7 @@ export const defaultContent: AivatarContent = {
       kind: "ingredient",
       tags: ["raw-fish"],
       price: 0,
+      sellPrice: 6,
     },
     {
       id: "raw-bluegill",
@@ -445,6 +447,7 @@ export const defaultContent: AivatarContent = {
       kind: "ingredient",
       tags: ["raw-fish"],
       price: 0,
+      sellPrice: 8,
     },
     {
       id: "raw-yellow-perch",
@@ -452,6 +455,7 @@ export const defaultContent: AivatarContent = {
       kind: "ingredient",
       tags: ["raw-fish"],
       price: 0,
+      sellPrice: 12,
     },
     {
       id: "raw-weather-loach",
@@ -459,6 +463,7 @@ export const defaultContent: AivatarContent = {
       kind: "ingredient",
       tags: ["raw-fish"],
       price: 0,
+      sellPrice: 16,
     },
     {
       id: "raw-rainbow-trout",
@@ -466,6 +471,7 @@ export const defaultContent: AivatarContent = {
       kind: "ingredient",
       tags: ["raw-fish"],
       price: 0,
+      sellPrice: 24,
     },
     {
       id: "cooked-black-bass",

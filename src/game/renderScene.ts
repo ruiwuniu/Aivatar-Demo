@@ -4036,6 +4036,80 @@ const drawBentoEatPose = (
   drawPixelRect(ctx, x - 4, y - 11, 10, 3, body);
 };
 
+const drawCookedFishMeal = (
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  centerY: number,
+  facing: AvatarRuntime["facing"],
+) => {
+  const direction = facing === "left" ? -1 : 1;
+  const plate = "#e4d3ad";
+  const plateShade = "#b99f76";
+  const fish = "#9b512b";
+  const fishLight = "#d98a48";
+  const fishDark = "#66351f";
+
+  drawPixelRect(ctx, centerX - 14, centerY + 2, 29, 3, plateShade);
+  drawPixelRect(ctx, centerX - 12, centerY, 25, 4, plate);
+  drawPixelRect(ctx, centerX - 9, centerY - 3, 18, 6, fishDark);
+  drawPixelRect(ctx, centerX - 8, centerY - 4, 16, 6, fish);
+  drawPixelRect(ctx, centerX - 5, centerY - 3, 9, 2, fishLight);
+  drawPixelRect(ctx, centerX + direction * 5, centerY - 3, 2, 2, "#f3cf78");
+  drawPixelRect(ctx, centerX - direction * 11, centerY - 4, 4, 3, fishDark);
+  drawPixelRect(ctx, centerX - direction * 11, centerY, 4, 3, fishDark);
+};
+
+const drawCookedFishBite = (
+  ctx: CanvasRenderingContext2D,
+  plateX: number,
+  plateY: number,
+  mouthX: number,
+  mouthY: number,
+  frame: number,
+) => {
+  const progress = (Math.sin(frame / 7 - Math.PI / 2) + 1) / 2;
+  const biteX = Math.round(plateX + (mouthX - plateX) * progress);
+  const biteY = Math.round(
+    plateY + (mouthY - plateY) * progress - Math.sin(progress * Math.PI) * 4,
+  );
+  drawPixelRect(ctx, biteX - 2, biteY - 1, 5, 3, "#d98a48");
+  drawPixelRect(ctx, biteX - 1, biteY - 2, 3, 2, "#f3cf78");
+};
+
+const drawFishEatPose = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  frame: number,
+  facing: AvatarRuntime["facing"],
+  body: string,
+  bodyLight: string,
+  ink: string,
+) => {
+  if (facing === "back") return;
+
+  const sideDirection = facing === "left" ? -1 : 1;
+  const front = facing === "front";
+  const plateX = front ? x : x + sideDirection * 13;
+  const plateY = front ? y - 3 : y - 6;
+  const mouthX = front ? x : x + sideDirection * 6;
+  const mouthY = y - 12;
+
+  if (front) {
+    drawPixelRect(ctx, x - 17, y - 7, 13, 6, body);
+    drawPixelRect(ctx, x + 7, y - 7, 13, 6, body);
+    drawPixelRect(ctx, x - 14, y - 5, 9, 3, bodyLight);
+    drawPixelRect(ctx, x + 8, y - 5, 9, 3, bodyLight);
+  } else {
+    drawPixelRect(ctx, x + sideDirection * 8, y - 8, 10, 5, body);
+    drawPixelRect(ctx, x + sideDirection * 12, y - 7, 5, 3, bodyLight);
+  }
+
+  drawCookedFishMeal(ctx, plateX, plateY, facing);
+  drawCookedFishBite(ctx, plateX, plateY - 2, mouthX, mouthY, frame);
+  drawPixelRect(ctx, mouthX - 3, mouthY + 1, 7, 2, ink);
+};
+
 const drawCookieEatPose = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -4505,6 +4579,9 @@ const drawDemoSparkAvatar = (
   if (avatar.behavior === "bento") {
     drawBentoEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
+  if (avatar.behavior === "fish") {
+    drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
+  }
   if (avatar.behavior === "cookie") {
     drawCookieEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
@@ -4847,6 +4924,7 @@ const drawCuteCrayfishAvatar = (
       avatar.behavior === "cookie";
     const isTwoClawHold =
       avatar.behavior === "bento"
+      || avatar.behavior === "fish"
       || avatar.behavior === "read_task_file"
       || avatar.behavior === "read_book";
     const isSinglePropHold =
@@ -4992,7 +5070,7 @@ const drawCuteCrayfishAvatar = (
           },
         ];
       }
-      if (avatar.behavior === "bento") {
+      if (avatar.behavior === "bento" || avatar.behavior === "fish") {
         const layout = crayfishActionLayout();
         return [
           {
@@ -5218,7 +5296,7 @@ const drawCuteCrayfishAvatar = (
       ];
     }
 
-    if (avatar.behavior === "bento") {
+    if (avatar.behavior === "bento" || avatar.behavior === "fish") {
       const layout = crayfishActionLayout();
       return [
         {
@@ -5568,6 +5646,22 @@ const drawCuteCrayfishAvatar = (
       drawPixelRect(ctx, trayX + 1, trayY + 5, 22, 1, "#d7b98d");
       drawPixelRect(ctx, mouthCenterX - 2, biteY, 5, 2, "#fff8df");
       drawPixelRect(ctx, mouthCenterX + 2, biteY + 1, 3, 1, "#ff8fa3");
+      return;
+    }
+
+    if (avatar.behavior === "fish") {
+      const plateCenterX = trayX + 12;
+      const plateCenterY = trayY + 1;
+      drawCookedFishMeal(ctx, plateCenterX, plateCenterY, facing);
+      drawCookedFishBite(
+        ctx,
+        plateCenterX,
+        plateCenterY - 2,
+        mouthCenterX,
+        biteY,
+        frame,
+      );
+      drawPixelRect(ctx, mouthLeftX, mouthY + 1, 7, 1, ink);
       return;
     }
 
@@ -6196,6 +6290,9 @@ const drawMoodSlimeAvatar = (
   if (avatar.behavior === "bento") {
     drawBentoEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
+  if (avatar.behavior === "fish") {
+    drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
+  }
   if (avatar.behavior === "cookie") {
     drawCookieEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
@@ -6293,6 +6390,7 @@ const drawWaveLizardAvatar = (
     avatar.behavior === "coffee" ||
     avatar.behavior === "cola" ||
     avatar.behavior === "bento" ||
+    avatar.behavior === "fish" ||
     avatar.behavior === "cookie" ||
     avatar.behavior === "phone" ||
     avatar.behavior === "fetch_task_file" ||
@@ -6762,6 +6860,27 @@ const drawWaveLizardAvatar = (
     drawPixelRect(ctx, mouthX + (front ? 1 : side * 1), mouthY + chew, 3, 2, "#ff8fa3");
   };
 
+  const drawLizardFishPose = () => {
+    if (facing === "back") return;
+
+    const { front, side, mouthX, mouthY } = lizardMouthAnchor();
+    const bob = Math.round(Math.sin(frame / 7));
+    const plateX = front ? x : mouthX + side * 3;
+    const plateY = y - 7 + bob;
+
+    if (front) {
+      drawLizardArm(x - 8, y - 17, plateX - 11, plateY + 5, -1);
+      drawLizardArm(x + 8, y - 17, plateX + 11, plateY + 5, 1);
+    } else {
+      drawLizardArm(x + side * 8, y - 17, plateX - side * 7, plateY + 5, side);
+      drawLizardArm(x - side * 6, y - 13, plateX - side * 11, plateY + 7, -side);
+    }
+
+    drawCookedFishMeal(ctx, plateX, plateY, facing);
+    drawCookedFishBite(ctx, plateX, plateY - 2, mouthX, mouthY, frame);
+    drawPixelRect(ctx, mouthX - (front ? 3 : side * 2), mouthY + 1, 6, 2, ink);
+  };
+
   const drawLizardCookiePose = () => {
     if (facing === "back") return;
 
@@ -6902,6 +7021,9 @@ const drawWaveLizardAvatar = (
   if (avatar.behavior === "bento") {
     drawLizardBentoPose();
   }
+  if (avatar.behavior === "fish") {
+    drawLizardFishPose();
+  }
   if (avatar.behavior === "cookie") {
     drawLizardCookiePose();
   }
@@ -6974,6 +7096,7 @@ const drawCutePenguinAvatar = (
     avatar.behavior === "coffee" ||
     avatar.behavior === "cola" ||
     avatar.behavior === "bento" ||
+    avatar.behavior === "fish" ||
     avatar.behavior === "cookie" ||
     avatar.behavior === "phone" ||
     avatar.behavior === "fetch_task_file" ||
@@ -7329,6 +7452,9 @@ const drawCutePenguinAvatar = (
   }
   if (avatar.behavior === "bento") {
     drawBentoEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
+  }
+  if (avatar.behavior === "fish") {
+    drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
   if (avatar.behavior === "cookie") {
     drawCookieEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
@@ -7769,6 +7895,17 @@ const drawCuteGhostAvatar = (
       return;
     }
 
+    if (avatar.behavior === "fish") {
+      const plateX = front ? x : propX;
+      const plateY = y - 8 + bob;
+      drawGhostArm(plateX - 12, plateY + 5, -1);
+      drawGhostArm(plateX + 12, plateY + 5, 1);
+      drawCookedFishMeal(ctx, plateX, plateY, facing);
+      drawCookedFishBite(ctx, plateX, plateY - 2, mouthX, mouthY, frame);
+      drawGhostChewMouth("#d98a48");
+      return;
+    }
+
     if (avatar.behavior === "cookie") {
       const cookieX = front ? x + 4 : propX;
       const cookieY = mouthY + 6 + bob;
@@ -7889,6 +8026,7 @@ const drawCuteGhostAvatar = (
     avatar.behavior === "coffee" ||
     avatar.behavior === "cola" ||
     avatar.behavior === "bento" ||
+    avatar.behavior === "fish" ||
     avatar.behavior === "cookie" ||
     avatar.behavior === "phone" ||
     avatar.behavior === "admire" ||
@@ -8166,6 +8304,9 @@ export const drawAvatar = (
   if (avatar.behavior === "bento") {
     drawBentoEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
+  if (avatar.behavior === "fish") {
+    drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
+  }
 
   if (avatar.behavior === "cookie") {
     drawCookieEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
@@ -8435,15 +8576,11 @@ const drawFishInteractionOverlay = (
   ctx: CanvasRenderingContext2D,
   avatar: AvatarRuntime,
   interaction: FurnitureInteractionState | null | undefined,
-  frame: number,
   renderPass: "behind-avatar" | "front-avatar",
   cookingPose: FishCookingTossPose | null = null,
 ) => {
   if (!interaction?.itemId) return;
   const rawFishPalette = rawFishCookingPalettes[interaction.itemId];
-  const cookedFish = interaction.itemId === "cooked-black-bass" || interaction.itemId === "cooked-crucian-carp";
-  const x = Math.round(avatar.x);
-  const y = Math.round(avatar.y);
   if (interaction.kind === "cook" && rawFishPalette && cookingPose) {
     const panBehindAvatar = avatar.facing === "back";
     if (
@@ -8454,13 +8591,6 @@ const drawFishInteractionOverlay = (
     } else if (panBehindAvatar && renderPass === "front-avatar") {
       drawCookingPan(ctx, avatar, cookingPose, rawFishPalette, true);
     }
-    return;
-  }
-  if (renderPass === "front-avatar" && interaction.kind === "feed" && cookedFish) {
-    const chew = Math.round(Math.sin(frame / 2) * 2);
-    drawPixelRect(ctx, x - 14, y - 24 + chew, 29, 4, "#e4d3ad");
-    drawPixelRect(ctx, x - 10, y - 30 + chew, 20, 8, "#9b512b");
-    drawPixelRect(ctx, x + 8, y - 28 + chew, 7, 5, "#c77936");
   }
 };
 
@@ -10219,6 +10349,11 @@ const tableCoffeeCupFillSet = (
 const placedItemYSort = (left: PlacedItem, right: PlacedItem) =>
   left.y - right.y || left.x - right.x || left.id.localeCompare(right.id);
 
+const placedItemDepthSort = (left: PlacedItem, right: PlacedItem) =>
+  placedItemDepthY(left) - placedItemDepthY(right) ||
+  left.x - right.x ||
+  left.id.localeCompare(right.id);
+
 const createPlacedItemRenderCache = (
   content: AivatarContent,
   tableCoffeeQuantity: number,
@@ -10247,7 +10382,7 @@ const createPlacedItemRenderCache = (
     }
   });
 
-  depthSortedPlacedItems.sort(placedItemYSort);
+  depthSortedPlacedItems.sort(placedItemDepthSort);
   wallPlacedItems.sort(placedItemYSort);
   floorUnderlayItems.sort(placedItemYSort);
   surfaceItemsByFurnitureId.forEach((items) => items.sort(placedItemYSort));
@@ -10287,7 +10422,7 @@ const drawPlacedItems = (
         (item) =>
           !isFloorUnderlayItem(item.itemId) && !isWallPlacedItem(content, item),
       )
-      .sort(placedItemYSort);
+      .sort(placedItemDepthSort);
 
   depthSortedPlacedItems
     .forEach((item) => {
@@ -10373,7 +10508,7 @@ const drawPlacedItemsInFrontOfForegroundFurniture = (
         (item) =>
           !isFloorUnderlayItem(item.itemId) && !isWallPlacedItem(content, item),
       )
-      .sort(placedItemYSort);
+      .sort(placedItemDepthSort);
 
   depthSortedPlacedItems
     .forEach((item) => {
@@ -13221,7 +13356,6 @@ const drawAvatarRenderLayer = (
       ctx,
       cookingRender.runtime,
       activeInteraction,
-      frame,
       "behind-avatar",
       cookingRender.pose,
     );
@@ -13239,7 +13373,6 @@ const drawAvatarRenderLayer = (
       ctx,
       cookingRender.runtime,
       activeInteraction,
-      frame,
       "front-avatar",
       cookingRender.pose,
     );

@@ -253,7 +253,7 @@ const normalizeSnapshot = (value: unknown): AivatarRoomsSnapshot => {
 export const ParkApp = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [hostSlotId] = useState(initialHostSlotId);
-  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(true);
   const [debugMessage, setDebugMessage] = useState("");
   const [activeRenderProfile, setActiveRenderProfile] =
     useState<ParkRenderProfile>("full");

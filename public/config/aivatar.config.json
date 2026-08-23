@@ -428,42 +428,48 @@
       "name": "Raw Black Bass",
       "kind": "ingredient",
       "tags": ["raw-fish"],
-      "price": 0
+      "price": 0,
+      "sellPrice": 10
     },
     {
       "id": "raw-crucian-carp",
       "name": "Raw Crucian Carp",
       "kind": "ingredient",
       "tags": ["raw-fish"],
-      "price": 0
+      "price": 0,
+      "sellPrice": 6
     },
     {
       "id": "raw-bluegill",
       "name": "Raw Bluegill",
       "kind": "ingredient",
       "tags": ["raw-fish"],
-      "price": 0
+      "price": 0,
+      "sellPrice": 8
     },
     {
       "id": "raw-yellow-perch",
       "name": "Raw Yellow Perch",
       "kind": "ingredient",
       "tags": ["raw-fish"],
-      "price": 0
+      "price": 0,
+      "sellPrice": 12
     },
     {
       "id": "raw-weather-loach",
       "name": "Raw Weather Loach",
       "kind": "ingredient",
       "tags": ["raw-fish"],
-      "price": 0
+      "price": 0,
+      "sellPrice": 16
     },
     {
       "id": "raw-rainbow-trout",
       "name": "Raw Rainbow Trout",
       "kind": "ingredient",
       "tags": ["raw-fish"],
-      "price": 0
+      "price": 0,
+      "sellPrice": 24
     },
     {
       "id": "cooked-black-bass",

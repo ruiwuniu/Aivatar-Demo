@@ -7286,6 +7286,28 @@ input[type="range"]::-moz-range-thumb {
   min-width: 44px;
 }
 
+.pixel-button.inventory-item-selected {
+  outline: 2px solid currentColor;
+  outline-offset: -3px;
+}
+
+.inventory-sell-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  border: 2px solid currentColor;
+  font-size: 10px;
+}
+
+.inventory-sell-actions > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .item-button-thumbnail {
   position: relative;
   width: 18px;

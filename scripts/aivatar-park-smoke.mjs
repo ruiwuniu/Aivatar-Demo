@@ -789,14 +789,50 @@ const expectedFishWeights = new Map([
   ["raw-weather-loach", 11],
   ["raw-rainbow-trout", 8],
 ]);
+const expectedFishSellPrices = new Map([
+  ["raw-crucian-carp", 6],
+  ["raw-bluegill", 8],
+  ["raw-black-bass", 10],
+  ["raw-yellow-perch", 12],
+  ["raw-weather-loach", 16],
+  ["raw-rainbow-trout", 24],
+]);
 for (const [fishId, weight] of expectedFishWeights) {
+  const sellPrice = expectedFishSellPrices.get(fishId);
   assert.match(
     probabilityText,
     new RegExp(`\\{ id: "${fishId}", weight: ${weight} \\}`),
   );
+  assert.equal(
+    config.itemDefinitions.find((item) => item.id === fishId)?.sellPrice,
+    sellPrice,
+  );
+  assert.match(
+    defaultContentText,
+    new RegExp(`id: "${fishId}"[\\s\\S]{0,180}sellPrice: ${sellPrice}`),
+  );
   assert.match(appText, new RegExp(`"${fishId}"`));
   assert.match(fishingAnimationText, new RegExp(`"${fishId}": "/park/fish/`));
   assert.match(storageText, new RegExp(`"${fishId}":`));
+}
+assert.match(typesText, /sellPrice\?: number/);
+assert.match(appText, /const sellRawFish = \(item: ItemDefinition\)/);
+assert.match(appText, /selectedRawFishItemId/);
+assert.match(appText, /className="inventory-sell-actions"/);
+assert.doesNotMatch(appText, /x\{quantity\}[\s\S]{0,80}actionLabel/);
+assert.match(typesText, /\| "fish"/);
+assert.match(appText, /item\.id\.startsWith\("cooked-"\)[\s\S]{0,80}\? "fish"/);
+assert.match(appText, /activeBehavior === "fish"/);
+assert.match(avatarRendererText, /const drawCookedFishMeal =/);
+assert.match(avatarRendererText, /const drawCookedFishBite =/);
+assert.match(avatarRendererText, /const drawFishEatPose =/);
+assert.doesNotMatch(avatarRendererText, /interaction\.kind === "feed" && cookedFish/);
+const fishRarityOrder = Array.from(expectedFishWeights.keys());
+for (let index = 1; index < fishRarityOrder.length; index += 1) {
+  const moreCommonFish = fishRarityOrder[index - 1];
+  const rarerFish = fishRarityOrder[index];
+  assert(expectedFishWeights.get(moreCommonFish) > expectedFishWeights.get(rarerFish));
+  assert(expectedFishSellPrices.get(moreCommonFish) < expectedFishSellPrices.get(rarerFish));
 }
 assert.equal(
   Array.from(expectedFishWeights.values()).reduce((total, weight) => total + weight, 0),
@@ -1685,6 +1721,16 @@ assert.match(
   avatarRendererText,
   /\.filter\(\(furniture\) => shouldRestorePlacedItemOverFurniture\(item, furniture\)\)\s*\.filter\(\(furniture\) => itemDepth >= furnitureDepthY\(furniture\)\)/,
   "bed-family easel restoration must retain the existing item-versus-furniture depth gate",
+);
+assert.match(
+  avatarRendererText,
+  /const placedItemDepthSort = \(left: PlacedItem, right: PlacedItem\) =>\s*placedItemDepthY\(left\) - placedItemDepthY\(right\)/,
+  "floor placed items must use their visual foot depth instead of incompatible raw anchors",
+);
+assert.equal(
+  (avatarRendererText.match(/\.sort\(placedItemDepthSort\)/g) ?? []).length,
+  3,
+  "the cached and fallback floor-item render paths must share one depth comparator",
 );
 assert.match(appText, /consumeFurnitureStorageItem\([\s\S]*"fridge"/);
 assert.match(tauriText, /inner_size\(1180\.0, 900\.0\)/);

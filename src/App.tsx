@@ -415,7 +415,7 @@ const DEFAULT_SCENE_PANEL_WIDTH =
   DEFAULT_EXPANDED_WINDOW_WIDTH - APP_HORIZONTAL_PADDING - APP_GRID_GAP - SIDE_PANEL_WIDTH;
 const COLLAPSED_WINDOW_MIN_WIDTH = DEFAULT_SCENE_PANEL_WIDTH + APP_HORIZONTAL_PADDING;
 const DEFAULT_WINDOW_HEIGHT = 520;
-const SHOW_DEBUG_CARD = false;
+const SHOW_DEBUG_CARD = true;
 const EXPANDED_WINDOW_MIN_WIDTH = 720;
 const COLLAPSED_WINDOW_CLIENT_WIDTH_GUARD = 2;
 const COLLAPSED_WINDOW_RESIZE_RETRY_DELAY_MS = 50;
@@ -552,6 +552,7 @@ const DEMO_BEHAVIORS: BehaviorName[] = [
   "coffee",
   "cola",
   "bento",
+  "fish",
   "cookie",
   "brew",
   "relax",
@@ -1630,10 +1631,10 @@ const behaviorForConsumable = (item: Pick<ItemDefinition, "id">): BehaviorName =
       ? "cola"
       : item.id === BENTO_ITEM_ID
         ? "bento"
-        : item.id === COOKIE_ITEM_ID
+          : item.id === COOKIE_ITEM_ID
           ? "cookie"
           : item.id.startsWith("cooked-")
-            ? "bento"
+            ? "fish"
         : "interact";
 
 const foodPreferenceScoreForConsumable = (
@@ -2497,7 +2498,7 @@ const placementTargetLabel = (
 };
 
 const itemSellValue = (item: ItemDefinition | null | undefined) =>
-  item ? Math.max(1, Math.floor(item.price / 2)) : 0;
+  item ? Math.max(1, Math.floor(item.sellPrice ?? item.price / 2)) : 0;
 
 const findItemDefinition = (content: AivatarContent, itemId: string) =>
   content.itemDefinitions.find((item) => item.id === itemId) ??
@@ -3749,6 +3750,7 @@ export const App = () => {
     useState<ShopCategoryId>("furniture");
   const [activeDecorSurfaceCategory, setActiveDecorSurfaceCategory] =
     useState<DecorSurfaceCategoryId>("wallpaper");
+  const [selectedRawFishItemId, setSelectedRawFishItemId] = useState<string | null>(null);
   const [decorPanelOpen, setDecorPanelOpen] = useState(false);
   const [paintingGalleryPanelOpen, setPaintingGalleryPanelOpen] = useState(false);
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
@@ -3758,7 +3760,7 @@ export const App = () => {
   const [integrationsPanelOpen, setIntegrationsPanelOpen] = useState(false);
   const [taskCabinetPanelOpen, setTaskCabinetPanelOpen] = useState(false);
   const [launcherPanelOpen, setLauncherPanelOpen] = useState(false);
-  const [debugPanelOpen, setDebugPanelOpen] = useState(false);
+  const [debugPanelOpen, setDebugPanelOpen] = useState(true);
   const [navDebugOverlay, setNavDebugOverlay] = useState(false);
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
   const [sidePanelAnimating, setSidePanelAnimating] = useState(false);
@@ -6907,7 +6909,10 @@ export const App = () => {
     const isRecordPlayerAnimating = isRecordPlayerAnimatingForAudio();
     const isColaSipping = activeBehavior === "cola";
     const isCoffeeSipping = activeBehavior === "coffee";
-    const isFoodEating = activeBehavior === "bento" || activeBehavior === "cookie";
+    const isFoodEating =
+      activeBehavior === "bento" ||
+      activeBehavior === "fish" ||
+      activeBehavior === "cookie";
     const isSleepingForAudio = avatar.behavior === "sleep" && !avatar.actionIntent;
     const activeCookingInteraction =
       activeInteraction?.kind === "cook" ? activeInteraction : null;
@@ -8956,6 +8961,64 @@ export const App = () => {
     .filter((entry): entry is InventoryEntry & { item: ItemDefinition } =>
       Boolean(entry.item),
     );
+  const selectedRawFishInventoryItem = selectedRawFishItemId
+    ? inventoryItems.find(
+        (entry) =>
+          entry.item.id === selectedRawFishItemId &&
+          entry.item.tags?.includes("raw-fish"),
+      ) ?? null
+    : null;
+
+  const sellRawFish = (item: ItemDefinition) => {
+    if (!item.tags?.includes("raw-fish")) return;
+    if (
+      getFurnitureStorageQuantity(
+        saveRef.current.furnitureStorage,
+        "fridge",
+        item.id,
+      ) <= 0
+    ) {
+      return;
+    }
+
+    const bitsEarned = itemSellValue(item);
+    const quantityBeforeSale = getFurnitureStorageQuantity(
+      saveRef.current.furnitureStorage,
+      "fridge",
+      item.id,
+    );
+    setSave((current) => {
+      if (
+        getFurnitureStorageQuantity(current.furnitureStorage, "fridge", item.id) <= 0
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        wallet: { ...current.wallet, bits: current.wallet.bits + bitsEarned },
+        furnitureStorage: consumeFurnitureStorageItem(
+          current.furnitureStorage,
+          "fridge",
+          item.id,
+        ),
+      };
+    });
+    if (quantityBeforeSale <= 1) {
+      setSelectedRawFishItemId(null);
+    }
+    updateActiveInteraction({
+      kind: "none",
+      furnitureId: "fridge",
+      furnitureName: ui("action.sell", { value: bitsEarned }),
+      message: ui("message.itemSold", {
+        name: item.name,
+        bits: bitsEarned,
+      }),
+      startedAt: performance.now(),
+      bubbleText: `+${bitsEarned}`,
+    });
+  };
 
   const applyItem = (item: ItemDefinition) => {
     if (item.tags?.includes("wall-surface")) {
@@ -15261,22 +15324,53 @@ export const App = () => {
             </span>
           </div>
           <div className="button-grid">
-            {inventoryItems.map(({ item, quantity }) => (
+            {inventoryItems.map(({ item, quantity }) => {
+              const rawFish = item.tags?.includes("raw-fish") ?? false;
+              const selectedRawFish = rawFish && selectedRawFishItemId === item.id;
+              const inventoryLabel = `${item.name} x${quantity}`;
+
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`pixel-button${
+                    selectedRawFish ? " inventory-item-selected" : ""
+                  }`}
+                  aria-label={inventoryLabel}
+                  aria-pressed={rawFish ? selectedRawFish : undefined}
+                  title={inventoryLabel}
+                  onClick={() =>
+                    rawFish
+                      ? setSelectedRawFishItemId((current) =>
+                          current === item.id ? null : item.id,
+                        )
+                      : applyItem(item)
+                  }
+                >
+                  <span className="item-button-content">
+                    <ItemThumbnail itemId={item.id} />
+                    <span>x{quantity}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {selectedRawFishInventoryItem ? (
+            <div className="inventory-sell-actions" role="group" aria-label={selectedRawFishInventoryItem.item.name}>
+              <span>
+                {selectedRawFishInventoryItem.item.name} x{selectedRawFishInventoryItem.quantity}
+              </span>
               <button
-                key={item.id}
                 type="button"
                 className="pixel-button"
-                aria-label={`${item.name} x${quantity}`}
-                title={`${item.name} x${quantity}`}
-                onClick={() => applyItem(item)}
+                onClick={() => sellRawFish(selectedRawFishInventoryItem.item)}
               >
-                <span className="item-button-content">
-                  <ItemThumbnail itemId={item.id} />
-                  <span>x{quantity}</span>
-                </span>
+                {ui("action.sell", {
+                  value: itemSellValue(selectedRawFishInventoryItem.item),
+                })}
               </button>
-            ))}
-          </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="control-section">

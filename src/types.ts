@@ -97,6 +97,7 @@ export type BehaviorName =
   | "coffee"
   | "cola"
   | "bento"
+  | "fish"
   | "cookie"
   | "brew"
   | "relax"
@@ -331,6 +332,7 @@ export interface ItemDefinition {
   name: string;
   kind: "food" | "drink" | "ingredient" | "tool" | "decor" | "furniture" | "window";
   price: number;
+  sellPrice?: number;
   unlockLevel?: number;
   tags?: ContentTag[];
   placementSurfaces?: PlacementSurface[];
