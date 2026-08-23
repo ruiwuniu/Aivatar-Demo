@@ -1094,6 +1094,7 @@ const normalizeStatus = (value) => {
   return {
     agent: typeof value.agent === "string" ? value.agent : "codex",
     sessionId: typeof value.sessionId === "string" ? value.sessionId : undefined,
+    rewardId: typeof value.rewardId === "string" ? value.rewardId : undefined,
     status,
     phase: typeof value.phase === "string" ? value.phase : status,
     task: typeof value.task === "string" ? value.task : undefined,
@@ -1429,6 +1430,7 @@ const spawnClaudeLearningWorker = async (status, digest) => {
 const sessionLearningStatus = (status, learning) => ({
   agent: "claude-code",
   sessionId: status.sessionId ?? "claude-code-desktop",
+  rewardId: status.rewardId,
   status: status.status === "error" ? "error" : "complete",
   phase: "session-learning",
   task: status.summary ?? status.message ?? "Claude Code turn complete",
@@ -1722,6 +1724,9 @@ const normalizeClaudeHookStatus = (input, statusLine) => {
     phase = "notification";
   }
   const sessionId = claudeSessionId(input);
+  const timestamp = new Date().toISOString();
+  const terminal = status === "complete" || status === "error";
+  const turnId = firstObjectString(input, ["turn_id", "message_id"]);
   const label = claudeSurfaceLabel(input);
   const tool = firstObjectString(input, ["tool_name"]);
   const message =
@@ -1763,6 +1768,9 @@ const normalizeClaudeHookStatus = (input, statusLine) => {
   const payload = {
     agent: "claude-code",
     sessionId,
+    rewardId: terminal
+      ? `claude-code:${sessionId}:${turnId ?? timestamp}`
+      : undefined,
     status,
     phase,
     task: message,
@@ -1771,7 +1779,7 @@ const normalizeClaudeHookStatus = (input, statusLine) => {
     message,
     severity:
       status === "error" ? "error" : status === "waiting_for_user" ? "warning" : "info",
-    timestamp: new Date().toISOString(),
+    timestamp,
     usage,
     idleBubbleCandidates: claudeIdleBubbles(input),
   };
@@ -2406,11 +2414,26 @@ const httpServer = http.createServer(async (request, response) => {
         });
         return;
       }
-      const effectiveStatus = preserveClaudeSessionEndStatus(
+      let effectiveStatus = preserveClaudeSessionEndStatus(
         event,
         nextStatus,
         existing,
       );
+      if (
+        existing &&
+        isTerminalSessionStatus(existing) &&
+        isTerminalSessionStatus(effectiveStatus) &&
+        event !== "UserPromptSubmit"
+      ) {
+        effectiveStatus = {
+          ...existing,
+          presenceTimestamp:
+            effectiveStatus.presenceTimestamp ?? existing.presenceTimestamp,
+          idleBubbleCandidates:
+            effectiveStatus.idleBubbleCandidates ?? existing.idleBubbleCandidates,
+          learning: effectiveStatus.learning ?? existing.learning,
+        };
+      }
       const terminal =
         event !== "SessionEnd" &&
         (effectiveStatus.status === "complete" ||
@@ -2457,10 +2480,12 @@ const httpServer = http.createServer(async (request, response) => {
           sessionLearningStatus(effectiveStatus, fallbackLearning),
         );
         currentStatus = withSessionExpiry({
-          ...learningStatus,
+          ...currentStatus,
           presenceTimestamp:
             learningStatus.presenceTimestamp ?? currentStatus.presenceTimestamp,
-          usage: learningStatus.usage ?? currentStatus.usage,
+          idleBubbleCandidates:
+            learningStatus.idleBubbleCandidates ?? currentStatus.idleBubbleCandidates,
+          learning: learningStatus.learning ?? currentStatus.learning,
         });
         sessions.set(sessionKey(currentStatus), currentStatus);
         pruneSessionOverflow();
@@ -2512,7 +2537,16 @@ const httpServer = http.createServer(async (request, response) => {
         });
         return;
       }
-      currentStatus = isClaudeDesktopInventoryStatus(nextStatus)
+      currentStatus = nextStatus.phase === "session-learning" && existing
+        ? {
+            ...existing,
+            presenceTimestamp:
+              nextStatus.presenceTimestamp ?? existing.presenceTimestamp,
+            idleBubbleCandidates:
+              nextStatus.idleBubbleCandidates ?? existing.idleBubbleCandidates,
+            learning: nextStatus.learning ?? existing.learning,
+          }
+        : isClaudeDesktopInventoryStatus(nextStatus)
         ? mergeClaudeDesktopInventoryStatus(nextStatus, existing)
         : {
             ...nextStatus,

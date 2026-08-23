@@ -817,6 +817,12 @@ for (const [fishId, weight] of expectedFishWeights) {
 }
 assert.match(typesText, /sellPrice\?: number/);
 assert.match(appText, /const sellRawFish = \(item: ItemDefinition\)/);
+assert.match(appText, /const BITS_EARN_AUDIO_SRC = "\/audio\/card-room-chip-payout\.mp3"/);
+assert.match(appText, /const playBitsEarnSound = \(\) =>/);
+assert.match(
+  appText,
+  /const sellRawFish = \(item: ItemDefinition\)[\s\S]*?playBitsEarnSound\(\);[\s\S]*?updateActiveInteraction\(/,
+);
 assert.match(appText, /selectedRawFishItemId/);
 assert.match(appText, /className="inventory-sell-actions"/);
 assert.doesNotMatch(appText, /x\{quantity\}[\s\S]{0,80}actionLabel/);
@@ -1419,19 +1425,65 @@ assert.match(
 );
 assert.match(fishingAnimationText, /crayfishUsesAvatarClaw: true/);
 assert.match(avatarRendererText, /heldPropGrip\?: AvatarHeldPropGrip/);
+assert.match(avatarRendererText, /heldPropOverlayOnly\?: boolean/);
 assert.match(avatarRendererText, /if \(heldPropGrip\) \{/);
 assert.match(avatarRendererText, /clawRotation: grip\.angle/);
 assert.match(avatarRendererText, /const supportGripDistance = 10/);
 assert.match(avatarRendererText, /const supportClaw = fishingClawPose/);
 assert.match(avatarRendererText, /return \[supportClaw, leadClaw\]/);
+assert.match(avatarRendererText, /const drawPenguinFishingFlippers = \(leadGrip: AvatarHeldPropGrip\)/);
+assert.match(avatarRendererText, /const supportGrip: AvatarHeldPropGrip = \{/);
+assert.match(
+  avatarRendererText,
+  /if \(isSide\) \{\s*drawGripFlipper\(x \+ sideDirection, y - 17, leadGrip, sideDirection\);\s*return;\s*\}/,
+  "a side-facing penguin must root its only visible grip flipper at the chest color boundary",
+);
+assert.match(
+  avatarRendererText,
+  /drawGripFlipper\(x - 13, y - 15, supportGrip, -1\);\s*drawGripFlipper\(x \+ 13, y - 15, leadGrip, 1\);/,
+  "a front-facing penguin must root both grip flippers at the belly color boundaries",
+);
+assert.match(
+  avatarRendererText,
+  /if \(heldPropOverlayOnly\) \{\s*if \(heldPropGrip\) drawPenguinFishingFlippers\(heldPropGrip\);\s*return;\s*\}/,
+  "the penguin grip must support a dedicated foreground overlay pass",
+);
+assert.match(
+  avatarRendererText,
+  /drawCutePenguinAvatar\([\s\S]*?options\.heldPropGrip/,
+  "the penguin renderer must receive the shared fishing grip",
+);
 assert.match(
   fishingAnimationText,
   /appearanceId === "cute-crayfish" \? 20 : 13/,
   "the crayfish rod handle must provide room for both native claws",
 );
-assert.match(rendererText, /if \(crayfishGrip\) drawFishing\(\);/);
-assert.match(rendererText, /\{ heldPropGrip: crayfishGrip \}/);
-assert.match(rendererText, /if \(!crayfishGrip\) drawFishing\(\);/);
+assert.match(
+  rendererText,
+  /const fishingGripAppearanceId =\s*options\.avatarAppearanceId === "cute-crayfish" \|\|\s*options\.avatarAppearanceId === "cute-penguin"/,
+  "crayfish claws and penguin flippers must share the animated fishing grip",
+);
+assert.match(rendererText, /if \(crayfishFishingGrip\) drawFishing\(\);/);
+assert.match(rendererText, /\{ heldPropGrip: avatarFishingGrip \}/);
+assert.match(
+  rendererText,
+  /if \(penguinFishingGrip\) \{\s*drawFishing\(\);[\s\S]*?heldPropOverlayOnly: true/,
+  "the park must draw the penguin body, then rod, then foreground gripping flipper overlay",
+);
+assert.match(rendererText, /else if \(!crayfishFishingGrip\) \{\s*drawFishing\(\);/);
+assert.match(
+  animationPreviewText,
+  /appearanceId === "cute-crayfish" \|\| appearanceId === "cute-penguin"/,
+  "the animation preview must expose the same penguin fishing grip as the main park",
+);
+assert.match(animationPreviewText, /if \(crayfishFishingGrip\) drawFishing\(\);/);
+assert.match(animationPreviewText, /\{ heldPropGrip: avatarFishingGrip \}/);
+assert.match(
+  animationPreviewText,
+  /if \(penguinFishingGrip\) \{\s*drawFishing\(\);[\s\S]*?heldPropOverlayOnly: true/,
+  "the action preview must use the same penguin body, rod, and foreground flipper ordering",
+);
+assert.match(animationPreviewText, /else if \(!crayfishFishingGrip\) \{\s*drawFishing\(\);/);
 assert.match(animationPreviewText, /resolveParkFishingGrip/);
 assert.match(animationPreviewText, /\{ heldPropGrip: crayfishGrip \}/);
 assert.match(fishingAnimationText, /quadraticCurveTo\(control\.x, control\.y, tip\.x, tip\.y\)/);

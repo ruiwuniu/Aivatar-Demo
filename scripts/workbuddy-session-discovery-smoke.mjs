@@ -172,6 +172,47 @@ try {
   assert.equal(coding.usage.totalTokens, 3500);
   assert.equal(coding.usage.inputTokens, 3500);
   assert.equal(coding.usage.contextTokens, 4500);
+  assert.match(coding.rewardId, /^workbuddy:coding-session:/);
+
+  const repeatedPayloads = await discoverWorkbuddyOnce({
+    DatabaseSync,
+    configDir: tempDir,
+    states,
+    now: now + 1000,
+    post: false,
+  });
+  assert.equal(
+    repeatedPayloads.some((payload) => payload.sessionId === "coding-session"),
+    false,
+    "an unchanged terminal row must not emit a second rewardable completion",
+  );
+  const lockedCodingState = states.get("coding-session");
+  assert.equal(lockedCodingState.terminalReward.rewardId, coding.rewardId);
+  assert.equal(lockedCodingState.terminalReward.usage.scope, "since-baseline");
+  assert.equal(lockedCodingState.terminalReward.usage.totalTokens, 3500);
+
+  const restartedCoding = buildWorkbuddyStatusPayload(
+    {
+      id: "coding-session",
+      title: "Coding task",
+      status: "completed",
+      sourceMode: "coding",
+      createdAt: now - 4000,
+      updatedAt: now - 1000,
+      lastActivityAt: now - 1000,
+      usageUpdatedAt: now + 5000,
+      used: 5000,
+      size: 200000,
+    },
+    undefined,
+    { baselineUsed: 1000 },
+    now + 5000,
+  );
+  assert.equal(
+    restartedCoding.rewardId,
+    coding.rewardId,
+    "usage-only updates after a restart must keep the same completion identity",
+  );
 
   const terminatedLive = buildWorkbuddyStatusPayload(
     {

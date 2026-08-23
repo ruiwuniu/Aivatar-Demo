@@ -323,8 +323,19 @@ export const buildWorkbuddyStatusPayload = (
   const title = titleForRow(row);
   const rawStatus = compactText(row.status, 40) || "pending";
   const timestampMs = rowActivityMs(row) || Date.now();
+  const terminalTimestampMs = Math.max(
+    0,
+    timestampMsFromValue(row.updatedAt) ?? 0,
+    timestampMsFromValue(row.lastActivityAt) ?? 0,
+    timestampMsFromValue(row.createdAt) ?? 0,
+  );
+  const candidateTimestamp = timestampIsoFromMs(
+    classification.rewardTerminal && terminalTimestampMs > 0
+      ? terminalTimestampMs
+      : timestampMs,
+  );
   const used = nonNegativeNumber(row.used);
-  const usage = (() => {
+  let usage = (() => {
     if (classification.rewardTerminal) {
       const baseline = nonNegativeNumber(state.baselineUsed);
       if (baseline !== undefined && used !== undefined && used > baseline) {
@@ -333,6 +344,23 @@ export const buildWorkbuddyStatusPayload = (
     }
     return workbuddyUsage(row, "context-window");
   })();
+  let timestamp = candidateTimestamp;
+  let rewardId;
+  if (classification.rewardTerminal) {
+    if (state.terminalReward) {
+      usage = state.terminalReward.usage;
+      timestamp = state.terminalReward.timestamp;
+      rewardId = state.terminalReward.rewardId;
+    } else {
+      rewardId = `workbuddy:${row.id}:${candidateTimestamp}`;
+      state.terminalReward = {
+        status: classification.status,
+        timestamp: candidateTimestamp,
+        rewardId,
+        usage,
+      };
+    }
+  }
 
   const model = compactText(row.model, 40);
   const detailParts = [
@@ -345,6 +373,7 @@ export const buildWorkbuddyStatusPayload = (
   return {
     agent: WORKBUDDY_AGENT,
     sessionId: row.id,
+    ...(rewardId ? { rewardId } : {}),
     status: classification.status,
     phase: classification.phase,
     task: `${label}: ${title}`,
@@ -353,7 +382,7 @@ export const buildWorkbuddyStatusPayload = (
     progress: classification.progress,
     message: `${label}: ${title}`,
     severity: classification.severity,
-    timestamp: timestampIsoFromMs(timestampMs),
+    timestamp,
     presenceTimestamp: timestampIsoFromMs(
       timestampMsFromValue(sidecar?.updatedAt) ?? timestampMs,
     ),
@@ -371,13 +400,15 @@ export const updateWorkbuddySessionState = (row, payload, state = {}) => {
     payload.status === "executing" ||
     payload.status === "waiting_for_user"
   ) {
-    if (used !== undefined && state.baselineUsed === undefined) {
+    if (state.lastStatus === "complete" || state.lastStatus === "error") {
+      state.baselineUsed = used;
+      state.terminalReward = undefined;
+    } else if (used !== undefined && state.baselineUsed === undefined) {
       state.baselineUsed = used;
     }
-  } else if (payload.status === "complete" || payload.status === "error") {
-    state.baselineUsed = undefined;
   } else if (payload.status === "idle") {
     state.baselineUsed = undefined;
+    state.terminalReward = undefined;
   }
   state.lastUsed = used;
   state.lastStatus = payload.status;
@@ -482,6 +513,7 @@ export const readWorkbuddySidecars = async (configDir = workbuddyHome()) => {
 const payloadKey = (payload) =>
   [
     payload.sessionId,
+    payload.rewardId,
     payload.status,
     payload.phase,
     payload.timestamp,

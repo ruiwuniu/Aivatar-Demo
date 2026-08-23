@@ -50,6 +50,9 @@ struct SessionState {
     last_payload_key: Option<String>,
     last_status: Option<String>,
     last_used: Option<u64>,
+    terminal_timestamp: Option<String>,
+    terminal_usage: Option<Value>,
+    terminal_reward_id: Option<String>,
 }
 
 struct Classification {
@@ -557,6 +560,18 @@ fn build_payload(
         0 => now,
         value => value,
     };
+    let terminal_timestamp_ms = row
+        .updated_at
+        .unwrap_or_default()
+        .max(row.last_activity_at.unwrap_or_default())
+        .max(row.created_at.unwrap_or_default());
+    let candidate_timestamp = iso_from_ms(if classification.reward_terminal
+        && terminal_timestamp_ms > 0
+    {
+        terminal_timestamp_ms
+    } else {
+        timestamp_ms
+    });
     let raw_status =
         compact_text(row.status.as_deref(), 40).unwrap_or_else(|| "pending".to_string());
     let mut detail = vec![format!("{label} area"), format!("Workbuddy {raw_status}")];
@@ -567,7 +582,7 @@ fn build_payload(
         detail.push(cwd);
     }
 
-    let usage = if classification.reward_terminal {
+    let mut usage = if classification.reward_terminal {
         if let (Some(baseline), Some(used)) = (state.baseline_used, row.used) {
             if used > baseline {
                 usage_value(row, "since-baseline", Some(used - baseline))
@@ -580,10 +595,29 @@ fn build_payload(
     } else {
         usage_value(row, "context-window", None)
     };
+    let mut timestamp = candidate_timestamp.clone();
+    let mut reward_id = None;
+    if classification.reward_terminal {
+        if let (Some(locked_timestamp), Some(locked_reward_id)) = (
+            state.terminal_timestamp.as_ref(),
+            state.terminal_reward_id.as_ref(),
+        ) {
+            timestamp = locked_timestamp.clone();
+            reward_id = Some(locked_reward_id.clone());
+            usage = state.terminal_usage.clone();
+        } else {
+            let id = format!("workbuddy:{}:{candidate_timestamp}", row.id);
+            state.terminal_timestamp = Some(candidate_timestamp.clone());
+            state.terminal_reward_id = Some(id.clone());
+            state.terminal_usage = usage.clone();
+            reward_id = Some(id);
+        }
+    }
 
     let mut payload = json!({
         "agent": AGENT,
         "sessionId": row.id,
+        "rewardId": reward_id,
         "status": classification.status,
         "phase": classification.phase,
         "task": format!("{label}: {title}"),
@@ -592,7 +626,7 @@ fn build_payload(
         "progress": classification.progress,
         "message": format!("{label}: {title}"),
         "severity": classification.severity,
-        "timestamp": iso_from_ms(timestamp_ms),
+        "timestamp": timestamp,
         "presenceTimestamp": iso_from_ms(sidecar.and_then(|value| value.updated_at).unwrap_or(timestamp_ms)),
         "expiresAt": expires_from_ms(timestamp_ms),
         "source": USAGE_SOURCE,
@@ -605,14 +639,19 @@ fn build_payload(
     }
 
     if classification.active {
-        if row.used.is_some() && state.baseline_used.is_none() {
+        if matches!(state.last_status.as_deref(), Some("complete" | "error")) {
+            state.baseline_used = row.used;
+            state.terminal_timestamp = None;
+            state.terminal_usage = None;
+            state.terminal_reward_id = None;
+        } else if row.used.is_some() && state.baseline_used.is_none() {
             state.baseline_used = row.used;
         }
-    } else if classification.status == "complete"
-        || classification.status == "error"
-        || classification.status == "idle"
-    {
+    } else if classification.status == "idle" {
         state.baseline_used = None;
+        state.terminal_timestamp = None;
+        state.terminal_usage = None;
+        state.terminal_reward_id = None;
     }
     state.last_status = Some(classification.status.to_string());
     state.last_used = row.used;
@@ -627,9 +666,13 @@ fn build_payload(
 
 fn payload_key(payload: &Value) -> String {
     format!(
-        "{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}",
         payload
             .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        payload
+            .get("rewardId")
             .and_then(Value::as_str)
             .unwrap_or_default(),
         payload
@@ -674,4 +717,71 @@ fn submit_presence(
         "sessionId": row.id,
         "timestamp": iso_from_ms(timestamp_ms)
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_payload_is_latched_across_usage_updates() {
+        let mut row = WorkbuddySession {
+            id: "coding-session".to_string(),
+            cwd: Some("C:/project".to_string()),
+            title: Some("Finished task".to_string()),
+            custom_title: None,
+            status: Some("completed".to_string()),
+            created_at: Some(1_000),
+            updated_at: Some(2_000),
+            last_activity_at: Some(2_000),
+            source_mode: Some("coding".to_string()),
+            model: None,
+            used: Some(4_500),
+            size: Some(200_000),
+            usage_updated_at: Some(2_000),
+        };
+        let mut state = SessionState {
+            baseline_used: Some(1_000),
+            ..SessionState::default()
+        };
+
+        let first = build_payload(&row, None, &mut state, 3_000).expect("first terminal");
+        assert_eq!(
+            first.pointer("/usage/scope").and_then(Value::as_str),
+            Some("since-baseline")
+        );
+        assert_eq!(
+            first.pointer("/usage/totalTokens").and_then(Value::as_u64),
+            Some(3_500)
+        );
+        let reward_id = first
+            .get("rewardId")
+            .and_then(Value::as_str)
+            .expect("reward id")
+            .to_string();
+
+        row.used = Some(5_000);
+        row.usage_updated_at = Some(2_500);
+        assert!(build_payload(&row, None, &mut state, 3_500).is_none());
+        assert_eq!(state.terminal_reward_id.as_deref(), Some(reward_id.as_str()));
+        assert_eq!(
+            state
+                .terminal_usage
+                .as_ref()
+                .and_then(|usage| usage.get("totalTokens"))
+                .and_then(Value::as_u64),
+            Some(3_500)
+        );
+
+        let mut restarted_state = SessionState {
+            baseline_used: Some(1_000),
+            ..SessionState::default()
+        };
+        let restarted = build_payload(&row, None, &mut restarted_state, 3_500)
+            .expect("restart payload");
+        assert_eq!(
+            restarted.get("rewardId").and_then(Value::as_str),
+            Some(reward_id.as_str())
+        );
+    }
 }

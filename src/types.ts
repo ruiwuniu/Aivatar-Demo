@@ -54,6 +54,7 @@ export interface AivatarPaintingPlan {
 export interface CodexStatusMessage {
   agent?: string;
   sessionId?: string;
+  rewardId?: string;
   status: CodexStatusName;
   phase?: string;
   task?: string;
@@ -550,6 +551,7 @@ export interface AivatarSaveState {
     pokerChips?: number;
   };
   purchasedItemIds: string[];
+  rewardedCompletionIds?: string[];
   furnitureStorage?: FurnitureStorageEntry[];
   workBoostUntil?: string;
   activeWindowId?: string;

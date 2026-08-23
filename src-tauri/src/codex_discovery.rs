@@ -1380,7 +1380,8 @@ fn status_from_record(
             session.usage_baseline = None;
             session.digest_entries.clear();
             session.terminal_turn_ended = true;
-            Some(build_status(
+            let terminal_timestamp = event_timestamp(record);
+            let mut status = build_status(
                 session_id,
                 "complete",
                 phase,
@@ -1389,8 +1390,15 @@ fn status_from_record(
                 &session.cwd,
                 usage,
                 learning,
-                event_timestamp(record),
-            ))
+                terminal_timestamp.clone(),
+            );
+            if let Some(object) = status.as_object_mut() {
+                object.insert(
+                    "rewardId".to_string(),
+                    json!(format!("codex:{session_id}:{terminal_timestamp}")),
+                );
+            }
+            Some(status)
         }
         _ => None,
     }

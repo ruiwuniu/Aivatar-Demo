@@ -4627,6 +4627,7 @@ export interface AvatarHeldPropGrip {
 
 export interface AvatarDrawOptions {
   heldPropGrip?: AvatarHeldPropGrip;
+  heldPropOverlayOnly?: boolean;
 }
 
 const drawCuteCrayfishAvatar = (
@@ -7061,6 +7062,8 @@ const drawCutePenguinAvatar = (
   y: number,
   theme: (typeof traitVisualThemes)[DominantTrait],
   dominantTrait: DominantTrait,
+  heldPropGrip?: AvatarHeldPropGrip,
+  heldPropOverlayOnly = false,
 ) => {
   const facing = avatar.facing;
   const sideDirection = facing === "left" ? -1 : 1;
@@ -7283,6 +7286,34 @@ const drawCutePenguinAvatar = (
     drawFlipper(x + 19, y - 17, x + 27, y - 1 - wingWave, 1);
   };
 
+  const drawPenguinFishingFlippers = (leadGrip: AvatarHeldPropGrip) => {
+    const rodX = Math.cos(leadGrip.angle);
+    const rodY = Math.sin(leadGrip.angle);
+    const supportGrip: AvatarHeldPropGrip = {
+      x: leadGrip.x - rodX * 10,
+      y: leadGrip.y - rodY * 10,
+      angle: leadGrip.angle,
+    };
+    const drawGripFlipper = (
+      shoulderX: number,
+      shoulderY: number,
+      grip: AvatarHeldPropGrip,
+      direction: number,
+    ) => {
+      drawFlipper(shoulderX, shoulderY, grip.x, grip.y, direction, true);
+      drawPixelRect(ctx, grip.x - 2, grip.y - 2, 5, 5, ink);
+      drawPixelRect(ctx, grip.x - 1, grip.y - 1, 3, 3, bodyMid);
+    };
+
+    if (isSide) {
+      drawGripFlipper(x + sideDirection, y - 17, leadGrip, sideDirection);
+      return;
+    }
+
+    drawGripFlipper(x - 13, y - 15, supportGrip, -1);
+    drawGripFlipper(x + 13, y - 15, leadGrip, 1);
+  };
+
   const mouthAnchor = () => {
     const front = facing === "front";
     const side = facing === "left" ? -1 : 1;
@@ -7430,6 +7461,11 @@ const drawCutePenguinAvatar = (
     drawPixelRect(ctx, hatX - 2, y - 46, 7, 2, "#a074b8");
   };
 
+  if (heldPropOverlayOnly) {
+    if (heldPropGrip) drawPenguinFishingFlippers(heldPropGrip);
+    return;
+  }
+
   drawPenguinBody();
 
   if (avatar.behavior === "paint") {
@@ -7438,9 +7474,9 @@ const drawCutePenguinAvatar = (
 
   drawPenguinFace();
 
-  if (isTyping) {
+  if (!heldPropGrip && isTyping) {
     drawPenguinTypingPose();
-  } else if (!needsSharedPose && !completeYawn) {
+  } else if (!heldPropGrip && !needsSharedPose && !completeYawn) {
     drawDefaultFlippers();
   }
 
@@ -8169,7 +8205,17 @@ export const drawAvatar = (
   }
 
   if (appearanceId === "cute-penguin") {
-    drawCutePenguinAvatar(ctx, avatar, frame, x, Math.round(avatar.y), theme, dominantTrait);
+    drawCutePenguinAvatar(
+      ctx,
+      avatar,
+      frame,
+      x,
+      Math.round(avatar.y),
+      theme,
+      dominantTrait,
+      options.heldPropGrip,
+      options.heldPropOverlayOnly,
+    );
     return;
   }
 

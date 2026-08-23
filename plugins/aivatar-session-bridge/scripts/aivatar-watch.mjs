@@ -712,6 +712,7 @@ const emitStatus = async (status, message, extra = {}) => {
   const payload = {
     agent: options.agent,
     sessionId: options.sessionId,
+    ...(extra.rewardId ? { rewardId: extra.rewardId } : {}),
     status,
     phase,
     task: summary,
@@ -723,7 +724,7 @@ const emitStatus = async (status, message, extra = {}) => {
     severity:
       extra.severity ??
       (status === "error" ? "error" : status === "waiting_for_user" ? "warning" : "info"),
-    timestamp: new Date().toISOString(),
+    timestamp: extra.timestamp ?? new Date().toISOString(),
     ...(usage ? { usage } : {}),
     ...(idleBubbleCandidates.length > 0
       ? { idleBubbleCandidates }
@@ -837,9 +838,13 @@ const handleRecord = async (record) => {
     rememberIdleBubbleCandidates(text);
     rememberConversationDigest("assistant", text);
     const summary = shortText(text, "Task finished");
+    const terminalTimestamp =
+      typeof record.timestamp === "string" ? record.timestamp : new Date().toISOString();
     await emitStatus("complete", summary, {
       phase: payload.phase,
       progress: 100,
+      timestamp: terminalTimestamp,
+      rewardId: `codex:${options.sessionId}:${terminalTimestamp}`,
     });
     void spawnLearningWorker("complete", summary).catch(() => {
       // Learning must never interrupt live status updates.

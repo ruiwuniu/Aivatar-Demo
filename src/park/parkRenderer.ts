@@ -1768,16 +1768,25 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
     .forEach((object) => drawReferenceObject(ctx, layers, object, options.frame));
   if (visualAvatar && options.petStats) {
     const fishingPose = options.fishingPose ?? "none";
-    const crayfishGrip = options.avatarAppearanceId === "cute-crayfish"
+    const fishingGripAppearanceId =
+      options.avatarAppearanceId === "cute-crayfish" ||
+      options.avatarAppearanceId === "cute-penguin"
+        ? options.avatarAppearanceId
+        : undefined;
+    const avatarFishingGrip = fishingGripAppearanceId
       ? resolveParkFishingGrip(
           visualAvatar,
-          "cute-crayfish",
+          fishingGripAppearanceId,
           fishingPose,
           options.frame,
           fishingNowMs,
           fishingPoseStartedAt,
         )
       : undefined;
+    const crayfishFishingGrip =
+      options.avatarAppearanceId === "cute-crayfish" ? avatarFishingGrip : undefined;
+    const penguinFishingGrip =
+      options.avatarAppearanceId === "cute-penguin" ? avatarFishingGrip : undefined;
     const drawFishing = () => drawParkFishingAnimation({
       ctx,
       avatar: visualAvatar,
@@ -1789,7 +1798,7 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
       poseStartedAt: fishingPoseStartedAt,
       spot: options.fishingSpot,
     });
-    if (crayfishGrip) drawFishing();
+    if (crayfishFishingGrip) drawFishing();
     drawAvatar(
       ctx,
       visualAvatar,
@@ -1798,9 +1807,23 @@ export const renderParkScene = (canvas: HTMLCanvasElement, options: ParkRenderOp
       { status: "idle", timestamp: new Date(options.nowMs).toISOString() },
       options.memory,
       options.avatarAppearanceId,
-      { heldPropGrip: crayfishGrip },
+      { heldPropGrip: avatarFishingGrip },
     );
-    if (!crayfishGrip) drawFishing();
+    if (penguinFishingGrip) {
+      drawFishing();
+      drawAvatar(
+        ctx,
+        visualAvatar,
+        avatarFrame,
+        options.petStats,
+        { status: "idle", timestamp: new Date(options.nowMs).toISOString() },
+        options.memory,
+        options.avatarAppearanceId,
+        { heldPropGrip: penguinFishingGrip, heldPropOverlayOnly: true },
+      );
+    } else if (!crayfishFishingGrip) {
+      drawFishing();
+    }
   }
   sorted
     .filter((object) => object.y > avatarY)

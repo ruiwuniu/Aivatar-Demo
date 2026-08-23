@@ -187,7 +187,7 @@ const statusFromEvent = (event) => {
   if (type === "session.error" || /error|fail|failed|exception/u.test(rawStatus)) {
     return "error";
   }
-  if (type === "session.idle" || /complete|completed|done|success/u.test(rawStatus)) {
+  if (type === "session.idle" || /complete|completed|done|success|idle/u.test(rawStatus)) {
     return "complete";
   }
   if (type === "permission.asked" || /permission|waiting|ask/u.test(rawStatus)) {
@@ -222,6 +222,97 @@ const summaryFromEvent = (event, status) => {
   if (status === "executing") return "opencode is using a tool";
   if (status === "thinking") return "opencode is working";
   return "opencode session online";
+};
+
+const opencodeMessageInfo = (event) =>
+  event?.properties?.info ?? event?.info ?? event?.message ?? {};
+
+const opencodeUsageFromInfo = (info) => {
+  const tokens = info?.tokens;
+  if (!tokens || typeof tokens !== "object") return undefined;
+  const number = (value) =>
+    Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0;
+  const freshInputTokens = number(tokens.input);
+  const cacheReadTokens = number(tokens.cache?.read);
+  const cacheWriteTokens = number(tokens.cache?.write);
+  const inputTokens = freshInputTokens + cacheReadTokens + cacheWriteTokens;
+  const outputTokens = number(tokens.output);
+  const reasoningOutputTokens = number(tokens.reasoning);
+  const totalTokens = inputTokens + outputTokens + reasoningOutputTokens;
+  if (totalTokens <= 0) return undefined;
+  return {
+    inputTokens,
+    cachedInputTokens: cacheReadTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    totalTokens,
+    source: "opencode-message-updated",
+    scope: "turn",
+  };
+};
+
+const newOpencodeTurn = (turnId) => ({
+  turnId,
+  turnStartedAt: new Date().toISOString(),
+  terminal: false,
+  assistantUsageByMessage: new Map(),
+});
+
+const aggregateOpencodeUsage = (state) => {
+  const usages = [...state.assistantUsageByMessage.values()];
+  if (usages.length === 0) return undefined;
+  return {
+    inputTokens: usages.reduce((sum, usage) => sum + usage.inputTokens, 0),
+    cachedInputTokens: usages.reduce(
+      (sum, usage) => sum + usage.cachedInputTokens,
+      0,
+    ),
+    outputTokens: usages.reduce((sum, usage) => sum + usage.outputTokens, 0),
+    reasoningOutputTokens: usages.reduce(
+      (sum, usage) => sum + usage.reasoningOutputTokens,
+      0,
+    ),
+    totalTokens: usages.reduce((sum, usage) => sum + usage.totalTokens, 0),
+    source: "opencode-message-updated",
+    scope: "turn",
+  };
+};
+
+const updateOpencodeTurn = (states, sessionId, event, status) => {
+  const type = eventType(event).toLowerCase();
+  const info = opencodeMessageInfo(event);
+  const role = firstString(info?.role)?.toLowerCase();
+  const messageId = firstString(info?.id, info?.messageID, info?.messageId);
+  let state = states.get(sessionId);
+  const startsTurn =
+    (type === "message.updated" && role === "user") ||
+    (type === "session.status" && status === "thinking" && state?.terminal);
+  if (!state || startsTurn) {
+    state = newOpencodeTurn(messageId ?? `${sessionId}:${Date.now()}`);
+    states.set(sessionId, state);
+  }
+  if (type === "message.updated" && role === "assistant" && !state.terminal) {
+    const usage = opencodeUsageFromInfo(info);
+    if (usage) {
+      state.assistantUsageByMessage.set(
+        messageId ?? `assistant-${state.assistantUsageByMessage.size}`,
+        usage,
+      );
+    }
+  }
+  if (status !== "complete" && status !== "error") {
+    return { state, usage: aggregateOpencodeUsage(state) };
+  }
+  if (state.terminal) return { state, suppress: true };
+  state.terminal = true;
+  state.terminalTimestamp = new Date().toISOString();
+  state.rewardId = `opencode:${sessionId}:${state.turnId}`;
+  return {
+    state,
+    usage: aggregateOpencodeUsage(state),
+    rewardId: state.rewardId,
+    timestamp: state.terminalTimestamp,
+  };
 };
 
 const bubbleCandidatesFromEvent = (event) => {
@@ -379,12 +470,13 @@ const spawnLearningWorker = async (payload, digest, config) => {
   }
 };
 
-const payloadForEvent = (event, context) => {
+const payloadForEvent = (event, context, turnUpdate = {}) => {
   const status = statusFromEvent(event);
   const summary = summaryFromEvent(event, status);
   return {
     agent: AGENT,
     sessionId: sessionIdForEvent(event, context),
+    rewardId: turnUpdate.rewardId,
     status,
     phase: eventType(event),
     task: summary,
@@ -393,7 +485,8 @@ const payloadForEvent = (event, context) => {
     message: summary,
     severity:
       status === "error" ? "error" : status === "waiting_for_user" ? "warning" : "info",
-    timestamp: new Date().toISOString(),
+    timestamp: turnUpdate.timestamp ?? new Date().toISOString(),
+    usage: turnUpdate.usage,
     idleBubbleCandidates: bubbleCandidatesFromEvent(event),
   };
 };
@@ -449,6 +542,7 @@ const sendPayload = async (payload, config) => {
 export const AivatarOpencodePlugin = async (context) => {
   const config = endpointConfig();
   const digests = new Map();
+  const sessionTurns = new Map();
   await bestEffort(context?.client?.app?.log?.({
     body: {
       service: "aivatar-opencode",
@@ -460,6 +554,13 @@ export const AivatarOpencodePlugin = async (context) => {
   return {
     "chat.message": async (input, output) => {
       const sessionId = input?.sessionID ?? sessionIdForEvent({}, context);
+      const turnId = firstString(
+        input?.message?.id,
+        input?.messageID,
+        input?.messageId,
+        `${sessionId}:${Date.now()}`,
+      );
+      sessionTurns.set(sessionId, newOpencodeTurn(turnId));
       addDigestEntry(digests, sessionId, digestEntryFromChatMessage(input, output));
     },
     "experimental.text.complete": async (input, output) => {
@@ -484,7 +585,16 @@ export const AivatarOpencodePlugin = async (context) => {
       }
     },
     event: async ({ event }) => {
-      const payload = payloadForEvent(event, context);
+      const sessionId = sessionIdForEvent(event, context);
+      const status = statusFromEvent(event);
+      const turnUpdate = updateOpencodeTurn(
+        sessionTurns,
+        sessionId,
+        event,
+        status,
+      );
+      if (turnUpdate.suppress) return;
+      const payload = payloadForEvent(event, context, turnUpdate);
       addDigestEntry(digests, payload.sessionId, digestEntryFromEvent(event));
       try {
         await sendPayload(payload, config);

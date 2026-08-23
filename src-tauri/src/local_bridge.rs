@@ -597,6 +597,9 @@ fn normalize_status(payload: Value) -> Result<Value, String> {
     if let Some(session_id) = source.get("sessionId").and_then(Value::as_str) {
         object.insert("sessionId".to_string(), session_id.into());
     }
+    if let Some(reward_id) = source.get("rewardId").and_then(Value::as_str) {
+        object.insert("rewardId".to_string(), reward_id.into());
+    }
     object.insert("status".to_string(), status.into());
     object.insert(
         "phase".to_string(),
@@ -654,6 +657,27 @@ fn normalize_status(payload: Value) -> Result<Value, String> {
     }
 
     Ok(Value::Object(object))
+}
+
+#[cfg(test)]
+mod status_normalization_tests {
+    use super::*;
+
+    #[test]
+    fn reward_id_survives_status_normalization() {
+        let normalized = normalize_status(json!({
+            "agent": "opencode",
+            "sessionId": "session-1",
+            "rewardId": "opencode:session-1:turn-1",
+            "status": "complete",
+            "timestamp": "2026-08-23T00:00:00Z"
+        }))
+        .expect("status should normalize");
+        assert_eq!(
+            normalized.get("rewardId").and_then(Value::as_str),
+            Some("opencode:session-1:turn-1")
+        );
+    }
 }
 
 fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
@@ -1068,6 +1092,7 @@ fn session_learning_status(status: &Value, learning: Value) -> Value {
     json!({
         "agent": "claude-code",
         "sessionId": string_field(status, "sessionId").unwrap_or_else(|| "claude-code-desktop".to_string()),
+        "rewardId": string_field(status, "rewardId"),
         "status": status.get("status").and_then(Value::as_str).unwrap_or("complete"),
         "phase": "session-learning",
         "task": summary,
@@ -1314,6 +1339,10 @@ fn normalize_claude_hook_status(input: Value, status_line: bool) -> Result<Value
         phase = "notification";
     }
     let session_id = claude_session_id(&input);
+    let timestamp = iso_now();
+    let terminal = status == "complete" || status == "error";
+    let turn_id = first_string(&input, &["turn_id", "message_id"])
+        .unwrap_or_else(|| timestamp.clone());
     let label = claude_surface_label(&input);
     let tool = input.get("tool_name").and_then(Value::as_str);
     let message = match event.as_str() {
@@ -1345,6 +1374,7 @@ fn normalize_claude_hook_status(input: Value, status_line: bool) -> Result<Value
     let mut payload = json!({
         "agent": "claude-code",
         "sessionId": session_id,
+        "rewardId": if terminal { Some(format!("claude-code:{session_id}:{turn_id}")) } else { None },
         "status": status,
         "phase": phase,
         "task": message,
@@ -1352,7 +1382,7 @@ fn normalize_claude_hook_status(input: Value, status_line: bool) -> Result<Value
         "progress": if status == "complete" { 100 } else if status == "idle" { 0 } else { 50 },
         "message": message,
         "severity": if status == "error" { "error" } else if status == "waiting_for_user" { "warning" } else { "info" },
-        "timestamp": iso_now(),
+        "timestamp": timestamp,
     });
     if let Some(usage) = usage {
         payload["usage"] = usage;
@@ -1441,11 +1471,27 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
         return Ok(response);
     }
     if let Some(existing) = existing {
+        let session_learning =
+            string_field(&status, "phase").as_deref() == Some("session-learning");
+        let repeated_claude_terminal =
+            string_field(&status, "agent").as_deref() == Some("claude-code")
+                && is_terminal_session_status(&status)
+                && is_terminal_session_status(&existing);
         let preserve_claude_session_end =
             should_preserve_claude_session_end(&status, &existing);
         let context_window_only =
             string_field(&status, "phase").as_deref() == Some("context-window");
-        if preserve_claude_session_end {
+        if session_learning || repeated_claude_terminal {
+            let mut merged = existing;
+            if let Some(object) = merged.as_object_mut() {
+                for field in ["presenceTimestamp", "idleBubbleCandidates", "learning"] {
+                    if let Some(value) = status.get(field) {
+                        object.insert(field.to_string(), value.clone());
+                    }
+                }
+            }
+            status = merged;
+        } else if preserve_claude_session_end {
             let mut merged = existing;
             if let Some(object) = merged.as_object_mut() {
                 for field in ["timestamp", "presenceTimestamp", "usage", "idleBubbleCandidates", "learning"] {

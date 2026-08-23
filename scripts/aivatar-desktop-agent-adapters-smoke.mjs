@@ -29,6 +29,13 @@ const opencodePlugin = await opencodeModule.AivatarOpencodePlugin({
   },
 });
 
+await opencodePlugin["chat.message"](
+  {
+    sessionID: "ses_aivatar",
+    message: { id: "msg-user-1" },
+  },
+  { message: "Build the feature" },
+);
 await opencodePlugin.event({
   event: {
     type: "session.status",
@@ -50,6 +57,32 @@ await opencodePlugin.event({
 });
 await opencodePlugin.event({
   event: {
+    type: "message.updated",
+    properties: {
+      info: {
+        id: "msg-assistant-1",
+        sessionID: "ses_aivatar",
+        role: "assistant",
+        tokens: {
+          input: 1200,
+          output: 300,
+          reasoning: 100,
+          cache: { read: 400, write: 50 },
+        },
+      },
+    },
+  },
+});
+await opencodePlugin.event({
+  event: {
+    type: "session.status",
+    sessionID: "ses_aivatar",
+    status: "idle",
+    title: "Finished",
+  },
+});
+await opencodePlugin.event({
+  event: {
     type: "session.idle",
     sessionID: "ses_aivatar",
     title: "Finished",
@@ -59,21 +92,31 @@ await opencodePlugin.event({
 const statusPosts = posted.filter((entry) =>
   entry.url.endsWith("/agent-status"),
 );
-assert.equal(statusPosts.length, 5);
+assert.equal(statusPosts.length, 6);
 assert.deepEqual(
-  statusPosts.slice(0, 4).map((entry) => entry.body.status),
-  ["executing", "thinking", "waiting_for_user", "complete"],
+  statusPosts.slice(0, 5).map((entry) => entry.body.status),
+  ["executing", "thinking", "waiting_for_user", "thinking", "complete"],
 );
 assert.deepEqual(
-  statusPosts.slice(0, 4).map((entry) => entry.body.agent),
-  ["opencode", "opencode", "opencode", "opencode"],
+  statusPosts.slice(0, 5).map((entry) => entry.body.agent),
+  ["opencode", "opencode", "opencode", "opencode", "opencode"],
 );
 assert.equal(statusPosts[1].body.phase, "message-display");
 assert.match(statusPosts[1].body.summary, /I found the live shape/);
 assert.equal(statusPosts[2].body.severity, "warning");
-assert.equal(statusPosts[4].body.phase, "session-learning");
-assert.equal(statusPosts[4].body.learning.source, "heuristic");
-assert.ok(statusPosts[4].body.learning.idleBubbleCandidates.length > 0);
+assert.equal(statusPosts[4].body.usage.totalTokens, 2050);
+assert.equal(statusPosts[4].body.usage.cachedInputTokens, 400);
+assert.equal(statusPosts[4].body.usage.scope, "turn");
+assert.equal(statusPosts[4].body.rewardId, "opencode:ses_aivatar:msg-user-1");
+assert.equal(
+  statusPosts.filter(
+    (entry) => entry.body.status === "complete" && entry.body.phase !== "session-learning",
+  ).length,
+  1,
+);
+assert.equal(statusPosts[5].body.phase, "session-learning");
+assert.equal(statusPosts[5].body.learning.source, "heuristic");
+assert.ok(statusPosts[5].body.learning.idleBubbleCandidates.length > 0);
 assert.ok(posted.some((entry) => entry.url.endsWith("/agent-presence")));
 assert.ok(posted.some((entry) => entry.url.endsWith("/agent-active")));
 assert.equal(logs[0]?.body?.message, "Aivatar opencode plugin initialized");
@@ -451,10 +494,16 @@ try {
     (session) => session.agent === "claude-code" && session.sessionId === "claude_native_smoke",
   );
   assert.ok(claudeSession);
-  assert.equal(claudeSession.phase, "session-learning");
+  assert.equal(claudeSession.phase, "turn-complete");
+  assert.equal(
+    claudeSession.rewardId,
+    "claude-code:claude_native_smoke:turn-smoke-1",
+  );
   assert.equal(claudeSession.learning.source, "heuristic");
   assert.ok(claudeSession.learning.idleBubbleCandidates.length > 0);
   const firstLearningId = claudeSession.learning.id;
+  const firstClaudeRewardId = claudeSession.rewardId;
+  const firstClaudeTerminalTimestamp = claudeSession.timestamp;
 
   await postHook({
     hook_event_name: "Stop",
@@ -467,6 +516,8 @@ try {
   );
   assert.ok(claudeSession);
   assert.equal(claudeSession.learning.id, firstLearningId);
+  assert.equal(claudeSession.rewardId, firstClaudeRewardId);
+  assert.equal(claudeSession.timestamp, firstClaudeTerminalTimestamp);
 
   await postHook({
     hook_event_name: "SessionEnd",
@@ -635,7 +686,11 @@ try {
   if (bridge.exitCode === null && bridge.signalCode === null) {
     bridge.kill();
     await new Promise((resolve) => {
-      const timeout = setTimeout(resolve, 1000);
+      const timeout = setTimeout(() => {
+        if (bridge.exitCode === null && bridge.signalCode === null) {
+          bridge.kill("SIGKILL");
+        }
+      }, 1000);
       bridge.once("exit", () => {
         clearTimeout(timeout);
         resolve();

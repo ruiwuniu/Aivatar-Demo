@@ -113,7 +113,8 @@ starts.
 - Original file: downloaded MP3 from the Pixabay sound effect page
 
 Aivatar uses this as the Card Room settlement one-shot when chips are collected
-to the pot or paid out to winner stacks.
+to the pot or paid out to winner stacks. The main room also plays it quietly as
+the bits-received confirmation when a raw fish is sold.
 
 ## card-room-user-win.mp3
 

@@ -238,16 +238,24 @@ export const ParkAnimationPreviewApp = () => {
         now,
         poseStartedAt,
       );
-      const crayfishGrip = appearanceId === "cute-crayfish"
+      const fishingGripAppearanceId =
+        appearanceId === "cute-crayfish" || appearanceId === "cute-penguin"
+          ? appearanceId
+          : undefined;
+      const avatarFishingGrip = fishingGripAppearanceId
         ? resolveParkFishingGrip(
             avatar,
-            appearanceId,
+            fishingGripAppearanceId,
             fishingPose,
             frame,
             now,
             poseStartedAt,
           )
         : undefined;
+      const crayfishFishingGrip =
+        appearanceId === "cute-crayfish" ? avatarFishingGrip : undefined;
+      const penguinFishingGrip =
+        appearanceId === "cute-penguin" ? avatarFishingGrip : undefined;
       const drawFishing = () => drawParkFishingAnimation({
         ctx,
         avatar,
@@ -262,7 +270,7 @@ export const ParkAnimationPreviewApp = () => {
         poseStartedAt,
         spot: PREVIEW_SPOT,
       });
-      if (crayfishGrip) drawFishing();
+      if (crayfishFishingGrip) drawFishing();
       drawAvatar(
         ctx,
         avatar,
@@ -271,9 +279,23 @@ export const ParkAnimationPreviewApp = () => {
         { status: "idle", timestamp: new Date().toISOString() },
         undefined,
         appearanceId,
-        { heldPropGrip: crayfishGrip },
+        { heldPropGrip: avatarFishingGrip },
       );
-      if (!crayfishGrip) drawFishing();
+      if (penguinFishingGrip) {
+        drawFishing();
+        drawAvatar(
+          ctx,
+          avatar,
+          avatarFrame,
+          PREVIEW_STATS,
+          { status: "idle", timestamp: new Date().toISOString() },
+          undefined,
+          appearanceId,
+          { heldPropGrip: penguinFishingGrip, heldPropOverlayOnly: true },
+        );
+      } else if (!crayfishFishingGrip) {
+        drawFishing();
+      }
 
       canvas.dataset.previewBehavior = behavior;
       canvas.dataset.previewFishingPose = fishingPose;

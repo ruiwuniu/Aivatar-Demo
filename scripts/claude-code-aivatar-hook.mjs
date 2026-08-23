@@ -283,6 +283,7 @@ const usageFromClaudeTranscript = async (input, scope = "context-window") => {
   try {
     const text = await readFile(transcriptPath, "utf8");
     const lines = text.split(/\r?\n/u).filter(Boolean).reverse();
+    const turnUsages = [];
     for (const line of lines) {
       let entry;
       try {
@@ -290,10 +291,28 @@ const usageFromClaudeTranscript = async (input, scope = "context-window") => {
       } catch {
         continue;
       }
+      const role = firstString(entry?.message?.role, entry?.role);
+      if (scope === "turn" && role === "user") break;
       const usage = entry?.message?.usage;
       const parsed = usageFromClaudeUsage(usage, "claude-code-transcript", scope);
-      if (parsed) return parsed;
+      if (!parsed) continue;
+      if (scope !== "turn") return parsed;
+      turnUsages.push(parsed);
     }
+    if (turnUsages.length === 0) return undefined;
+    return {
+      inputTokens: turnUsages.reduce((sum, usage) => sum + usage.inputTokens, 0),
+      cachedInputTokens: turnUsages.reduce(
+        (sum, usage) => sum + usage.cachedInputTokens,
+        0,
+      ),
+      outputTokens: turnUsages.reduce((sum, usage) => sum + usage.outputTokens, 0),
+      totalTokens: turnUsages.reduce((sum, usage) => sum + usage.totalTokens, 0),
+      contextTokens: turnUsages.reduce((sum, usage) => sum + usage.inputTokens, 0),
+      modelContextWindow: turnUsages[0].modelContextWindow,
+      source: "claude-code-transcript-turn",
+      scope: "turn",
+    };
   } catch {
     return undefined;
   }
@@ -799,17 +818,37 @@ try {
     !statusLineMode && !isLifecycleOnlyEvent(hookEvent);
   const realActivitySeen =
     Boolean(previousState.realActivitySeen) || eventShowsRealActivity;
-  const usage =
+  const liveUsage =
     usageFromClaudeInput(input, "context-window") ??
     (await usageFromClaudeTranscript(input, "context-window")) ??
-    previousState.latestUsage;
+    (hookEvent === "UserPromptSubmit" ? undefined : previousState.latestUsage);
   const status = statusLineMode
-    ? statusForStatusLine(input, previousState, usage)
+    ? statusForStatusLine(input, previousState, liveUsage)
     : preserveTerminalStatusAfterTurnEnd(input, statusForEvent(input), previousState);
   const preservedTerminalStatus = Boolean(status.preservedTerminal);
   const isTerminalStatus = isTerminalStatusName(status.status);
+  const repeatedTerminalStatus =
+    isTerminalStatus &&
+    isTerminalStatusName(previousState.status) &&
+    hookEvent !== "UserPromptSubmit";
+  const terminalUsage = isTerminalStatus
+    ? repeatedTerminalStatus
+      ? previousState.terminalUsage
+      : (await usageFromClaudeTranscript(input, "turn")) ??
+        usageFromClaudeInput(input, "turn")
+    : undefined;
+  const usage = isTerminalStatus ? terminalUsage : liveUsage;
+  const eventTurnId = firstString(input?.turn_id, input?.message_id);
+  const turnStartedAt =
+    hookEvent === "UserPromptSubmit"
+      ? new Date().toISOString()
+      : previousState.turnStartedAt ?? new Date().toISOString();
+  const turnId =
+    hookEvent === "UserPromptSubmit"
+      ? eventTurnId ?? turnStartedAt
+      : previousState.turnId ?? eventTurnId ?? turnStartedAt;
   const timestamp =
-    (statusLineMode || preservedTerminalStatus) &&
+    (statusLineMode || preservedTerminalStatus || repeatedTerminalStatus) &&
     previousState.status === status.status &&
     previousState.timestamp
       ? previousState.timestamp
@@ -817,6 +856,9 @@ try {
   const payload = {
     agent: "claude-code",
     sessionId,
+    rewardId: isTerminalStatus
+      ? previousState.rewardId ?? `claude-code:${sessionId}:${turnId}`
+      : undefined,
     status: status.status,
     phase: status.phase,
     task: status.message,
@@ -831,12 +873,7 @@ try {
           ? "warning"
           : "info",
     timestamp,
-    usage: usage
-      ? {
-          ...usage,
-          scope: isTerminalStatus ? "turn" : usage.scope ?? "context-window",
-        }
-      : undefined,
+    usage,
     idleBubbleCandidates: idleBubbleCandidatesFromInput(input),
   };
   const learningTriggerKey = [
@@ -853,7 +890,14 @@ try {
     message: payload.message,
     timestamp: payload.timestamp,
     realActivitySeen,
-    latestUsage: payload.usage ?? previousState.latestUsage,
+    latestUsage:
+      hookEvent === "UserPromptSubmit"
+        ? payload.usage
+        : payload.usage ?? previousState.latestUsage,
+    terminalUsage: isTerminalStatus ? payload.usage : undefined,
+    rewardId: isTerminalStatus ? payload.rewardId : undefined,
+    turnId,
+    turnStartedAt,
     lastLearningKey: isTerminalStatus
       ? previousState.lastLearningKey
       : undefined,
@@ -914,6 +958,10 @@ try {
       timestamp: payload.timestamp,
       realActivitySeen,
       latestUsage: payload.usage ?? previousState.latestUsage,
+      terminalUsage: payload.usage,
+      rewardId: payload.rewardId,
+      turnId,
+      turnStartedAt,
       lastLearningKey: learningTriggerKey,
     });
     void spawnLearningWorker(sessionId, input, payload).catch(() => {

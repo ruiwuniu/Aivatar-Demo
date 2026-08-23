@@ -373,6 +373,7 @@ const TOKEN_REWARD_DEFAULT_MAX_BITS = 100;
 const TOKEN_REWARD_EXTREME_USAGE_TOKEN_THRESHOLD = 1_000_000;
 const TOKEN_REWARD_EXTREME_USAGE_MAX_BITS = 1000;
 const TOKEN_REWARD_CACHED_INPUT_WEIGHT = 0.1;
+const REWARDED_COMPLETION_ID_LIMIT = 256;
 const INTERACTION_ARRIVAL_DISTANCE = 8;
 const AVATAR_FOOTPRINT_HALF_WIDTH = 6;
 const AVATAR_FOOTPRINT_TOP_OFFSET = 6;
@@ -415,7 +416,7 @@ const DEFAULT_SCENE_PANEL_WIDTH =
   DEFAULT_EXPANDED_WINDOW_WIDTH - APP_HORIZONTAL_PADDING - APP_GRID_GAP - SIDE_PANEL_WIDTH;
 const COLLAPSED_WINDOW_MIN_WIDTH = DEFAULT_SCENE_PANEL_WIDTH + APP_HORIZONTAL_PADDING;
 const DEFAULT_WINDOW_HEIGHT = 520;
-const SHOW_DEBUG_CARD = true;
+const SHOW_DEBUG_CARD = false;
 const EXPANDED_WINDOW_MIN_WIDTH = 720;
 const COLLAPSED_WINDOW_CLIENT_WIDTH_GUARD = 2;
 const COLLAPSED_WINDOW_RESIZE_RETRY_DELAY_MS = 50;
@@ -442,6 +443,7 @@ const FRIDGE_DOOR_OPEN_AUDIO_SRC = "/audio/fridge-door-open.mp3";
 const FRIDGE_DOOR_CLOSE_AUDIO_SRC = "/audio/fridge-door-close.mp3";
 const AGENT_COMPLETE_AUDIO_SRC = "/audio/agent-complete-success.ogg";
 const BITS_SPEND_AUDIO_SRC = "/audio/bits-spend.wav";
+const BITS_EARN_AUDIO_SRC = "/audio/card-room-chip-payout.mp3";
 const COLA_CAN_OPEN_AUDIO_SRC = "/audio/cola-can-open.mp3";
 const COLA_DRINK_AUDIO_SRC = "/audio/cola-drink.mp3";
 const COFFEE_DRINK_AUDIO_SRC = "/audio/coffee-drink-slurping.mp3";
@@ -525,6 +527,7 @@ const FRIDGE_DOOR_AUDIO_VOLUME_MULTIPLIER = 0.65;
 const FRIDGE_DOOR_CLOSE_AUDIO_DELAY_MS = 3650;
 const AGENT_COMPLETE_AUDIO_VOLUME_MULTIPLIER = 0.65;
 const BITS_SPEND_AUDIO_VOLUME_MULTIPLIER = 0.55;
+const BITS_EARN_AUDIO_VOLUME_MULTIPLIER = 0.48;
 const COFFEE_BREW_SPEND_AUDIO_VOLUME_MULTIPLIER = 0.35;
 const STARTUP_SOUND_AUDIO_VOLUME_MULTIPLIER = 0.28;
 const COLA_CAN_OPEN_AUDIO_VOLUME_MULTIPLIER = 0.55;
@@ -2791,6 +2794,13 @@ const normalizeFurnitureSkinIds = (value: unknown): Record<string, string> => {
   );
 };
 
+const normalizeRewardedCompletionIds = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((entry): entry is string =>
+    typeof entry === "string" && entry.trim().length > 0,
+  ).map((entry) => entry.trim()))].slice(-REWARDED_COMPLETION_ID_LIMIT);
+};
+
 const saveFromContent = (
   content: AivatarContent,
   options: {
@@ -2814,6 +2824,7 @@ const saveFromContent = (
   ...loadDefaultLayout(content),
   wallet: normalizeSaveWallet(content.wallet),
   purchasedItemIds: [],
+  rewardedCompletionIds: [],
   activeFurnitureSkinIds: {},
 });
 
@@ -2852,6 +2863,9 @@ const normalizeSavePayload = (
     paintingGallery: normalizePaintingGallery(parsed.paintingGallery),
     wallet: normalizeSaveWallet(parsed.wallet, fallback.wallet),
     activeFurnitureSkinIds: normalizeFurnitureSkinIds(parsed.activeFurnitureSkinIds),
+    rewardedCompletionIds: normalizeRewardedCompletionIds(
+      parsed.rewardedCompletionIds,
+    ),
     inventory: removeDeprecatedInventoryItems(
       parsed.inventory ?? fallback.inventory,
     ),
@@ -3828,6 +3842,7 @@ export const App = () => {
   } | null>(null);
   const agentCompleteAudioRef = useRef<HTMLAudioElement | null>(null);
   const bitsSpendAudioRef = useRef<HTMLAudioElement | null>(null);
+  const bitsEarnAudioRef = useRef<HTMLAudioElement | null>(null);
   const shopPurchaseCooldownUntilRef = useRef<Record<string, number>>({});
   const shopLongPressTimerRef = useRef<number | null>(null);
   const shopLongPressTriggeredRef = useRef(false);
@@ -3911,7 +3926,9 @@ export const App = () => {
     new Map<string, "complete" | "error">(),
   );
   const taskCabinetVisualFlowRef = useRef<TaskCabinetVisualFlow | null>(null);
-  const rewardedCompleteKeysRef = useRef(new Set<string>());
+  const rewardedCompleteKeysRef = useRef(
+    new Set<string>(save.rewardedCompletionIds ?? []),
+  );
   const appliedLearningIdsRef = useRef(new Set<string>());
   const paintingPlanRequestsRef = useRef(new Set<string>());
   const behaviorDemoTimerRef = useRef<number | null>(null);
@@ -5433,6 +5450,10 @@ export const App = () => {
     playOneShotAudio(bitsSpendAudioRef.current, volumeMultiplier);
   };
 
+  const playBitsEarnSound = () => {
+    playOneShotAudio(bitsEarnAudioRef.current, BITS_EARN_AUDIO_VOLUME_MULTIPLIER);
+  };
+
   const pauseAudio = (audio: HTMLAudioElement | null) => {
     if (!audio || audio.paused) return;
     audio.pause();
@@ -5931,6 +5952,9 @@ export const App = () => {
     setActiveRecordPlayerId(null);
     runtimeRef.current = nextSave.avatarRuntime ?? initialAvatarRuntime();
     setAvatar(runtimeRef.current);
+    rewardedCompleteKeysRef.current = new Set(
+      nextSave.rewardedCompletionIds ?? [],
+    );
     setSave(nextSave);
   };
 
@@ -6685,6 +6709,11 @@ export const App = () => {
     bitsSpendAudio.volume = audioVolume;
     bitsSpendAudioRef.current = bitsSpendAudio;
 
+    const bitsEarnAudio = new Audio(BITS_EARN_AUDIO_SRC);
+    bitsEarnAudio.preload = "auto";
+    bitsEarnAudio.volume = audioVolume;
+    bitsEarnAudioRef.current = bitsEarnAudio;
+
     const colaCanOpenAudio = new Audio(COLA_CAN_OPEN_AUDIO_SRC);
     colaCanOpenAudio.preload = "auto";
     colaCanOpenAudio.volume = audioVolume;
@@ -6745,6 +6774,7 @@ export const App = () => {
       fridgeDoorCloseAudio.pause();
       agentCompleteAudio.pause();
       bitsSpendAudio.pause();
+      bitsEarnAudio.pause();
       clearShopLongPressTimer();
       colaCanOpenAudio.pause();
       colaDrinkAudio.pause();
@@ -6770,6 +6800,7 @@ export const App = () => {
       fridgeDoorCloseAudioRef.current = null;
       agentCompleteAudioRef.current = null;
       bitsSpendAudioRef.current = null;
+      bitsEarnAudioRef.current = null;
       colaCanOpenAudioRef.current = null;
       colaDrinkAudioRef.current = null;
       coffeeDrinkAudioRef.current = null;
@@ -6793,6 +6824,7 @@ export const App = () => {
       fridgeDoorCloseAudioRef.current,
       agentCompleteAudioRef.current,
       bitsSpendAudioRef.current,
+      bitsEarnAudioRef.current,
       colaCanOpenAudioRef.current,
       colaDrinkAudioRef.current,
       coffeeDrinkAudioRef.current,
@@ -8876,7 +8908,7 @@ export const App = () => {
         Date.now() - completedAt <= COMPLETE_REWARD_FRESH_MS;
       if (!activeTransition && !freshComplete) return;
 
-      const completeKey = [
+      const completeKey = candidate.rewardId?.trim() || [
         candidate.agent,
         candidate.sessionId ?? "default",
         candidate.timestamp,
@@ -8896,6 +8928,12 @@ export const App = () => {
       setSave((current) => ({
         ...current,
         wallet: { ...current.wallet, bits: current.wallet.bits + rewardBits },
+        rewardedCompletionIds: [
+          ...(current.rewardedCompletionIds ?? []).filter(
+            (entry) => entry !== completeKey,
+          ),
+          completeKey,
+        ].slice(-REWARDED_COMPLETION_ID_LIMIT),
         memory: recordTaskCompleteMemory(
           current.memory,
           candidate,
@@ -9007,6 +9045,7 @@ export const App = () => {
     if (quantityBeforeSale <= 1) {
       setSelectedRawFishItemId(null);
     }
+    playBitsEarnSound();
     updateActiveInteraction({
       kind: "none",
       furnitureId: "fridge",
