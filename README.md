@@ -7,38 +7,34 @@
 **中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。像素小伙伴会生活在可装修的主房间、纸牌屋和山顶公园中，并对 Codex、Claude Code、opencode、腾讯 WorkBuddy 或自定义本地 agent 桥接的实时状态作出反应。
 
 <p align="center">
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.1/Aivatar_0.4.1_universal.dmg"><strong>Download macOS DMG 0.4.1</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_universal.dmg"><strong>Download macOS DMG 0.4.2</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.1/Aivatar_0.4.1_x64-setup.exe"><strong>Download Windows EXE 0.4.1</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_x64-setup.exe"><strong>Download Windows EXE 0.4.2</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.1/Aivatar_0.4.1_x64_en-US.msi"><strong>Download Windows MSI 0.4.1</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_x64_en-US.msi"><strong>Download Windows MSI 0.4.2</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.4.1">Release 0.4.1</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.4.2">Release 0.4.2</a>
 </p>
 
-## 0.4.1 Highlights / 0.4.1 更新亮点
+## 0.4.2 Highlights / 0.4.2 更新亮点
 
 **EN**
 
-- Hilltop Park now has deterministic weekly rain: exactly two rainy days per local week, randomized 10-minute to 6-hour events, natural cloud gathering/clearing, and minimum clear gaps between storms.
-- Rain intensity transitions smoothly through sprinkle, light, moderate, heavy, and storm stages, with duration floors for stronger stages so natural weather no longer flickers rapidly.
-- Weather visuals include full-sky storm clouds, sea/cliff haze, night-aware rain colors, pond ripples, and grass splashes that scale continuously with rain intensity.
-- Layered rain ambience crossfades without abrupt audio gaps; storm stages add separated near, medium, and distant thunder candidates.
-- Cached rain sprites, deterministic particle seeds, cropped splash buffers, and bounded surface updates preserve the accepted look while substantially reducing storm render cost.
-- Autonomous cooking now blocks unrelated Coffee Machine brewing until cooking finishes; Oil Easel/bed-foot occlusion, cliff-fog coverage, fish localization, and Cute Crayfish fishing grip have also been corrected.
-- Cute Crayfish uses both of its own claws to hold the rod at a chest-level grip during casting instead of rendering a duplicate claw or stretched arm.
-- Internal Debug controls remain available for focused source QA but are hidden in normal release builds.
+- Raw fish can now be sold directly from the inventory at rarity-based prices. Selecting a fish opens a dedicated sale action with a clear payout and sound feedback instead of squeezing sale text into the inventory button.
+- Raw-fish eating now uses correctly positioned fish artwork rather than reusing the bento animation with a displaced cooked fish; Gas Range depth sorting also remains stable after appliance interactions.
+- Cute Penguin fishing has been redrawn so its wings visibly grip the rod during casting, waiting, and reeling. Front/side grip placement, rod layering, single visible side wing, and wing-root alignment now match the character body and the action preview.
+- Codex, Claude Code, opencode, and Tencent WorkBuddy now share persistent exactly-once bits settlement. Stable reward IDs prevent duplicate payouts across repeated terminal events, reconnects, save reloads, and learning updates.
+- Claude Code uses current-turn transcript usage without carrying stale usage into a later turn; opencode aggregates assistant token fields per turn; WorkBuddy locks its first terminal baseline delta; Codex binds rewards to the final rollout record.
+- Main-room and Hilltop Park Debug controls remain available in source for focused QA but are hidden in normal release builds.
 
 **中文**
 
-- 山顶公园加入确定性的每周天气：每个本地自然周恰有两个下雨日，单场雨随机持续 10 分钟至 6 小时，并包含自然的乌云聚集、放晴过程和雨间晴天间隔。
-- 雨量会在零星、小雨、中雨、大雨和暴雨之间平滑过渡；中雨、大雨和暴雨具有最低持续时间，避免自然天气频繁闪变。
-- 天气画面加入覆盖完整天空的乌云、悬崖下海面朦胧、夜间适配的雨线颜色，以及随雨量连续变化的池塘波纹和草地水花。
-- 分层雨声音效可平滑交叉切换；暴雨阶段会以明确间隔随机播放近、中、远三种距离的雷声。
-- 通过缓存雨线 sprite、预生成粒子种子、裁剪水花缓冲区和限制水面刷新频率，在不改变确认视觉的前提下显著降低暴雨渲染开销。
-- 自主烹饪期间不会再转去启动咖啡机；同时修复了画架与床尾遮挡、悬崖雾气覆盖、鱼类汉化，以及可爱龙虾的钓鱼握杆动作。
-- 可爱龙虾甩杆时会在胸前使用自身两只钳子握杆，不再额外绘制重复钳子或异常拉长手臂。
-- 正式发布版继续隐藏内部 Debug 控件，同时保留源码中的专项 QA 能力。
+- 背包中的生鱼现在可以直接出售，并按照稀有度获得不同价格。单击鱼类后会显示独立的出售操作、明确的价格和音效，不再把出售文字挤在背包按钮内。
+- 吃生鱼不再复用便当动画并叠加错位的熟鱼；灶台与咖啡机等家具交互后的绘制层级也会保持稳定。
+- 可爱企鹅在甩杆、垂钓和收杆期间会真正用翅膀握住鱼竿；正面/侧面握点、鱼竿层级、侧面单翅显示和翅膀根部黑白交界对齐均已修正，并同步到动作预览。
+- Codex、Claude Code、opencode 和腾讯 WorkBuddy 现在共享可持久化的 exactly-once bits 结算。稳定 reward ID 可阻止重复终态、重连、存档重载和学习更新造成重复奖励。
+- Claude Code 仅结算当前 turn 的 transcript 用量；opencode 按 turn 聚合 assistant token；WorkBuddy 锁定首次终态的 baseline 增量；Codex 将奖励绑定到最终 rollout 记录。
+- 主房间和山顶公园的 Debug 控件仍保留在源码中用于专项 QA，但在正式发布界面中隐藏。
 
 ### UI Showcase / UI 展示
 
@@ -196,7 +192,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.4.1 is available through GitHub Releases as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer. These builds are unsigned and intended for GitHub tester distribution while signing, notarization, and release-mode integrations continue to harden.
+> Current status / 当前状态: 0.4.2 is available through GitHub Releases as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer. These builds are unsigned and intended for GitHub tester distribution while signing, notarization, and release-mode integrations continue to harden.
 
 ## Contents / 目录
 
@@ -678,9 +674,9 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 Current release-prep notes:
 
-- The 0.4.1 release is available through GitHub Releases as a universal macOS `.dmg`, Windows NSIS `.exe`, and Windows MSI installer. The current artifacts are unsigned.
+- The 0.4.2 release is available through GitHub Releases as a universal macOS `.dmg`, Windows NSIS `.exe`, and Windows MSI installer. The current artifacts are unsigned.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
-- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, Card Room, Hilltop Park, fishing, directional gas-range cooking, dynamic rain/weather, and the 0.4.1 interaction/rendering fixes are now part of the preview surface.
+- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, Card Room, Hilltop Park, fishing, directional gas-range cooking, dynamic rain/weather, and the 0.4.2 interaction/rendering and reward-settlement fixes are now part of the preview surface.
 - Native bridge support exists for local status, Codex Desktop session discovery, Tencent WorkBuddy China mainland/international `working`/`coding` session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
 - A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
 - Linux packaging remains planned after the desktop integration path is stable.
@@ -689,9 +685,9 @@ Current release-prep notes:
 
 当前发布准备阶段说明：
 
-- 0.4.1 已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包；当前产物尚未签名。
+- 0.4.2 已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包；当前产物尚未签名。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
-- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、纸牌屋 Card Room、山顶公园、钓鱼、四向燃气灶烹饪、动态雨天系统，以及 0.4.1 交互/渲染修复，已经纳入预览体验。
+- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、纸牌屋 Card Room、山顶公园、钓鱼、四向燃气灶烹饪、动态雨天系统，以及 0.4.2 交互/渲染和奖励结算修复，已经纳入预览体验。
 - 本地状态、Codex Desktop 会话发现、腾讯 WorkBuddy 大陆版/国际版 `working`/`coding` 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。
 - 完全 Rust-native 的 connected runner 和面向发布模式的 provider-backed learning 仍是后续加固工作。
 - Linux 打包计划会在桌面集成路径继续稳定后推进。

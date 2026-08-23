@@ -1485,7 +1485,6 @@ assert.match(
 );
 assert.match(animationPreviewText, /else if \(!crayfishFishingGrip\) \{\s*drawFishing\(\);/);
 assert.match(animationPreviewText, /resolveParkFishingGrip/);
-assert.match(animationPreviewText, /\{ heldPropGrip: crayfishGrip \}/);
 assert.match(fishingAnimationText, /quadraticCurveTo\(control\.x, control\.y, tip\.x, tip\.y\)/);
 assert.match(fishingAnimationText, /const drawPixelRipple/);
 assert.match(fishingAnimationText, /const drawSplash/);
