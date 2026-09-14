@@ -7,16 +7,22 @@
 **中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。像素小伙伴会生活在可装修的主房间、纸牌屋和山顶公园中，并对 Codex、Claude Code、opencode、腾讯 WorkBuddy 或自定义本地 agent 桥接的实时状态作出反应。
 
 <p align="center">
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_universal.dmg"><strong>Download macOS DMG 0.4.2</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_universal-r1.dmg"><strong>Download macOS DMG 0.4.2 r1</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_x64-setup.exe"><strong>Download Windows EXE 0.4.2</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_x64-setup-r1.exe"><strong>Download Windows EXE 0.4.2 r1</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_x64_en-US.msi"><strong>Download Windows MSI 0.4.2</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_x64_en-US-r1.msi"><strong>Download Windows MSI 0.4.2 r1</strong></a>
   ·
   <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.4.2">Release 0.4.2</a>
 </p>
 
 ## 0.4.2 Highlights / 0.4.2 更新亮点
+
+**Revision 1 / 修订版 1** — The application version remains `0.4.2`; download the `r1` installers above for these fixes. 应用版本号仍为 `0.4.2`，以上 `r1` 安装包包含本次修复。
+
+- Codex turn completion and late events now preserve the correct finished state. 修复 Codex 任务结束后仍显示工作中的问题。
+- Ordinary save changes are batched every 20 seconds and unchanged content is skipped; purchases, rewards, save switching, and exit still save immediately. 普通状态变化每 20 秒合并保存，内容未变时跳过写入；购买、奖励、切档和退出仍立即保存。
+- Cross-window updates preserve pending progress and external inventory changes without repeated write-back. 多窗口同步保留待保存的进度及其他窗口新增的物品，避免重复回写。
 
 **EN**
 
