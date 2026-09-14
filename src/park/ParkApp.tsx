@@ -28,6 +28,7 @@ import {
 import {
   PARK_LAYOUT_EVENT,
   PARK_LAYOUT_STORAGE_KEY,
+  flushParkSaveSlot,
   hasFishingRod,
   persistParkRuntime,
   readParkLayout,
@@ -299,6 +300,20 @@ export const ParkApp = () => {
   const lastMoodAtRef = useRef(0);
   const lastWeatherUiAtRef = useRef(Number.NEGATIVE_INFINITY);
 
+  const flushCurrentParkSave = () => {
+    if (!hostSlotId) return;
+    const simulation = simulationRef.current;
+    if (simulation && visitRef.current && !debugPreviewRef.current) {
+      persistParkRuntime(hostSlotId, simulation.avatar, simulation.navMemory);
+    }
+    flushParkSaveSlot(hostSlotId);
+  };
+
+  const replaceParkVisit = (visit: AivatarVisitSession | null) => {
+    if (visitRef.current?.visitId !== visit?.visitId) flushCurrentParkSave();
+    visitRef.current = visit;
+  };
+
   const restoreMainWindowAfterPark = async (updateUi = true) => {
     if (!mainWindowHiddenForProfileRef.current) {
       handoffMainWindowHideRequestedRef.current = false;
@@ -456,13 +471,13 @@ export const ParkApp = () => {
         if (activeVisit) {
           const latest = snapshot.visits.find((visit) => visit.visitId === activeVisit.visitId);
           if (!latest || latest.phase === "cancelled" || latest.phase === "ended") {
-            visitRef.current = null;
+            replaceParkVisit(null);
             if (!debugPreviewRef.current) simulationRef.current = null;
             const restored = await restoreMainWindowAfterPark();
             if (restored) invitationStartedRef.current = false;
             return;
           }
-          visitRef.current = latest;
+          replaceParkVisit(latest);
           const handoffComplete =
             latest.phase !== "invited" &&
             latest.guestRuntimeRoomInstanceId === instanceIdRef.current;
@@ -523,7 +538,7 @@ export const ParkApp = () => {
         });
         if (!visit) return;
         invitationStartedRef.current = true;
-        visitRef.current = visit;
+        replaceParkVisit(visit);
         await postJson(VISIT_INVITE_URL, visit);
       } catch {
         // The park remains an empty animated landscape until the main room bridge is available.
@@ -535,6 +550,7 @@ export const ParkApp = () => {
     return () => {
       stopped = true;
       window.clearInterval(timer);
+      flushCurrentParkSave();
     };
   }, [hostSlotId]);
 
@@ -584,6 +600,12 @@ export const ParkApp = () => {
           );
         }
         if (!debugPreviewActive && visit) {
+          if (result.events.length > 0 || now - lastPersistAtRef.current >= 2000) {
+            lastPersistAtRef.current = now;
+            // Refresh the pending snapshot; the shared writer commits ordinary
+            // progress at most once per 20 seconds. A catch commits it immediately.
+            persistParkRuntime(hostSlotId, result.state.avatar, result.state.navMemory);
+          }
           result.events.forEach((event) => {
             const nextSave = recordParkCatch(hostSlotId, event.fishId);
             if (nextSave) {
@@ -599,10 +621,6 @@ export const ParkApp = () => {
               saveRef.current = nextSave;
               setSave(nextSave);
             }
-          }
-          if (now - lastPersistAtRef.current >= 2000) {
-            lastPersistAtRef.current = now;
-            persistParkRuntime(hostSlotId, result.state.avatar, result.state.navMemory);
           }
           if (now - lastVisitPostAtRef.current >= PARK_SYNC_MS) {
             lastVisitPostAtRef.current = now;
@@ -692,11 +710,15 @@ export const ParkApp = () => {
     return () => {
       stopped = true;
       window.cancelAnimationFrame(animation);
+      flushCurrentParkSave();
     };
   }, [hostSlotId]);
 
   useEffect(() => {
+    let stopped = false;
+    let unlistenSave: (() => void) | undefined;
     const finishVisit = () => {
+      flushCurrentParkSave();
       void restoreMainWindowAfterPark(false);
       const visit = visitRef.current;
       if (!visit) return;
@@ -708,14 +730,31 @@ export const ParkApp = () => {
       });
       if (ended) void postJson(VISIT_END_URL, ended, true).catch(() => undefined);
     };
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden") flushCurrentParkSave();
+    };
     window.addEventListener("pagehide", finishVisit);
     window.addEventListener("beforeunload", finishVisit);
+    document.addEventListener("visibilitychange", flushWhenHidden);
+    if ("__TAURI_INTERNALS__" in window) {
+      void import("@tauri-apps/api/event")
+        .then(({ listen }) => listen("aivatar://save-before-close", flushCurrentParkSave))
+        .then((unlisten) => {
+          if (stopped) unlisten();
+          else unlistenSave = unlisten;
+        })
+        .catch(() => undefined);
+    }
     return () => {
+      stopped = true;
+      flushCurrentParkSave();
+      unlistenSave?.();
       void restoreMainWindowAfterPark(false);
       window.removeEventListener("pagehide", finishVisit);
       window.removeEventListener("beforeunload", finishVisit);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
     };
-  }, []);
+  }, [hostSlotId]);
 
   const selectPreviewHour = (hour: number | null) => {
     const url = new URL(window.location.href);
@@ -790,6 +829,7 @@ export const ParkApp = () => {
       setDebugMessage("当前公园窗口没有关联角色存档。");
       return;
     }
+    flushCurrentParkSave();
     const currentSave = readParkSaveSlot(hostSlotId) ?? saveRef.current;
     if (!currentSave) {
       setDebugMessage("未找到当前角色存档，无法召唤。");
@@ -811,6 +851,7 @@ export const ParkApp = () => {
       setDebugMessage("当前公园窗口没有关联角色存档。");
       return;
     }
+    flushCurrentParkSave();
     const currentSave = readParkSaveSlot(hostSlotId) ?? saveRef.current;
     if (!currentSave) {
       setDebugMessage("未找到当前角色存档，无法开始钓鱼。");
@@ -837,6 +878,7 @@ export const ParkApp = () => {
       setDebugMessage("当前公园窗口没有关联角色存档。");
       return;
     }
+    flushCurrentParkSave();
     const currentSave = readParkSaveSlot(hostSlotId) ?? saveRef.current;
     if (!currentSave) {
       setDebugMessage("未找到当前角色存档，无法前往长椅。");

@@ -600,6 +600,9 @@ fn normalize_status(payload: Value) -> Result<Value, String> {
     if let Some(reward_id) = source.get("rewardId").and_then(Value::as_str) {
         object.insert("rewardId".to_string(), reward_id.into());
     }
+    if let Some(turn_id) = source.get("turnId").and_then(Value::as_str) {
+        object.insert("turnId".to_string(), turn_id.into());
+    }
     object.insert("status".to_string(), status.into());
     object.insert(
         "phase".to_string(),
@@ -1437,6 +1440,225 @@ fn normalize_presence(payload: Value) -> Result<Value, String> {
     }))
 }
 
+fn merge_codex_session_status(mut status: Value, existing: &Value) -> Value {
+    let phase = string_field(&status, "phase");
+    if matches!(phase.as_deref(), Some("session-learning" | "context-window")) {
+        let mut merged = existing.clone();
+        if let Some(object) = merged.as_object_mut() {
+            for field in ["presenceTimestamp", "idleBubbleCandidates", "learning"] {
+                if let Some(value) = status.get(field) {
+                    object.insert(field.to_string(), value.clone());
+                }
+            }
+            if phase.as_deref() == Some("context-window") {
+                if let Some(usage) = status.get("usage") {
+                    object.insert("usage".to_string(), usage.clone());
+                }
+            }
+        }
+        return merged;
+    }
+
+    let incoming_turn = string_field(&status, "turnId");
+    let existing_turn = string_field(existing, "turnId");
+    let starts_turn = matches!(phase.as_deref(), Some("turn-start" | "user-message"))
+        && matches!(status_name(&status), Some("thinking" | "executing"));
+    let same_known_turn = incoming_turn.is_some() && incoming_turn == existing_turn;
+    let different_known_turn = incoming_turn.is_some()
+        && existing_turn.is_some()
+        && incoming_turn != existing_turn;
+    // A terminal event for this known turn outranks an asynchronous tool update,
+    // even when that tool update has a later timestamp and arrived first.
+    let finishes_current_turn = same_known_turn
+        && is_terminal_session_status(&status)
+        && matches!(status_name(existing), Some("thinking" | "executing" | "waiting_for_user"));
+    let incoming_at = parsed_ms(status.get("timestamp"));
+    let existing_at = parsed_ms(existing.get("timestamp"));
+    if incoming_at > 0
+        && existing_at > 0
+        && incoming_at < existing_at
+        && !finishes_current_turn
+    {
+        return existing.clone();
+    }
+
+    // Only an explicit new turn may reopen a completed Codex session. Watcher
+    // callbacks and discovery refreshes can arrive after its terminal event.
+    if (different_known_turn && !starts_turn)
+        || (is_terminal_session_status(existing) && (!starts_turn || same_known_turn))
+    {
+        return existing.clone();
+    }
+
+    if let Some(object) = status.as_object_mut() {
+        for field in ["presenceTimestamp", "idleBubbleCandidates", "learning"] {
+            if !object.contains_key(field) {
+                if let Some(value) = existing.get(field) {
+                    object.insert(field.to_string(), value.clone());
+                }
+            }
+        }
+        // A legacy start without a turn id must not retain the previous turn's
+        // identity or reward usage. Ordinary updates may acquire an official id.
+        if !starts_turn {
+            for field in ["turnId", "usage"] {
+                if !object.contains_key(field) {
+                    if let Some(value) = existing.get(field) {
+                        object.insert(field.to_string(), value.clone());
+                    }
+                }
+            }
+        }
+    }
+    status
+}
+
+#[cfg(test)]
+mod codex_session_merge_tests {
+    use super::*;
+
+    fn event(status: &str, phase: &str, turn_id: Option<&str>, second: u8) -> Value {
+        normalize_status(json!({
+            "agent": "codex",
+            "sessionId": "synthetic-session",
+            "turnId": turn_id,
+            "status": status,
+            "phase": phase,
+            "timestamp": format!("2026-09-05T10:00:{second:02}Z")
+        }))
+        .expect("synthetic status should normalize")
+    }
+
+    #[test]
+    fn codex_turn_id_survives_normalization() {
+        let status = event("thinking", "turn-start", Some("turn-a"), 1);
+        assert_eq!(status.get("turnId").and_then(Value::as_str), Some("turn-a"));
+    }
+
+    #[test]
+    fn codex_older_activity_and_unidentified_terminals_cannot_replace_current_status() {
+        let current = event("executing", "tool", Some("turn-a"), 10);
+        for (status, phase, turn_id) in [
+            ("thinking", "commentary", Some("turn-a")),
+            ("complete", "final", None),
+            ("complete", "final", Some("turn-b")),
+        ] {
+            let older = event(status, phase, turn_id, 5);
+            assert_eq!(merge_codex_session_status(older, &current), current);
+        }
+    }
+
+    #[test]
+    fn codex_known_turn_terminal_can_finish_after_newer_tool_update() {
+        let current = event("executing", "tool", Some("turn-a"), 3);
+        for terminal in ["complete", "error"] {
+            let finished = event(terminal, "turn-complete", Some("turn-a"), 2);
+            assert_eq!(merge_codex_session_status(finished.clone(), &current), finished);
+        }
+    }
+
+    #[test]
+    fn codex_terminal_status_rejects_late_activity_with_or_without_turn_id() {
+        for terminal in ["complete", "error"] {
+            let current = event(terminal, "turn-complete", Some("turn-a"), 10);
+            for turn_id in [Some("turn-a"), None] {
+                for (status, phase) in [
+                    ("thinking", "commentary"),
+                    ("executing", "tool"),
+                    ("thinking", "tool-result"),
+                    ("thinking", "discovery"),
+                    ("idle", "idle"),
+                ] {
+                    let late = event(status, phase, turn_id, 20);
+                    assert_eq!(merge_codex_session_status(late, &current), current);
+                }
+            }
+            let duplicate_start = event("thinking", "turn-start", Some("turn-a"), 20);
+            assert_eq!(merge_codex_session_status(duplicate_start, &current), current);
+        }
+    }
+
+    #[test]
+    fn codex_duplicate_terminal_retains_first_reward_and_usage() {
+        let working = event("executing", "tool", Some("turn-a"), 3);
+        let mut first_final = event("complete", "final", Some("turn-a"), 2);
+        first_final["rewardId"] = json!("codex:synthetic-session:first-final");
+        first_final["usage"] = json!({ "totalTokens": 120, "scope": "turn" });
+        let current = merge_codex_session_status(first_final.clone(), &working);
+        assert_eq!(current, first_final);
+        for turn_id in [Some("turn-a"), None] {
+            let mut duplicate = event("complete", "turn-complete", turn_id, 4);
+            duplicate["rewardId"] = json!("codex:synthetic-session:duplicate-final");
+            duplicate["usage"] = json!({ "totalTokens": 900, "scope": "turn" });
+            assert_eq!(merge_codex_session_status(duplicate, &current), current);
+        }
+    }
+
+    #[test]
+    fn codex_explicit_new_turn_accepts_its_activity_and_completion() {
+        let finished = event("complete", "final", Some("turn-a"), 10);
+        let start = event("thinking", "turn-start", Some("turn-b"), 20);
+        let current = merge_codex_session_status(start, &finished);
+        assert_eq!(status_name(&current), Some("thinking"));
+        assert_eq!(string_field(&current, "turnId").as_deref(), Some("turn-b"));
+
+        let working = event("executing", "tool", Some("turn-b"), 21);
+        let current = merge_codex_session_status(working, &current);
+        assert_eq!(status_name(&current), Some("executing"));
+        let mut next_final = event("complete", "final", Some("turn-b"), 22);
+        next_final["rewardId"] = json!("codex:synthetic-session:next-final");
+        next_final["usage"] = json!({ "totalTokens": 50, "scope": "turn" });
+        assert_eq!(merge_codex_session_status(next_final.clone(), &current), next_final);
+    }
+
+    #[test]
+    fn codex_other_turn_events_cannot_finish_or_update_an_active_turn() {
+        let current = event("thinking", "turn-start", Some("turn-b"), 20);
+        for (status, phase) in [("executing", "tool"), ("complete", "final")] {
+            let late = event(status, phase, Some("turn-a"), 30);
+            assert_eq!(merge_codex_session_status(late, &current), current);
+        }
+    }
+
+    #[test]
+    fn codex_legacy_start_clears_previous_identity_and_can_acquire_official_id() {
+        let mut finished = event("complete", "final", Some("turn-a"), 10);
+        finished["rewardId"] = json!("previous-reward");
+        finished["usage"] = json!({ "totalTokens": 100, "scope": "turn" });
+        for phase in ["turn-start", "user-message"] {
+            let start = event("thinking", phase, None, 20);
+            let current = merge_codex_session_status(start, &finished);
+            assert_eq!(status_name(&current), Some("thinking"));
+            for field in ["turnId", "rewardId", "usage"] {
+                assert!(current.get(field).is_none(), "new legacy turn retained {field}");
+            }
+
+            let official = event("executing", "tool", Some("turn-b"), 21);
+            let current = merge_codex_session_status(official, &current);
+            assert_eq!(string_field(&current, "turnId").as_deref(), Some("turn-b"));
+            let legacy = event("thinking", "tool-result", None, 22);
+            let current = merge_codex_session_status(legacy, &current);
+            assert_eq!(string_field(&current, "turnId").as_deref(), Some("turn-b"));
+        }
+    }
+
+    #[test]
+    fn codex_late_learning_and_context_only_update_metadata_of_new_turn() {
+        let current = event("executing", "tool", Some("turn-b"), 20);
+        for phase in ["session-learning", "context-window"] {
+            let mut metadata = event("complete", phase, Some("turn-a"), 10);
+            metadata["learning"] = json!({ "id": "previous-turn-learning" });
+            metadata["usage"] = json!({ "totalTokens": 100, "scope": "context-window" });
+            let merged = merge_codex_session_status(metadata, &current);
+            for field in ["status", "phase", "timestamp", "turnId"] {
+                assert_eq!(merged.get(field), current.get(field));
+            }
+            assert_eq!(merged["learning"]["id"], json!("previous-turn-learning"));
+            assert_eq!(merged.get("usage").is_some(), phase == "context-window");
+        }
+    }
+}
+
 pub fn submit_status(payload: Value) -> Result<Value, String> {
     let mut status = normalize_status(payload)?;
     let incoming_status = status.clone();
@@ -1481,7 +1703,9 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
             should_preserve_claude_session_end(&status, &existing);
         let context_window_only =
             string_field(&status, "phase").as_deref() == Some("context-window");
-        if session_learning || repeated_claude_terminal {
+        if string_field(&status, "agent").as_deref() == Some("codex") {
+            status = merge_codex_session_status(status, &existing);
+        } else if session_learning || repeated_claude_terminal {
             let mut merged = existing;
             if let Some(object) = merged.as_object_mut() {
                 for field in ["presenceTimestamp", "idleBubbleCandidates", "learning"] {

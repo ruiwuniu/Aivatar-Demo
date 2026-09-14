@@ -103,6 +103,8 @@ import {
   gasOvenRangeCookingFacing,
 } from "./game/gasOvenRangeSprites";
 import { useCodexStatus } from "./hooks/useCodexStatus";
+import { writeJsonIfChanged } from "./persistence/savePersistence";
+import { createRoomSavePersistence } from "./persistence/roomSavePersistence";
 import {
   agentDisplayName,
   agentSourceBadge,
@@ -2894,9 +2896,11 @@ const loadSave = (content: AivatarContent, storageKey = SAVE_KEY): AivatarSaveSt
 
 const persistSave = (save: AivatarSaveState, storageKey = SAVE_KEY) => {
   try {
-    localStorage.setItem(storageKey, JSON.stringify(save));
+    writeJsonIfChanged(localStorage, storageKey, save);
+    return true;
   } catch (error) {
     console.warn("Could not persist Aivatar save.", error);
+    return false;
   }
 };
 
@@ -2992,7 +2996,7 @@ const writeSaveSlots = (slots: SaveSlotSummary[]) => {
     .sort((a, b) => a.slotIndex - b.slotIndex);
 
   try {
-    localStorage.setItem(SAVE_SLOTS_KEY, JSON.stringify(sortedSlots));
+    writeJsonIfChanged(localStorage, SAVE_SLOTS_KEY, sortedSlots);
   } catch (error) {
     console.warn("Could not persist Aivatar save slots.", error);
   }
@@ -3783,13 +3787,18 @@ export const App = () => {
   const sidePanelTimerRef = useRef<number | null>(null);
   const [save, setSave] = useState<AivatarSaveState>(() => loadInitialSave());
   const saveRef = useRef(save);
+  const urgentSaveRef = useRef(false);
+  const saveContentRef = useRef(contentBase);
+  saveContentRef.current = contentBase;
   const updateSaveSlotSummary = (
     slotId: string,
     savedState: AivatarSaveState,
     syncState = true,
   ) => {
     const timestamp = new Date().toISOString();
-    const nextSlots = saveSlotsRef.current.map((slot) =>
+    const currentSlots = readSaveSlots();
+    if (!currentSlots.some((slot) => slot.id === slotId)) return;
+    const nextSlots = currentSlots.map((slot) =>
       slot.id === slotId ? updateSaveSlotSummaryFromSave(slot, savedState, timestamp) : slot,
     );
 
@@ -3797,16 +3806,27 @@ export const App = () => {
     writeSaveSlots(nextSlots);
     if (syncState) setSaveSlots(nextSlots);
   };
+  const roomSavePersistenceRef = useRef<ReturnType<typeof createRoomSavePersistence> | null>(null);
+  if (!roomSavePersistenceRef.current) {
+    roomSavePersistenceRef.current = createRoomSavePersistence({
+      storage: localStorage,
+      storageKey: saveSlotStorageKey,
+      normalize: (value) => normalizeSavePayload(saveContentRef.current, value),
+      runtime: (slotId) => activeSaveSlotIdRef.current === slotId
+        ? runtimeRef.current
+        : undefined,
+      onPersisted: updateSaveSlotSummary,
+      onError: (error) => console.warn("Could not persist Aivatar save; will retry.", error),
+    });
+    if (activeSaveSlotIdRef.current) {
+      roomSavePersistenceRef.current.activate(activeSaveSlotIdRef.current, save);
+    }
+  }
   const persistCurrentSaveSlot = (syncState = true) => {
     const slotId = activeSaveSlotIdRef.current;
     if (!slotId) return;
 
-    const savedState = {
-      ...saveRef.current,
-      avatarRuntime: runtimeRef.current,
-    };
-    persistSave(savedState, saveSlotStorageKey(slotId));
-    updateSaveSlotSummary(slotId, savedState, syncState);
+    roomSavePersistenceRef.current?.flush(slotId, saveRef.current, syncState);
   };
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
   const [uiTheme, setUiTheme] = useState<UiThemeId>(() => loadInitialUiTheme());
@@ -5937,6 +5957,9 @@ export const App = () => {
   };
 
   const applySaveSlotState = (slotId: string, nextSave: AivatarSaveState) => {
+    nextSave = roomSavePersistenceRef.current!.activate(slotId, nextSave);
+    urgentSaveRef.current = false;
+    saveRef.current = nextSave;
     activeSaveSlotIdRef.current = slotId;
     hadSavedStateRef.current = true;
     setActiveSaveSlotId(slotId);
@@ -6066,7 +6089,7 @@ export const App = () => {
       (a, b) => a.slotIndex - b.slotIndex,
     );
 
-    persistSave(nextSave, saveSlotStorageKey(slotId));
+    if (!persistSave(nextSave, saveSlotStorageKey(slotId))) return;
     saveSlotsRef.current = nextSlots;
     writeSaveSlots(nextSlots);
     setSaveSlots(nextSlots);
@@ -6150,6 +6173,7 @@ export const App = () => {
 
     try {
       localStorage.removeItem(saveSlotStorageKey(deleteSaveSlot.id));
+      roomSavePersistenceRef.current?.forget(deleteSaveSlot.id);
     } catch (error) {
       console.warn("Could not delete Aivatar save slot.", error);
     }
@@ -6350,40 +6374,30 @@ export const App = () => {
   useEffect(() => {
     saveRef.current = save;
     if (!activeSaveSlotId) return;
-
-    const savedState = {
-      ...save,
-      avatarRuntime: runtimeRef.current,
-    };
-    persistSave(savedState, saveSlotStorageKey(activeSaveSlotId));
-    updateSaveSlotSummary(activeSaveSlotId, savedState);
+    roomSavePersistenceRef.current?.update(activeSaveSlotId, save, urgentSaveRef.current);
+    urgentSaveRef.current = false;
   }, [activeSaveSlotId, save]);
 
   useEffect(() => {
     if (!activeSaveSlotId) return;
     const storageKey = saveSlotStorageKey(activeSaveSlotId);
-    const mergeParkSave = (event: StorageEvent) => {
-      if (event.key !== storageKey || !event.newValue) return;
+    const mergeExternalSave = (event: StorageEvent) => {
+      if (event.key !== storageKey) return;
       try {
-        const external = normalizeSavePayload(
-          contentBase,
-          JSON.parse(event.newValue) as Partial<AivatarSaveState>,
+        // Read the latest stored snapshot: queued storage events can be stale.
+        const merged = roomSavePersistenceRef.current!.mergeExternal(
+          activeSaveSlotId, saveRef.current,
         );
-        setSave((current) => ({
-          ...current,
-          petStats: external.petStats,
-          memory: external.memory,
-          inventory: external.inventory,
-          furnitureStorage: external.furnitureStorage,
-          parkNavMemory: external.parkNavMemory,
-          parkRuntime: external.parkRuntime,
-        }));
+        if (merged !== saveRef.current) {
+          saveRef.current = merged;
+          setSave(merged);
+        }
       } catch {
-        // Ignore incomplete cross-window writes; the next park update will retry.
+        // Keep the local draft when an external snapshot cannot be read.
       }
     };
-    window.addEventListener("storage", mergeParkSave);
-    return () => window.removeEventListener("storage", mergeParkSave);
+    window.addEventListener("storage", mergeExternalSave);
+    return () => window.removeEventListener("storage", mergeExternalSave);
   }, [activeSaveSlotId, contentBase]);
 
   useEffect(() => {
@@ -6644,6 +6658,7 @@ export const App = () => {
   useEffect(() => {
     const flushSave = () => {
       persistCurrentSaveSlot(false);
+      roomSavePersistenceRef.current?.flushAll();
     };
     const flushOnVisibilityHidden = () => {
       if (document.visibilityState === "hidden") flushSave();
@@ -9852,6 +9867,7 @@ export const App = () => {
 
   const trainGrowthTrait = (trait: keyof AivatarGrowthTraits) => {
     const label = ui(`growth.trait.${trait}`);
+    urgentSaveRef.current = true;
     setSave((current) => ({
       ...current,
       memory: recordTraitTrainingMemory(current.memory, trait),
@@ -10103,8 +10119,12 @@ export const App = () => {
     updateActiveInteraction(null);
     runtimeRef.current = initialAvatarRuntime();
     setAvatar(runtimeRef.current);
-    persistSave(freshSave, saveSlotStorageKey(activeSlotId));
-    updateSaveSlotSummary(activeSlotId, freshSave);
+    if (persistSave(freshSave, saveSlotStorageKey(activeSlotId))) {
+      roomSavePersistenceRef.current?.forget(activeSlotId);
+      roomSavePersistenceRef.current?.activate(activeSlotId, freshSave);
+      updateSaveSlotSummary(activeSlotId, freshSave);
+    }
+    saveRef.current = freshSave;
     setSave(freshSave);
   };
 

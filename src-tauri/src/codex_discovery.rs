@@ -1,6 +1,6 @@
 use std::{
     collections::hash_map::DefaultHasher,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
     hash::{Hash, Hasher},
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
@@ -30,7 +30,7 @@ const CLAUDE_DESKTOP_INVENTORY_REPOST: Duration = Duration::from_secs(60);
 const MAX_CLAUDE_LEVELDB_BYTES: u64 = 25 * 1024 * 1024;
 const CLAUDE_LOG_INITIAL_TAIL_BYTES: u64 = 256 * 1024;
 const DEFAULT_CLAUDE_CHAT_SETTLE_MS: u64 = 5_000;
-const MAX_LINE_CHARS: usize = 32 * 1024;
+const CLOSED_TURN_LIMIT: usize = 64;
 const SUMMARY_CHARS: usize = 90;
 const DIGEST_ENTRY_LIMIT: usize = 8;
 const DIGEST_ENTRY_CHARS: usize = 360;
@@ -77,6 +77,7 @@ struct ClaudeChatActivityCache {
     posted_complete_signature: Option<String>,
 }
 
+#[derive(Default)]
 struct WatchedSession {
     path: PathBuf,
     offset: u64,
@@ -87,6 +88,11 @@ struct WatchedSession {
     digest_entries: Vec<DigestEntry>,
     last_learning_id: Option<String>,
     terminal_turn_ended: bool,
+    turn_id: Option<String>,
+    turn_started_at: Option<String>,
+    turn_start_status: Option<Value>,
+    terminal_timestamp: Option<String>,
+    closed_turn_ids: VecDeque<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -174,22 +180,17 @@ fn discovery_loop() {
 
 fn initialize_watched_session(meta: &SessionMeta) -> WatchedSession {
     let mut session = WatchedSession {
-        offset: 0,
         path: meta.path.clone(),
         cwd: meta.cwd.clone(),
-        last_event_key: None,
-        usage_baseline: None,
-        latest_usage: None,
-        digest_entries: Vec::new(),
-        last_learning_id: None,
-        terminal_turn_ended: false,
+        ..WatchedSession::default()
     };
     let restored_status = restore_latest_status(&meta.session_id, &mut session);
-    session.offset = file_len(&meta.path).unwrap_or(0);
 
     if let Some(status) = restored_status {
         session.last_event_key = Some(status_event_key(&status));
-        submit_status(status);
+        for update in restored_status_updates(&session, status) {
+            submit_status(update);
+        }
     } else {
         let status = discovered_status(meta);
         session.last_event_key = Some(status_event_key(&status));
@@ -1176,11 +1177,11 @@ fn discovered_status(meta: &SessionMeta) -> Value {
     json!({
         "agent": AGENT,
         "sessionId": meta.session_id,
-        "status": "thinking",
+        "status": "idle",
         "phase": "discovered",
         "task": "Codex Desktop session detected",
         "summary": summary,
-        "progress": 20,
+        "progress": 0,
         "message": "Codex Desktop session detected",
         "severity": "info",
         "timestamp": iso_now()
@@ -1188,63 +1189,129 @@ fn discovered_status(meta: &SessionMeta) -> Value {
 }
 
 fn tail_session(session_id: &str, session: &mut WatchedSession) -> Result<(), String> {
-    let current_len = file_len(&session.path)?;
-    if current_len < session.offset {
-        session.offset = current_len;
+    if file_len(&session.path)? < session.offset {
+        let previous_key = session.last_event_key.clone();
+        if let Some(status) = restore_latest_status(session_id, session) {
+            if previous_key.as_deref() != Some(status_event_key(&status).as_str()) {
+                for update in restored_status_updates(session, status) {
+                    submit_status(update);
+                }
+            }
+        }
         return Ok(());
     }
-    if current_len == session.offset {
-        return Ok(());
-    }
+    read_session_updates(session_id, session, true, submit_status)
+}
 
+// Commit only complete JSONL records. The same reader is used for startup and
+// live updates, so a partial line (including partial UTF-8) stays before offset.
+fn read_session_updates(
+    session_id: &str,
+    session: &mut WatchedSession,
+    allow_learning_worker: bool,
+    mut on_status: impl FnMut(Value),
+) -> Result<(), String> {
     let mut file = File::open(&session.path).map_err(|error| error.to_string())?;
+    let snapshot_len = file.metadata().map_err(|error| error.to_string())?.len();
+    if snapshot_len < session.offset {
+        return Err("Codex rollout was truncated during reading".to_string());
+    }
     file.seek(SeekFrom::Start(session.offset))
         .map_err(|error| error.to_string())?;
-    let mut appended = String::new();
-    file.read_to_string(&mut appended)
-        .map_err(|error| error.to_string())?;
-    session.offset = current_len;
-
-    for line in appended.lines().filter(|line| !line.trim().is_empty()) {
-        if line.len() > MAX_LINE_CHARS {
-            continue;
+    // Bound this pass to the snapshot of this open file, not a later stat of its path.
+    let mut reader = BufReader::new(file.take(snapshot_len - session.offset));
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let bytes_read = reader
+            .read_until(b'\n', &mut line)
+            .map_err(|error| error.to_string())?;
+        if bytes_read == 0 || line.last() != Some(&b'\n') {
+            break;
         }
-        if let Ok(record) = serde_json::from_str::<Value>(line) {
-            handle_record(session_id, session, &record);
+        session.offset += bytes_read as u64;
+        // Long tool results and final replies are valid records. Summaries and
+        // learning digests are bounded after parsing, never by dropping events.
+        let Ok(record) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
+        if let Some(status) =
+            status_from_record(session_id, session, &record, allow_learning_worker)
+        {
+            let key = status_event_key(&status);
+            if session.last_event_key.as_deref() != Some(key.as_str()) {
+                session.last_event_key = Some(key);
+                on_status(status);
+            }
         }
     }
     Ok(())
 }
 
-fn handle_record(session_id: &str, session: &mut WatchedSession, record: &Value) {
-    let status = status_from_record(session_id, session, record, true);
+fn restore_latest_status(session_id: &str, session: &mut WatchedSession) -> Option<Value> {
+    *session = WatchedSession {
+        path: session.path.clone(),
+        cwd: session.cwd.clone(),
+        ..WatchedSession::default()
+    };
+    let mut latest_status = None;
+    read_session_updates(session_id, session, false, |status| {
+        latest_status = Some(status)
+    })
+    .ok()?;
+    latest_status
+}
 
-    if let Some(status) = status {
-        let event_key = status_event_key(&status);
-        if session.last_event_key.as_deref() == Some(event_key.as_str()) {
-            return;
+fn restored_status_updates(session: &WatchedSession, latest: Value) -> Vec<Value> {
+    let mut updates = Vec::new();
+    // A surviving bridge may still hold the previous turn's terminal status.
+    // Reintroduce only the restored turn's actual start before its latest state.
+    if let Some(start) = &session.turn_start_status {
+        if status_event_key(start) != status_event_key(&latest) {
+            updates.push(start.clone());
         }
-        session.last_event_key = Some(event_key);
-        submit_status(status);
+    }
+    updates.push(latest);
+    updates
+}
+
+fn record_turn_id(record: &Value) -> Option<String> {
+    let payload = record.get("payload").unwrap_or(record);
+    string_field(payload, "turn_id")
+        .or_else(|| string_field(payload, "turnId"))
+        .or_else(|| string_field(record, "turn_id"))
+}
+
+fn timestamp_before(left: &str, right: &str) -> bool {
+    match (
+        chrono::DateTime::parse_from_rfc3339(left),
+        chrono::DateTime::parse_from_rfc3339(right),
+    ) {
+        (Ok(left), Ok(right)) => left < right,
+        _ => false,
     }
 }
 
-fn restore_latest_status(session_id: &str, session: &mut WatchedSession) -> Option<Value> {
-    let file = File::open(&session.path).ok()?;
-    let reader = BufReader::new(file);
-    let mut latest_status = None;
-    for line in reader.lines().map_while(Result::ok) {
-        if line.len() > MAX_LINE_CHARS || line.trim().is_empty() {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if let Some(status) = status_from_record(session_id, session, &record, false) {
-            latest_status = Some(status);
+fn remember_closed_turn(session: &mut WatchedSession, turn_id: &str) {
+    if !session.closed_turn_ids.iter().any(|id| id == turn_id) {
+        session.closed_turn_ids.push_back(turn_id.to_string());
+        if session.closed_turn_ids.len() > CLOSED_TURN_LIMIT {
+            session.closed_turn_ids.pop_front();
         }
     }
-    latest_status
+}
+
+fn begin_turn(session: &mut WatchedSession, turn_id: Option<String>, timestamp: &str) {
+    session.terminal_turn_ended = false;
+    session.turn_id = turn_id;
+    session.turn_started_at = Some(timestamp.to_string());
+    session.turn_start_status = None;
+    session.terminal_timestamp = None;
+    session.usage_baseline = session
+        .latest_usage
+        .as_ref()
+        .map(|usage| usage.total.clone());
+    session.digest_entries.clear();
 }
 
 fn status_from_record(
@@ -1260,148 +1327,278 @@ fn status_from_record(
         .get("phase")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let timestamp = event_timestamp(record);
+    let turn_id = record_turn_id(record);
+    let start_event = record_type == Some("event_msg")
+        && matches!(
+            payload_type,
+            Some("task_started" | "turn_started" | "user_message")
+        );
+    let final_message = matches!(phase, "final" | "final_answer")
+        && ((record_type == Some("event_msg") && payload_type == Some("agent_message"))
+            || (record_type == Some("response_item")
+                && payload_type == Some("message")
+                && payload.get("role").and_then(Value::as_str) == Some("assistant")));
+    let terminal_event = record_type == Some("event_msg")
+        && matches!(
+            payload_type,
+            Some("task_complete" | "turn_complete" | "turn_aborted")
+        );
 
-    match (record_type, payload_type, phase) {
-        (Some("event_msg"), Some("token_count"), _) => {
+    let token_event = record_type == Some("event_msg") && payload_type == Some("token_count");
+    let current_terminal_telemetry =
+        token_event && session.terminal_turn_ended && turn_id == session.turn_id;
+    if !current_terminal_telemetry
+        && turn_id
+            .as_ref()
+            .is_some_and(|id| session.closed_turn_ids.contains(id))
+    {
+        return None;
+    }
+    if session
+        .turn_started_at
+        .as_deref()
+        .is_some_and(|start| timestamp_before(&timestamp, start))
+    {
+        return None;
+    }
+    let different_turn =
+        matches!((&session.turn_id, &turn_id), (Some(current), Some(next)) if current != next);
+    if different_turn && !start_event {
+        return None;
+    }
+
+    if start_event {
+        if session.terminal_turn_ended
+            && !different_turn
+            && session
+                .terminal_timestamp
+                .as_deref()
+                .is_some_and(|end| timestamp == end || timestamp_before(&timestamp, end))
+        {
+            return None;
+        }
+        if session.turn_started_at.is_none() || session.terminal_turn_ended || different_turn {
+            begin_turn(session, turn_id.clone(), &timestamp);
+        } else if session.turn_id.is_none() {
+            // A user message may precede task_started. Attach the official ID
+            // without resetting the baseline, also preserving same-turn steering.
+            session.turn_id = turn_id.clone();
+        }
+    } else if session.terminal_turn_ended {
+        // Token telemetry can arrive after final. Keep it for the next baseline,
+        // but it must not reopen this turn or award it a second time.
+        if token_event {
             if let Some(snapshot) = usage_snapshot_from_record(record) {
-                session.latest_usage = Some(snapshot.clone());
-                if session.terminal_turn_ended {
-                    return None;
-                }
+                session.latest_usage = Some(snapshot);
+            }
+        }
+        if terminal_event {
+            if let Some(id) = &turn_id {
+                remember_closed_turn(session, id);
+            }
+        }
+        return None;
+    }
+
+    let mut status = if final_message || terminal_event {
+        if session.turn_id.is_none() {
+            session.turn_id = turn_id.clone();
+        }
+        let interrupted = payload_type == Some("turn_aborted");
+        let failed = interrupted || payload.get("error").is_some_and(|error| !error.is_null());
+        let terminal_phase = if terminal_event {
+            payload_type.unwrap_or("complete")
+        } else {
+            phase
+        };
+        let summary = if interrupted {
+            "Codex turn interrupted".to_string()
+        } else if failed {
+            payload
+                .get("error")
+                .and_then(|error| string_field(error, "message"))
+                .unwrap_or_else(|| "Codex turn failed".to_string())
+        } else {
+            string_field(payload, "last_agent_message")
+                .or_else(|| text_from_payload(payload))
+                .unwrap_or_else(|| "Task finished".to_string())
+        };
+        finish_turn(
+            session_id,
+            session,
+            if failed { "error" } else { "complete" },
+            terminal_phase,
+            summary,
+            &timestamp,
+            allow_learning_worker,
+        )
+    } else {
+        match (record_type, payload_type, phase) {
+            (Some("event_msg"), Some("token_count"), _) => {
+                let snapshot = usage_snapshot_from_record(record)?;
                 let usage = context_usage(&snapshot);
-                Some(build_status(
+                session.latest_usage = Some(snapshot);
+                // Telemetry alone is not evidence that a task is running.
+                build_status(
                     session_id,
-                    "thinking",
+                    if session.turn_started_at.is_some() {
+                        "thinking"
+                    } else {
+                        "idle"
+                    },
                     "context-window",
                     "Updating Codex context usage".to_string(),
                     45,
                     &session.cwd,
                     usage,
                     None,
-                    event_timestamp(record),
-                ))
-            } else {
-                None
+                    timestamp.clone(),
+                )
             }
-        }
-        (Some("event_msg"), Some("user_message"), _) => {
-            session.terminal_turn_ended = false;
-            session.usage_baseline = session
-                .latest_usage
-                .as_ref()
-                .map(|usage| usage.total.clone());
-            if let Some(text) = text_from_payload(payload) {
+            (Some("event_msg"), Some("task_started" | "turn_started"), _) => build_status(
+                session_id,
+                "thinking",
+                "turn-start",
+                "Starting Codex turn".to_string(),
+                20,
+                &session.cwd,
+                None,
+                None,
+                timestamp.clone(),
+            ),
+            (Some("event_msg"), Some("user_message"), _) => {
+                let text = text_from_payload(payload)
+                    .unwrap_or_else(|| "Reading user request".to_string());
                 remember_digest(session, "user", &text);
+                build_status(
+                    session_id,
+                    "thinking",
+                    "user-message",
+                    text,
+                    30,
+                    &session.cwd,
+                    None,
+                    None,
+                    timestamp.clone(),
+                )
             }
-            Some(build_status(
-                session_id,
-                "thinking",
-                "user-message",
-                text_from_payload(payload).unwrap_or_else(|| "Reading user request".to_string()),
-                30,
-                &session.cwd,
-                None,
-                None,
-                event_timestamp(record),
-            ))
-        }
-        (Some("response_item"), Some("function_call" | "custom_tool_call"), _) => {
-            session.terminal_turn_ended = false;
-            if session.usage_baseline.is_none() {
-                session.usage_baseline = session
-                    .latest_usage
-                    .as_ref()
-                    .map(|usage| usage.total.clone());
+            (
+                Some("response_item"),
+                Some(
+                    "function_call"
+                    | "custom_tool_call"
+                    | "function_call_output"
+                    | "custom_tool_call_output",
+                ),
+                _,
+            )
+            | (Some("event_msg"), Some("agent_message"), "commentary") => {
+                if session.turn_started_at.is_none() {
+                    begin_turn(session, turn_id.clone(), &timestamp);
+                } else if session.turn_id.is_none() {
+                    session.turn_id = turn_id.clone();
+                }
+                let (state, activity_phase, text, progress) = match payload_type {
+                    Some("agent_message") => {
+                        let text = text_from_payload(payload)
+                            .unwrap_or_else(|| "Codex is thinking aloud".to_string());
+                        remember_digest(session, "assistant", &text);
+                        ("thinking", "commentary", text, 70)
+                    }
+                    Some("function_call_output" | "custom_tool_call_output") => (
+                        "thinking",
+                        "tool-result",
+                        "Reviewing tool result".to_string(),
+                        65,
+                    ),
+                    _ => {
+                        let name = string_field(payload, "name")
+                            .or_else(|| string_field(payload, "tool_name"))
+                            .unwrap_or_else(|| "tool".to_string());
+                        ("executing", "tool-use", format!("Using {name}"), 55)
+                    }
+                };
+                build_status(
+                    session_id,
+                    state,
+                    activity_phase,
+                    text,
+                    progress,
+                    &session.cwd,
+                    None,
+                    None,
+                    timestamp.clone(),
+                )
             }
-            let tool_name = string_field(payload, "name")
-                .or_else(|| string_field(payload, "tool_name"))
-                .unwrap_or_else(|| "tool".to_string());
-            Some(build_status(
-                session_id,
-                "executing",
-                "tool-use",
-                format!("Using {tool_name}"),
-                55,
-                &session.cwd,
-                None,
-                None,
-                event_timestamp(record),
-            ))
+            _ => return None,
         }
-        (Some("response_item"), Some("function_call_output" | "custom_tool_call_output"), _) => {
-            session.terminal_turn_ended = false;
-            if session.usage_baseline.is_none() {
-                session.usage_baseline = session
-                    .latest_usage
-                    .as_ref()
-                    .map(|usage| usage.total.clone());
-            }
-            Some(build_status(
-                session_id,
-                "thinking",
-                "tool-result",
-                "Reviewing tool result".to_string(),
-                65,
-                &session.cwd,
-                None,
-                None,
-                event_timestamp(record),
-            ))
-        }
-        (Some("event_msg"), Some("agent_message"), "commentary") => {
-            session.terminal_turn_ended = false;
-            let text =
-                text_from_payload(payload).unwrap_or_else(|| "Codex is thinking aloud".to_string());
-            remember_digest(session, "assistant", &text);
-            Some(build_status(
-                session_id,
-                "thinking",
-                "commentary",
-                text,
-                70,
-                &session.cwd,
-                None,
-                None,
-                event_timestamp(record),
-            ))
-        }
-        (Some("event_msg"), Some("agent_message"), "final" | "final_answer") => {
-            let final_text =
-                text_from_payload(payload).unwrap_or_else(|| "Task finished".to_string());
-            remember_digest(session, "assistant", &final_text);
-            let usage = completion_usage(session);
-            let worker_started = allow_learning_worker
-                && spawn_learning_worker(session_id, "complete", &final_text, session);
-            let learning = if worker_started {
-                None
-            } else {
-                heuristic_learning(session_id, phase, &final_text, session)
-            };
-            session.usage_baseline = None;
-            session.digest_entries.clear();
-            session.terminal_turn_ended = true;
-            let terminal_timestamp = event_timestamp(record);
-            let mut status = build_status(
-                session_id,
-                "complete",
-                phase,
-                final_text,
-                100,
-                &session.cwd,
-                usage,
-                learning,
-                terminal_timestamp.clone(),
-            );
-            if let Some(object) = status.as_object_mut() {
-                object.insert(
-                    "rewardId".to_string(),
-                    json!(format!("codex:{session_id}:{terminal_timestamp}")),
-                );
-            }
-            Some(status)
-        }
-        _ => None,
+    };
+    if let (Some(object), Some(turn_id)) = (status.as_object_mut(), &session.turn_id) {
+        object.insert("turnId".to_string(), json!(turn_id));
     }
+    if start_event {
+        if session.turn_start_status.is_none() {
+            session.turn_start_status = Some(status.clone());
+        } else if let (Some(start), Some(turn_id)) =
+            (&mut session.turn_start_status, &session.turn_id)
+        {
+            start["turnId"] = json!(turn_id);
+        }
+    }
+    Some(status)
+}
+
+fn finish_turn(
+    session_id: &str,
+    session: &mut WatchedSession,
+    state: &str,
+    phase: &str,
+    summary: String,
+    timestamp: &str,
+    allow_learning_worker: bool,
+) -> Value {
+    let mut usage = None;
+    let mut learning = None;
+    if state == "complete" {
+        remember_digest(session, "assistant", &summary);
+        usage = completion_usage(session);
+        let worker_started =
+            allow_learning_worker && spawn_learning_worker(session_id, state, &summary, session);
+        if !worker_started {
+            learning = heuristic_learning(session_id, phase, &summary, session);
+        }
+    }
+    session.usage_baseline = None;
+    session.digest_entries.clear();
+    session.terminal_turn_ended = true;
+    session.terminal_timestamp = Some(timestamp.to_string());
+    if let Some(id) = session.turn_id.clone() {
+        remember_closed_turn(session, &id);
+    }
+    let mut status = build_status(
+        session_id,
+        state,
+        phase,
+        summary,
+        100,
+        &session.cwd,
+        usage,
+        learning,
+        timestamp.to_string(),
+    );
+    if let Some(object) = status.as_object_mut() {
+        if state == "complete" {
+            // Keep the legacy identity so native and external watchers agree.
+            object.insert(
+                "rewardId".to_string(),
+                json!(format!("codex:{session_id}:{timestamp}")),
+            );
+        } else {
+            object.insert("severity".to_string(), json!("error"));
+        }
+    }
+    status
 }
 
 fn build_status(
@@ -2184,9 +2381,11 @@ fn submit_status(status: Value) {
 
 fn status_event_key(status: &Value) -> String {
     format!(
-        "{}:{}:{}",
+        "{}:{}:{}:{}:{}",
         status.get("status").and_then(Value::as_str).unwrap_or(""),
         status.get("phase").and_then(Value::as_str).unwrap_or(""),
+        status.get("turnId").and_then(Value::as_str).unwrap_or(""),
+        status.get("timestamp").and_then(Value::as_str).unwrap_or(""),
         status.get("message").and_then(Value::as_str).unwrap_or("")
     )
 }
@@ -2268,3 +2467,7 @@ fn float_field(value: &Value, field: &str) -> Option<f64> {
 fn iso_now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
+
+#[cfg(test)]
+#[path = "codex_discovery_tests.rs"]
+mod codex_session_tests;
