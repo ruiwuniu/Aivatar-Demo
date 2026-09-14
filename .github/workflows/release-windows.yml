@@ -6,7 +6,7 @@ on:
       tag:
         description: GitHub release tag to upload Windows installers to.
         required: true
-        default: v0.4.2
+        default: v0.4.3
       ref:
         description: Git ref to build.
         required: true
@@ -105,5 +105,6 @@ jobs:
           }
           $assets += Get-Item -Path "windows-release-checksums.json"
           foreach ($asset in $assets) {
-            gh release upload $env:RELEASE_TAG $asset.FullName --repo $env:GITHUB_REPOSITORY --clobber
+            gh release upload $env:RELEASE_TAG $asset.FullName --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw "Release upload failed for $($asset.Name)." }
           }

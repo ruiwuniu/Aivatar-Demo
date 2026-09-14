@@ -7,22 +7,22 @@
 **中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。像素小伙伴会生活在可装修的主房间、纸牌屋和山顶公园中，并对 Codex、Claude Code、opencode、腾讯 WorkBuddy 或自定义本地 agent 桥接的实时状态作出反应。
 
 <p align="center">
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_universal-r1.dmg"><strong>Download macOS DMG 0.4.2 r1</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.3/Aivatar_0.4.3_universal.dmg"><strong>Download macOS DMG 0.4.3</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_x64-setup-r1.exe"><strong>Download Windows EXE 0.4.2 r1</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.3/Aivatar_0.4.3_x64-setup.exe"><strong>Download Windows EXE 0.4.3</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.2/Aivatar_0.4.2_x64_en-US-r1.msi"><strong>Download Windows MSI 0.4.2 r1</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.3/Aivatar_0.4.3_x64_en-US.msi"><strong>Download Windows MSI 0.4.3</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.4.2">Release 0.4.2</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.4.3">Release 0.4.3</a>
 </p>
 
-## 0.4.2 Highlights / 0.4.2 更新亮点
-
-**Revision 1 / 修订版 1** — The application version remains `0.4.2`; download the `r1` installers above for these fixes. 应用版本号仍为 `0.4.2`，以上 `r1` 安装包包含本次修复。
+## 0.4.3 Highlights / 0.4.3 更新亮点
 
 - Codex turn completion and late events now preserve the correct finished state. 修复 Codex 任务结束后仍显示工作中的问题。
 - Ordinary save changes are batched every 20 seconds and unchanged content is skipped; purchases, rewards, save switching, and exit still save immediately. 普通状态变化每 20 秒合并保存，内容未变时跳过写入；购买、奖励、切档和退出仍立即保存。
 - Cross-window updates preserve pending progress and external inventory changes without repeated write-back. 多窗口同步保留待保存的进度及其他窗口新增的物品，避免重复回写。
+
+## 0.4.2 Highlights / 0.4.2 更新亮点
 
 **EN**
 
@@ -198,7 +198,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.4.2 is available through GitHub Releases as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer. These builds are unsigned and intended for GitHub tester distribution while signing, notarization, and release-mode integrations continue to harden.
+> Current status / 当前状态: 0.4.3 is available through GitHub Releases as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer. These builds are unsigned and intended for GitHub tester distribution while signing, notarization, and release-mode integrations continue to harden.
 
 ## Contents / 目录
 
@@ -680,7 +680,7 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 Current release-prep notes:
 
-- The 0.4.2 release is available through GitHub Releases as a universal macOS `.dmg`, Windows NSIS `.exe`, and Windows MSI installer. The current artifacts are unsigned.
+- The 0.4.3 release is available through GitHub Releases as a universal macOS `.dmg`, Windows NSIS `.exe`, and Windows MSI installer. The current artifacts are unsigned.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
 - Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, Card Room, Hilltop Park, fishing, directional gas-range cooking, dynamic rain/weather, and the 0.4.2 interaction/rendering and reward-settlement fixes are now part of the preview surface.
 - Native bridge support exists for local status, Codex Desktop session discovery, Tencent WorkBuddy China mainland/international `working`/`coding` session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
@@ -691,7 +691,7 @@ Current release-prep notes:
 
 当前发布准备阶段说明：
 
-- 0.4.2 已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包；当前产物尚未签名。
+- 0.4.3 已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包；当前产物尚未签名。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
 - 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、纸牌屋 Card Room、山顶公园、钓鱼、四向燃气灶烹饪、动态雨天系统，以及 0.4.2 交互/渲染和奖励结算修复，已经纳入预览体验。
 - 本地状态、Codex Desktop 会话发现、腾讯 WorkBuddy 大陆版/国际版 `working`/`coding` 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。

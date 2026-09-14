@@ -1,0 +1,172 @@
+name: Release macOS installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Draft GitHub release tag to upload the macOS installer to.
+        required: true
+        default: v0.4.3
+      ref:
+        description: Git ref to build; use a full commit SHA for a release.
+        required: true
+        default: main
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build and verify the Universal macOS installer
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout the requested source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Check version and draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName > "$RUNNER_TEMP/aivatar-release.json"
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import tomllib
+
+          version = json.loads(pathlib.Path("package.json").read_text())["version"]
+          tauri_version = json.loads(pathlib.Path("src-tauri/tauri.conf.json").read_text())["version"]
+          rust_version = tomllib.loads(pathlib.Path("src-tauri/Cargo.toml").read_text())["package"]["version"]
+          release = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-release.json").read_text())
+          if not (version == tauri_version == rust_version):
+              raise SystemExit("Package, Tauri, and Cargo versions must match.")
+          if release["tagName"] != f"v{version}" or not release["isDraft"]:
+              raise SystemExit("The requested release must be a draft matching the source version.")
+          print(f"Building version {version} for draft {release['tagName']}.")
+          PY
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust for both Mac architectures
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the Tauri Universal DMG
+        run: npm run tauri -- build --target universal-apple-darwin --bundles dmg --ci
+
+      - name: Verify the mounted installer and write checksums
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import plistlib
+          import subprocess
+          import tempfile
+
+          root = pathlib.Path.cwd()
+          version = json.loads((root / "package.json").read_text())["version"]
+          bundle_root = root / "src-tauri/target/universal-apple-darwin/release/bundle"
+          assets = sorted((bundle_root / "dmg").glob("*.dmg"))
+          expected_name = f"Aivatar_{version}_universal.dmg"
+          if len(assets) != 1 or assets[0].name != expected_name:
+              raise SystemExit(f"Expected exactly one installer named {expected_name}.")
+          dmg = assets[0]
+          subprocess.run(["hdiutil", "verify", str(dmg)], check=True)
+          mount = pathlib.Path(tempfile.mkdtemp(prefix="aivatar-dmg-check-", dir=os.environ["RUNNER_TEMP"]))
+          mounted = False
+          try:
+              subprocess.run(["hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", str(mount), str(dmg)], check=True)
+              mounted = True
+              app = mount / "Aivatar.app"
+              info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+              if info.get("CFBundleShortVersionString") != version or info.get("CFBundleVersion") != version:
+                  raise SystemExit("The mounted application version does not match package.json.")
+              if info.get("CFBundleIdentifier") != "com.aivatar.desktop":
+                  raise SystemExit("Unexpected application bundle identifier.")
+              executable = app / "Contents/MacOS" / info["CFBundleExecutable"]
+              architectures = sorted(subprocess.check_output(["lipo", "-archs", str(executable)], text=True).split())
+              if architectures != ["arm64", "x86_64"]:
+                  raise SystemExit("The mounted application must contain arm64 and x86_64.")
+              built_executable = bundle_root.parent / "aivatar"
+              if executable.read_bytes() != built_executable.read_bytes():
+                  raise SystemExit("The mounted executable differs from the freshly built executable.")
+              resource_root = app / "Contents/Resources/_up_"
+              required = [
+                  "scripts/aivatar-learning-worker.mjs",
+                  "scripts/aivatar-save-persistence-smoke.mjs",
+                  "scripts/aivatar-codex-native-smoke.py",
+                  "plugins/aivatar-session-bridge/scripts/aivatar-watch.mjs",
+              ]
+              for relative in required:
+                  if not (resource_root / relative).is_file():
+                      raise SystemExit(f"Missing packaged resource: {relative}")
+              resource_count = 0
+              for directory in ("scripts", "plugins/aivatar-session-bridge"):
+                  for source in sorted((root / directory).rglob("*")):
+                      if not source.is_file():
+                          continue
+                      relative = source.relative_to(root)
+                      packaged = resource_root / relative
+                      if not packaged.is_file() or source.read_bytes() != packaged.read_bytes():
+                          raise SystemExit(f"Packaged resource mismatch: {relative}")
+                      resource_count += 1
+              with dmg.open("rb") as stream:
+                  checksum = hashlib.file_digest(stream, "sha256").hexdigest()
+              report = {
+                  "version": version,
+                  "sourceCommit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+                  "assets": [{"name": dmg.name, "size": dmg.stat().st_size, "sha256": checksum}],
+                  "verification": {
+                      "dmgChecksumValid": True,
+                      "mountedReadOnly": True,
+                      "bundleVersion": info["CFBundleVersion"],
+                      "architectures": architectures,
+                      "mountedExecutableMatchesBuild": True,
+                      "resourceFilesMatchSource": resource_count,
+                      "requiredResources": required,
+                      "applicationLaunched": False,
+                  },
+              }
+              pathlib.Path("macos-release-checksums.json").write_text(json.dumps(report, indent=2) + "\n")
+              print(json.dumps(report, indent=2))
+          finally:
+              if mounted or os.path.ismount(mount):
+                  subprocess.run(["hdiutil", "detach", str(mount)], check=True)
+          PY
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aivatar-macos-installer-${{ inputs.tag }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            macos-release-checksums.json
+
+      - name: Upload assets to the draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
+          gh release upload "$RELEASE_TAG" src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg macos-release-checksums.json --repo "$GITHUB_REPOSITORY"
