@@ -28,7 +28,7 @@ import {
 import {
   PARK_LAYOUT_EVENT,
   PARK_LAYOUT_STORAGE_KEY,
-  flushParkSaveSlot,
+  flushParkSaveSlotResult,
   hasFishingRod,
   persistParkRuntime,
   readParkLayout,
@@ -36,6 +36,8 @@ import {
   recordParkCatch,
   recordParkMoodRecovery,
 } from "./parkStorage";
+import type { SaveFlushResult } from "../persistence/savePersistence";
+import { installCloseSaveHandler } from "../persistence/closeSave";
 import {
   isParkGrassPoint,
   parkFishingSpotById,
@@ -300,13 +302,13 @@ export const ParkApp = () => {
   const lastMoodAtRef = useRef(0);
   const lastWeatherUiAtRef = useRef(Number.NEGATIVE_INFINITY);
 
-  const flushCurrentParkSave = () => {
-    if (!hostSlotId) return;
+  const flushCurrentParkSave = (): SaveFlushResult => {
+    if (!hostSlotId) return { ok: true, written: false };
     const simulation = simulationRef.current;
     if (simulation && visitRef.current && !debugPreviewRef.current) {
       persistParkRuntime(hostSlotId, simulation.avatar, simulation.navMemory);
     }
-    flushParkSaveSlot(hostSlotId);
+    return flushParkSaveSlotResult(hostSlotId).result;
   };
 
   const replaceParkVisit = (visit: AivatarVisitSession | null) => {
@@ -737,8 +739,13 @@ export const ParkApp = () => {
     window.addEventListener("beforeunload", finishVisit);
     document.addEventListener("visibilitychange", flushWhenHidden);
     if ("__TAURI_INTERNALS__" in window) {
-      void import("@tauri-apps/api/event")
-        .then(({ listen }) => listen("aivatar://save-before-close", flushCurrentParkSave))
+      void installCloseSaveHandler(flushCurrentParkSave, {
+        onFailure: (message, error) => {
+          console.error("Could not finish saving the Park before close.", error);
+          setDebugMessage(message);
+          window.alert(message);
+        },
+      })
         .then((unlisten) => {
           if (stopped) unlisten();
           else unlistenSave = unlisten;

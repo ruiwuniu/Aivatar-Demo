@@ -1,5 +1,10 @@
 import type { AivatarSaveState, AvatarRuntime } from "../types";
-import { createSavePersistence, jsonEqual, mergeSaveChanges } from "./savePersistence";
+import {
+  createSavePersistence,
+  DEFAULT_SAVE_WAIT_MS,
+  jsonEqual,
+  mergeSaveChanges,
+} from "./savePersistence";
 
 const mergeCounter = (base: number, local: number, remote: number) =>
   local === base ? remote
@@ -91,7 +96,7 @@ export const createRoomSavePersistence = (options: {
   const drafts = new Map<string, RoomSaveDraft>();
   const persistence = createSavePersistence({
     storage: options.storage,
-    waitMs: 20_000,
+    waitMs: DEFAULT_SAVE_WAIT_MS,
     onError: options.onError,
   });
 

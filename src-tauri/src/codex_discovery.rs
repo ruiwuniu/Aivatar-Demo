@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         OnceLock,
     },
     thread,
@@ -36,6 +36,7 @@ const DIGEST_ENTRY_LIMIT: usize = 8;
 const DIGEST_ENTRY_CHARS: usize = 360;
 
 static STARTED: AtomicBool = AtomicBool::new(false);
+static LEARNING_CONTEXT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static LEARNING_SCRIPT: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Clone)]
@@ -1889,12 +1890,31 @@ fn write_learning_context(session_id: &str, session: &WatchedSession) -> Option<
     let dir = learning_context_dir();
     std::fs::create_dir_all(&dir).ok()?;
     let millis = chrono::Utc::now().timestamp_millis();
-    let path = dir.join(format!(
-        "codex-{}-{millis}.txt",
-        safe_file_component(session_id)
-    ));
-    std::fs::write(&path, digest).ok()?;
-    Some(path)
+    let safe_session = safe_file_component(session_id);
+
+    for _ in 0..64 {
+        let sequence = LEARNING_CONTEXT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = dir.join(format!(
+            "codex-{safe_session}-{}-{millis}-{sequence}.txt",
+            std::process::id(),
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if std::io::Write::write_all(&mut file, digest.as_bytes()).is_ok() {
+                    return Some(path);
+                }
+                let _ = std::fs::remove_file(&path);
+                return None;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 fn command_variants(command: &str) -> Vec<String> {
@@ -2016,7 +2036,7 @@ fn spawn_learning_worker(
         .arg("--summary")
         .arg(summarize(summary))
         .arg("--context-file")
-        .arg(context_path)
+        .arg(&context_path)
         .arg("--avatar-state-file")
         .arg(avatar_state_file())
         .env(
@@ -2036,7 +2056,19 @@ fn spawn_learning_worker(
         command.creation_flags(0x08000000);
     }
 
-    command.spawn().is_ok()
+    match command.spawn() {
+        Ok(mut child) => {
+            thread::spawn(move || {
+                let _ = child.wait();
+                let _ = fs::remove_file(context_path);
+            });
+            true
+        }
+        Err(_) => {
+            let _ = fs::remove_file(context_path);
+            false
+        }
+    }
 }
 
 fn heuristic_learning(

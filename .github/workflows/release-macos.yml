@@ -6,7 +6,7 @@ on:
       tag:
         description: Draft GitHub release tag to upload the macOS installer to.
         required: true
-        default: v0.4.3
+        default: v0.4.4
       ref:
         description: Git ref to build; use a full commit SHA for a release.
         required: true

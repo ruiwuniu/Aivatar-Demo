@@ -8,6 +8,8 @@ import ts from "typescript";
 // Execute the actual TypeScript modules with memory-only storage and a fake
 // clock. No user save, WebKit profile, browser, or local bridge is opened.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const PASSIVE_CHECKPOINT_MS = 5 * 60_000;
+const RETRY_WAIT_MS = 20_000;
 const slotKey = (slot = "synthetic") => `aivatar.saveSlot.v1.${slot}`;
 const baseSave = () => ({
   avatarId: "synthetic-avatar",
@@ -94,32 +96,32 @@ const check = (name, run) => {
   console.log(`[park-persistence] PASS ${name}`);
 };
 
-check("continuous runtime changes coalesce at the first 20-second deadline", () => {
+check("continuous runtime changes coalesce at the first five-minute checkpoint", () => {
   const h = createHarness();
   h.queue(0);
-  for (let second = 2; second <= 18; second += 2) {
+  for (let second = 30; second <= 270; second += 30) {
     h.advanceTo(second * 1000);
     h.queue(second);
     assert.equal(h.writes.length, 0);
   }
-  assert.equal(h.api.readParkSaveSlot("synthetic").parkRuntime.x, 18);
-  h.advanceTo(19_999);
+  assert.equal(h.api.readParkSaveSlot("synthetic").parkRuntime.x, 270);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS - 1);
   assert.equal(h.writes.length, 0);
-  h.advanceTo(20_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS);
   assert.equal(h.writes.length, 1);
-  assert.equal(h.stored().parkRuntime.x, 18);
-  h.advanceTo(22_000);
-  h.queue(22);
-  h.advanceTo(41_999);
+  assert.equal(h.stored().parkRuntime.x, 270);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS + 2_000);
+  h.queue(302);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS * 2 + 1_999);
   assert.equal(h.writes.length, 1);
-  h.advanceTo(42_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS * 2 + 2_000);
   assert.equal(h.writes.length, 2);
 });
 
 check("pending mood and runtime merge with another window's current wallet", () => {
   const h = createHarness();
   h.queue(10);
-  h.advanceTo(18_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS - 2_000);
   const visible = h.api.recordParkMoodRecovery("synthetic", 3);
   assert.equal(visible.petStats.mood, 43);
   assert.equal(visible.parkRuntime.x, 10);
@@ -128,7 +130,7 @@ check("pending mood and runtime merge with another window's current wallet", () 
   remote.wallet.bits = 777;
   remote.petStats.energy = 72;
   h.values.set(slotKey(), JSON.stringify(remote));
-  h.advanceTo(20_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS);
   assert.equal(h.writes.length, 1);
   assert.equal(h.stored().wallet.bits, 777);
   assert.equal(h.stored().petStats.energy, 72);
@@ -146,7 +148,7 @@ check("catch commits rewards and the current pending runtime immediately once", 
   assert.equal(saved.furnitureStorage[0].quantity, 1);
   assert.equal(saved.memory.recentEvents.length, 1);
   assert(saved.petStats.mood > 41);
-  h.advanceTo(60_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS + RETRY_WAIT_MS);
   assert.equal(h.writes.length, 1);
 });
 
@@ -162,13 +164,13 @@ check("failed critical save retains its patch and retries against fresh storage"
   remote.wallet.bits = 999;
   h.values.set(slotKey(), JSON.stringify(remote));
   h.setFailWrites(false);
-  h.advanceTo(20_000);
+  h.advanceTo(RETRY_WAIT_MS);
   assert.equal(h.writes.length, 1);
   assert.equal(h.stored().wallet.bits, 999);
   assert.equal(h.stored().parkRuntime.x, 31);
   assert.equal(h.stored().furnitureStorage[0].quantity, 1);
   assert.equal(h.stored().memory.recentEvents.length, 1);
-  h.advanceTo(60_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS * 2);
   assert.equal(h.writes.length, 1);
 });
 
@@ -176,10 +178,10 @@ check("read errors preserve pending data for a later successful retry", () => {
   const h = createHarness();
   h.queue(40);
   h.setFailReads(true);
-  h.advanceTo(20_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS);
   assert.equal(h.writes.length, 0);
   h.setFailReads(false);
-  h.advanceTo(40_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS + RETRY_WAIT_MS);
   assert.equal(h.writes.length, 1);
   assert.equal(h.stored().parkRuntime.x, 40);
 });
@@ -190,7 +192,7 @@ check("a catch observed during a read failure is not discarded", () => {
   h.setFailReads(true);
   assert.equal(h.api.recordParkCatch("synthetic", "raw-black-bass"), null);
   h.setFailReads(false);
-  h.advanceTo(20_000);
+  h.advanceTo(RETRY_WAIT_MS);
   assert.equal(h.writes.length, 1);
   assert.equal(h.stored().furnitureStorage[0].itemId, "raw-black-bass");
   assert.equal(h.stored().furnitureStorage[0].quantity, 1);
@@ -200,13 +202,13 @@ check("a deleted slot is not recreated and its pending patch is discarded", () =
   const h = createHarness();
   h.queue(50);
   h.values.delete(slotKey());
-  h.advanceTo(20_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS);
   assert.equal(h.values.has(slotKey()), false);
   assert.equal(h.writes.length, 0);
   h.values.set(slotKey(), JSON.stringify(baseSave()));
   h.api.flushParkSaveSlot("synthetic");
   assert.equal(h.stored().parkRuntime, undefined);
-  h.advanceTo(60_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS * 2);
   assert.equal(h.writes.length, 0);
 });
 
@@ -215,12 +217,17 @@ check("exit flush writes the latest snapshot immediately and repeated flush is a
   h.queue(60);
   h.advanceTo(1000);
   h.queue(61);
-  assert.equal(h.api.flushParkSaveSlot("synthetic").parkRuntime.x, 61);
+  const flushed = h.api.flushParkSaveSlotResult("synthetic");
+  assert.equal(flushed.save.parkRuntime.x, 61);
+  assert.equal(flushed.result.ok, true);
+  assert.equal(flushed.result.written, true);
   assert.equal(h.writes.length, 1);
-  h.api.flushParkSaveSlot("synthetic");
+  assert.equal(h.api.flushParkSaveSlot("synthetic").parkRuntime.x, 61);
   h.queue(61);
-  h.api.flushParkSaveSlot("synthetic");
-  h.advanceTo(60_000);
+  const unchanged = h.api.flushParkSaveSlotResult("synthetic");
+  assert.equal(unchanged.result.ok, true);
+  assert.equal(unchanged.result.written, false);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS * 2);
   assert.equal(h.writes.length, 1);
 });
 
@@ -229,11 +236,15 @@ check("a failed old-slot exit flush retries without taking the new slot's runtim
   h.values.set(slotKey("other"), JSON.stringify(baseSave()));
   h.queue(62);
   h.setFailWrites(true);
-  assert.equal(h.api.flushParkSaveSlot("synthetic"), null);
+  const failed = h.api.flushParkSaveSlotResult("synthetic");
+  assert.equal(failed.save, null);
+  assert.equal(failed.result.ok, false);
+  assert.equal(failed.result.written, false);
+  assert.equal(h.api.readParkSaveSlot("synthetic").parkRuntime.x, 62);
   h.queue(92, "other");
   h.setFailWrites(false);
   h.api.flushParkSaveSlot("other");
-  h.advanceTo(20_000);
+  h.advanceTo(RETRY_WAIT_MS);
   assert.equal(h.stored().parkRuntime.x, 62);
   assert.equal(h.stored("other").parkRuntime.x, 92);
   assert.equal(h.writes.length, 2);
@@ -270,10 +281,10 @@ check("independent slots and identical layout/runtime values avoid extra writes"
   assert.equal(h.writes.length, 1);
   assert.equal(h.stored("other").parkRuntime.x, 80);
   assert.equal(h.stored().parkRuntime, undefined);
-  h.advanceTo(20_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS);
   assert.equal(h.writes.length, 2);
   h.queue(70);
-  h.advanceTo(40_000);
+  h.advanceTo(PASSIVE_CHECKPOINT_MS * 2);
   assert.equal(h.writes.length, 2);
   h.api.writeParkLayout([]);
   h.api.writeParkLayout([]);

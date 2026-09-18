@@ -11,12 +11,17 @@ export interface SaveFlushResult {
 export interface SavePersistenceOptions {
   storage: JsonStorage | (() => JsonStorage);
   waitMs?: number;
+  retryWaitMs?: number;
   setTimer?: (callback: () => void, delayMs: number) => unknown;
   clearTimer?: (timer: unknown) => void;
   onError?: (error: unknown, key: string) => void;
 }
 
-export const DEFAULT_SAVE_WAIT_MS = 20_000;
+// Passive movement/runtime state is crash-safety checkpointed at most once per
+// five-minute window. Explicit durable actions and close/manual flushes bypass
+// this delay through flush/flushAll.
+export const DEFAULT_SAVE_WAIT_MS = 5 * 60_000;
+export const DEFAULT_SAVE_RETRY_MS = 20_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -104,6 +109,9 @@ export const createSavePersistence = (options: SavePersistenceOptions) => {
   const waitMs = Number.isFinite(options.waitMs) && (options.waitMs ?? 0) > 0
     ? options.waitMs as number
     : DEFAULT_SAVE_WAIT_MS;
+  const retryWaitMs = Number.isFinite(options.retryWaitMs) && (options.retryWaitMs ?? 0) > 0
+    ? options.retryWaitMs as number
+    : DEFAULT_SAVE_RETRY_MS;
   const setTimer = options.setTimer
     ?? ((callback: () => void, delayMs: number) => globalThis.setTimeout(callback, delayMs));
   const clearTimer = options.clearTimer
@@ -118,13 +126,13 @@ export const createSavePersistence = (options: SavePersistenceOptions) => {
     }
   };
 
-  const armTimer = (key: string, entry: PendingSave) => {
+  const armTimer = (key: string, entry: PendingSave, delayMs = waitMs) => {
     if (entry.timer !== undefined) return;
     const timer = setTimer(() => {
       const current = pending.get(key);
       if (current && current.timer === timer) current.timer = undefined;
       flush(key);
-    }, waitMs);
+    }, delayMs);
     entry.timer = timer;
   };
 
@@ -168,7 +176,11 @@ export const createSavePersistence = (options: SavePersistenceOptions) => {
       }
     } catch (error) {
       const current = pending.get(key);
-      if (current) armTimer(key, current);
+      if (current) {
+        if (current.timer !== undefined) clearTimer(current.timer);
+        current.timer = undefined;
+        armTimer(key, current, retryWaitMs);
+      }
       reportError(error, key);
       return { ok: false, written: false };
     }

@@ -1,8 +1,9 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+    Mutex,
 };
 
 use tauri::{path::BaseDirectory, Emitter, Manager, Size};
@@ -102,7 +103,32 @@ struct ParkProfileWindowState {
     hidden_by: Mutex<Option<String>>,
 }
 
+#[derive(Default)]
+struct CloseSaveState {
+    next_request_id: AtomicU64,
+    windows: Mutex<CloseSaveWindows>,
+}
+
+#[derive(Default)]
+struct CloseSaveWindows {
+    pending: HashMap<String, u64>,
+    approved: HashSet<String>,
+    pending_exit_code: Option<Option<i32>>,
+    replaying_exit: bool,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveBeforeCloseRequest {
+    request_id: u64,
+}
+
 const MAX_TASK_PROMPT_CHARS: usize = 24_000;
+const CLOSE_SAVE_TIMEOUT_MS: u64 = 15_000;
+// Wry replaces its default WebView2 arguments when custom arguments are set.
+// Keep those defaults here, and use this exact value for every shared-profile window.
+const WEBVIEW2_BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --disk-cache-size=134217728";
 
 fn hash_value(value: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -189,26 +215,107 @@ fn url_component(value: &str) -> String {
 }
 
 fn attach_save_before_close_handler(window: tauri::WebviewWindow) {
-    let closing = Arc::new(AtomicBool::new(false));
+    let app = window.app_handle().clone();
+    let label = window.label().to_string();
     let window_for_event = window.clone();
-    let closing_for_event = Arc::clone(&closing);
 
-    window.on_window_event(move |event| {
-        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            if closing_for_event.load(Ordering::SeqCst) {
+    window.on_window_event(move |event| match event {
+        tauri::WindowEvent::CloseRequested { api, .. } => {
+            let close_state = app.state::<CloseSaveState>();
+            let mut windows = match close_state.windows.lock() {
+                Ok(windows) => windows,
+                Err(_) => return,
+            };
+
+            if windows.approved.remove(&label) {
                 return;
             }
 
             api.prevent_close();
-            closing_for_event.store(true, Ordering::SeqCst);
-            let window_for_close = window_for_event.clone();
-            let _ = window_for_event.emit("aivatar://save-before-close", ());
+            if windows.pending.contains_key(&label) {
+                return;
+            }
+
+            let request_id = close_state
+                .next_request_id
+                .fetch_add(1, Ordering::Relaxed)
+                .wrapping_add(1);
+            windows.pending.insert(label.clone(), request_id);
+            drop(windows);
+
+            if window_for_event
+                .emit(
+                    "aivatar://save-before-close",
+                    SaveBeforeCloseRequest { request_id },
+                )
+                .is_err()
+            {
+                if let Ok(mut windows) = close_state.windows.lock() {
+                    windows.pending.remove(&label);
+                    windows.pending_exit_code = None;
+                }
+                return;
+            }
+
+            let app_for_timeout = app.clone();
+            let label_for_timeout = label.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                let _ = window_for_close.close();
+                std::thread::sleep(std::time::Duration::from_millis(CLOSE_SAVE_TIMEOUT_MS));
+                let close_state = app_for_timeout.state::<CloseSaveState>();
+                if let Ok(mut windows) = close_state.windows.lock() {
+                    if windows.pending.get(&label_for_timeout) == Some(&request_id) {
+                        // Fail closed: a renderer that did not confirm its save must stay open.
+                        // Clearing only the stale request lets a later close attempt retry.
+                        windows.pending.remove(&label_for_timeout);
+                        windows.pending_exit_code = None;
+                    }
+                };
             });
         }
+        tauri::WindowEvent::Destroyed => {
+            if let Ok(mut windows) = app.state::<CloseSaveState>().windows.lock() {
+                windows.pending.remove(&label);
+                windows.approved.remove(&label);
+            }
+        }
+        _ => {}
     });
+}
+
+#[tauri::command]
+fn confirm_close_after_save(
+    window: tauri::WebviewWindow,
+    request_id: u64,
+    ok: bool,
+) -> Result<(), String> {
+    let label = window.label().to_string();
+    let app = window.app_handle();
+    let close_state = app.state::<CloseSaveState>();
+    let mut windows = close_state
+        .windows
+        .lock()
+        .map_err(|_| "Could not lock the close-save state.".to_string())?;
+
+    if windows.pending.get(&label) != Some(&request_id) {
+        return Err("The close-save request is no longer active.".to_string());
+    }
+
+    windows.pending.remove(&label);
+    if !ok {
+        windows.pending_exit_code = None;
+        return Ok(());
+    }
+
+    windows.approved.insert(label.clone());
+    drop(windows);
+    if let Err(error) = window.close() {
+        if let Ok(mut windows) = close_state.windows.lock() {
+            windows.approved.remove(&label);
+            windows.pending_exit_code = None;
+        }
+        return Err(format!("Could not close the saved window: {error}"));
+    }
+    Ok(())
 }
 
 fn attach_main_window_restore_handler(window: tauri::WebviewWindow, app: tauri::AppHandle) {
@@ -1489,6 +1596,7 @@ async fn open_save_slot_window(
     .always_on_top(false)
     .decorations(true)
     .focused(true)
+    .additional_browser_args(WEBVIEW2_BROWSER_ARGS)
     .build()
     .map_err(|error| format!("Could not open save window: {error}"))?;
 
@@ -1520,7 +1628,7 @@ async fn open_card_room_window(
         "./?view=card-room&hostSlotId={}",
         url_component(host_slot_id)
     );
-    tauri::WebviewWindowBuilder::new(
+    let window = tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
@@ -1533,8 +1641,11 @@ async fn open_card_room_window(
     .always_on_top(false)
     .decorations(true)
     .focused(true)
+    .additional_browser_args(WEBVIEW2_BROWSER_ARGS)
     .build()
     .map_err(|error| format!("Could not open card room: {error}"))?;
+
+    attach_save_before_close_handler(window);
 
     Ok(CardRoomWindowResult { label })
 }
@@ -1573,9 +1684,11 @@ async fn open_park_window(
     .decorations(true)
     .focused(false)
     .visible(false)
+    .additional_browser_args(WEBVIEW2_BROWSER_ARGS)
     .build()
     .map_err(|error| format!("Could not open park: {error}"))?;
     attach_main_window_restore_handler(window.clone(), app.clone());
+    attach_save_before_close_handler(window.clone());
 
     if let Err(error) = window.show().and_then(|_| window.set_focus()) {
         let _ = window.close();
@@ -1621,6 +1734,7 @@ async fn open_park_developer_window(
     .always_on_top(false)
     .decorations(true)
     .focused(true)
+    .additional_browser_args(WEBVIEW2_BROWSER_ARGS)
     .build()
     .map_err(|error| format!("Could not open park developer: {error}"))?;
 
@@ -1663,6 +1777,7 @@ async fn open_park_animation_preview_window(
     .always_on_top(false)
     .decorations(true)
     .focused(true)
+    .additional_browser_args(WEBVIEW2_BROWSER_ARGS)
     .build()
     .map_err(|error| format!("Could not open park animation preview: {error}"))?;
 
@@ -1739,8 +1854,21 @@ fn write_social_room_memory(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[cfg(all(debug_assertions, target_os = "windows"))]
+    if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_none() {
+        let dev_profile = format!(
+            "aivatar-webview2-dev-{:016x}",
+            hash_value(env!("CARGO_MANIFEST_DIR")),
+        );
+        std::env::set_var(
+            "WEBVIEW2_USER_DATA_FOLDER",
+            std::env::temp_dir().join(dev_profile),
+        );
+    }
+
+    let app = tauri::Builder::default()
         .manage(ParkProfileWindowState::default())
+        .manage(CloseSaveState::default())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -1756,6 +1884,7 @@ pub fn run() {
             start_task_agent,
             resize_main_window_for_side_panel,
             set_main_window_visibility_for_park_profile,
+            confirm_close_after_save,
             open_save_slot_window,
             open_card_room_window,
             open_park_window,
@@ -1775,6 +1904,43 @@ pub fn run() {
             let _ = start_status_bridge_inner(Some(&app_handle));
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Aivatar");
+        .build(tauri::generate_context!())
+        .expect("error while building Aivatar");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+            let windows = app_handle.webview_windows();
+            let close_state = app_handle.state::<CloseSaveState>();
+            let mut close_windows = match close_state.windows.lock() {
+                Ok(windows) => windows,
+                Err(_) => return,
+            };
+
+            if close_windows.replaying_exit {
+                close_windows.replaying_exit = false;
+                return;
+            }
+
+            if windows.is_empty() {
+                if let Some(requested_code) = close_windows.pending_exit_code.take() {
+                    close_windows.replaying_exit = true;
+                    drop(close_windows);
+                    api.prevent_exit();
+                    app_handle.exit(requested_code.unwrap_or(0));
+                }
+                return;
+            }
+
+            // App-level quit requests can bypass WindowEvent::CloseRequested. Convert them
+            // into ordinary window closes so every persistent window completes its save ACK.
+            if close_windows.pending_exit_code.is_none() {
+                close_windows.pending_exit_code = Some(code);
+            }
+            drop(close_windows);
+            api.prevent_exit();
+            for window in windows.into_values() {
+                let _ = window.close();
+            }
+        }
+    });
 }

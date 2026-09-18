@@ -6,7 +6,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { defaultContent } from "./data/defaultContent";
 import { loadContentConfig } from "./data/loadContent";
 import {
@@ -105,6 +104,10 @@ import {
 import { useCodexStatus } from "./hooks/useCodexStatus";
 import { writeJsonIfChanged } from "./persistence/savePersistence";
 import { createRoomSavePersistence } from "./persistence/roomSavePersistence";
+import {
+  aggregateSaveFlushResults,
+  installCloseSaveHandler,
+} from "./persistence/closeSave";
 import {
   agentDisplayName,
   agentSourceBadge,
@@ -3824,9 +3827,10 @@ export const App = () => {
   }
   const persistCurrentSaveSlot = (syncState = true) => {
     const slotId = activeSaveSlotIdRef.current;
-    if (!slotId) return;
+    if (!slotId) return { ok: true, written: false };
 
-    roomSavePersistenceRef.current?.flush(slotId, saveRef.current, syncState);
+    return roomSavePersistenceRef.current?.flush(slotId, saveRef.current, syncState)
+      ?? { ok: false, written: false };
   };
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
   const [uiTheme, setUiTheme] = useState<UiThemeId>(() => loadInitialUiTheme());
@@ -6371,7 +6375,7 @@ export const App = () => {
     roomVisitMenuOpenRef.current = roomVisitMenuOpen;
   }, [roomVisitMenuOpen]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     saveRef.current = save;
     if (!activeSaveSlotId) return;
     roomSavePersistenceRef.current?.update(activeSaveSlotId, save, urgentSaveRef.current);
@@ -6657,8 +6661,9 @@ export const App = () => {
 
   useEffect(() => {
     const flushSave = () => {
-      persistCurrentSaveSlot(false);
-      roomSavePersistenceRef.current?.flushAll();
+      const activeResult = persistCurrentSaveSlot(false);
+      const remainingResults = roomSavePersistenceRef.current?.flushAll();
+      return aggregateSaveFlushResults(activeResult, remainingResults);
     };
     const flushOnVisibilityHidden = () => {
       if (document.visibilityState === "hidden") flushSave();
@@ -6667,9 +6672,13 @@ export const App = () => {
     window.addEventListener("pagehide", flushSave);
     window.addEventListener("beforeunload", flushSave);
     document.addEventListener("visibilitychange", flushOnVisibilityHidden);
-    const unlistenPromise = listen("aivatar://save-before-close", flushSave).catch(
-      () => undefined,
-    );
+    const unlistenPromise = installCloseSaveHandler(flushSave, {
+      onFailure: (message, error) => {
+        console.error("Could not finish saving Aivatar before close.", error);
+        setSaveSlotMessage(message);
+        window.alert(message);
+      },
+    }).catch(() => undefined);
 
     return () => {
       stopBehaviorDemo();

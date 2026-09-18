@@ -1,5 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LOCALE_KEY, localeOptions, resolveInitialLocale, t, type Locale } from "../i18n";
+import { writeJsonIfChanged, type SaveFlushResult } from "../persistence/savePersistence";
+import {
+  aggregateSaveFlushResults,
+  installCloseSaveHandler,
+} from "../persistence/closeSave";
 import type {
   AivatarDarkTraits,
   AivatarRoomPresence,
@@ -38,6 +43,7 @@ import {
   redeemCardRoomSaveSlotPokerChipsForBits,
   writeCardRoomSaveSlotDarkTraitChanges,
   writeCardRoomSaveSlotPokerChips,
+  writeCardRoomSaveSlotPokerChipsResult,
 } from "./saveRoster";
 import {
   CARD_ROOM_BITS_DEBT_LIMIT,
@@ -203,6 +209,17 @@ const initialVictoryDemoEnabled = () => queryValue("victoryDemo") === "1";
 const playerNameStorageKey = (slotId: string | null) =>
   `aivatar.cardRoom.playerName.v1.${slotId ?? "preview"}`;
 
+const persistCardRoomJson = (key: string, value: unknown): SaveFlushResult => {
+  try {
+    return {
+      ok: true,
+      written: writeJsonIfChanged(localStorage, key, value),
+    };
+  } catch {
+    return { ok: false, written: false };
+  }
+};
+
 const readPlayerChipWallet = (): PlayerChipWallet => {
   try {
     const raw = localStorage.getItem(PLAYER_WALLET_STORAGE_KEY);
@@ -228,11 +245,7 @@ const writePlayerChipWallet = (wallet: PlayerChipWallet) => {
     pokerChips: normalizePokerChips(wallet.pokerChips),
     chipDebt: normalizeChipDebt(wallet.chipDebt),
   };
-  try {
-    localStorage.setItem(PLAYER_WALLET_STORAGE_KEY, JSON.stringify(nextWallet));
-  } catch {
-    // Ignore storage failures in webviews with restricted persistence.
-  }
+  persistCardRoomJson(PLAYER_WALLET_STORAGE_KEY, nextWallet);
   return nextWallet;
 };
 
@@ -247,11 +260,7 @@ const readHouseBank = (): CardRoomHouseBank => {
 
 const writeHouseBank = (bank: CardRoomHouseBank) => {
   const nextBank = normalizeHouseBank(bank);
-  try {
-    localStorage.setItem(HOUSE_BANK_STORAGE_KEY, JSON.stringify(nextBank));
-  } catch {
-    // Ignore storage failures in webviews with restricted persistence.
-  }
+  persistCardRoomJson(HOUSE_BANK_STORAGE_KEY, nextBank);
   return nextBank;
 };
 
@@ -350,11 +359,7 @@ const readCardRoomDecorState = (): CardRoomDecorState => {
 
 const writeCardRoomDecorState = (decor: CardRoomDecorState) => {
   const nextDecor = normalizeCardRoomDecorState(decor);
-  try {
-    localStorage.setItem(CARD_ROOM_DECOR_STORAGE_KEY, JSON.stringify(nextDecor));
-  } catch {
-    // Ignore storage failures in webviews with restricted persistence.
-  }
+  persistCardRoomJson(CARD_ROOM_DECOR_STORAGE_KEY, nextDecor);
   return nextDecor;
 };
 
@@ -1376,6 +1381,7 @@ export const CardRoomApp = () => {
   const tableMotionRef = useRef<CardRoomTableMotion>(createInitialCardRoomMotion());
   const playerWalletRef = useRef(playerWallet);
   const houseBankRef = useRef(houseBank);
+  const cardRoomDecorRef = useRef(cardRoomDecor);
   const hostCharacterRef = useRef<CardRoomCharacter>(hostDisplayCharacter);
   const seatedCharactersRef = useRef(seatedCharacters);
   const visitorStatesRef = useRef<Record<string, CardRoomVisitorState>>({});
@@ -1388,6 +1394,32 @@ export const CardRoomApp = () => {
   const [playersSeatedReady, setPlayersSeatedReady] = useState(false);
   const playersSeatedReadyRef = useRef(false);
   const [userHandCardsReady, setUserHandCardsReady] = useState(false);
+
+  const flushCardRoomSave = (): SaveFlushResult => {
+    const currentTable = tableRef.current;
+    const currentUser = currentTable.players.find((player) => player.isUser);
+    const latestPlayerWallet = {
+      ...playerWalletRef.current,
+      pokerChips: normalizePokerChips(
+        currentUser?.stack ?? playerWalletRef.current.pokerChips,
+      ),
+    };
+    const results: SaveFlushResult[] = [
+      persistCardRoomJson(PLAYER_WALLET_STORAGE_KEY, latestPlayerWallet),
+      persistCardRoomJson(HOUSE_BANK_STORAGE_KEY, normalizeHouseBank(houseBankRef.current)),
+      persistCardRoomJson(
+        CARD_ROOM_DECOR_STORAGE_KEY,
+        normalizeCardRoomDecorState(cardRoomDecorRef.current),
+      ),
+    ];
+
+    currentTable.players.forEach((player) => {
+      if (player.isUser || !player.slotId) return;
+      const saved = writeCardRoomSaveSlotPokerChipsResult(player.slotId, player.stack);
+      results.push({ ok: saved.ok, written: saved.written });
+    });
+    return aggregateSaveFlushResults(results);
+  };
   const userHandCardsReadyRef = useRef(false);
   const [companionsPanelCollapsed, setCompanionsPanelCollapsed] = useState(false);
   const companionsPanel = useCardRoomCollapsibleHeight(!companionsPanelCollapsed);
@@ -2002,11 +2034,25 @@ export const CardRoomApp = () => {
   }, [availableCompanions, roomSnapshot, selectedSlotIds]);
 
   useEffect(() => {
-    const handlePageHide = () => endAllCardRoomVisits(true);
+    const handlePageHide = () => {
+      flushCardRoomSave();
+      endAllCardRoomVisits(true);
+    };
     window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
+    const unlistenPromise = installCloseSaveHandler(flushCardRoomSave, {
+      onFailure: (message, error) => {
+        console.error("Could not finish saving the Card Room before close.", error);
+        setStatusMessage(message);
+        window.alert(message);
+      },
+    }).catch(() => undefined);
 
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
+      void unlistenPromise.then((unlisten) => unlisten?.());
+      flushCardRoomSave();
       endAllCardRoomVisits(true);
     };
   }, []);
@@ -2160,6 +2206,10 @@ export const CardRoomApp = () => {
   useEffect(() => {
     houseBankRef.current = houseBank;
   }, [houseBank]);
+
+  useLayoutEffect(() => {
+    cardRoomDecorRef.current = cardRoomDecor;
+  }, [cardRoomDecor]);
 
   useEffect(() => {
     freeRoamEnabledRef.current = freeRoamEnabled;

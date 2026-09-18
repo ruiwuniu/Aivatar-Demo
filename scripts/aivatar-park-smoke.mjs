@@ -1264,6 +1264,19 @@ assert.equal(
   "throttle",
   "the main WebView must remain timer-throttled instead of fully suspended when occluded",
 );
+const mainBrowserArgs = tauriConfig.app.windows.find(
+  (windowConfig) => windowConfig.label === "main",
+)?.additionalBrowserArgs ?? "";
+assert.match(mainBrowserArgs, /--disk-cache-size=134217728/);
+assert.match(mainBrowserArgs, /msWebOOUI,msPdfOOUI,msSmartScreenProtection/);
+assert.match(mainBrowserArgs, /--autoplay-policy=no-user-gesture-required/);
+assert.match(tauriText, /WEBVIEW2_USER_DATA_FOLDER/);
+assert.match(tauriText, /aivatar-webview2-dev/);
+assert.equal(
+  (tauriText.match(/\.additional_browser_args\(WEBVIEW2_BROWSER_ARGS\)/g) ?? []).length,
+  5,
+  "every dynamically created WebView must use the same bounded cache arguments",
+);
 assert.match(tauriText, /fn set_main_window_visibility_for_park_profile/);
 assert.match(tauriText, /get_webview_window\("main"\)/);
 assert.match(tauriText, /fn attach_main_window_restore_handler/);
@@ -1289,7 +1302,11 @@ assert.doesNotMatch(
   /set_main_window_visibility_for_park_owner\(&app, &label, (?:false|true)\)/,
   "native park open must leave the main room running until the React handoff completes",
 );
-assert.match(tauriText, /set_main_window_visibility_for_park_profile,\s*open_save_slot_window/);
+assert.match(
+  tauriText,
+  /set_main_window_visibility_for_park_profile,\s*confirm_close_after_save,\s*open_save_slot_window/,
+  "the acknowledged close-save command must stay registered before persistent windows are opened",
+);
 assert.match(canvasSnapshotsText, /const snapshotStateByCanvas = new WeakMap/);
 assert.match(canvasSnapshotsText, /typeof createImageBitmap !== "function"/);
 assert.match(canvasSnapshotsText, /state\.pending \|\| state\.disabled \|\| state\.bitmap/);

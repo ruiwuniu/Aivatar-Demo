@@ -9,6 +9,8 @@ const compile = (relative) => ts.transpileModule(
 ).outputText;
 const sharedCode = compile("../src/persistence/savePersistence.ts");
 const roomCode = compile("../src/persistence/roomSavePersistence.ts");
+const PASSIVE_CHECKPOINT_MS = 5 * 60_000;
+const RETRY_WAIT_MS = 20_000;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const runtime = (x) => ({
   x, y: 10, targetX: x, targetY: 10, facing: "front", behavior: "idle",
@@ -93,7 +95,7 @@ const test = (name, run) => {
   console.log(`PASS ${name}`);
 };
 
-test("passive changes keep the first deadline and coalesce continuously for five minutes", () => {
+test("passive changes have a five-minute upper bound and coalesce into one checkpoint", () => {
   const f = fixture();
   let local = initialSave();
   f.controller.activate("a", local);
@@ -102,10 +104,29 @@ test("passive changes keep the first deadline and coalesce continuously for five
     local = { ...local, navMemory: { ...local.navMemory, exploredCells: { test: update + 1 } } };
     f.controller.update("a", local);
   }
-  f.advanceTo(300_000);
-  assert.equal(f.writes.length, 15);
-  assert.equal(f.notifications.length, 15);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS - 1);
+  assert.equal(f.writes.length, 0);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS);
+  assert.equal(f.writes.length, 1);
+  assert.equal(f.notifications.length, 1);
   assert.equal(JSON.parse(f.values.get("slot-a")).navMemory.exploredCells.test, 601);
+});
+
+test("close/manual flush writes the latest passive room state before its checkpoint", () => {
+  const f = fixture();
+  let local = initialSave();
+  f.controller.activate("a", local);
+  local = { ...local, navMemory: { ...local.navMemory, exploredCells: { test: 2 } } };
+  f.controller.update("a", local);
+  f.advanceTo(42_000);
+  local = { ...local, navMemory: { ...local.navMemory, exploredCells: { test: 3 } } };
+  f.controller.update("a", local);
+  assert.equal(f.controller.flush("a", local).ok, true);
+  assert.equal(f.writes.length, 1);
+  assert.equal(f.writes[0].at, 42_000);
+  assert.equal(JSON.parse(f.values.get("slot-a")).navMemory.exploredCells.test, 3);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS * 2);
+  assert.equal(f.writes.length, 1, "close flush must cancel the pending checkpoint");
 });
 
 test("wallet, inventory, completed turns, and saved bubble preferences write immediately", () => {
@@ -160,7 +181,7 @@ test("two remote imports preserve an already pending local navigation change", (
   current = f.controller.mergeExternal("a", current);
   f.controller.update("a", current);
   assert.equal(f.writes.length, 0);
-  f.advanceTo(20_000);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS);
   const saved = JSON.parse(f.values.get("slot-a"));
   assert.equal(saved.navMemory.exploredCells.test, 8);
   assert.equal(saved.wallet.bits, 300);
@@ -179,7 +200,7 @@ test("multiple unseen external changes survive subsequent local saves without Re
     remote.wallet.bits = step * 500;
     remote.parkRuntime = runtime(step * 10);
     f.values.set("slot-a", JSON.stringify(remote));
-    f.advanceTo(step * 20_000);
+    f.advanceTo(step * PASSIVE_CHECKPOINT_MS);
     const saved = JSON.parse(f.values.get("slot-a"));
     assert.equal(saved.wallet.bits, step * 500);
     assert.equal(saved.parkRuntime.x, step * 10);
@@ -199,7 +220,7 @@ test("failed flush freezes the old slot runtime and retries only that slot after
   f.live.runtime = runtime(77);
   f.controller.activate("b", initialSave());
   f.failedKeys.delete("slot-a");
-  f.advanceTo(20_000);
+  f.advanceTo(RETRY_WAIT_MS);
   assert.deepEqual(f.writes.map(({ key }) => key), ["slot-a"]);
   const saved = JSON.parse(f.values.get("slot-a"));
   assert.equal(saved.wallet.bits, 88);
@@ -220,7 +241,7 @@ test("reactivating a slot preserves its failed pending changes and external addi
   assert.equal(restored.wallet.bits, 80);
   assert.deepEqual(clone(restored.inventory), external.inventory);
   f.failedKeys.delete("slot-a");
-  f.advanceTo(20_000);
+  f.advanceTo(RETRY_WAIT_MS);
   assert.equal(JSON.parse(f.values.get("slot-a")).wallet.bits, 80);
   assert.deepEqual(JSON.parse(f.values.get("slot-a")).inventory, external.inventory);
 });
@@ -232,12 +253,12 @@ test("read or parse failure keeps the local draft until a later retry succeeds",
   const local = { ...original, navMemory: { ...original.navMemory, exploredCells: { test: 99 } } };
   f.controller.update("a", local);
   f.values.set("slot-a", "incomplete JSON");
-  f.advanceTo(20_000);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS);
   assert.equal(f.writes.length, 0);
   assert.equal(f.notifications.length, 0);
   assert.equal(f.errors.length, 1);
   f.values.set("slot-a", JSON.stringify(original));
-  f.advanceTo(40_000);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS + RETRY_WAIT_MS);
   assert.equal(JSON.parse(f.values.get("slot-a")).navMemory.exploredCells.test, 99);
   assert.equal(f.notifications.length, 1);
 });
@@ -250,7 +271,7 @@ test("deletion and forget never recreate a pending slot", () => {
     f.controller.update("a", { ...original, petStats: { ...original.petStats, energy: 49 } });
     f.values.delete("slot-a");
     if (forget) f.controller.forget("a");
-    f.advanceTo(100_000);
+    f.advanceTo(PASSIVE_CHECKPOINT_MS * 2);
     assert.equal(f.values.has("slot-a"), false);
     assert.equal(f.writes.length, 0);
     assert.equal(f.notifications.length, 0);
@@ -272,7 +293,7 @@ test("two windows with different runtimes do not echo external storage updates",
   b.flush("a", stateB);
   stateA = a.mergeExternal("a", stateA);
   a.update("a", stateA);
-  f.advanceTo(100_000);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS * 2);
   assert.equal(f.writes.length, 2);
 });
 
@@ -282,7 +303,7 @@ test("equal snapshots and flushAll without pending work do not rewrite slot meta
   f.controller.activate("a", original);
   assert.equal(f.controller.flush("a", original).written, false);
   f.controller.flushAll();
-  f.advanceTo(100_000);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS * 2);
   assert.equal(f.writes.length, 0);
   assert.equal(f.notifications.length, 0);
 });
@@ -297,17 +318,17 @@ test("concurrent pet stat deltas preserve external rewards without replaying loc
   f.controller.update("a", local);
   const external = { ...original, petStats: { ...original.petStats, mood: 44 } };
   f.values.set("slot-a", JSON.stringify(external));
-  f.advanceTo(20_000);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS);
   assert.equal(JSON.parse(f.values.get("slot-a")).petStats.mood, 43);
 
   local = { ...local, navMemory: { ...local.navMemory, exploredCells: { test: 2 } } };
   f.controller.update("a", local);
-  f.advanceTo(40_000);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS * 2);
   assert.equal(JSON.parse(f.values.get("slot-a")).petStats.mood, 43, "unchanged local mood must not decay twice");
 
   local = { ...local, petStats: { ...local.petStats, mood: 38 } };
   f.controller.update("a", local);
-  f.advanceTo(60_000);
+  f.advanceTo(PASSIVE_CHECKPOINT_MS * 3);
   assert.equal(JSON.parse(f.values.get("slot-a")).petStats.mood, 42, "next local decay is applied once");
 });
 

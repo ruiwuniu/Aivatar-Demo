@@ -7,7 +7,11 @@ import type {
 } from "../types";
 import { DEFAULT_PARK_OBJECTS, type ParkObjectPlacement } from "./parkContent";
 import { fishingRewards, type ParkRawFishId } from "./parkProbability";
-import { createSavePersistence } from "../persistence/savePersistence";
+import {
+  createSavePersistence,
+  DEFAULT_SAVE_WAIT_MS,
+  type SaveFlushResult,
+} from "../persistence/savePersistence";
 
 export const PARK_LAYOUT_STORAGE_KEY = "aivatar.park.layout.v2";
 export const PARK_LAYOUT_EVENT = "aivatar:park-layout";
@@ -97,7 +101,7 @@ type PendingParkSave = {
 const pendingParkSaves = new Map<string, PendingParkSave>();
 const parkPersistence = createSavePersistence({
   storage: () => localStorage,
-  waitMs: 20_000,
+  waitMs: DEFAULT_SAVE_WAIT_MS,
 });
 
 const pendingParkSave = (slotId: string) => {
@@ -150,8 +154,15 @@ export const readParkSaveSlot = (slotId: string): AivatarSaveState | null => {
   }
 };
 
-export const flushParkSaveSlot = (slotId: string): AivatarSaveState | null => {
-  if (!pendingParkSaves.has(slotId)) return readParkSaveSlot(slotId);
+export const flushParkSaveSlotResult = (
+  slotId: string,
+): { save: AivatarSaveState | null; result: SaveFlushResult } => {
+  if (!pendingParkSaves.has(slotId)) {
+    return {
+      save: readParkSaveSlot(slotId),
+      result: { ok: true, written: false },
+    };
+  }
   let saved: AivatarSaveState | undefined;
   const result = parkPersistence.flush(
     parkSaveStorageKey(slotId),
@@ -161,8 +172,14 @@ export const flushParkSaveSlot = (slotId: string): AivatarSaveState | null => {
     },
     () => pendingParkSaves.delete(slotId),
   );
-  return result.ok ? saved ?? null : null;
+  return {
+    save: result.ok ? saved ?? null : null,
+    result,
+  };
 };
+
+export const flushParkSaveSlot = (slotId: string): AivatarSaveState | null =>
+  flushParkSaveSlotResult(slotId).save;
 
 export const mutateParkSaveSlot = (
   slotId: string,

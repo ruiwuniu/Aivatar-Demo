@@ -4,6 +4,7 @@ import type {
   AvatarAppearanceId,
 } from "../types";
 import type { CardRoomCharacter } from "./holdemEngine";
+import { writeJsonIfChanged } from "../persistence/savePersistence";
 import {
   CARD_ROOM_CHIP_BUNDLE_CHIPS,
   cashOutPokerChipsForBits,
@@ -227,15 +228,16 @@ export const writeCardRoomSaveSlotDarkTraitChanges = (
   const nextDarkTraits = applyDarkTraitChanges(currentDarkTraits, changes);
 
   try {
-    localStorage.setItem(
+    writeJsonIfChanged(
+      localStorage,
       `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      JSON.stringify({
+      {
         ...save,
         memory: {
           ...memory,
           darkTraits: nextDarkTraits,
         },
-      }),
+      },
     );
     return nextDarkTraits;
   } catch {
@@ -265,16 +267,17 @@ export const exchangeCardRoomSaveSlotPokerChips = (
   const spentBits = normalizeWalletBits(currentWallet.bits) - nextBits;
 
   try {
-    localStorage.setItem(
+    writeJsonIfChanged(
+      localStorage,
       `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      JSON.stringify({
+      {
         ...save,
         wallet: {
           ...wallet,
           bits: nextBits,
           pokerChips: nextPokerChips,
         },
-      }),
+      },
     );
     return {
       bits: nextBits,
@@ -308,16 +311,17 @@ export const redeemCardRoomSaveSlotPokerChipsForBits = (
   const redeemedBits = nextBits - normalizeWalletBits(currentWallet.bits);
 
   try {
-    localStorage.setItem(
+    writeJsonIfChanged(
+      localStorage,
       `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      JSON.stringify({
+      {
         ...save,
         wallet: {
           ...wallet,
           bits: nextBits,
           pokerChips: nextPokerChips,
         },
-      }),
+      },
     );
     return {
       bits: nextBits,
@@ -346,16 +350,17 @@ export const giftCardRoomSaveSlotPokerChips = (
     normalizePokerChips(pokerChipsOverride ?? wallet.pokerChips) + giftChips;
 
   try {
-    localStorage.setItem(
+    writeJsonIfChanged(
+      localStorage,
       `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      JSON.stringify({
+      {
         ...save,
         wallet: {
           ...wallet,
           bits: nextBits,
           pokerChips: nextPokerChips,
         },
-      }),
+      },
     );
     return {
       bits: nextBits,
@@ -385,16 +390,17 @@ export const cashOutCardRoomSaveSlotPokerChips = (
   if (nextWallet.redeemedBits <= 0 || nextWallet.cashedOutChips <= 0) return null;
 
   try {
-    localStorage.setItem(
+    writeJsonIfChanged(
+      localStorage,
       `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      JSON.stringify({
+      {
         ...save,
         wallet: {
           ...wallet,
           bits: nextWallet.bits,
           pokerChips: nextWallet.pokerChips,
         },
-      }),
+      },
     );
     return nextWallet;
   } catch {
@@ -406,27 +412,70 @@ export const writeCardRoomSaveSlotPokerChips = (
   slotId: string | null,
   pokerChips: number,
 ) => {
-  if (!slotId) return null;
-  const save = readJson(`${SAVE_SLOT_KEY_PREFIX}${slotId}`);
-  if (!isRecord(save)) return null;
+  const result = writeCardRoomSaveSlotPokerChipsResult(slotId, pokerChips);
+  return result.ok && !result.skipped ? result.pokerChips : null;
+};
 
-  const wallet = isRecord(save.wallet) ? save.wallet : {};
+export type CardRoomSaveSlotPokerChipsWriteResult = {
+  ok: boolean;
+  written: boolean;
+  skipped: boolean;
+  pokerChips: number | null;
+};
+
+export const writeCardRoomSaveSlotPokerChipsResult = (
+  slotId: string | null,
+  pokerChips: number,
+): CardRoomSaveSlotPokerChipsWriteResult => {
+  if (!slotId) {
+    return { ok: true, written: false, skipped: true, pokerChips: null };
+  }
+
+  const storageKey = `${SAVE_SLOT_KEY_PREFIX}${slotId}`;
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(storageKey);
+  } catch {
+    return { ok: false, written: false, skipped: false, pokerChips: null };
+  }
+  if (raw === null) {
+    // Another window may have deleted this slot while the table was open.
+    return { ok: true, written: false, skipped: true, pokerChips: null };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, written: false, skipped: false, pokerChips: null };
+  }
+  if (!isRecord(parsed)) {
+    return { ok: false, written: false, skipped: false, pokerChips: null };
+  }
+
+  const wallet = isRecord(parsed.wallet) ? parsed.wallet : {};
   const nextPokerChips = normalizePokerChips(pokerChips);
 
   try {
-    localStorage.setItem(
-      `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      JSON.stringify({
-        ...save,
+    const written = writeJsonIfChanged(
+      localStorage,
+      storageKey,
+      {
+        ...parsed,
         wallet: {
           ...wallet,
           bits: normalizeWalletBits(wallet.bits),
           pokerChips: nextPokerChips,
         },
-      }),
+      },
     );
-    return nextPokerChips;
+    return {
+      ok: true,
+      written,
+      skipped: false,
+      pokerChips: nextPokerChips,
+    };
   } catch {
-    return null;
+    return { ok: false, written: false, skipped: false, pokerChips: null };
   }
 };

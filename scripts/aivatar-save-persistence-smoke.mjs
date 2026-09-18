@@ -10,7 +10,14 @@ const { outputText } = ts.transpileModule(source, {
 });
 const module = { exports: {} };
 vm.runInNewContext(outputText, { module, exports: module.exports }, { filename: sourcePath.pathname });
-const { createSavePersistence, writeJsonIfChanged, mergeSaveChanges, jsonEqual, DEFAULT_SAVE_WAIT_MS } = module.exports;
+const {
+  createSavePersistence,
+  writeJsonIfChanged,
+  mergeSaveChanges,
+  jsonEqual,
+  DEFAULT_SAVE_WAIT_MS,
+  DEFAULT_SAVE_RETRY_MS,
+} = module.exports;
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 const fakeClock = () => {
@@ -100,33 +107,35 @@ test("equal JSON skips writes but rechecks external storage every time", () => {
   assert.throws(() => writeJsonIfChanged(storage, "slot", undefined), /JSON serializable/);
 });
 
-test("continuous changes flush at the original 20 second deadline with the latest snapshot", () => {
+test("continuous changes flush at the original five-minute deadline with the latest snapshot", () => {
   const { writer, clock, values, writes } = fixture();
-  assert.equal(DEFAULT_SAVE_WAIT_MS, 20_000);
+  assert.equal(DEFAULT_SAVE_WAIT_MS, 300_000);
   let latest = 0;
   let snapshots = 0;
-  for (let second = 0; second < 20; second += 1) {
-    clock.advanceTo(second * 1000);
-    latest = second;
+  for (let update = 0; update < 600; update += 1) {
+    clock.advanceTo(update * 500);
+    latest = update;
     writer.schedule("slot", () => { snapshots += 1; return { nav: latest }; });
   }
-  latest = 20;
+  latest = 600;
   assert.equal(snapshots, 0);
-  clock.advanceTo(20_000);
+  clock.advanceTo(299_999);
+  assert.equal(writes.length, 0);
+  clock.advanceTo(300_000);
   assert.equal(snapshots, 1);
   assert.equal(writes.length, 1);
-  assert.deepEqual(JSON.parse(values.get("slot")), { nav: 20 });
+  assert.deepEqual(JSON.parse(values.get("slot")), { nav: 600 });
   assert.equal(writer.hasPending(), false);
 });
 
-test("five minutes of 500ms changes produce bounded periodic saves without starvation", () => {
+test("ten minutes of 500ms changes produce one checkpoint per five-minute window", () => {
   const { writer, clock, writes } = fixture();
-  for (let update = 0; update < 600; update += 1) {
+  for (let update = 0; update < 1200; update += 1) {
     clock.advanceTo(update * 500);
     writer.schedule("slot", () => ({ update }));
   }
-  clock.advanceTo(300_000);
-  assert.equal(writes.length, 15);
+  clock.advanceTo(600_000);
+  assert.equal(writes.length, 2);
   assert.equal(writer.hasPending(), false);
 });
 
@@ -136,10 +145,10 @@ test("keys have independent deadlines and flush without dirty work is a no-op", 
   writer.schedule("a", () => ({ value: 1 }));
   clock.advanceTo(5000);
   writer.schedule("b", () => ({ value: 2 }));
-  clock.advanceTo(20_000);
+  clock.advanceTo(300_000);
   assert.deepEqual(writes.map(({ key }) => key), ["a"]);
   assert.equal(writer.hasPending("b"), true);
-  clock.advanceTo(25_000);
+  clock.advanceTo(305_000);
   assert.deepEqual(writes.map(({ key }) => key), ["a", "b"]);
 });
 
@@ -150,25 +159,43 @@ test("critical flush writes immediately and also notifies on an equal-content sk
   assert.deepEqual(plain(writer.flush("slot", () => ({ bits: 42 }), onPersisted)), { ok: true, written: true });
   writer.schedule("slot", () => ({ bits: 42 }), onPersisted);
   assert.deepEqual(plain(writer.flush("slot")), { ok: true, written: false });
-  clock.advanceTo(100_000);
+  clock.advanceTo(600_000);
   assert.equal(writes.length, 1);
   assert.deepEqual(saved.map(({ written }) => written), [true, false]);
   assert.equal(writer.hasPending(), false);
 });
 
+test("close/manual flush commits the latest passive snapshot before five minutes", () => {
+  const { writer, clock, values, writes } = fixture();
+  let latest = 1;
+  writer.schedule("slot", () => ({ nav: latest }));
+  clock.advanceTo(42_000);
+  latest = 2;
+  writer.schedule("slot", () => ({ nav: latest }));
+  assert.deepEqual(plain(writer.flush("slot")), { ok: true, written: true });
+  assert.deepEqual(JSON.parse(values.get("slot")), { nav: 2 });
+  assert.equal(writes.length, 1);
+  clock.advanceTo(600_000);
+  assert.equal(writes.length, 1, "the cancelled checkpoint must not replay after close flush");
+});
+
 test("write failures retain pending work and retry the newest snapshot without extending the retry deadline", () => {
   const { writer, clock, storage, values, errors } = fixture();
+  assert.equal(DEFAULT_SAVE_RETRY_MS, 20_000);
   const saved = [];
   storage.failWrite = true;
   writer.schedule("slot", () => ({ bits: 1 }), (snapshot) => saved.push(snapshot));
-  clock.advanceTo(20_000);
+  clock.advanceTo(300_000);
   assert.equal(writer.hasPending("slot"), true);
   assert.equal(errors.length, 1);
   assert.equal(saved.length, 0);
-  clock.advanceTo(30_000);
+  clock.advanceTo(310_000);
   writer.schedule("slot", () => ({ bits: 2 }), (snapshot) => saved.push(snapshot));
   storage.failWrite = false;
-  clock.advanceTo(40_000);
+  clock.advanceTo(319_999);
+  assert.equal(writer.hasPending("slot"), true);
+  assert.equal(values.has("slot"), false);
+  clock.advanceTo(320_000);
   assert.deepEqual(JSON.parse(values.get("slot")), { bits: 2 });
   assert.equal(saved.length, 1);
   assert.equal(writer.hasPending(), false);
@@ -197,7 +224,7 @@ test("a deleted destination can skip the snapshot without recreating the slot", 
   const { writer, clock, writes } = fixture();
   const saved = [];
   writer.schedule("deleted-slot", () => undefined, (snapshot, written) => saved.push({ snapshot, written }));
-  clock.advanceTo(20_000);
+  clock.advanceTo(300_000);
   assert.equal(writes.length, 0);
   assert.deepEqual(saved, [{ snapshot: undefined, written: false }]);
   assert.equal(writer.hasPending(), false);
@@ -208,7 +235,7 @@ test("completion callback failure never requeues an already committed write", ()
   assert.equal(writer.flush("slot", () => ({ bits: 1 }), () => { throw new Error("callback failure"); }).ok, true);
   assert.equal(errors.length, 1);
   assert.equal(writer.hasPending(), false);
-  clock.advanceTo(100_000);
+  clock.advanceTo(600_000);
   assert.equal(writes.length, 1);
 });
 
@@ -218,7 +245,7 @@ test("cancel removes only its key and flushAll reports each remaining result", (
   writer.schedule("keep-slot", () => ({ value: 2 }));
   writer.cancel("leave-slot");
   assert.deepEqual(plain(writer.flushAll()), [{ key: "keep-slot", ok: true, written: true }]);
-  clock.advanceTo(100_000);
+  clock.advanceTo(600_000);
   assert.deepEqual(writes.map(({ key }) => key), ["keep-slot"]);
   assert.equal(clock.size, 0);
 });
@@ -231,7 +258,7 @@ test("new work scheduled during a flush survives the older flush", () => {
   });
   assert.equal(writer.flush("slot").ok, true);
   assert.equal(writer.hasPending("slot"), true);
-  clock.advanceTo(20_000);
+  clock.advanceTo(300_000);
   assert.equal(writes.length, 2);
   assert.deepEqual(JSON.parse(values.get("slot")), { value: 2 });
 });
@@ -265,7 +292,7 @@ test("delayed saves merge against storage at flush time and advance their baseli
   const local = { nav: { visits: 2 }, wallet: { bits: 10 } };
   writer.schedule("slot", () => mergeSaveChanges(base, local, JSON.parse(storage.getItem("slot"))), (snapshot) => { base = snapshot; });
   values.set("slot", '{"nav":{"visits":1},"wallet":{"bits":99}}');
-  clock.advanceTo(20_000);
+  clock.advanceTo(300_000);
   assert.deepEqual(JSON.parse(values.get("slot")), { nav: { visits: 2 }, wallet: { bits: 99 } });
   assert.deepEqual(plain(base), { nav: { visits: 2 }, wallet: { bits: 99 } });
 });

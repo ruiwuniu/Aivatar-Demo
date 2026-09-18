@@ -2,8 +2,11 @@ use std::{
     collections::{HashMap, HashSet},
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    path::PathBuf,
-    sync::{mpsc, Arc, Mutex, OnceLock},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc, Arc, Mutex, OnceLock,
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -63,6 +66,41 @@ const PAINTING_TRAITS: [&str; 6] = [
 ];
 
 static BRIDGE_STATE: OnceLock<Arc<Mutex<BridgeState>>> = OnceLock::new();
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn write_unique_temp_file(
+    directory: &Path,
+    stem: &str,
+    extension: &str,
+    contents: &[u8],
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    for _ in 0..64 {
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = directory.join(format!(
+            "{stem}-{}-{}-{sequence}.{extension}",
+            std::process::id(),
+            now_ms(),
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(contents) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(error.to_string());
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("Could not allocate a unique Aivatar temporary file.".to_string())
+}
 
 #[derive(Default)]
 struct BridgeState {
@@ -1008,12 +1046,6 @@ fn learning_enabled() -> bool {
 
 fn learning_context_file(session_id: &str, digest: &[String], summary: &str) -> Result<PathBuf, String> {
     let directory = std::env::temp_dir().join("aivatar-learning-context");
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let path = directory.join(format!(
-        "claude-native-{}-{}.txt",
-        safe_session_name(session_id),
-        now_ms()
-    ));
     let mut content = String::new();
     if !summary.trim().is_empty() {
         content.push_str("summary: ");
@@ -1027,8 +1059,12 @@ fn learning_context_file(session_id: &str, digest: &[String], summary: &str) -> 
     if content.trim().is_empty() {
         content.push_str("Claude Code turn completed.\n");
     }
-    std::fs::write(&path, content).map_err(|error| error.to_string())?;
-    Ok(path)
+    write_unique_temp_file(
+        &directory,
+        &format!("claude-native-{}", safe_session_name(session_id)),
+        "txt",
+        content.as_bytes(),
+    )
 }
 
 fn node_command() -> PathBuf {
@@ -1069,7 +1105,7 @@ fn spawn_claude_learning_worker(status: &Value, digest: &[String]) -> bool {
             &summary,
             "--context-file",
         ])
-        .arg(context_file)
+        .arg(&context_file)
         .arg("--avatar-state-file")
         .arg(avatar_state_file())
         .env("AIVATAR_AGENT", "claude-code")
@@ -1085,7 +1121,19 @@ fn spawn_claude_learning_worker(status: &Value, digest: &[String]) -> bool {
         command.creation_flags(0x08000000);
     }
 
-    command.spawn().is_ok()
+    match command.spawn() {
+        Ok(mut child) => {
+            thread::spawn(move || {
+                let _ = child.wait();
+                let _ = std::fs::remove_file(context_file);
+            });
+            true
+        }
+        Err(_) => {
+            let _ = std::fs::remove_file(context_file);
+            false
+        }
+    }
 }
 
 fn session_learning_status(status: &Value, learning: Value) -> Value {
@@ -2071,20 +2119,18 @@ fn painting_provider() -> String {
 
 fn painting_payload_file(payload: &Value) -> Result<PathBuf, String> {
     let directory = std::env::temp_dir().join("aivatar-painting-context");
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let avatar = payload
         .get("avatarId")
         .and_then(Value::as_str)
         .or_else(|| payload.get("avatarName").and_then(Value::as_str))
         .unwrap_or("avatar");
-    let path = directory.join(format!(
-        "painting-{}-{}.json",
-        safe_session_name(avatar),
-        now_ms()
-    ));
-    std::fs::write(&path, serde_json::to_vec_pretty(payload).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
-    Ok(path)
+    let contents = serde_json::to_vec_pretty(payload).map_err(|error| error.to_string())?;
+    write_unique_temp_file(
+        &directory,
+        &format!("painting-{}", safe_session_name(avatar)),
+        "json",
+        &contents,
+    )
 }
 
 fn normalize_painting_plan_response(value: Value) -> Result<Value, String> {
@@ -2132,7 +2178,7 @@ fn run_painting_worker(payload: Value) -> Result<Value, String> {
         .arg("--provider")
         .arg(painting_provider())
         .arg("--payload-file")
-        .arg(payload_file)
+        .arg(&payload_file)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -2143,7 +2189,9 @@ fn run_painting_worker(payload: Value) -> Result<Value, String> {
         command.creation_flags(0x08000000);
     }
 
-    let output = command.output().map_err(|error| error.to_string())?;
+    let output = command.output();
+    let _ = std::fs::remove_file(&payload_file);
+    let output = output.map_err(|error| error.to_string())?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2379,19 +2427,17 @@ fn social_dialogue_provider() -> String {
 
 fn social_dialogue_payload_file(payload: &Value) -> Result<PathBuf, String> {
     let directory = std::env::temp_dir().join("aivatar-social-dialogue-context");
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let visit = payload
         .get("visitId")
         .and_then(Value::as_str)
         .unwrap_or("visit");
-    let path = directory.join(format!(
-        "dialogue-{}-{}.json",
-        safe_session_name(visit),
-        now_ms()
-    ));
-    std::fs::write(&path, serde_json::to_vec_pretty(payload).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
-    Ok(path)
+    let contents = serde_json::to_vec_pretty(payload).map_err(|error| error.to_string())?;
+    write_unique_temp_file(
+        &directory,
+        &format!("dialogue-{}", safe_session_name(visit)),
+        "json",
+        &contents,
+    )
 }
 
 fn run_social_dialogue_worker(payload: Value) -> Result<Value, String> {
@@ -2404,7 +2450,7 @@ fn run_social_dialogue_worker(payload: Value) -> Result<Value, String> {
         .arg("--provider")
         .arg(social_dialogue_provider())
         .arg("--payload-file")
-        .arg(payload_file)
+        .arg(&payload_file)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -2415,7 +2461,9 @@ fn run_social_dialogue_worker(payload: Value) -> Result<Value, String> {
         command.creation_flags(0x08000000);
     }
 
-    let output = command.output().map_err(|error| error.to_string())?;
+    let output = command.output();
+    let _ = std::fs::remove_file(&payload_file);
+    let output = output.map_err(|error| error.to_string())?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
