@@ -22,7 +22,8 @@ function decodeBase64(value, label) {
 // Tauri uses a base64-encoded Minisign public-key/signature box. Verify both
 // the artifact and the trusted comment using Node's Ed25519 implementation.
 // This is release QA only; the app also verifies downloads with its updater plugin.
-export function verifyUpdaterSignature(bytes, encodedSignature, encodedPublicKey) {
+export function verifyUpdaterSignature(bytes, encodedSignature, encodedPublicKey, expectedVersion) {
+  requireCondition(typeof expectedVersion === "string" && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(expectedVersion), "A stable expected app version is required for signature verification");
   const keyLines = decodeBase64(encodedPublicKey.trim(), "Updater public key").toString("utf8").trimEnd().split(/\r?\n/);
   requireCondition(keyLines.length === 2 && keyLines[0].startsWith("untrusted comment: "), "Invalid Minisign public key box");
   const key = decodeBase64(keyLines[1], "Minisign public key");
@@ -43,6 +44,8 @@ export function verifyUpdaterSignature(bytes, encodedSignature, encodedPublicKey
   requireCondition(verify(null, payload, publicKey, signature.subarray(10)), "Updater artifact signature verification failed");
   const comment = lines[2].slice("trusted comment: ".length).trim();
   requireCondition(verify(null, Buffer.concat([signature.subarray(10), Buffer.from(comment)]), publicKey, globalSignature), "Updater trusted comment signature verification failed");
+  const versions = comment.split("\t").filter((field) => field.startsWith("version:")).map((field) => field.slice("version:".length));
+  requireCondition(versions.length === 1 && versions[0] === expectedVersion, "Updater signature must bind exactly one matching app version");
   return true;
 }
 
@@ -60,6 +63,9 @@ function digest(bytes) {
 }
 
 function readAsset(path) {
+  const size = statSync(path).size;
+  if (/\.(app\.tar\.gz|exe|msi)$/.test(path)) requireCondition(size <= 512 * 1024 * 1024, "Updater artifact exceeds the client download limit of 512 MiB");
+  if (path.endsWith(".sig")) requireCondition(size <= 4096, "Updater signature file is oversized");
   const bytes = readFileSync(path);
   requireCondition(bytes.length > 0 && statSync(path).isFile(), `Empty or invalid artifact: ${path}`);
   return { bytes, metadata: { name: basename(path), size: bytes.length, sha256: digest(bytes) } };
@@ -115,7 +121,7 @@ export function createPlatformReport({ platform, bundleRoot, version, sourceComm
     const { bytes, metadata } = readAsset(path);
     const signatureAsset = readAsset(`${path}.sig`);
     const signature = signatureAsset.bytes.toString("utf8").trim();
-    verifyUpdaterSignature(bytes, signature, publicKey);
+    verifyUpdaterSignature(bytes, signature, publicKey, version);
     assets.set(metadata.name, metadata);
     assets.set(signatureAsset.metadata.name, signatureAsset.metadata);
     for (const target of artifact.targets) platforms[target] = { url: assetUrl(identity, metadata.name), signature };
@@ -123,7 +129,7 @@ export function createPlatformReport({ platform, bundleRoot, version, sourceComm
   return {
     schemaVersion: 1, platform, ...identity, publicKeySha256: digest(Buffer.from(publicKey.trim())),
     platforms, assets: [...assets.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    verification: { ...checksums.verification, updaterArtifactSignaturesValid: true, updaterTrustedCommentSignaturesValid: true },
+    verification: { ...checksums.verification, updaterArtifactSignaturesValid: true, updaterTrustedCommentSignaturesValid: true, updaterSignedVersionMatches: true },
   };
 }
 
@@ -139,7 +145,7 @@ export function mergePlatformReports({ reports, assetsDir, version, sourceCommit
     requireCondition(report.schemaVersion === 1 && Object.hasOwn(platformTargets, report.platform), "Invalid platform report");
     for (const field of Object.keys(identity)) requireCondition(report[field] === identity[field], `Platform report ${field} mismatch`);
     requireCondition(report.publicKeySha256 === digest(Buffer.from(publicKey.trim())), "Platform report uses a different updater public key");
-    requireCondition(report.verification.updaterArtifactSignaturesValid === true && report.verification.updaterTrustedCommentSignaturesValid === true, "Platform report is missing signature verification");
+    requireCondition(report.verification.updaterArtifactSignaturesValid === true && report.verification.updaterTrustedCommentSignaturesValid === true && report.verification.updaterSignedVersionMatches === true, "Platform report is missing signature verification");
     requireCondition(JSON.stringify(Object.keys(report.platforms).sort()) === JSON.stringify([...platformTargets[report.platform]].sort()), "Unexpected or missing updater platform targets");
     requireCondition(Array.isArray(report.assets) && JSON.stringify(report.assets.map((asset) => asset.name).sort()) === JSON.stringify(expectedReleaseNames(report.platform, version)), "Unexpected or missing release assets in platform report");
     for (const asset of report.assets) {
@@ -153,7 +159,7 @@ export function mergePlatformReports({ reports, assetsDir, version, sourceCommit
       const name = basename(artifact.file);
       requireCondition(assets.has(name) && assets.has(`${name}.sig`), `Missing signed updater artifact: ${name}`);
       const signature = readFileSync(resolve(assetsDir, `${name}.sig`), "utf8").trim();
-      verifyUpdaterSignature(readFileSync(resolve(assetsDir, name)), signature, publicKey);
+      verifyUpdaterSignature(readFileSync(resolve(assetsDir, name)), signature, publicKey, version);
       for (const target of artifact.targets) {
         const entry = report.platforms[target];
         requireCondition(entry.url === assetUrl(identity, name) && entry.signature === signature, `Unexpected updater URL or signature for ${target}`);
@@ -162,7 +168,7 @@ export function mergePlatformReports({ reports, assetsDir, version, sourceCommit
     }
   }
   const manifest = { version, notes: notes.trim(), pub_date: pubDate, platforms };
-  const checksums = { ...identity, assets: [...assets.values()].sort((a, b) => a.name.localeCompare(b.name)), verification: { bothPlatformsPresent: true, sourceCommitMatches: true, downloadedAssetsMatchCI: true, updaterSignaturesValid: true } };
+  const checksums = { ...identity, assets: [...assets.values()].sort((a, b) => a.name.localeCompare(b.name)), verification: { bothPlatformsPresent: true, sourceCommitMatches: true, downloadedAssetsMatchCI: true, updaterSignaturesValid: true, updaterSignedVersionsMatch: true } };
   return { manifest, checksums };
 }
 
@@ -183,7 +189,7 @@ function main() {
   const options = parseArgs(args);
   for (const name of ["config", "version", "source", "repo", "output"]) requireCondition(options[name], `Missing --${name}`);
   const config = readJson(options.config);
-  requireCondition(config.version === options.version && config.bundle?.createUpdaterArtifacts === true, "Tauri configuration version/updater artifacts must match this release");
+  requireCondition(config.version === options.version && config.bundle?.createUpdaterArtifacts === true && config.plugins?.updater?.requireSignedVersion === true, "Tauri configuration version/updater artifacts must match this release");
   const common = { version: options.version, sourceCommit: options.source, repo: options.repo, publicKey: config.plugins?.updater?.pubkey };
   requireCondition(typeof common.publicKey === "string" && common.publicKey.trim(), "Updater public key is missing from Tauri config");
   if (command === "platform") {

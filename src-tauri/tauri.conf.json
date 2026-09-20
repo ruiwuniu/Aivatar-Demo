@@ -57,6 +57,7 @@
   },
   "plugins": {
     "updater": {
+      "requireSignedVersion": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENGNzJFNTlENDA4NjdDMEEKUldRS2ZJWkFuZVZ5ejA5VVBSMFo0L1JFY250bkRYaHJuVkphOFVaZitMNS9LWk1iQnVweHdWVkQK",
       "endpoints": [
         "https://github.com/ruiwuniu/Aivatar-Demo/releases/latest/download/latest.json"

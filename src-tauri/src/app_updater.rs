@@ -9,6 +9,10 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 const UPDATE_ENDPOINT: &str =
     "https://github.com/ruiwuniu/Aivatar-Demo/releases/latest/download/latest.json";
+const MAX_MANIFEST_BYTES: usize = 256 * 1024;
+// Current Windows installers are about 313 MB; leave upgrade headroom while
+// bounding unauthenticated network data before signature verification.
+const MAX_PACKAGE_BYTES: usize = 512 * 1024 * 1024;
 const SAVE_TIMEOUT: Duration = Duration::from_secs(20);
 const STATE_EVENT: &str = "aivatar://updater-state";
 const SAVE_EVENT: &str = "aivatar://save-before-update";
@@ -116,6 +120,39 @@ struct SaveRequest {
     request_id: u64,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSaveStatus {
+    request_id: u64,
+    active: bool,
+    phase: &'static str,
+}
+
+fn save_request_status(inner: &UpdaterInner, label: &str, request_id: u64) -> UpdateSaveStatus {
+    let active = inner.barrier.as_ref().is_some_and(|barrier| {
+        barrier.request_id == request_id && barrier.pending.contains_key(label)
+    }) && matches!(inner.snapshot.phase, "saving" | "installing");
+    UpdateSaveStatus {
+        request_id,
+        active,
+        phase: if active {
+            inner.snapshot.phase
+        } else {
+            "inactive"
+        },
+    }
+}
+
+#[tauri::command]
+pub fn app_update_save_status(
+    window: tauri::WebviewWindow,
+    request_id: u64,
+) -> Result<UpdateSaveStatus, String> {
+    let state = window.state::<AppUpdaterState>();
+    let inner = state.inner.lock().map_err(|_| lock_error())?;
+    Ok(save_request_status(&inner, window.label(), request_id))
+}
+
 fn lock_error() -> String {
     "The updater is temporarily unavailable.".into()
 }
@@ -196,6 +233,19 @@ pub async fn app_update_check(
         // Keep the endpoint native and fixed even if a renderer is compromised.
         let updater = app
             .updater_builder()
+            // UpdaterExt normally cleans up WebViews before attempting to
+            // launch the Windows installer. Keep them alive if launch fails;
+            // our save barrier already handles durable state before install.
+            .on_before_exit(|| {})
+            .network_limits(tauri_plugin_updater::NetworkLimits {
+                max_manifest_bytes: MAX_MANIFEST_BYTES,
+                max_download_bytes: MAX_PACKAGE_BYTES,
+                allowed_hosts: vec![
+                    "github.com".into(),
+                    "release-assets.githubusercontent.com".into(),
+                ],
+                max_redirects: 5,
+            })
             .endpoints(vec![UPDATE_ENDPOINT
                 .parse()
                 .map_err(|_| "Invalid built-in update endpoint.".to_string())?])
@@ -424,8 +474,18 @@ fn install_saved_update(app: tauri::AppHandle) -> Result<UpdateSnapshot, String>
 
     if let Err(error) = outcome {
         // Leave all windows and the verified package available for a retry.
-        // Resume events are sent while the native gate still excludes a new
-        // install, preventing a late cancellation from thawing a newer request.
+        // Clear the native barrier before notifying renderers: they authenticate
+        // cancellation by querying this state. Keep the lifecycle gate held
+        // until notifications have been sent, excluding a newer install.
+        let close = app.state::<crate::CloseSaveState>();
+        let mut windows = close.windows.lock().map_err(|_| lock_error())?;
+        let snapshot = {
+            let mut inner = state.inner.lock().map_err(|_| lock_error())?;
+            inner.barrier = None;
+            inner.snapshot.phase = "downloaded";
+            inner.snapshot.error = Some(error);
+            publish(&app, &mut inner)
+        };
         for label in &labels {
             let _ = app.emit_to(
                 label.as_str(),
@@ -433,18 +493,11 @@ fn install_saved_update(app: tauri::AppHandle) -> Result<UpdateSnapshot, String>
                 SaveRequest { request_id },
             );
         }
-        let close = app.state::<crate::CloseSaveState>();
-        let mut windows = close.windows.lock().map_err(|_| lock_error())?;
-        let mut inner = state.inner.lock().map_err(|_| lock_error())?;
-        inner.barrier = None;
-        inner.snapshot.phase = "downloaded";
-        inner.snapshot.error = Some(error);
         windows.updating = false;
-        return Ok(publish(&app, &mut inner));
+        return Ok(snapshot);
     }
     let snapshot = {
         let mut inner = state.inner.lock().map_err(|_| lock_error())?;
-        inner.barrier = None;
         inner.installed_exit = true;
         inner.snapshot.clone()
     };
@@ -542,5 +595,26 @@ mod tests {
         windows.replaying_exit = false;
         windows.updating = true;
         assert!(!windows.can_start_update());
+    }
+
+    #[test]
+    fn save_status_authenticates_request_window_and_native_phase() {
+        let state = AppUpdaterState::new(false);
+        let mut inner = state.inner.lock().unwrap();
+        inner.barrier = Some(SaveBarrier::new(17, ["main".into(), "park-one".into()]));
+        for phase in ["saving", "installing"] {
+            inner.snapshot.phase = phase;
+            let status = save_request_status(&inner, "main", 17);
+            assert!(status.active);
+            assert_eq!(status.phase, phase);
+            assert!(save_request_status(&inner, "park-one", 17).active);
+            assert!(!save_request_status(&inner, "unrelated-window", 17).active);
+            assert!(!save_request_status(&inner, "main", 16).active);
+        }
+        inner.snapshot.phase = "downloaded";
+        assert!(!save_request_status(&inner, "main", 17).active);
+        inner.snapshot.phase = "saving";
+        inner.barrier = None;
+        assert!(!save_request_status(&inner, "main", 17).active);
     }
 }

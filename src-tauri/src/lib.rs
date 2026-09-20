@@ -2430,6 +2430,7 @@ pub fn run() {
             app_updater::app_update_download,
             app_updater::app_update_install,
             app_updater::app_update_confirm_save,
+            app_updater::app_update_save_status,
             set_main_window_visibility_for_park_profile,
             confirm_close_after_save,
             open_save_slot_window,

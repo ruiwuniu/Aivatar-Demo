@@ -11,20 +11,27 @@ const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 const rawPublic = publicKey.export({ format: "der", type: "spki" }).subarray(-32);
 const keyId = Buffer.from("0123456789abcdef", "hex");
 const encodedPublicKey = Buffer.from(`untrusted comment: synthetic release QA\n${Buffer.concat([Buffer.from("Ed"), keyId, rawPublic]).toString("base64")}\n`).toString("base64");
-function signatureFor(bytes, algorithm = "ED") {
+function signatureFor(bytes, algorithm = "ED", versionFields = "\tversion:0.5.0") {
   const message = algorithm === "ED" ? createHash("blake2b512").update(bytes).digest() : bytes;
   const signature = sign(null, message, privateKey);
-  const comment = "timestamp:1\tfile:synthetic-artifact\tprehashed";
+  const comment = `timestamp:1\tfile:synthetic-artifact\tprehashed${versionFields}`;
   const globalSignature = sign(null, Buffer.concat([signature, Buffer.from(comment)]), privateKey);
   return Buffer.from(`untrusted comment: synthetic release QA\n${Buffer.concat([Buffer.from(algorithm), keyId, signature]).toString("base64")}\ntrusted comment: ${comment}\n${globalSignature.toString("base64")}\n`).toString("base64");
 }
 const bytes = Buffer.from("synthetic updater artifact");
-assert.equal(verifyUpdaterSignature(bytes, signatureFor(bytes), encodedPublicKey), true);
-assert.equal(verifyUpdaterSignature(bytes, signatureFor(bytes, "Ed"), encodedPublicKey), true);
-assert.throws(() => verifyUpdaterSignature(Buffer.from("tampered"), signatureFor(bytes), encodedPublicKey), /artifact signature/);
+assert.equal(verifyUpdaterSignature(bytes, signatureFor(bytes), encodedPublicKey, "0.5.0"), true);
+assert.equal(verifyUpdaterSignature(bytes, signatureFor(bytes, "Ed"), encodedPublicKey, "0.5.0"), true);
+assert.throws(() => verifyUpdaterSignature(Buffer.from("tampered"), signatureFor(bytes), encodedPublicKey, "0.5.0"), /artifact signature/);
 const changedComment = Buffer.from(Buffer.from(signatureFor(bytes), "base64").toString().replace("timestamp:1", "timestamp:2")).toString("base64");
-assert.throws(() => verifyUpdaterSignature(bytes, changedComment, encodedPublicKey), /comment signature/);
-assert.throws(() => verifyUpdaterSignature(bytes, "not-a-signature", encodedPublicKey), /base64/);
+assert.throws(() => verifyUpdaterSignature(bytes, changedComment, encodedPublicKey, "0.5.0"), /comment signature/);
+assert.throws(() => verifyUpdaterSignature(bytes, "not-a-signature", encodedPublicKey, "0.5.0"), /base64/);
+
+assert.throws(() => verifyUpdaterSignature(bytes, signatureFor(bytes), encodedPublicKey), /expected app version/);
+assert.throws(() => verifyUpdaterSignature(bytes, signatureFor(bytes), encodedPublicKey, "0.5.1"), /matching app version/);
+assert.throws(() => verifyUpdaterSignature(bytes, signatureFor(bytes, "ED", ""), encodedPublicKey, "0.5.0"), /matching app version/);
+assert.throws(() => verifyUpdaterSignature(bytes, signatureFor(bytes, "ED", "\tversion:0.5.0\tversion:0.5.0"), encodedPublicKey, "0.5.0"), /matching app version/);
+const changedVersion = Buffer.from(Buffer.from(signatureFor(bytes), "base64").toString().replace("version:0.5.0", "version:0.5.1")).toString("base64");
+assert.throws(() => verifyUpdaterSignature(bytes, changedVersion, encodedPublicKey, "0.5.1"), /comment signature/);
 
 const root = mkdtempSync(join(tmpdir(), "aivatar-updater-release-qa-"));
 const downloads = join(root, "downloaded");
@@ -76,4 +83,4 @@ assert.throws(() => mergePlatformReports({ ...mergeOptions, reports: [macos, mis
 const dmg = join(downloads, "Aivatar_0.5.0_universal.dmg");
 writeFileSync(dmg, Buffer.concat([readFileSync(dmg), Buffer.from("tampered")]));
 assert.throws(() => mergePlatformReports(mergeOptions), /Downloaded asset differs/);
-console.log("Updater release smoke passed: artifact/comment signatures, tamper rejection, installer-specific targets, complete checksums, immutable source, two-platform merge and URL guards.");
+console.log("Updater release smoke passed: artifact/comment/version signatures, missing/wrong/duplicate version and tamper rejection, installer-specific targets, complete checksums, immutable source, two-platform merge and URL guards.");

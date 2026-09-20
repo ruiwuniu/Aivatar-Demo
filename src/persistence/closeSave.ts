@@ -9,6 +9,7 @@ export const CONFIRM_CLOSE_AFTER_SAVE_COMMAND = "confirm_close_after_save";
 export const SAVE_BEFORE_UPDATE_EVENT = "aivatar://save-before-update";
 export const CANCEL_UPDATE_SAVE_EVENT = "aivatar://update-save-cancelled";
 export const CONFIRM_UPDATE_SAVE_COMMAND = "app_update_confirm_save";
+export const UPDATE_SAVE_STATUS_COMMAND = "app_update_save_status";
 export const CLOSE_SAVE_FAILURE_MESSAGE =
   "Aivatar could not finish saving. This window will stay open; please try closing it again.";
 
@@ -120,83 +121,162 @@ let closeAttempt = 0;
 type SaveFlusher = () => CloseSaveFlushResult | Promise<CloseSaveFlushResult>;
 const registeredFlushers = new Set<SaveFlusher>();
 
+export interface UpdateSaveStatus {
+  requestId: number;
+  active: boolean;
+  phase: "saving" | "installing" | "inactive";
+}
+
+interface UpdateSaveOptions extends Pick<CloseSaveHandlerOptions, "drain" | "timeoutMs"> {
+  invokeUpdate?: CloseSaveHandlerOptions["invokeClose"];
+  queryStatus?: (requestId: number) => Promise<UpdateSaveStatus>;
+}
+
 interface UpdateSaveAttempt {
   requestId: number;
   release: () => void;
   cancelled: boolean;
   promise: Promise<SaveFlushResult>;
+  queryStatus: UpdateSaveOptions["queryStatus"];
+  recoveryTimer?: ReturnType<typeof setTimeout>;
+  verification?: Promise<void>;
 }
 let activeUpdateSave: UpdateSaveAttempt | null = null;
+const pendingUpdateValidation = new Map<number, Promise<SaveFlushResult>>();
 
-export const cancelUpdateSaveRequest = (payload: CloseSaveRequest | null | undefined) => {
-  if (!validRequestId(payload?.requestId) || activeUpdateSave?.requestId !== payload.requestId) return;
-  const attempt = activeUpdateSave;
+const queryUpdateSaveStatus = async (
+  requestId: number,
+  query: UpdateSaveOptions["queryStatus"],
+): Promise<UpdateSaveStatus> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const status = await Promise.race([
+      query ? query(requestId) : invoke<UpdateSaveStatus>(UPDATE_SAVE_STATUS_COMMAND, { requestId }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Update save status timed out.")), 3_000);
+      }),
+    ]);
+    if (status?.requestId !== requestId ||
+      !(status.active === false && status.phase === "inactive" ||
+        status.active === true && (status.phase === "saving" || status.phase === "installing"))) {
+      throw new Error("Invalid update save status.");
+    }
+    return status;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
+const releaseUpdateSaveAttempt = (attempt: UpdateSaveAttempt) => {
+  if (activeUpdateSave !== attempt) return;
   activeUpdateSave = null;
   attempt.cancelled = true;
+  if (attempt.recoveryTimer !== undefined) clearTimeout(attempt.recoveryTimer);
   attempt.release();
 };
 
-// Updating saves every mounted controller in this WebView, including room,
-// park and card-room drafts. A separate pause lease cannot clear a close or
-// another writer's pause when installation fails and the native shell resumes.
+// Events are notifications, not authority: another local WebView can emit the
+// same event name. Only a caller-bound Rust query may authorize thawing. On
+// uncertain IPC failure keep the lease and retry; never time out installation.
+const recoverInactiveUpdateSave = (attempt: UpdateSaveAttempt): Promise<void> => {
+  if (activeUpdateSave !== attempt) return Promise.resolve();
+  if (attempt.verification) return attempt.verification;
+  attempt.verification = (async () => {
+    try {
+      const status = await queryUpdateSaveStatus(attempt.requestId, attempt.queryStatus);
+      if (!status.active) releaseUpdateSaveAttempt(attempt);
+    } catch {
+      // A missing response is not permission to resume save producers.
+    } finally {
+      // Retry active replies too: a real cancellation may arrive while this
+      // query is in flight, after Rust already captured its older active state.
+      // Coalescing those notifications must not lose the eventual inactive state.
+      if (activeUpdateSave === attempt && attempt.recoveryTimer === undefined) {
+        attempt.recoveryTimer = setTimeout(() => {
+          attempt.recoveryTimer = undefined;
+          void recoverInactiveUpdateSave(attempt);
+        }, 1_000);
+      }
+    }
+  })().finally(() => { attempt.verification = undefined; });
+  return attempt.verification;
+};
+
+export const cancelUpdateSaveRequest = async (payload: CloseSaveRequest | null | undefined): Promise<void> => {
+  if (!validRequestId(payload?.requestId) || activeUpdateSave?.requestId !== payload.requestId) return;
+  await recoverInactiveUpdateSave(activeUpdateSave);
+};
+
+// Validate request, calling window and native phase before pausing. Updating
+// then saves every registered room/park/card controller in this WebView. The
+// separate lease cannot clear normal-close or another writer's pause.
 export const handleUpdateSaveRequest = (
   payload: CloseSaveRequest | null | undefined,
-  options: Pick<CloseSaveHandlerOptions, "drain" | "timeoutMs"> & {
-    invokeUpdate?: CloseSaveHandlerOptions["invokeClose"];
-  } = {},
+  options: UpdateSaveOptions = {},
 ): Promise<SaveFlushResult> => {
   if (!validRequestId(payload?.requestId)) return Promise.resolve({ ok: false, written: false });
   const requestId = payload.requestId;
-  const acknowledge = (ok: boolean) => (options.invokeUpdate ?? invoke)(CONFIRM_UPDATE_SAVE_COMMAND, { requestId, ok });
+  const pending = pendingUpdateValidation.get(requestId);
+  if (pending) return pending;
   if (activeUpdateSave?.requestId === requestId) return activeUpdateSave.promise;
-  if (activeUpdateSave || isStoreClosing()) {
-    return acknowledge(false).catch(() => undefined).then(() => ({ ok: false, written: false }));
-  }
-  const attempt: UpdateSaveAttempt = {
-    requestId,
-    release: pauseStoreUpdates(),
-    cancelled: false,
-    promise: Promise.resolve({ ok: false, written: false }),
-  };
-  activeUpdateSave = attempt;
-  attempt.promise = (async () => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let result: SaveFlushResult = { ok: false, written: false };
-    let successAcknowledgementStarted = false;
-    try {
-      result = await Promise.race([
-        (async () => {
-          const results: SaveFlushResult[] = [];
-          for (const flush of [...registeredFlushers]) {
-            if (attempt.cancelled) return { ok: false, written: false };
-            results.push(aggregateSaveFlushResults(await flush()));
-            if (!results[results.length - 1].ok) return aggregateSaveFlushResults(results);
-          }
-          await (options.drain ?? drainStore)();
-          return aggregateSaveFlushResults(results);
-        })(),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error("Saving before update timed out.")), options.timeoutMs ?? 14_000);
-        }),
-      ]);
-      if (attempt.cancelled) return { ok: false, written: result.written };
-      successAcknowledgementStarted = result.ok;
-      await acknowledge(result.ok);
-      return result;
-    } catch {
-      if (!attempt.cancelled) void acknowledge(false).catch(() => undefined);
-      result = { ok: false, written: false };
-      return result;
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-      // A success ACK may have reached Rust even when its response was lost.
-      // Installation could already be underway, so only native cancellation
-      // may release that lease. Rust cancels an unacknowledged barrier after
-      // its own deadline; acknowledged barriers remain frozen through install.
-      if (!result.ok && !successAcknowledgementStarted && activeUpdateSave === attempt) cancelUpdateSaveRequest({ requestId });
+  const acknowledge = (ok: boolean) => (options.invokeUpdate ?? invoke)(CONFIRM_UPDATE_SAVE_COMMAND, { requestId, ok });
+  const work = (async (): Promise<SaveFlushResult> => {
+    let status: UpdateSaveStatus;
+    try { status = await queryUpdateSaveStatus(requestId, options.queryStatus); }
+    catch { return { ok: false, written: false }; }
+    if (!status.active || status.phase !== "saving") return { ok: false, written: false };
+    if (activeUpdateSave || isStoreClosing()) {
+      void acknowledge(false).catch(() => undefined);
+      return { ok: false, written: false };
     }
-  })();
-  return attempt.promise;
+    const attempt: UpdateSaveAttempt = {
+      requestId,
+      release: pauseStoreUpdates(),
+      cancelled: false,
+      queryStatus: options.queryStatus,
+      promise: Promise.resolve({ ok: false, written: false }),
+    };
+    activeUpdateSave = attempt;
+    attempt.promise = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let result: SaveFlushResult = { ok: false, written: false };
+      let successAcknowledgementStarted = false;
+      try {
+        result = await Promise.race([
+          (async () => {
+            const results: SaveFlushResult[] = [];
+            for (const flush of [...registeredFlushers]) {
+              if (attempt.cancelled) return { ok: false, written: false };
+              results.push(aggregateSaveFlushResults(await flush()));
+              if (!results[results.length - 1].ok) return aggregateSaveFlushResults(results);
+            }
+            await (options.drain ?? drainStore)();
+            return aggregateSaveFlushResults(results);
+          })(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("Saving before update timed out.")), options.timeoutMs ?? 14_000);
+          }),
+        ]);
+        if (attempt.cancelled) return { ok: false, written: result.written };
+        successAcknowledgementStarted = result.ok;
+        await acknowledge(result.ok);
+        return result;
+      } catch {
+        if (!attempt.cancelled) void acknowledge(false).catch(() => undefined);
+        result = { ok: false, written: false };
+        if (successAcknowledgementStarted) await recoverInactiveUpdateSave(attempt);
+        return result;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        // A successful ACK may have reached Rust despite a lost response.
+        // Only an authoritative inactive status may then release this lease.
+        if (!result.ok && !successAcknowledgementStarted) releaseUpdateSaveAttempt(attempt);
+      }
+    })();
+    return attempt.promise;
+  })().finally(() => { pendingUpdateValidation.delete(requestId); });
+  pendingUpdateValidation.set(requestId, work);
+  return work;
 };
 
 let updateListeners: { users: number; ready: Promise<UnlistenFn> } | null = null;
@@ -207,7 +287,7 @@ const retainUpdateSaveListeners = async (): Promise<UnlistenFn> => {
       users: 0,
       ready: (async () => {
         const cancel = await listen<CloseSaveRequest>(CANCEL_UPDATE_SAVE_EVENT, (event) => {
-          cancelUpdateSaveRequest(event.payload);
+          void cancelUpdateSaveRequest(event.payload);
         }, target);
         try {
           const save = await listen<CloseSaveRequest>(SAVE_BEFORE_UPDATE_EVENT, (event) => {
@@ -225,7 +305,10 @@ const retainUpdateSaveListeners = async (): Promise<UnlistenFn> => {
     if (listeners.users === 0) {
       if (updateListeners === listeners) updateListeners = null;
       void listeners.ready.then((stop) => stop(), () => undefined);
-      if (activeUpdateSave) cancelUpdateSaveRequest({ requestId: activeUpdateSave.requestId });
+      // A controller unmount is not proof that native installation ended.
+      // Retain the barrier across a replacement owner and keep polling after
+      // event listeners are detached until Rust confirms inactivity.
+      if (activeUpdateSave) void recoverInactiveUpdateSave(activeUpdateSave);
     }
   };
   try { await listeners.ready; return release; }

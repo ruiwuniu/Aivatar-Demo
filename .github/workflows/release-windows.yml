@@ -4,15 +4,25 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing draft GitHub release tag for the Windows installers.
+        description: Existing stable release tag (draft unless explicitly replacing).
         required: true
         default: v0.5.0
       ref:
         description: Full 40-character commit SHA to build.
         required: true
+      replace_release:
+        description: Prepare replacement assets for an existing published release without changing it.
+        type: boolean
+        required: true
+        default: false
+      previous_source:
+        description: Existing release full commit SHA; required only for replacement.
+        type: string
+        required: false
+        default: ''
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-windows-${{ inputs.tag }}
@@ -20,18 +30,25 @@ concurrency:
 
 jobs:
   build-windows:
+    if: github.repository == 'ruiwuniu/Aivatar-Demo' && github.ref == 'refs/heads/main' && inputs.ref == github.sha
+    permissions:
+      contents: read
     name: Build and verify Windows installers
     runs-on: windows-latest
     timeout-minutes: 60
     env:
       SOURCE_SHA: ${{ inputs.ref }}
       RELEASE_TAG: ${{ inputs.tag }}
+      REPLACE_RELEASE: ${{ inputs.replace_release && 'true' || 'false' }}
+      PREVIOUS_SOURCE: ${{ inputs.previous_source }}
+      WORKFLOW_COMMIT: ${{ github.workflow_sha }}
+      WORKFLOW_REFERENCE: ${{ github.workflow_ref }}
     defaults:
       run:
         shell: pwsh
     steps:
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
 
@@ -40,15 +57,20 @@ jobs:
         run: |
           import os
           import re
-          if not re.fullmatch(r"[0-9a-fA-F]{40}", os.environ["SOURCE_SHA"]):
+          if os.environ["GITHUB_REF"] != "refs/heads/main" or os.environ["WORKFLOW_COMMIT"] != os.environ["SOURCE_SHA"] or os.environ["GITHUB_SHA"] != os.environ["SOURCE_SHA"]:
+              raise SystemExit("The workflow and source must be the exact current main commit.")
+          if os.environ["WORKFLOW_REFERENCE"] != "ruiwuniu/Aivatar-Demo/.github/workflows/release-windows.yml@refs/heads/main":
+              raise SystemExit("Unexpected release workflow origin.")
+          if not re.fullmatch(r"[0-9a-f]{40}", os.environ["SOURCE_SHA"]):
               raise SystemExit("Supply ref as a full 40-character commit SHA, not a branch or tag.")
 
       - name: Checkout the requested source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
-      - name: Check source, versions, draft release and tag
+      - name: Check source, versions, release mode and tag
         env:
           GH_TOKEN: ${{ github.token }}
         shell: python
@@ -64,6 +86,16 @@ jobs:
           sha = os.environ["SOURCE_SHA"].lower()
           tag = os.environ["RELEASE_TAG"]
           repo = os.environ["GITHUB_REPOSITORY"]
+          replacement_input = os.environ["REPLACE_RELEASE"]
+          previous = os.environ["PREVIOUS_SOURCE"]
+          if replacement_input not in ("true", "false"):
+              raise SystemExit("Replacement mode must be the explicit workflow boolean.")
+          replacement = replacement_input == "true"
+          if replacement and (not re.fullmatch(r"[0-9a-f]{40}", previous) or previous == sha):
+              raise SystemExit("Replacement requires a different previous full source SHA.")
+          if not replacement and previous:
+              raise SystemExit("previous_source is only accepted for explicit replacement.")
+          release_sha = previous if replacement else sha
           if not re.fullmatch(r"[0-9a-f]{40}", sha):
               raise SystemExit("ref must be a full 40-character commit SHA.")
           head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -93,40 +125,46 @@ jobs:
           def api(endpoint):
               return json.loads(subprocess.check_output(["gh", "api", f"repos/{repo}/{endpoint}"], text=True))
 
-          release = json.loads(subprocess.check_output(["gh", "release", "view", tag, "--repo", repo, "--json", "tagName,isDraft,targetCommitish"], text=True))
-          if release["tagName"] != tag or not release["isDraft"]:
-              raise SystemExit("The requested existing release must still be a draft matching the source version.")
-          if release["targetCommitish"].lower() != sha:
-              raise SystemExit("Create the draft with --target set to the requested full source SHA.")
+          if api("git/ref/heads/main")["object"]["sha"] != sha:
+              raise SystemExit("Source must still be the head of protected main.")
+          if package.get("devDependencies", {}).get("@tauri-apps/cli") != "2.11.5":
+              raise SystemExit("Release builds require the pinned Tauri CLI 2.11.5.")
+          if tauri.get("plugins", {}).get("updater", {}).get("requireSignedVersion") is not True:
+              raise SystemExit("The updater must require a signed app version.")
+          release = json.loads(subprocess.check_output(["gh", "release", "view", tag, "--repo", repo, "--json", "tagName,isDraft,isPrerelease,targetCommitish"], text=True))
+          if release["tagName"] != tag or release["isPrerelease"] or release["isDraft"] != (not replacement):
+              raise SystemExit("Normal releases require a stable draft; replacement requires an existing published stable release.")
+          if release["targetCommitish"] != release_sha:
+              raise SystemExit("Release target must match the exact approved current or previous source SHA.")
           references = api(f"git/matching-refs/tags/{tag}")
           matching = [entry for entry in references if entry["ref"] == f"refs/tags/{tag}"]
-          if len(matching) > 1:
-              raise SystemExit("Ambiguous release tag reference.")
+          if len(matching) != 1:
+              raise SystemExit("The approved release tag must already exist before building.")
           if matching:
               target_object = matching[0]["object"]
               for _ in range(10):
                   if target_object["type"] != "tag":
                       break
                   target_object = api(f"git/tags/{target_object['sha']}")["object"]
-              if target_object["type"] != "commit" or target_object["sha"] != sha:
-                  raise SystemExit("The existing release tag does not point to the requested source commit.")
-          # A draft may not create its tag until publication; its full target SHA was checked above.
+              if target_object["type"] != "commit" or target_object["sha"] != release_sha:
+                  raise SystemExit("The existing release tag does not point to the approved release source commit.")
+          # Replacement leaves the existing published tag and release untouched.
           with pathlib.Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as stream:
               stream.write(f"RELEASE_VERSION={version}\n")
-          # Re-run this exact check immediately before uploading to catch draft/tag drift.
+          # Keep this source check for build diagnostics; the isolated signer revalidates independently.
           guard_path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-release-guard.py"
           if pathlib.Path(__file__).resolve() != guard_path.resolve():
               guard_path.write_text(pathlib.Path(__file__).read_text(), encoding="utf-8")
-          print(f"Verified draft {tag}, source {sha}, versions and resource allowlist.")
+          print(f"Verified release {tag}, source {sha}, replacement={replacement}, versions and resource allowlist.")
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: x86_64-pc-windows-msvc
 
@@ -156,16 +194,20 @@ jobs:
           test_env = dict(os.environ, CARGO_TARGET_DIR=str(pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-storage-core-target"))
           subprocess.run(["cargo", "test", "--locked", "--manifest-path", "scripts/wal-diagnostics/save-store-rust-tests/Cargo.toml"], check=True, env=test_env)
 
-      - name: Build Tauri Windows bundles
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+      - name: Prepare an unsigned-build config outside the source tree
+        shell: python
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
-            throw "TAURI_SIGNING_PRIVATE_KEY must be configured before building release updates."
-          }
-          npm run tauri -- build --target x86_64-pc-windows-msvc --bundles "nsis,msi" --ci -- --locked
-          if ($LASTEXITCODE -ne 0) { throw "Signed Windows bundle build failed." }
+          import json
+          import os
+          import pathlib
+          path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-unsigned-build.json"
+          with path.open("x") as stream:
+              json.dump({"bundle": {"createUpdaterArtifacts": False}}, stream)
+
+      - name: Build unsigned Tauri Windows installers
+        run: |
+          npm run tauri -- build --target x86_64-pc-windows-msvc --bundles "nsis,msi" --ci --config (Join-Path $env:RUNNER_TEMP "aivatar-unsigned-build.json") -- --locked
+          if ($LASTEXITCODE -ne 0) { throw "Unsigned Windows bundle build failed." }
 
       - name: Verify installer metadata and write checksums
         run: |
@@ -239,39 +281,418 @@ jobs:
           } | ConvertTo-Json -Depth 5 | Set-Content -Path windows-release-checksums.json -Encoding utf8
           Get-Content windows-release-checksums.json
 
-      - name: Verify updater signatures and write Windows update metadata
+      - name: Stage the exact unsigned artifacts for the isolated signer
+        shell: python
         run: |
-          node scripts/aivatar-updater-release.mjs platform `
-            --platform windows --bundle-root src-tauri/target/x86_64-pc-windows-msvc/release/bundle `
-            --version $env:RELEASE_VERSION --source $env:SOURCE_SHA --repo $env:GITHUB_REPOSITORY `
-            --config src-tauri/tauri.conf.json --checksums windows-release-checksums.json --output updater-windows.json
-          if ($LASTEXITCODE -ne 0) { throw "Updater artifact signature verification failed." }
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import shutil
 
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+          version = os.environ["RELEASE_VERSION"]
+          platform = "windows"
+          bundle = pathlib.Path("src-tauri/target/x86_64-pc-windows-msvc/release/bundle")
+          paths = [f"nsis/Aivatar_{version}_x64-setup.exe", f"msi/Aivatar_{version}_x64_en-US.msi"]
+          report = json.loads(pathlib.Path(f"{platform}-release-checksums.json").read_text(encoding="utf-8-sig"))
+          stage = pathlib.Path(os.environ["RUNNER_TEMP"]) / "unsigned-release"
+          stage.mkdir(exist_ok=False)
+          assets = []
+          for relative in paths:
+              source = bundle / relative
+              destination = stage / source.name
+              shutil.copyfile(source, destination)
+              with destination.open("rb") as stream:
+                  digest = hashlib.file_digest(stream, "sha256").hexdigest()
+              assets.append({"name": destination.name, "size": destination.stat().st_size, "sha256": digest})
+          report.update({"schemaVersion": 1, "platform": platform, "repo": os.environ["GITHUB_REPOSITORY"],
+                         "version": version, "sourceCommit": os.environ["SOURCE_SHA"], "assets": assets,
+                         "runId": os.environ["GITHUB_RUN_ID"], "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"]})
+          (stage / "unsigned-build.json").write_text(json.dumps(report, indent=2) + "\n")
+
+      - name: Upload immutable unsigned build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: aivatar-windows-installers-${{ inputs.tag }}
+          name: unsigned-windows-${{ inputs.ref }}-${{ github.run_attempt }}
           if-no-files-found: error
-          path: |
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.sig
-            windows-release-checksums.json
-            updater-windows.json
+          retention-days: 7
+          path: ${{ runner.temp }}/unsigned-release/*
 
-      - name: Upload assets to the draft GitHub Release
+  sign-and-upload:
+    name: Approve, sign and upload windows release assets
+    needs: build-windows
+    if: github.repository == 'ruiwuniu/Aivatar-Demo' && github.ref == 'refs/heads/main' && inputs.ref == github.sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: updater-signing
+    permissions:
+      actions: read
+      contents: write
+    env:
+      SOURCE_SHA: ${{ inputs.ref }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      REPLACE_RELEASE: ${{ inputs.replace_release && 'true' || 'false' }}
+      PREVIOUS_SOURCE: ${{ inputs.previous_source }}
+      WORKFLOW_COMMIT: ${{ github.workflow_sha }}
+      WORKFLOW_REFERENCE: ${{ github.workflow_ref }}
+    defaults:
+      run:
+        # Isolated Python ignores workspace/PYTHONPATH module injection. This job
+        # never checks out or executes source, npm hooks, Cargo code or artifacts.
+        shell: python -I {0}
+    steps:
+      - name: Revalidate the protected workflow, main commit, tag and release mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_READY: ${{ vars.AIVATAR_RELEASE_SIGNING_READY }}
+        run: |
+          import base64
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+
+          repo = "ruiwuniu/Aivatar-Demo"
+          sha = os.environ["SOURCE_SHA"]
+          tag = os.environ["RELEASE_TAG"]
+          workflow = ".github/workflows/release-windows.yml"
+          replacement_input = os.environ["REPLACE_RELEASE"]
+          previous = os.environ["PREVIOUS_SOURCE"]
+          if replacement_input not in ("true", "false"):
+              raise SystemExit("Replacement mode must be the explicit workflow boolean.")
+          replacement = replacement_input == "true"
+          if replacement and (not re.fullmatch(r"[0-9a-f]{40}", previous) or previous == sha):
+              raise SystemExit("Replacement requires a different previous full source SHA.")
+          if not replacement and previous:
+              raise SystemExit("previous_source is only accepted for explicit replacement.")
+          release_sha = previous if replacement else sha
+          if os.environ["SIGNING_READY"] != "environment-only-v1":
+              raise SystemExit("Configure and review the updater-signing environment before signing.")
+          if os.environ["GITHUB_REPOSITORY"] != repo or os.environ["GITHUB_REF"] != "refs/heads/main" or os.environ["GITHUB_EVENT_NAME"] != "workflow_dispatch":
+              raise SystemExit("Only this repository's protected main workflow may sign.")
+          if not re.fullmatch(r"[0-9a-f]{40}", sha) or not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
+              raise SystemExit("Invalid immutable source or stable release tag.")
+          if os.environ["GITHUB_SHA"] != sha or os.environ["WORKFLOW_COMMIT"] != sha or os.environ["WORKFLOW_REFERENCE"] != f"{repo}/{workflow}@refs/heads/main":
+              raise SystemExit("Workflow, source and dispatched main commit must be identical.")
+
+          def api(endpoint):
+              return json.loads(subprocess.check_output(["gh", "api", f"repos/{repo}/{endpoint}"], text=True))
+
+          if api("git/ref/heads/main")["object"]["sha"] != sha:
+              raise SystemExit("Main advanced; review and dispatch a fresh release run.")
+          reference = api(f"git/ref/tags/{tag}")["object"]
+          for _ in range(10):
+              if reference["type"] != "tag":
+                  break
+              reference = api(f"git/tags/{reference['sha']}")["object"]
+          if reference["type"] != "commit" or reference["sha"] != release_sha:
+              raise SystemExit("The release tag moved or differs from the approved current or previous source commit.")
+          release = api(f"releases/tags/{tag}")
+          if release["draft"] != (not replacement) or release["prerelease"] or release["tag_name"] != tag or release["target_commitish"] != release_sha:
+              raise SystemExit("Normal mode requires an existing stable draft at this commit; replacement requires a published stable release at previous_source.")
+          replacement_evidence = None
+          if replacement:
+              if not release.get("published_at") or not release.get("updated_at") or not isinstance(release.get("id"), int):
+                  raise SystemExit("Published replacement release identity is incomplete.")
+              replacement_evidence = {"previousSourceCommit": previous, "releaseId": release["id"],
+                                      "publishedAt": release["published_at"], "updatedAt": release["updated_at"]}
+          run = api(f"actions/runs/{os.environ['GITHUB_RUN_ID']}")
+          if run["event"] != "workflow_dispatch" or run["head_branch"] != "main" or run["head_sha"] != sha or run["path"] != workflow or str(run["run_attempt"]) != os.environ["GITHUB_RUN_ATTEMPT"]:
+              raise SystemExit("Unexpected workflow run provenance.")
+
+          def source_json(path):
+              source = api(f"contents/{path}?ref={sha}")
+              if source["encoding"] != "base64" or source["size"] > 1_000_000:
+                  raise SystemExit("Unexpected source configuration payload.")
+              return json.loads(base64.b64decode(source["content"]))
+
+          config = source_json("src-tauri/tauri.conf.json")
+          package = source_json("package.json")
+          version = tag[1:]
+          updater = config.get("plugins", {}).get("updater", {})
+          endpoint = f"https://github.com/{repo}/releases/latest/download/latest.json"
+          if config["version"] != version or package["version"] != version or package.get("devDependencies", {}).get("@tauri-apps/cli") != "2.11.5":
+              raise SystemExit("Source version or pinned Tauri CLI does not match the release.")
+          if config.get("bundle", {}).get("createUpdaterArtifacts") is not True or updater.get("requireSignedVersion") is not True or updater.get("endpoints") != [endpoint]:
+              raise SystemExit("Updater configuration must require version-bound official updates.")
+          if not isinstance(updater.get("pubkey"), str) or len(updater["pubkey"]) > 1000:
+              raise SystemExit("Missing or oversized updater public key.")
+          context = {"repo": repo, "sourceCommit": sha, "version": version, "tag": tag,
+                     "platform": "windows", "runId": os.environ["GITHUB_RUN_ID"],
+                     "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"], "publicKey": updater["pubkey"],
+                     "replacement": replacement_evidence}
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-signing"
+          root.mkdir(exist_ok=True)
+          context_path = root / "release-context.json"
+          if context_path.exists() and json.loads(context_path.read_text()) != context:
+              raise SystemExit("Release context changed during signing.")
+          context_path.write_text(json.dumps(context))
+          guard = root / "release-guard.py"
+          if pathlib.Path(__file__).resolve() != guard.resolve():
+              guard.write_text(pathlib.Path(__file__).read_text())
+          print(f"Approved source {sha}, tag {tag}, workflow {workflow}, replacement={replacement}; existing release remains unchanged.")
+
+      - name: Download only this run's immutable artifact and verify its digest
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = "Stop"
-          python (Join-Path $env:RUNNER_TEMP "aivatar-release-guard.py")
-          if ($LASTEXITCODE -ne 0) { throw "Draft release/source recheck failed." }
-          $bundleRoot = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
-          $version = $env:RELEASE_VERSION
-          # latest.json is deliberately assembled only after BOTH platform jobs pass.
-          gh release upload $env:RELEASE_TAG `
-            "$bundleRoot/nsis/Aivatar_${version}_x64-setup.exe" "$bundleRoot/nsis/Aivatar_${version}_x64-setup.exe.sig" `
-            "$bundleRoot/msi/Aivatar_${version}_x64_en-US.msi" "$bundleRoot/msi/Aivatar_${version}_x64_en-US.msi.sig" `
-            windows-release-checksums.json updater-windows.json --repo $env:GITHUB_REPOSITORY
-          if ($LASTEXITCODE -ne 0) { throw "Release asset upload failed." }
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import stat
+          import subprocess
+          import zipfile
+
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-signing"
+          context = json.loads((root / "release-context.json").read_text())
+          repo, run_id, attempt = context["repo"], context["runId"], context["runAttempt"]
+          expected_name = f"unsigned-{context['platform']}-{context['sourceCommit']}-{attempt}"
+          response = json.loads(subprocess.check_output(["gh", "api", f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"], text=True))
+          artifacts = [item for item in response["artifacts"] if item["name"] == expected_name and not item["expired"]]
+          if len(artifacts) != 1:
+              raise SystemExit("Expected exactly one unsigned artifact from this workflow attempt.")
+          artifact = artifacts[0]
+          if str(artifact["workflow_run"]["id"]) != run_id or artifact["workflow_run"]["head_sha"] != context["sourceCommit"]:
+              raise SystemExit("Artifact is not from the approved workflow run/commit.")
+          expected_digest = artifact.get("digest", "")
+          if not expected_digest.startswith("sha256:") or len(expected_digest) != 71:
+              raise SystemExit("GitHub must provide an immutable artifact SHA256 digest.")
+          maximum_archive = 2 * 512 * 1024 * 1024 + 64 * 1024 * 1024
+          if not 0 < artifact["size_in_bytes"] <= maximum_archive:
+              raise SystemExit("Unsigned artifact archive exceeds the signing download limit.")
+          archive_path = root / "unsigned.zip"
+          with archive_path.open("xb") as stream:
+              process = subprocess.Popen(["gh", "api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip"], stdout=subprocess.PIPE)
+              downloaded = 0
+              try:
+                  while chunk := process.stdout.read(1024 * 1024):
+                      downloaded += len(chunk)
+                      if downloaded > maximum_archive:
+                          raise SystemExit("Artifact download exceeded its size limit.")
+                      stream.write(chunk)
+                  if process.wait() != 0:
+                      raise SystemExit("Artifact download failed.")
+              finally:
+                  process.stdout.close()
+                  if process.poll() is None:
+                      process.kill()
+                      process.wait()
+          if archive_path.stat().st_size > maximum_archive:
+              raise SystemExit("Downloaded artifact archive exceeds its size limit.")
+          with archive_path.open("rb") as stream:
+              digest = hashlib.file_digest(stream, "sha256").hexdigest()
+          if "sha256:" + digest != expected_digest:
+              raise SystemExit("Artifact archive digest mismatch; do not sign.")
+          version = context["version"]
+          names = [f"Aivatar_{version}_x64-setup.exe", f"Aivatar_{version}_x64_en-US.msi"]
+          destination = root / "assets"
+          destination.mkdir(exist_ok=False)
+          with zipfile.ZipFile(archive_path) as archive:
+              members = archive.infolist()
+              if len(members) != len(names) + 1 or {item.filename for item in members} != set(names + ["unsigned-build.json"]):
+                  raise SystemExit("Unsigned artifact must contain only the exact flat asset allowlist.")
+              for item in members:
+                  mode = item.external_attr >> 16
+                  limit = 512_000 if item.filename == "unsigned-build.json" else (2_000_000_000 if item.filename.endswith(".dmg") else 512 * 1024 * 1024)
+                  if item.is_dir() or stat.S_IFMT(mode) not in (0, stat.S_IFREG) or not 0 < item.file_size <= limit:
+                      raise SystemExit("Invalid artifact type or size.")
+                  # Never execute or extract paths supplied by the build. The exact
+                  # flat allowlist above also excludes scripts, links and executables
+                  # other than the Windows installers, which remain opaque data.
+                  with archive.open(item) as source, (destination / item.filename).open("xb") as target:
+                      while chunk := source.read(1024 * 1024):
+                          target.write(chunk)
+          build = json.loads((destination / "unsigned-build.json").read_text())
+          for key in ("repo", "sourceCommit", "version", "platform", "runId", "runAttempt"):
+              if build.get(key) != context[key]:
+                  raise SystemExit(f"Build report identity mismatch: {key}")
+          if sorted(item["name"] for item in build["assets"]) != sorted(names):
+              raise SystemExit("Build report asset allowlist mismatch.")
+          for item in build["assets"]:
+              path = destination / item["name"]
+              with path.open("rb") as stream:
+                  digest = hashlib.file_digest(stream, "sha256").hexdigest()
+              if path.stat().st_size != item["size"] or digest != item["sha256"]:
+                  raise SystemExit("Unsigned asset differs from its build report.")
+          provenance = {"artifactId": artifact["id"], "artifactDigest": expected_digest,
+                        "workflowRunId": run_id, "runAttempt": attempt, "sourceCommit": context["sourceCommit"]}
+          (root / "artifact-provenance.json").write_text(json.dumps(provenance))
+          print(f"Verified immutable artifact {artifact['id']} from run {run_id}, attempt {attempt}.")
+
+      - name: Fetch the pinned standalone Tauri signer without npm or Cargo
+        run: |
+          import hashlib
+          import io
+          import os
+          import pathlib
+          import tarfile
+          import urllib.request
+
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-signing"
+          url = "https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.11.5/cargo-tauri-x86_64-unknown-linux-gnu.tgz"
+          expected = "e75e2a1e8d3bceba327a10640a08b0bfef6d7559e8e13274629189001f2fce08"
+          with urllib.request.urlopen(url, timeout=60) as response:
+              archive_bytes = response.read(20_000_001)
+          if len(archive_bytes) > 20_000_000 or hashlib.sha256(archive_bytes).hexdigest() != expected:
+              raise SystemExit("Pinned standalone signer archive checksum mismatch.")
+          with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+              files = [item for item in archive.getmembers() if item.isfile() and pathlib.PurePosixPath(item.name).name == "cargo-tauri"]
+              if len(files) != 1 or files[0].size > 100_000_000:
+                  raise SystemExit("Unexpected signer archive contents.")
+              signer = root / "cargo-tauri"
+              with signer.open("xb") as stream:
+                  stream.write(archive.extractfile(files[0]).read())
+          signer.chmod(0o700)
+          (root / "signer-work").mkdir(exist_ok=False)
+
+      - name: Sign only the approved update files with their exact app version
+        env:
+          # This distinct name exists ONLY in the protected environment. The old
+          # repository TAURI_SIGNING_PRIVATE_KEY is intentionally never referenced.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.AIVATAR_RELEASE_SIGNING_PRIVATE_KEY }}
+        run: |
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-signing"
+          context = json.loads((root / "release-context.json").read_text())
+          version = context["version"]
+          if not os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "").strip():
+              raise SystemExit("Missing environment-only AIVATAR_RELEASE_SIGNING_PRIVATE_KEY.")
+          signer = root / "cargo-tauri"
+          result = subprocess.run([str(signer), "--version"], capture_output=True, text=True, env={"LANG": "C.UTF-8"})
+          if result.returncode or result.stdout.strip() != "tauri-cli 2.11.5":
+              raise SystemExit("Unexpected standalone signer version.")
+          # No token, project configuration, npm/Cargo process or repository
+          # script receives this environment. Signer output is never echoed.
+          signing_env = {"TAURI_SIGNING_PRIVATE_KEY": os.environ["TAURI_SIGNING_PRIVATE_KEY"],
+                         "TAURI_SIGNING_PRIVATE_KEY_PASSWORD": "", "LANG": "C.UTF-8"}
+          for name in [f"Aivatar_{version}_x64-setup.exe", f"Aivatar_{version}_x64_en-US.msi"]:
+              result = subprocess.run([str(signer), "signer", "sign", "--app-version", version, str(root / "assets" / name)],
+                                      cwd=root / "signer-work", env=signing_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+              if result.returncode:
+                  raise SystemExit("Version-bound updater signing failed; no assets were published.")
+          print("Approved updater files signed with Tauri CLI 2.11.5 and the exact release version.")
+
+      - name: Verify signatures and signed versions without loading repository code
+        run: |
+          import base64
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-signing"
+          context = json.loads((root / "release-context.json").read_text())
+          build = json.loads((root / "assets/unsigned-build.json").read_text())
+          provenance = json.loads((root / "artifact-provenance.json").read_text())
+          version = context["version"]
+          assets = root / "assets"
+          verification = root / "verification"
+          verification.mkdir(exist_ok=False)
+          key_lines = base64.b64decode(context["publicKey"].strip(), validate=True).decode().strip().splitlines()
+          if len(key_lines) != 2 or not key_lines[0].startswith("untrusted comment: "):
+              raise SystemExit("Invalid updater public key box.")
+          key = base64.b64decode(key_lines[1], validate=True)
+          if len(key) != 42 or key[:2] != b"Ed":
+              raise SystemExit("Invalid updater public key.")
+          (verification / "public.der").write_bytes(bytes.fromhex("302a300506032b6570032100") + key[10:])
+
+          def check_ed25519(message, signature):
+              (verification / "message").write_bytes(message)
+              (verification / "signature").write_bytes(signature)
+              result = subprocess.run(["/usr/bin/openssl", "pkeyutl", "-verify", "-rawin", "-pubin", "-keyform", "DER",
+                                       "-inkey", str(verification / "public.der"), "-in", str(verification / "message"),
+                                       "-sigfile", str(verification / "signature")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+              if result.returncode:
+                  raise SystemExit("Updater signature verification failed.")
+
+          platforms = {}
+          for name, targets in [(f"Aivatar_{version}_x64-setup.exe", ["windows-x86_64", "windows-x86_64-nsis"]), (f"Aivatar_{version}_x64_en-US.msi", ["windows-x86_64-msi"])]:
+              path = assets / name
+              encoded = (assets / (name + ".sig")).read_text().strip()
+              lines = base64.b64decode(encoded, validate=True).decode().strip().splitlines()
+              if len(lines) != 4 or not lines[0].startswith("untrusted comment: ") or not lines[2].startswith("trusted comment: "):
+                  raise SystemExit("Invalid updater signature box.")
+              signature = base64.b64decode(lines[1], validate=True)
+              comment_signature = base64.b64decode(lines[3], validate=True)
+              if len(signature) != 74 or signature[:2] != b"ED" or signature[2:10] != key[2:10] or len(comment_signature) != 64:
+                  raise SystemExit("Invalid updater signature algorithm, key or length.")
+              with path.open("rb") as stream:
+                  digest = hashlib.file_digest(stream, "blake2b").digest()
+              check_ed25519(digest, signature[10:])
+              comment = lines[2][len("trusted comment: "):].strip()
+              check_ed25519(signature[10:] + comment.encode(), comment_signature)
+              versions = [field[len("version:"):] for field in comment.split("\t") if field.startswith("version:")]
+              if versions != [version]:
+                  raise SystemExit("Signature app version must exactly match the release manifest version.")
+              for target in targets:
+                  platforms[target] = {"url": f"https://github.com/{context['repo']}/releases/download/{context['tag']}/{name}", "signature": encoded}
+          records = []
+          for name in [f"Aivatar_{version}_x64-setup.exe", f"Aivatar_{version}_x64-setup.exe.sig", f"Aivatar_{version}_x64_en-US.msi", f"Aivatar_{version}_x64_en-US.msi.sig"]:
+              path = assets / name
+              with path.open("rb") as stream:
+                  digest = hashlib.file_digest(stream, "sha256").hexdigest()
+              records.append({"name": name, "size": path.stat().st_size, "sha256": digest})
+          # The pre-signing report is data only; recheck it against the now signed files.
+          actual = {item["name"]: item for item in records}
+          if any(actual.get(item["name"]) != item for item in build["assets"]):
+              raise SystemExit("An unsigned build asset changed during signing.")
+          identity = {key: context[key] for key in ("repo", "sourceCommit", "version", "tag")}
+          report = {"schemaVersion": 1, "platform": context["platform"], **identity,
+                    "publicKeySha256": hashlib.sha256(context["publicKey"].strip().encode()).hexdigest(),
+                    "platforms": platforms, "assets": sorted(records, key=lambda item: item["name"]), "build": provenance,
+                    "replacement": context["replacement"],
+                    "verification": {**build["verification"], "updaterArtifactSignaturesValid": True,
+                                     "updaterTrustedCommentSignaturesValid": True, "updaterSignedVersionMatches": True}}
+          (assets / "updater-windows.json").write_text(json.dumps(report, indent=2) + "\n")
+          installers = [f"Aivatar_{version}_x64-setup.exe", f"Aivatar_{version}_x64_en-US.msi"]
+          checksums = {"version": version, "sourceCommit": context["sourceCommit"],
+                       "assets": [actual[name] for name in installers], "verification": build["verification"], "build": provenance,
+                       "replacement": context["replacement"]}
+          (assets / "windows-release-checksums.json").write_text(json.dumps(checksums, indent=2) + "\n")
+          print("Verified file signatures, trusted comments, version binding and immutable build provenance.")
+
+      - name: Recheck the release and route only the signed asset allowlist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_READY: ${{ vars.AIVATAR_RELEASE_SIGNING_READY }}
+        run: |
+          import json
+          import os
+          import pathlib
+          import shutil
+          import subprocess
+          import sys
+
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-signing"
+          subprocess.run([sys.executable, "-I", str(root / "release-guard.py")], check=True)
+          context = json.loads((root / "release-context.json").read_text())
+          version = context["version"]
+          names = [f"Aivatar_{version}_x64-setup.exe", f"Aivatar_{version}_x64-setup.exe.sig", f"Aivatar_{version}_x64_en-US.msi", f"Aivatar_{version}_x64_en-US.msi.sig"] + ["updater-windows.json", "windows-release-checksums.json"]
+          if context["replacement"] is not None:
+              # Replacement only exports a new immutable Actions artifact. It must
+              # never overwrite public assets, update a tag or hide the old release.
+              stage = pathlib.Path(os.environ["RUNNER_TEMP"]) / "signed-release"
+              stage.mkdir(exist_ok=False)
+              for name in names:
+                  shutil.copyfile(root / "assets" / name, stage / name)
+              print("Prepared verified replacement artifact; public release and tag remain unchanged.")
+          else:
+              # Normal mode retains draft-only uploads without --clobber.
+              subprocess.run(["gh", "release", "upload", context["tag"], *[str(root / "assets" / name) for name in names],
+                              "--repo", context["repo"]], check=True)
+
+      - name: Preserve the signed replacement asset allowlist
+        if: ${{ inputs.replace_release }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signed-windows-${{ inputs.ref }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 7
+          path: ${{ runner.temp }}/signed-release/*
