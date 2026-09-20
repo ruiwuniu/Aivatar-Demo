@@ -11,7 +11,9 @@ import {
   createSavePersistence,
   DEFAULT_SAVE_WAIT_MS,
   type SaveFlushResult,
+  type JsonReadView,
 } from "../persistence/savePersistence";
+import { appStorage } from "../persistence/saveStore";
 
 export const PARK_LAYOUT_STORAGE_KEY = "aivatar.park.layout.v2";
 export const PARK_LAYOUT_EVENT = "aivatar:park-layout";
@@ -31,17 +33,17 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const readJson = (key: string): unknown => {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = appStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 };
 
-const writeJson = (key: string, value: unknown) => {
+const writeJson = async (key: string, value: unknown) => {
   try {
     const serialized = JSON.stringify(value);
-    if (localStorage.getItem(key) !== serialized) localStorage.setItem(key, serialized);
+    if (appStorage.getItem(key) !== serialized) await appStorage.setItem(key, serialized);
     return true;
   } catch {
     return false;
@@ -100,7 +102,7 @@ type PendingParkSave = {
 
 const pendingParkSaves = new Map<string, PendingParkSave>();
 const parkPersistence = createSavePersistence({
-  storage: () => localStorage,
+  storage: appStorage,
   waitMs: DEFAULT_SAVE_WAIT_MS,
 });
 
@@ -115,13 +117,16 @@ const pendingParkSave = (slotId: string) => {
 
 // Read the current shared save at commit time. Only park-owned fields and
 // queued rewards are applied, so another window's wallet edits are retained.
-const mergedParkSave = (slotId: string): AivatarSaveState | undefined => {
-  const raw = localStorage.getItem(parkSaveStorageKey(slotId));
+const mergedParkSave = (
+  slotId: string,
+  view: JsonReadView = appStorage,
+  pending = pendingParkSaves.get(slotId),
+): AivatarSaveState | undefined => {
+  const raw = view.getItem(parkSaveStorageKey(slotId));
   if (raw === null) return undefined;
   const value: unknown = JSON.parse(raw);
   if (!isRecord(value)) throw new Error("Invalid park save slot");
   let save = value as unknown as AivatarSaveState;
-  const pending = pendingParkSaves.get(slotId);
   if (!pending) return save;
   if (pending.runtime) save = { ...save, parkRuntime: pending.runtime };
   if (pending.navMemory) save = { ...save, parkNavMemory: pending.navMemory };
@@ -139,10 +144,30 @@ const mergedParkSave = (slotId: string): AivatarSaveState | undefined => {
 };
 
 const queueParkSave = (slotId: string) => {
+  let captured: PendingParkSave | undefined;
   parkPersistence.schedule(
     parkSaveStorageKey(slotId),
-    () => mergedParkSave(slotId),
-    () => pendingParkSaves.delete(slotId),
+    (view) => {
+      const pending = pendingParkSaves.get(slotId);
+      if (!pending) return undefined;
+      captured ??= { ...pending, mutations: [...pending.mutations] };
+      return mergedParkSave(slotId, view, captured);
+    },
+    (snapshot) => {
+      const pending = pendingParkSaves.get(slotId);
+      if (!pending || !captured) return;
+      if (!snapshot) {
+        pendingParkSaves.delete(slotId);
+        return;
+      }
+      pending.moodRecovery -= captured.moodRecovery;
+      pending.mutations = pending.mutations.filter((mutation) => !captured!.mutations.includes(mutation));
+      if (pending.runtime === captured.runtime) pending.runtime = undefined;
+      if (pending.navMemory === captured.navMemory) pending.navMemory = undefined;
+      if (!pending.runtime && !pending.navMemory && pending.moodRecovery === 0 && pending.mutations.length === 0) {
+        pendingParkSaves.delete(slotId);
+      }
+    },
   );
 };
 
@@ -154,34 +179,27 @@ export const readParkSaveSlot = (slotId: string): AivatarSaveState | null => {
   }
 };
 
-export const flushParkSaveSlotResult = (
+export const flushParkSaveSlotResult = async (
   slotId: string,
-): { save: AivatarSaveState | null; result: SaveFlushResult } => {
-  if (!pendingParkSaves.has(slotId)) {
+): Promise<{ save: AivatarSaveState | null; result: SaveFlushResult }> => {
+  if (!pendingParkSaves.has(slotId) && !parkPersistence.hasPending(parkSaveStorageKey(slotId))) {
     return {
       save: readParkSaveSlot(slotId),
       result: { ok: true, written: false },
     };
   }
-  let saved: AivatarSaveState | undefined;
-  const result = parkPersistence.flush(
-    parkSaveStorageKey(slotId),
-    () => {
-      saved = mergedParkSave(slotId);
-      return saved;
-    },
-    () => pendingParkSaves.delete(slotId),
-  );
+  if (pendingParkSaves.has(slotId)) queueParkSave(slotId);
+  const result = await parkPersistence.flush(parkSaveStorageKey(slotId));
   return {
-    save: result.ok ? saved ?? null : null,
+    save: result.ok ? readParkSaveSlot(slotId) : null,
     result,
   };
 };
 
-export const flushParkSaveSlot = (slotId: string): AivatarSaveState | null =>
-  flushParkSaveSlotResult(slotId).save;
+export const flushParkSaveSlot = async (slotId: string): Promise<AivatarSaveState | null> =>
+  (await flushParkSaveSlotResult(slotId)).save;
 
-export const mutateParkSaveSlot = (
+export const mutateParkSaveSlot = async (
   slotId: string,
   mutate: (save: AivatarSaveState) => AivatarSaveState,
 ) => {
@@ -222,16 +240,17 @@ const addFridgeFish = (
 const recordCatchMemory = (
   memory: AivatarMemory | undefined,
   fishId: ParkRawFishId,
+  eventId: string,
+  now: string,
 ): AivatarMemory | undefined => {
   if (!memory) return memory;
   const rewards = fishingRewards();
-  const now = new Date().toISOString();
   return {
     ...memory,
     recentEvents: [
       ...(memory.recentEvents ?? []),
       {
-        id: `park-catch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+        id: eventId,
         type: "recovery_used" as const,
         timestamp: now,
         summary: `Caught ${PARK_FISH_NAMES[fishId]} at the park`,
@@ -249,8 +268,10 @@ const recordCatchMemory = (
   };
 };
 
-export const recordParkCatch = (slotId: string, fishId: ParkRawFishId) =>
-  mutateParkSaveSlot(slotId, (save) => {
+export const recordParkCatch = (slotId: string, fishId: ParkRawFishId) => {
+  const eventId = `park-catch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const now = new Date().toISOString();
+  return mutateParkSaveSlot(slotId, (save) => {
     const rewards = fishingRewards();
     return {
       ...save,
@@ -259,9 +280,10 @@ export const recordParkCatch = (slotId: string, fishId: ParkRawFishId) =>
         mood: Math.min(100, save.petStats.mood + rewards.mood),
       },
       furnitureStorage: addFridgeFish(save.furnitureStorage, fishId),
-      memory: recordCatchMemory(save.memory, fishId),
+      memory: recordCatchMemory(save.memory, fishId, eventId, now),
     };
   });
+};
 
 export const recordParkMoodRecovery = (slotId: string, mood = 1) => {
   if (!readParkSaveSlot(slotId) || !Number.isFinite(mood) || mood <= 0) return null;
@@ -307,8 +329,8 @@ export const readParkLayout = (): ParkObjectPlacement[] => {
   return placements;
 };
 
-export const writeParkLayout = (placements: ParkObjectPlacement[]) => {
-  const written = writeJson(PARK_LAYOUT_STORAGE_KEY, placements);
+export const writeParkLayout = async (placements: ParkObjectPlacement[]) => {
+  const written = await writeJson(PARK_LAYOUT_STORAGE_KEY, placements);
   if (written) window.dispatchEvent(new CustomEvent(PARK_LAYOUT_EVENT));
   return written;
 };

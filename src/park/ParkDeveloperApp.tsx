@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   DEFAULT_PARK_OBJECTS,
   PARK_OBJECT_DEFINITIONS,
@@ -10,6 +10,8 @@ import {
 } from "./parkContent";
 import { renderParkScene } from "./parkRenderer";
 import { readParkLayout, writeParkLayout } from "./parkStorage";
+import { installCloseSaveHandler } from "../persistence/closeSave";
+import { isStoreClosing } from "../persistence/saveStore";
 
 export const ParkDeveloperApp = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -18,11 +20,32 @@ export const ParkDeveloperApp = () => {
   const [selectedKind, setSelectedKind] = useState<ParkObjectKind>("tree");
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [message, setMessage] = useState("Click a valid grass position to place the selected object.");
+  const [saveMessage, setSaveMessage] = useState("");
+  const saveGeneration = useRef(0);
+
+  useLayoutEffect(() => {
+    objectsRef.current = objects;
+    const generation = ++saveGeneration.current;
+    setSaveMessage("Saving layout…");
+    void writeParkLayout(objects).then((ok) => {
+      if (generation !== saveGeneration.current) return;
+      setSaveMessage(ok ? "Layout saved." : "Could not save layout. Your edits are retained; retry before closing.");
+    });
+  }, [objects]);
 
   useEffect(() => {
-    objectsRef.current = objects;
-    writeParkLayout(objects);
-  }, [objects]);
+    let stopped = false;
+    let unlisten: (() => void) | undefined;
+    void installCloseSaveHandler(async () => {
+      const ok = await writeParkLayout(objectsRef.current);
+      return { ok, written: ok };
+    }, {
+      onFailure: (message) => setSaveMessage(message),
+    }).then((stop) => { if (stopped) stop(); else unlisten = stop; }, () => {
+      setSaveMessage("Could not enable save-before-close. Keep this window open until the layout is saved.");
+    });
+    return () => { stopped = true; unlisten?.(); };
+  }, []);
 
   useEffect(() => {
     let frame = 0;
@@ -58,6 +81,7 @@ export const ParkDeveloperApp = () => {
   };
 
   const placeObject = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isStoreClosing()) return;
     const point = canvasPoint(event);
     if (!point) return;
     const hit = [...objects]
@@ -84,6 +108,7 @@ export const ParkDeveloperApp = () => {
   };
 
   const undoLastPlacement = () => {
+    if (isStoreClosing()) return;
     if (objects.length === 0) return;
     setObjects((current) => current.slice(0, -1));
     setSelectedObjectId(null);
@@ -91,6 +116,7 @@ export const ParkDeveloperApp = () => {
   };
 
   const clearPlacedObjects = () => {
+    if (isStoreClosing()) return;
     setObjects(DEFAULT_PARK_OBJECTS.map((object) => ({ ...object })));
     setSelectedObjectId(null);
     setMessage("Cleared developer-placed objects. The reference landscape remains intact.");
@@ -116,7 +142,12 @@ export const ParkDeveloperApp = () => {
         <button type="button" onClick={undoLastPlacement}>Undo last placement</button>
         <button type="button" onClick={clearPlacedObjects}>Clear placed objects</button>
         <p className="park-developer-message">{message}</p>
-        <small>Coordinates are saved immediately and shared with every open park window.</small>
+        <p role="status">{saveMessage}</p>
+        <button type="button" onClick={() => {
+          if (isStoreClosing()) return;
+          void writeParkLayout(objectsRef.current).then((ok) => setSaveMessage(ok ? "Layout saved." : "Could not save layout. Please retry."));
+        }}>Retry save</button>
+        <small>Coordinates are shared with open park windows after saving finishes.</small>
       </aside>
       <section className="park-developer-stage">
         <canvas ref={canvasRef} className="park-canvas" onPointerDown={placeObject} />

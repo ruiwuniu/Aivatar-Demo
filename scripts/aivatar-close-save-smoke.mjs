@@ -13,14 +13,25 @@ const { outputText } = ts.transpileModule(source, {
 const defaultInvocations = [];
 let registeredEvent = null;
 let registeredListener = null;
+let registeredOptions = null;
 let unlistenCount = 0;
+let closing = false;
+let drainFailure;
 const module = { exports: {} };
 vm.runInNewContext(
   outputText,
   {
     module,
     exports: module.exports,
+    setTimeout,
+    clearTimeout,
     require(id) {
+      if (id === "./saveStore") return {
+        isStoreClosing: () => closing,
+        setStoreClosing: (value) => { closing = value; },
+        pauseStoreUpdates: () => { const previous = closing; closing = true; return () => { closing = previous; }; },
+        drainStore: async () => { if (drainFailure) throw drainFailure; },
+      };
       if (id === "@tauri-apps/api/core") {
         return {
           invoke: async (command, payload) => {
@@ -30,13 +41,17 @@ vm.runInNewContext(
       }
       if (id === "@tauri-apps/api/event") {
         return {
-          listen: async (eventName, listener) => {
+          listen: async (eventName, listener, options) => {
             registeredEvent = eventName;
             registeredListener = listener;
+            registeredOptions = options;
             return () => { unlistenCount += 1; };
           },
         };
       }
+      if (id === "@tauri-apps/api/webviewWindow") return {
+        getCurrentWebviewWindow: () => ({ label: "synthetic-room" }),
+      };
       throw new Error(`Unexpected dependency: ${id}`);
     },
   },
@@ -51,6 +66,100 @@ const test = async (name, run) => {
   checks += 1;
   console.log(`PASS ${name}`);
 };
+
+await test("close remains frozen until both asynchronous flush and store drain complete", async () => {
+  let releaseFlush;
+  let releaseDrain;
+  const acknowledgements = [];
+  const pending = api.handleCloseSaveRequest({ requestId: 100 }, () =>
+    new Promise((resolve) => { releaseFlush = () => resolve({ ok: true, written: true }); }), {
+      drain: () => new Promise((resolve) => { releaseDrain = resolve; }),
+      invokeClose: async (_command, payload) => acknowledgements.push(payload),
+    });
+  assert.equal(closing, true);
+  assert.equal(acknowledgements.length, 0);
+  releaseFlush();
+  await new Promise(setImmediate);
+  assert.equal(acknowledgements.length, 0);
+  releaseDrain();
+  assert.equal((await pending).ok, true);
+  assert.equal(acknowledgements[0].ok, true);
+});
+
+await test("a rejected drain fails closed and restores interaction", async () => {
+  drainFailure = new Error("synthetic queued settings write failed");
+  const acknowledgements = [];
+  const result = await api.handleCloseSaveRequest({ requestId: 101 }, async () => ({ ok: true, written: true }), {
+    invokeClose: async (_command, payload) => acknowledgements.push(payload),
+  });
+  drainFailure = undefined;
+  assert.equal(result.ok, false);
+  assert.equal(acknowledgements[0].ok, false);
+  assert.equal(closing, false);
+});
+
+await test("timeout restores interaction and late flush cannot acknowledge success", async () => {
+  let release;
+  const acknowledgements = [];
+  const result = await api.handleCloseSaveRequest({ requestId: 102 }, () => new Promise((resolve) => { release = resolve; }), {
+    timeoutMs: 5,
+    invokeClose: async (_command, payload) => acknowledgements.push(payload),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(closing, false);
+  release({ ok: true, written: true });
+  await new Promise(setImmediate);
+  assert(acknowledgements.every((payload) => payload.ok === false));
+});
+
+await test("manual retry flushes registered controller drafts before clearing errors", async () => {
+  let failed = true;
+  let flushes = 0;
+  closing = false;
+  const stop = await api.installCloseSaveHandler(async () => {
+    flushes += 1;
+    assert.equal(closing, true);
+    return { ok: !failed, written: !failed };
+  });
+  await assert.rejects(api.retryPendingSaves(), /pending changes/);
+  assert.equal(closing, false);
+  failed = false;
+  await api.retryPendingSaves();
+  assert.equal(flushes, 2);
+  assert.equal(closing, false);
+  stop();
+  await api.retryPendingSaves();
+  assert.equal(flushes, 2, "unmounted controller must not remain in the retry registry");
+  unlistenCount = 0;
+});
+
+await test("web preview registers and unregisters retry barriers without native event APIs", async () => {
+  const webModule = { exports: {} };
+  let flushes = 0;
+  let nativeCalls = 0;
+  vm.runInNewContext(outputText, {
+    module: webModule, exports: webModule.exports, setTimeout, clearTimeout,
+    window: { addEventListener() {}, removeEventListener() {} },
+    require(id) {
+      if (id === "./saveStore") return {
+        drainStore: async () => undefined,
+        isStoreClosing: () => false,
+        setStoreClosing() {},
+        pauseStoreUpdates: () => () => undefined,
+      };
+      if (id === "@tauri-apps/api/event") return { listen: async () => { nativeCalls += 1; throw new Error("no Tauri"); } };
+      if (id === "@tauri-apps/api/core") return { invoke: async () => undefined };
+      if (id === "@tauri-apps/api/webviewWindow") return { getCurrentWebviewWindow: () => { nativeCalls += 1; throw new Error("no Tauri"); } };
+      throw new Error(`Unexpected dependency: ${id}`);
+    },
+  });
+  const stop = await webModule.exports.installCloseSaveHandler(() => { flushes += 1; return { ok: true, written: false }; });
+  await webModule.exports.retryPendingSaves();
+  stop();
+  await webModule.exports.retryPendingSaves();
+  assert.equal(flushes, 1);
+  assert.equal(nativeCalls, 0);
+});
 
 await test("aggregate reports any write and every flush must succeed", () => {
   assert.deepEqual(
@@ -154,7 +263,8 @@ await test("command failure is surfaced instead of silently claiming close succe
       onFailure: (message, error) => failures.push({ message, error }),
     },
   );
-  assert.deepEqual(plain(result), { ok: true, written: false });
+  assert.deepEqual(plain(result), { ok: false, written: false });
+  assert.equal(closing, false);
   assert.equal(failures.length, 1);
   assert.equal(failures[0].error, commandError);
 });
@@ -163,6 +273,7 @@ await test("installed listener handles the numbered desktop event and can unlist
   const before = defaultInvocations.length;
   const unlisten = await api.installCloseSaveHandler(() => ({ ok: true, written: false }));
   assert.equal(registeredEvent, "aivatar://save-before-close");
+  assert.deepEqual(plain(registeredOptions), { target: { kind: "WebviewWindow", label: "synthetic-room" } });
   assert.equal(typeof registeredListener, "function");
   registeredListener({ payload: { requestId: 47 } });
   await new Promise((resolve) => setImmediate(resolve));

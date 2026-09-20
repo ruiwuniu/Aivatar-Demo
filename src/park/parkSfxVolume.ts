@@ -1,3 +1,4 @@
+import { appStorage } from "../persistence/saveStore";
 export const PARK_GLOBAL_SFX_VOLUME_KEY = "aivatar.audioVolume.v1";
 export const DEFAULT_PARK_GLOBAL_SFX_VOLUME = 0.45;
 
@@ -11,7 +12,7 @@ export const applyParkSfxPerceptualCurve = (rawVolume: number) => {
 export const readParkSfxVolume = () => {
   let rawVolume = DEFAULT_PARK_GLOBAL_SFX_VOLUME;
   try {
-    const stored = localStorage.getItem(PARK_GLOBAL_SFX_VOLUME_KEY);
+    const stored = appStorage.getItem(PARK_GLOBAL_SFX_VOLUME_KEY);
     if (stored !== null) {
       const parsed = Number(stored);
       if (Number.isFinite(parsed)) rawVolume = clampUnit(parsed);

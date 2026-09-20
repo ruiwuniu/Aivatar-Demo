@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LOCALE_KEY, localeOptions, resolveInitialLocale, t, type Locale } from "../i18n";
-import { writeJsonIfChanged, type SaveFlushResult } from "../persistence/savePersistence";
+import type { SaveFlushResult } from "../persistence/savePersistence";
+import { appStorage, transactStore, subscribeStore, drainStore, isStoreClosing } from "../persistence/saveStore";
 import {
-  aggregateSaveFlushResults,
   installCloseSaveHandler,
 } from "../persistence/closeSave";
 import type {
@@ -42,8 +42,7 @@ import {
   readCardRoomRoster,
   redeemCardRoomSaveSlotPokerChipsForBits,
   writeCardRoomSaveSlotDarkTraitChanges,
-  writeCardRoomSaveSlotPokerChips,
-  writeCardRoomSaveSlotPokerChipsResult,
+  settleCardRoomTable,
 } from "./saveRoster";
 import {
   CARD_ROOM_BITS_DEBT_LIMIT,
@@ -52,7 +51,6 @@ import {
   CARD_ROOM_CHIP_BUNDLE_CHIPS,
   CARD_ROOM_DEFAULT_POKER_CHIPS,
   CARD_ROOM_PLAYER_CHIP_DEBT_LIMIT,
-  addHouseVaultBits,
   borrowPlayerPokerChips,
   canBorrowPlayerPokerChips,
   canExchangePokerChips,
@@ -209,20 +207,9 @@ const initialVictoryDemoEnabled = () => queryValue("victoryDemo") === "1";
 const playerNameStorageKey = (slotId: string | null) =>
   `aivatar.cardRoom.playerName.v1.${slotId ?? "preview"}`;
 
-const persistCardRoomJson = (key: string, value: unknown): SaveFlushResult => {
-  try {
-    return {
-      ok: true,
-      written: writeJsonIfChanged(localStorage, key, value),
-    };
-  } catch {
-    return { ok: false, written: false };
-  }
-};
-
 const readPlayerChipWallet = (): PlayerChipWallet => {
   try {
-    const raw = localStorage.getItem(PLAYER_WALLET_STORAGE_KEY);
+    const raw = appStorage.getItem(PLAYER_WALLET_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
     const source =
       parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -240,28 +227,13 @@ const readPlayerChipWallet = (): PlayerChipWallet => {
   }
 };
 
-const writePlayerChipWallet = (wallet: PlayerChipWallet) => {
-  const nextWallet = {
-    pokerChips: normalizePokerChips(wallet.pokerChips),
-    chipDebt: normalizeChipDebt(wallet.chipDebt),
-  };
-  persistCardRoomJson(PLAYER_WALLET_STORAGE_KEY, nextWallet);
-  return nextWallet;
-};
-
 const readHouseBank = (): CardRoomHouseBank => {
   try {
-    const raw = localStorage.getItem(HOUSE_BANK_STORAGE_KEY);
+    const raw = appStorage.getItem(HOUSE_BANK_STORAGE_KEY);
     return normalizeHouseBank(raw ? JSON.parse(raw) : null);
   } catch {
     return normalizeHouseBank(null);
   }
-};
-
-const writeHouseBank = (bank: CardRoomHouseBank) => {
-  const nextBank = normalizeHouseBank(bank);
-  persistCardRoomJson(HOUSE_BANK_STORAGE_KEY, nextBank);
-  return nextBank;
 };
 
 const createCardRoomInstanceId = () =>
@@ -345,7 +317,7 @@ const normalizeCardRoomSnapshot = (value: unknown): AivatarRoomsSnapshot => {
 
 const readCardRoomDecorState = (): CardRoomDecorState => {
   try {
-    const raw = localStorage.getItem(CARD_ROOM_DECOR_STORAGE_KEY);
+    const raw = appStorage.getItem(CARD_ROOM_DECOR_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
     return normalizeCardRoomDecorState(
       parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -355,12 +327,6 @@ const readCardRoomDecorState = (): CardRoomDecorState => {
   } catch {
     return normalizeCardRoomDecorState(cardRoomDefaultDecorState);
   }
-};
-
-const writeCardRoomDecorState = (decor: CardRoomDecorState) => {
-  const nextDecor = normalizeCardRoomDecorState(decor);
-  persistCardRoomJson(CARD_ROOM_DECOR_STORAGE_KEY, nextDecor);
-  return nextDecor;
 };
 
 const stacksFromTable = (table: HoldemTableState) =>
@@ -551,7 +517,7 @@ const normalizeCardRoomAudioVolume = (value: number) =>
 
 const readCardRoomAudioVolume = () => {
   try {
-    const saved = localStorage.getItem(CARD_ROOM_AUDIO_VOLUME_KEY);
+    const saved = appStorage.getItem(CARD_ROOM_AUDIO_VOLUME_KEY);
     return saved === null
       ? CARD_ROOM_DEFAULT_AUDIO_VOLUME
       : normalizeCardRoomAudioVolume(Number(saved));
@@ -1328,7 +1294,7 @@ export const CardRoomApp = () => {
   const playerNameKey = USER_PLAYER_SLOT_ID;
   const savedPlayerName = useMemo(() => {
     try {
-      return localStorage.getItem(playerNameStorageKey(null))?.trim() ?? "";
+      return appStorage.getItem(playerNameStorageKey(null))?.trim() ?? "";
     } catch {
       return "";
     }
@@ -1395,30 +1361,53 @@ export const CardRoomApp = () => {
   const playersSeatedReadyRef = useRef(false);
   const [userHandCardsReady, setUserHandCardsReady] = useState(false);
 
-  const flushCardRoomSave = (): SaveFlushResult => {
-    const currentTable = tableRef.current;
-    const currentUser = currentTable.players.find((player) => player.isUser);
-    const latestPlayerWallet = {
-      ...playerWalletRef.current,
-      pokerChips: normalizePokerChips(
-        currentUser?.stack ?? playerWalletRef.current.pokerChips,
-      ),
-    };
-    const results: SaveFlushResult[] = [
-      persistCardRoomJson(PLAYER_WALLET_STORAGE_KEY, latestPlayerWallet),
-      persistCardRoomJson(HOUSE_BANK_STORAGE_KEY, normalizeHouseBank(houseBankRef.current)),
-      persistCardRoomJson(
-        CARD_ROOM_DECOR_STORAGE_KEY,
-        normalizeCardRoomDecorState(cardRoomDecorRef.current),
-      ),
-    ];
-
-    currentTable.players.forEach((player) => {
-      if (player.isUser || !player.slotId) return;
-      const saved = writeCardRoomSaveSlotPokerChipsResult(player.slotId, player.stack);
-      results.push({ ok: saved.ok, written: saved.written });
-    });
-    return aggregateSaveFlushResults(results);
+  const [criticalPending, setCriticalPending] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const criticalBusyRef = useRef(false);
+  const criticalTaskRef = useRef<Promise<boolean> | null>(null);
+  const failedCriticalRef = useRef<(() => Promise<void>) | null>(null);
+  const finishHandRef = useRef<() => Promise<void>>(async () => undefined);
+  const runCritical = (operation: () => Promise<void>, retry = false): Promise<boolean> => {
+    if (criticalBusyRef.current || (!retry && (isStoreClosing() || failedCriticalRef.current))) {
+      return Promise.resolve(false);
+    }
+    criticalBusyRef.current = true;
+    setCriticalPending(true);
+    const task = (async () => {
+      try {
+        await operation();
+        failedCriticalRef.current = null;
+        setSaveFailed(false);
+        return true;
+      } catch (error) {
+        failedCriticalRef.current = operation;
+        setSaveFailed(true);
+        console.error("Card Room save did not commit.", error);
+        return false;
+      } finally {
+        criticalBusyRef.current = false;
+        setCriticalPending(false);
+        criticalTaskRef.current = null;
+      }
+    })();
+    criticalTaskRef.current = task;
+    return task;
+  };
+  const retryCriticalSave = () => {
+    if (failedCriticalRef.current) void runCritical(failedCriticalRef.current, true);
+  };
+  const flushCardRoomSave = async (): Promise<SaveFlushResult> => {
+    await criticalTaskRef.current;
+    if (failedCriticalRef.current) await runCritical(failedCriticalRef.current, true);
+    if (!failedCriticalRef.current) await runCritical(() => finishHandRef.current(), true);
+    try {
+      await drainStore();
+      // Table transitions commit before becoming visible; closing must not
+      // replay absolute stacks over changes committed by another window.
+      return { ok: !failedCriticalRef.current, written: false };
+    } catch {
+      return { ok: false, written: false };
+    }
   };
   const userHandCardsReadyRef = useRef(false);
   const [companionsPanelCollapsed, setCompanionsPanelCollapsed] = useState(false);
@@ -1996,10 +1985,6 @@ export const CardRoomApp = () => {
   };
 
   useEffect(() => {
-    localStorage.setItem(LOCALE_KEY, locale);
-  }, [locale]);
-
-  useEffect(() => {
     let stopped = false;
 
     const syncRooms = async () => {
@@ -2035,7 +2020,7 @@ export const CardRoomApp = () => {
 
   useEffect(() => {
     const handlePageHide = () => {
-      flushCardRoomSave();
+      void flushCardRoomSave();
       endAllCardRoomVisits(true);
     };
     window.addEventListener("pagehide", handlePageHide);
@@ -2052,7 +2037,7 @@ export const CardRoomApp = () => {
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handlePageHide);
       void unlistenPromise.then((unlisten) => unlisten?.());
-      flushCardRoomSave();
+      void flushCardRoomSave();
       endAllCardRoomVisits(true);
     };
   }, []);
@@ -2062,11 +2047,11 @@ export const CardRoomApp = () => {
     const handInProgressForStacks =
       currentTable.street !== "waiting" && currentTable.street !== "handComplete";
     setStacks({
-      [USER_PLAYER_AVATAR_ID]: normalizePokerChips(playerWalletRef.current.pokerChips),
+      [USER_PLAYER_AVATAR_ID]: normalizePokerChips(playerWallet.pokerChips),
       ...mergeDefaultStacks(roster, {}),
       ...(handInProgressForStacks ? stacksFromTable(currentTable) : {}),
     });
-  }, [roster]);
+  }, [roster, playerWallet.pokerChips]);
 
   useEffect(() => {
     tableRef.current = table;
@@ -2181,16 +2166,27 @@ export const CardRoomApp = () => {
       cardRoomAudioVolumeRef.current = readCardRoomAudioVolume();
       applyCardRoomAudioVolume();
     };
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === CARD_ROOM_AUDIO_VOLUME_KEY) {
-        refreshCardRoomAudioVolume();
+    const unlisten = subscribeStore((event) => {
+      if (event.key === CARD_ROOM_AUDIO_VOLUME_KEY) refreshCardRoomAudioVolume();
+      if (event.key === "aivatar.saveSlots.v1" || event.key.startsWith("aivatar.saveSlot.v1.")) {
+        setRoster(readCardRoomRoster());
       }
-    };
-
-    window.addEventListener("storage", handleStorage);
+      if (event.key === PLAYER_WALLET_STORAGE_KEY) {
+        const wallet = readPlayerChipWallet();
+        playerWalletRef.current = wallet;
+        setPlayerWallet(wallet);
+      }
+      if (event.key === HOUSE_BANK_STORAGE_KEY) {
+        const bank = readHouseBank();
+        houseBankRef.current = bank;
+        setHouseBank(bank);
+      }
+      if (event.key === CARD_ROOM_DECOR_STORAGE_KEY) setCardRoomDecor(readCardRoomDecorState());
+      if (event.key === LOCALE_KEY) setLocale(resolveInitialLocale());
+    });
     window.addEventListener("focus", refreshCardRoomAudioVolume);
     return () => {
-      window.removeEventListener("storage", handleStorage);
+      unlisten();
       window.removeEventListener("focus", refreshCardRoomAudioVolume);
     };
   }, []);
@@ -2422,45 +2418,9 @@ export const CardRoomApp = () => {
     };
   }, [roomKey]);
 
-  const persistTablePokerChips = (players: HoldemPlayer[]) => {
-    const updates = new Map<string, number>();
-    let nextPlayerWallet: PlayerChipWallet | null = null;
-    players.forEach((player) => {
-      if (player.isUser) {
-        nextPlayerWallet = writePlayerChipWallet({
-          ...playerWalletRef.current,
-          pokerChips: player.stack,
-        });
-        return;
-      }
-
-      const nextPokerChips = writeCardRoomSaveSlotPokerChips(player.slotId, player.stack);
-      if (nextPokerChips !== null) {
-        updates.set(player.slotId, nextPokerChips);
-      }
-    });
-    if (nextPlayerWallet) {
-      playerWalletRef.current = nextPlayerWallet;
-      setPlayerWallet(nextPlayerWallet);
-    }
-    if (updates.size === 0) {
-      return;
-    }
-
-    setRoster((current) =>
-      current.map((character) =>
-        updates.has(character.slotId)
-          ? {
-              ...character,
-              pokerChips: updates.get(character.slotId) ?? character.pokerChips,
-            }
-          : character,
-      ),
-    );
-  };
-
-  const commitTable = (nextTable: HoldemTableState) => {
+  const commitTable = (nextTable: HoldemTableState, baselinePlayers?: HoldemPlayer[]) => runCritical(async () => {
     const previousTable = tableRef.current;
+    await settleCardRoomTable(nextTable.players, baselinePlayers ?? previousTable.players);
     const now = performance.now();
     const previousMotion = tableMotionRef.current;
     const communityRevealCount = Math.max(
@@ -2573,9 +2533,8 @@ export const CardRoomApp = () => {
         ...current,
         ...stacksFromTable(nextTable),
       }));
-      persistTablePokerChips(nextTable.players);
     }
-  };
+  });
 
   const refreshRoster = () => {
     const nextRoster = readCardRoomRoster();
@@ -2584,11 +2543,13 @@ export const CardRoomApp = () => {
   };
 
   const summonAllCompanions = () => {
+    if (criticalBusyRef.current || failedCriticalRef.current || isStoreClosing()) return;
     setSelectedSlotIds(availableCompanions.map((character) => character.slotId));
     setFreeRoamEnabled(true);
   };
 
   const toggleCompanion = (slotId: string) => {
+    if (criticalBusyRef.current || failedCriticalRef.current || isStoreClosing()) return;
     setSelectedSlotIds((current) =>
       current.includes(slotId)
         ? current.filter((value) => value !== slotId)
@@ -2598,24 +2559,19 @@ export const CardRoomApp = () => {
   };
 
   const updatePlayerName = (value: string) => {
-    setPlayerNameOverrides((current) => ({
-      ...current,
-      [playerNameKey]: value,
-    }));
-    try {
+    void runCritical(async () => {
       const trimmed = value.trim();
-      if (trimmed) {
-        localStorage.setItem(playerNameStorageKey(null), trimmed);
-      } else {
-        localStorage.removeItem(playerNameStorageKey(null));
-      }
-    } catch {
-      // Ignore storage failures in webviews with restricted persistence.
-    }
+      if (trimmed) await appStorage.setItem(playerNameStorageKey(null), trimmed);
+      else await appStorage.removeItem(playerNameStorageKey(null));
+      setPlayerNameOverrides((current) => ({ ...current, [playerNameKey]: value }));
+    });
   };
 
   const startHand = () => {
+    if (criticalBusyRef.current || failedCriticalRef.current || isStoreClosing()) return;
     if (table.street !== "waiting" && table.street !== "handComplete") return;
+    if (table.street === "handComplete" && (processedAutoCashOutHandRef.current !== table.handNumber
+      || processedDarkTraitHandRef.current !== table.handNumber)) return;
     if (seatedCharacters.length < 2) {
       setStatusMessage(ui("cardRoom.needPlayers"));
       return;
@@ -2632,7 +2588,7 @@ export const CardRoomApp = () => {
     const handStarted =
       nextTable.handNumber !== table.handNumber || nextTable.street !== table.street;
     if (!handStarted) {
-      commitTable(nextTable);
+      void commitTable(nextTable, players);
       setStatusMessage(
         players.filter((player) => creditAvailable(player) > 0).length < 2
           ? ui("cardRoom.needChips")
@@ -2653,263 +2609,129 @@ export const CardRoomApp = () => {
         ? createHandDarkStats(nextTable, hostStartingPlayer, previousHostHandNetRef.current)
         : null;
     processedDarkTraitHandRef.current = null;
-    commitTable(nextTable);
+    void commitTable(nextTable, players);
     setStatusMessage("");
   };
 
   const releaseCompanionsFromTable = () => {
+    if (criticalBusyRef.current || failedCriticalRef.current || isStoreClosing()) return;
     if (table.street !== "waiting" && table.street !== "handComplete") return;
     setFreeRoamEnabled(true);
     setStatusMessage(ui("cardRoom.freeRoamStarted"));
   };
 
-  const updateHouseBank = (
-    updater: (current: CardRoomHouseBank) => CardRoomHouseBank | null,
-  ) => {
-    const next = updater(houseBankRef.current);
-    if (!next) return null;
-    const normalized = writeHouseBank(next);
-    houseBankRef.current = normalized;
-    setHouseBank(normalized);
-    return normalized;
-  };
-
-  const withdrawHouseBits = () => {
-    const available = Math.max(0, normalizeHouseBits(houseBankRef.current.vaultBits));
-    if (available <= 0) {
-      setStatusMessage(ui("cardRoom.houseBankEmpty"));
-      return;
+  const refreshCommittedBalances = () => {
+    const nextRoster = readCardRoomRoster();
+    const wallet = readPlayerChipWallet();
+    const bank = readHouseBank();
+    playerWalletRef.current = wallet;
+    houseBankRef.current = bank;
+    setPlayerWallet(wallet);
+    setHouseBank(bank);
+    setRoster(nextRoster);
+    setStacks((current) => ({ ...current, [USER_PLAYER_AVATAR_ID]: wallet.pokerChips,
+      ...Object.fromEntries(nextRoster.map((entry) => [entry.avatarId, entry.pokerChips])),
+    }));
+    const currentTable = tableRef.current;
+    if (currentTable.street === "waiting" || currentTable.street === "handComplete") {
+      const nextTable = { ...currentTable, players: currentTable.players.map((player) => {
+        const chips = player.isUser ? wallet.pokerChips
+          : nextRoster.find((entry) => entry.slotId === player.slotId)?.pokerChips;
+        return chips === undefined ? player : { ...player, pokerChips: chips, stack: chips };
+      }) };
+      tableRef.current = nextTable;
+      setTable(nextTable);
     }
-
-    updateHouseBank(withdrawHouseVaultBits);
-    setStatusMessage(ui("cardRoom.houseBankWithdrawn", { bits: available }));
   };
 
-  const settleHouseDebt = () => {
-    const currentBank = houseBankRef.current;
-    const payment = Math.min(
-      normalizeHouseBits(currentBank.vaultBits),
-      normalizePayoutDebtBits(currentBank.payoutDebtBits),
-    );
-    if (payment <= 0) {
-      setStatusMessage(ui("cardRoom.houseDebtNoSettlement"));
-      return;
-    }
+  const withdrawHouseBits = () => void runCritical(async () => {
+    const withdrawn = await transactStore((view) => {
+      const bank = normalizeHouseBank(JSON.parse(view.getItem(HOUSE_BANK_STORAGE_KEY) ?? "null"));
+      const bits = bank.vaultBits;
+      return { changes: { [HOUSE_BANK_STORAGE_KEY]: JSON.stringify(withdrawHouseVaultBits(bank)) }, result: bits };
+    });
+    refreshCommittedBalances();
+    setStatusMessage(ui(withdrawn > 0 ? "cardRoom.houseBankWithdrawn" : "cardRoom.houseBankEmpty", { bits: withdrawn }));
+  });
 
-    const nextBank = updateHouseBank(settleHouseBankDebt);
-    setStatusMessage(
-      ui("cardRoom.houseDebtSettled", {
-        bits: payment,
-        vault: nextBank?.vaultBits ?? houseBankRef.current.vaultBits,
-        debt: nextBank?.payoutDebtBits ?? houseBankRef.current.payoutDebtBits,
-      }),
-    );
-  };
+  const settleHouseDebt = () => void runCritical(async () => {
+    const settled = await transactStore((view) => {
+      const bank = normalizeHouseBank(JSON.parse(view.getItem(HOUSE_BANK_STORAGE_KEY) ?? "null"));
+      const next = settleHouseBankDebt(bank);
+      return { changes: { [HOUSE_BANK_STORAGE_KEY]: JSON.stringify(next) },
+        result: { ...next, payment: bank.payoutDebtBits - next.payoutDebtBits } };
+    });
+    refreshCommittedBalances();
+    setStatusMessage(ui(settled.payment > 0 ? "cardRoom.houseDebtSettled" : "cardRoom.houseDebtNoSettlement", {
+      bits: settled.payment, vault: settled.vaultBits, debt: settled.payoutDebtBits,
+    }));
+  });
 
   const giftCharacterChips = (character: CardRoomCharacter) => {
     if (character.avatarId === USER_PLAYER_AVATAR_ID) return;
-    const handIsRunning = table.street !== "waiting" && table.street !== "handComplete";
-    if (handIsRunning) {
-      setStatusMessage(ui("cardRoom.chipShopLocked"));
-      return;
-    }
-    if (normalizeOwnerBits(houseBankRef.current.ownerBits) < CARD_ROOM_CHIP_BUNDLE_BITS) {
-      setStatusMessage(ui("cardRoom.giftChipsOwnerBitsInsufficient"));
-      return;
-    }
-
-    const currentPokerChips = stacks[character.avatarId] ?? character.pokerChips;
-    const nextWallet = giftCardRoomSaveSlotPokerChips(
-      character.slotId,
-      currentPokerChips,
-      CARD_ROOM_CHIP_BUNDLE_CHIPS,
-    );
-    if (!nextWallet) {
-      setStatusMessage(ui("cardRoom.giftChipsFailed", { name: character.avatarName }));
-      return;
-    }
-
-    const nextBank = updateHouseBank((current) =>
-      spendOwnerBits(current, CARD_ROOM_CHIP_BUNDLE_BITS),
-    );
-    if (!nextBank) {
-      setStatusMessage(ui("cardRoom.giftChipsOwnerBitsInsufficient"));
-      return;
-    }
-
-    setRoster((current) =>
-      current.map((candidate) =>
-        candidate.slotId === character.slotId
-          ? {
-              ...candidate,
-              walletBits: nextWallet.bits,
-              pokerChips: nextWallet.pokerChips,
-            }
-          : candidate,
-      ),
-    );
-    setStacks((current) => ({
-      ...current,
-      [character.avatarId]: nextWallet.pokerChips,
-    }));
-    setStatusMessage(
-      ui("cardRoom.giftChipsComplete", {
-        name: character.avatarName,
-        bits: CARD_ROOM_CHIP_BUNDLE_BITS,
-        chips: nextWallet.giftedChips,
-      }),
-    );
+    if (tableRef.current.street !== "waiting" && tableRef.current.street !== "handComplete") return;
+    if (tableRef.current.street === "handComplete"
+      && (processedAutoCashOutHandRef.current !== tableRef.current.handNumber
+        || processedDarkTraitHandRef.current !== tableRef.current.handNumber)) return;
+    void runCritical(async () => {
+      const next = await giftCardRoomSaveSlotPokerChips(character.slotId);
+      if (!next) { setStatusMessage(ui("cardRoom.giftChipsOwnerBitsInsufficient")); return; }
+      refreshCommittedBalances();
+      setStatusMessage(ui("cardRoom.giftChipsComplete", {
+        name: character.avatarName, bits: CARD_ROOM_CHIP_BUNDLE_BITS, chips: next.giftedChips,
+      }));
+    });
   };
 
   const exchangeCharacterChips = (character: CardRoomCharacter) => {
-    const handIsRunning = table.street !== "waiting" && table.street !== "handComplete";
-    if (handIsRunning) {
-      setStatusMessage(ui("cardRoom.chipShopLocked"));
-      return;
-    }
-
-    const currentPokerChips = stacks[character.avatarId] ?? character.pokerChips;
-    if (character.avatarId === USER_PLAYER_AVATAR_ID) {
-      const currentWallet = {
-        ...playerWalletRef.current,
-        pokerChips: currentPokerChips,
-      };
-      if (normalizeOwnerBits(houseBankRef.current.ownerBits) >= CARD_ROOM_CHIP_BUNDLE_BITS) {
-        const nextBank = updateHouseBank((current) =>
-          spendOwnerBits(current, CARD_ROOM_CHIP_BUNDLE_BITS),
-        );
-        if (!nextBank) {
-          setStatusMessage(ui("cardRoom.playerOwnerBitsInsufficient"));
-          return;
-        }
-
-        const nextWallet = writePlayerChipWallet({
-          ...currentWallet,
-          pokerChips: normalizePokerChips(currentWallet.pokerChips) + CARD_ROOM_CHIP_BUNDLE_CHIPS,
+    if (tableRef.current.street !== "waiting" && tableRef.current.street !== "handComplete") return;
+    if (tableRef.current.street === "handComplete"
+      && (processedAutoCashOutHandRef.current !== tableRef.current.handNumber
+        || processedDarkTraitHandRef.current !== tableRef.current.handNumber)) return;
+    void runCritical(async () => {
+      if (character.avatarId === USER_PLAYER_AVATAR_ID) {
+        const method = await transactStore<"owner" | "borrow" | null>((view): { changes: Record<string, string | null>; result: "owner" | "borrow" | null } => {
+          const raw = JSON.parse(view.getItem(PLAYER_WALLET_STORAGE_KEY) ?? "null") as Partial<PlayerChipWallet> | null;
+          const wallet = { pokerChips: normalizePokerChips(raw?.pokerChips), chipDebt: normalizeChipDebt(raw?.chipDebt) };
+          const bank = normalizeHouseBank(JSON.parse(view.getItem(HOUSE_BANK_STORAGE_KEY) ?? "null"));
+          const nextBank = spendOwnerBits(bank, CARD_ROOM_CHIP_BUNDLE_BITS);
+          if (nextBank) return { changes: {
+            [HOUSE_BANK_STORAGE_KEY]: JSON.stringify(nextBank),
+            [PLAYER_WALLET_STORAGE_KEY]: JSON.stringify({ ...wallet, pokerChips: wallet.pokerChips + CARD_ROOM_CHIP_BUNDLE_CHIPS }),
+          }, result: "owner" };
+          if (!canBorrowPlayerPokerChips(wallet)) return { changes: {} as Record<string, string | null>, result: null };
+          return { changes: { [PLAYER_WALLET_STORAGE_KEY]: JSON.stringify(borrowPlayerPokerChips(wallet)) }, result: "borrow" };
         });
-        playerWalletRef.current = nextWallet;
-        setPlayerWallet(nextWallet);
-        setStacks((current) => ({
-          ...current,
-          [USER_PLAYER_AVATAR_ID]: nextWallet.pokerChips,
+        if (!method) { setStatusMessage(ui("cardRoom.playerChipDebtLimit")); return; }
+        refreshCommittedBalances();
+        setStatusMessage(ui(method === "owner" ? "cardRoom.playerOwnerExchangedChips" : "cardRoom.playerBorrowedChips", {
+          bits: CARD_ROOM_CHIP_BUNDLE_BITS, chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
         }));
-        setStatusMessage(
-          ui("cardRoom.playerOwnerExchangedChips", {
-            bits: CARD_ROOM_CHIP_BUNDLE_BITS,
-            chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
-          }),
-        );
         return;
       }
-
-      if (!canBorrowPlayerPokerChips(currentWallet)) {
-        setStatusMessage(ui("cardRoom.playerChipDebtLimit"));
-        return;
-      }
-
-      const nextWallet = writePlayerChipWallet(borrowPlayerPokerChips(currentWallet));
-      playerWalletRef.current = nextWallet;
-      setPlayerWallet(nextWallet);
-      setStacks((current) => ({
-        ...current,
-        [USER_PLAYER_AVATAR_ID]: nextWallet.pokerChips,
+      const next = await exchangeCardRoomSaveSlotPokerChips(character.slotId);
+      if (!next) { setStatusMessage(ui("cardRoom.chipShopDebtLimit")); return; }
+      refreshCommittedBalances();
+      setStatusMessage(ui("cardRoom.chipShopExchanged", {
+        name: character.avatarName, chips: CARD_ROOM_CHIP_BUNDLE_CHIPS, bits: next.spentBits, vault: next.bank.vaultBits,
       }));
-      setStatusMessage(
-        ui("cardRoom.playerBorrowedChips", {
-          chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
-        }),
-      );
-      return;
-    }
-
-    const nextWallet = exchangeCardRoomSaveSlotPokerChips(
-      character.slotId,
-      currentPokerChips,
-    );
-    if (!nextWallet) {
-      setStatusMessage(ui("cardRoom.chipShopDebtLimit"));
-      return;
-    }
-
-    const spentBits = normalizeHouseBits(nextWallet.spentBits, CARD_ROOM_CHIP_BUNDLE_BITS);
-    const nextBank = updateHouseBank((current) => addHouseVaultBits(current, spentBits));
-    setRoster((current) =>
-      current.map((candidate) =>
-        candidate.slotId === character.slotId
-          ? {
-              ...candidate,
-              walletBits: nextWallet.bits,
-              pokerChips: nextWallet.pokerChips,
-            }
-          : candidate,
-      ),
-    );
-    setStacks((current) => ({
-      ...current,
-      [character.avatarId]: nextWallet.pokerChips,
-    }));
-    setStatusMessage(
-      ui("cardRoom.chipShopExchanged", {
-        name: character.avatarName,
-        chips: CARD_ROOM_CHIP_BUNDLE_CHIPS,
-        bits: spentBits,
-        vault: nextBank?.vaultBits ?? houseBankRef.current.vaultBits,
-      }),
-    );
+    });
   };
 
   const redeemCharacterBits = (character: CardRoomCharacter) => {
     if (character.avatarId === USER_PLAYER_AVATAR_ID) return;
-    const handIsRunning = table.street !== "waiting" && table.street !== "handComplete";
-    if (handIsRunning) {
-      setStatusMessage(ui("cardRoom.chipShopLocked"));
-      return;
-    }
-
-    const currentPokerChips = stacks[character.avatarId] ?? character.pokerChips;
-    if (!canRedeemPokerChipsForBits({ pokerChips: currentPokerChips })) {
-      setStatusMessage(ui("cardRoom.chipShopNeedChipsForBits"));
-      return;
-    }
-
-    const nextWallet = redeemCardRoomSaveSlotPokerChipsForBits(
-      character.slotId,
-      currentPokerChips,
-    );
-    if (!nextWallet) {
-      setStatusMessage(ui("cardRoom.chipShopNeedChipsForBits"));
-      return;
-    }
-
-    const redeemedBits = normalizeHouseBits(nextWallet.redeemedBits, CARD_ROOM_CHIP_BUNDLE_BITS);
-    const nextBank = updateHouseBank((current) => addHouseVaultBits(current, -redeemedBits));
-    setRoster((current) =>
-      current.map((candidate) =>
-        candidate.slotId === character.slotId
-          ? {
-              ...candidate,
-              walletBits: nextWallet.bits,
-              pokerChips: nextWallet.pokerChips,
-            }
-          : candidate,
-      ),
-    );
-    setStacks((current) => ({
-      ...current,
-      [character.avatarId]: nextWallet.pokerChips,
-    }));
-    setStatusMessage(
-      ui("cardRoom.chipShopRedeemed", {
-        name: character.avatarName,
-        bits: redeemedBits,
-        vault: nextBank?.vaultBits ?? houseBankRef.current.vaultBits,
-      }),
-    );
-  };
-
-  const spendOwnerDecorBits = (price: number): CardRoomHouseBank | null => {
-    if (price <= 0) return houseBankRef.current;
-    return updateHouseBank((current) => spendOwnerBits(current, price));
+    if (tableRef.current.street !== "waiting" && tableRef.current.street !== "handComplete") return;
+    if (tableRef.current.street === "handComplete"
+      && (processedAutoCashOutHandRef.current !== tableRef.current.handNumber
+        || processedDarkTraitHandRef.current !== tableRef.current.handNumber)) return;
+    void runCritical(async () => {
+      const next = await redeemCardRoomSaveSlotPokerChipsForBits(character.slotId);
+      if (!next) { setStatusMessage(ui("cardRoom.chipShopNeedChipsForBits")); return; }
+      refreshCommittedBalances();
+      setStatusMessage(ui("cardRoom.chipShopRedeemed", {
+        name: character.avatarName, bits: next.redeemedBits, vault: next.bank.vaultBits,
+      }));
+    });
   };
 
   const isDecorItemActive = (item: CardRoomShopItem, decor = cardRoomDecor) => {
@@ -2926,52 +2748,42 @@ export const CardRoomApp = () => {
   };
 
   const buyOrApplyDecorItem = (item: CardRoomShopItem) => {
-    if (handInProgress) {
-      setStatusMessage(ui("cardRoom.decorShopLocked"));
-      return;
-    }
-    if (isDecorItemActive(item)) return;
-
-    const purchased = cardRoomDecor.purchasedItemIds.includes(item.id);
-    const purchaseCost = purchased ? 0 : item.price;
-    if (!spendOwnerDecorBits(purchaseCost)) {
-      setStatusMessage(ui("cardRoom.decorNotEnoughBits", { price: purchaseCost }));
-      return;
-    }
-
-    const nextDecor: CardRoomDecorState = {
-      ...cardRoomDecor,
-      purchasedItemIds: purchased
-        ? cardRoomDecor.purchasedItemIds
-        : Array.from(new Set([...cardRoomDecor.purchasedItemIds, item.id])),
-      furnitureItemIds: cardRoomDecor.furnitureItemIds,
-    };
-    if (item.cardRoomCategory === "wall" && item.targetSurfaceId) {
-      nextDecor.wallSurfaceId = item.targetSurfaceId;
-    } else if (item.cardRoomCategory === "floor" && item.targetSurfaceId) {
-      nextDecor.floorSurfaceId = item.targetSurfaceId;
-    } else if (item.cardRoomCategory === "window" && item.targetWindowId) {
-      nextDecor.windowId = item.targetWindowId;
-    } else if (item.cardRoomCategory === "furniture") {
-      nextDecor.furnitureItemIds = Array.from(
-        new Set([...cardRoomDecor.furnitureItemIds, item.id]),
-      );
-    }
-
-    const normalizedDecor = writeCardRoomDecorState(nextDecor);
-    setCardRoomDecor(normalizedDecor);
-    setStatusMessage(
-      ui(purchased ? "cardRoom.decorAppliedMessage" : "cardRoom.decorPurchasedMessage", {
-        name: item.name,
-        price: purchaseCost,
-      }),
-    );
+    if (tableRef.current.street !== "waiting" && tableRef.current.street !== "handComplete") return;
+    if (tableRef.current.street === "handComplete"
+      && (processedAutoCashOutHandRef.current !== tableRef.current.handNumber
+        || processedDarkTraitHandRef.current !== tableRef.current.handNumber)) return;
+    void runCritical(async () => {
+      const purchase = await transactStore<{ purchased: boolean; cost: number } | null>((view) => {
+        const decor = normalizeCardRoomDecorState(JSON.parse(view.getItem(CARD_ROOM_DECOR_STORAGE_KEY) ?? "null"));
+        const bank = normalizeHouseBank(JSON.parse(view.getItem(HOUSE_BANK_STORAGE_KEY) ?? "null"));
+        const purchased = decor.purchasedItemIds.includes(item.id);
+        const cost = purchased ? 0 : item.price;
+        const nextBank = spendOwnerBits(bank, cost);
+        if (!nextBank) return { changes: {} as Record<string, string | null>, result: null };
+        const nextDecor = { ...decor, purchasedItemIds: [...new Set([...decor.purchasedItemIds, item.id])] };
+        if (item.cardRoomCategory === "wall" && item.targetSurfaceId) nextDecor.wallSurfaceId = item.targetSurfaceId;
+        else if (item.cardRoomCategory === "floor" && item.targetSurfaceId) nextDecor.floorSurfaceId = item.targetSurfaceId;
+        else if (item.cardRoomCategory === "window" && item.targetWindowId) nextDecor.windowId = item.targetWindowId;
+        else if (item.cardRoomCategory === "furniture") nextDecor.furnitureItemIds = [...new Set([...decor.furnitureItemIds, item.id])];
+        return { changes: {
+          [HOUSE_BANK_STORAGE_KEY]: JSON.stringify(nextBank),
+          [CARD_ROOM_DECOR_STORAGE_KEY]: JSON.stringify(normalizeCardRoomDecorState(nextDecor)),
+        }, result: { purchased, cost } };
+      });
+      if (!purchase) { setStatusMessage(ui("cardRoom.decorNotEnoughBits", { price: item.price })); return; }
+      refreshCommittedBalances();
+      setCardRoomDecor(readCardRoomDecorState());
+      setStatusMessage(ui(purchase.purchased ? "cardRoom.decorAppliedMessage" : "cardRoom.decorPurchasedMessage", {
+        name: item.name, price: purchase.cost,
+      }));
+    });
   };
 
   const applyUserAction = (
     type: "fold" | "check" | "call" | "bet" | "raise" | "all-in",
     targetRoundBet?: number,
   ) => {
+    if (criticalBusyRef.current || failedCriticalRef.current || isStoreClosing()) return;
     const activePlayer =
       table.activeSeatIndex === null ? null : table.players[table.activeSeatIndex];
     if (!activePlayer?.isUser) return;
@@ -2986,10 +2798,11 @@ export const CardRoomApp = () => {
     if (stats && stats.handNumber === table.handNumber) {
       recordHandDarkAction(stats, table, activePlayer, action);
     }
-    commitTable(applyHoldemAction(table, action));
+    void commitTable(applyHoldemAction(table, action));
   };
 
   const callClockForActivePlayer = () => {
+    if (criticalBusyRef.current || failedCriticalRef.current || isStoreClosing()) return;
     const activePlayer =
       table.activeSeatIndex === null ? null : table.players[table.activeSeatIndex];
     if (!activePlayer || activePlayer.isUser) return;
@@ -3009,6 +2822,7 @@ export const CardRoomApp = () => {
   };
 
   useEffect(() => {
+    if (criticalBusyRef.current || failedCriticalRef.current || isStoreClosing()) return;
     const activePlayer =
       table.activeSeatIndex === null ? null : table.players[table.activeSeatIndex];
     if (!activePlayer || activePlayer.isUser || table.street === "handComplete") return;
@@ -3025,10 +2839,10 @@ export const CardRoomApp = () => {
       },
     };
     const timer = window.setTimeout(() => {
-      commitTable(applyHoldemAction(table, aiMove.action));
+      void commitTable(applyHoldemAction(table, aiMove.action));
     }, aiMove.delayMs);
     return () => window.clearTimeout(timer);
-  }, [playersSeatedReady, table.actionSerial, table.activeSeatIndex, table.street]);
+  }, [playersSeatedReady, table.actionSerial, table.activeSeatIndex, table.street, criticalPending, saveFailed]);
 
   useEffect(() => {
     if (!calledClock) return undefined;
@@ -3070,7 +2884,7 @@ export const CardRoomApp = () => {
         setCalledClock(null);
         return;
       }
-      commitTable(applyHoldemAction(currentTable, { type: "timeout" }));
+      void commitTable(applyHoldemAction(currentTable, { type: "timeout" }));
       setCalledClock(null);
     }, remainingMs);
     return () => window.clearTimeout(timer);
@@ -3081,99 +2895,51 @@ export const CardRoomApp = () => {
     calledClock?.seatIndex,
   ]);
 
-  useEffect(() => {
-    if (table.street !== "handComplete") return;
-    if (processedAutoCashOutHandRef.current === table.handNumber) return;
-    const winner = wholeTableCharacterWinner(table);
-    if (!winner) return;
-
-    const cashOut = cashOutCardRoomSaveSlotPokerChips(winner.slotId, winner.stack);
-    if (!cashOut) return;
-
-    processedAutoCashOutHandRef.current = table.handNumber;
-    const nextBank = updateHouseBank((current) =>
-      addHouseVaultBits(current, -cashOut.redeemedBits),
-    );
-    const nextTable: HoldemTableState = {
-      ...table,
-      players: table.players.map((player) =>
-        player.seatIndex === winner.seatIndex
-          ? {
-              ...player,
-              walletBits: cashOut.bits,
-              pokerChips: cashOut.pokerChips,
-              stack: cashOut.pokerChips,
-            }
-          : player,
-      ),
-      log: [
-        ...table.log,
-        ui("cardRoom.autoCashOutLog", {
-          name: winner.avatarName,
-          chips: cashOut.cashedOutChips,
-          bits: cashOut.redeemedBits,
-        }),
-      ],
-    };
-    tableRef.current = nextTable;
-    setTable(nextTable);
-    setRoster((current) =>
-      current.map((character) =>
-        character.slotId === winner.slotId
-          ? {
-              ...character,
-              walletBits: cashOut.bits,
-              pokerChips: cashOut.pokerChips,
-            }
-          : character,
-      ),
-    );
-    setStacks((current) => ({
-      ...current,
-      [winner.avatarId]: cashOut.pokerChips,
-    }));
-    setStatusMessage(
-      ui("cardRoom.autoCashOutComplete", {
-        name: winner.avatarName,
-        chips: cashOut.cashedOutChips,
-        bits: cashOut.redeemedBits,
-        rate: Math.round(CARD_ROOM_AUTO_CASH_OUT_RATE * 100),
-        vault: nextBank?.vaultBits ?? houseBankRef.current.vaultBits,
-        debt: nextBank?.payoutDebtBits ?? houseBankRef.current.payoutDebtBits,
-      }),
-    );
-  }, [table.actionSerial, table.handNumber, table.players, table.street]);
-
-  useEffect(() => {
-    if (table.street !== "handComplete") return;
-    if (processedDarkTraitHandRef.current === table.handNumber) return;
+  // Close calls this same sequence after freezing producers. A successful
+  // cash-out is marked before the next await, so retrying a failed trait update
+  // cannot repeat the economic transfer.
+  finishHandRef.current = async () => {
+    const completed = tableRef.current;
+    if (completed.street !== "handComplete") return;
+    if (processedAutoCashOutHandRef.current !== completed.handNumber) {
+      const winner = wholeTableCharacterWinner(completed);
+      const cashOut = winner ? await cashOutCardRoomSaveSlotPokerChips(winner.slotId) : null;
+      processedAutoCashOutHandRef.current = completed.handNumber;
+      if (cashOut && winner) {
+        refreshCommittedBalances();
+        setStatusMessage(ui("cardRoom.autoCashOutComplete", {
+          name: winner.avatarName, chips: cashOut.cashedOutChips, bits: cashOut.redeemedBits,
+          rate: Math.round(CARD_ROOM_AUTO_CASH_OUT_RATE * 100), vault: cashOut.bank.vaultBits, debt: cashOut.bank.payoutDebtBits,
+        }));
+      }
+    }
+    if (processedDarkTraitHandRef.current === completed.handNumber) return;
     const stats = hostHandDarkStatsRef.current;
-    const finalPlayer = table.players.find((player) => player.isUser);
-    if (!stats || !finalPlayer || stats.handNumber !== table.handNumber) return;
-
-    processedDarkTraitHandRef.current = table.handNumber;
-    previousHostHandNetRef.current = finalPlayer.stack - stats.startStack;
-    const changes = darkTraitChangesForCompletedHand(stats, table, finalPlayer);
-    const nextDarkTraits = writeCardRoomSaveSlotDarkTraitChanges(hostSlotId, changes);
-    if (!nextDarkTraits) return;
-
-    setRoster((current) =>
-      current.map((character) =>
-        character.slotId === hostSlotId
-          ? {
-              ...character,
-              darkTraits: nextDarkTraits,
-            }
-          : character,
-      ),
-    );
-  }, [hostSlotId, table.actionSerial, table.handNumber, table.players, table.street]);
+    const finalPlayer = completed.players.find((player) => player.isUser);
+    if (stats && finalPlayer && stats.handNumber === completed.handNumber) {
+      const changes = darkTraitChangesForCompletedHand(stats, completed, finalPlayer);
+      await writeCardRoomSaveSlotDarkTraitChanges(hostSlotId, changes);
+      previousHostHandNetRef.current = finalPlayer.stack - stats.startStack;
+      setRoster(readCardRoomRoster());
+    }
+    processedDarkTraitHandRef.current = completed.handNumber;
+  };
+  useEffect(() => {
+    if (table.street !== "handComplete" || criticalPending || saveFailed || isStoreClosing()) return;
+    if (processedAutoCashOutHandRef.current === table.handNumber
+      && processedDarkTraitHandRef.current === table.handNumber) return;
+    void runCritical(() => finishHandRef.current());
+  }, [table.actionSerial, table.handNumber, table.street, criticalPending, saveFailed]);
 
   const activePlayer =
     table.activeSeatIndex === null ? null : table.players[table.activeSeatIndex];
   const legal = legalActionsForActivePlayer(table);
   const userTurn = Boolean(activePlayer?.isUser);
-  const canActNow = userTurn && playersSeatedReady;
+  const completingHand = table.street === "handComplete"
+    && (processedAutoCashOutHandRef.current !== table.handNumber
+      || processedDarkTraitHandRef.current !== table.handNumber);
+  const controlsBlocked = criticalPending || completingHand || saveFailed || isStoreClosing();
+  const canActNow = userTurn && playersSeatedReady && !controlsBlocked;
   const userPlayer = table.players.find((player) => player.isUser);
   const activeActionLabel = activePlayer
     ? `${activePlayer.avatarName} ${stackLabel(activePlayer.stack, ui)}`
@@ -3210,7 +2976,9 @@ export const CardRoomApp = () => {
         })
     : null;
   const canStartHand =
-    seatedCharacters.length >= 2 &&
+    !controlsBlocked && seatedCharacters.length >= 2 &&
+    (table.street !== "handComplete" || (processedAutoCashOutHandRef.current === table.handNumber
+      && processedDarkTraitHandRef.current === table.handNumber)) &&
     (table.street === "waiting" || table.street === "handComplete");
   const communityCardsLabel = table.communityCards.length
     ? compactCards(table.communityCards)
@@ -3232,9 +3000,9 @@ export const CardRoomApp = () => {
     (item) => item.cardRoomCategory === resolvedActiveDecorCategory,
   );
   const canReleaseCompanions =
-    !handInProgress && seatedCharacters.length >= 2 && !freeRoamEnabled;
+    !controlsBlocked && !handInProgress && seatedCharacters.length >= 2 && !freeRoamEnabled;
   const canCallClock =
-    handInProgress &&
+    !controlsBlocked && handInProgress &&
     playersSeatedReady &&
     Boolean(activePlayer && !activePlayer.isUser) &&
     !activeCalledClock;
@@ -3408,7 +3176,8 @@ export const CardRoomApp = () => {
               key={option.locale}
               type="button"
               className={locale === option.locale ? "active" : ""}
-              onClick={() => setLocale(option.locale)}
+              disabled={controlsBlocked}
+              onClick={() => void runCritical(async () => { await appStorage.setItem(LOCALE_KEY, option.locale); setLocale(option.locale); })}
             >
               {option.label}
             </button>
@@ -3482,6 +3251,7 @@ export const CardRoomApp = () => {
               <input
                 type="text"
                 value={playerNameInput}
+                disabled={controlsBlocked}
                 maxLength={18}
                 placeholder={ui("cardRoom.playerNamePlaceholder")}
                 onChange={(event) => updatePlayerName(event.target.value)}
@@ -3494,7 +3264,7 @@ export const CardRoomApp = () => {
               type="button"
               className="pixel-button"
               onClick={summonAllCompanions}
-              disabled={availableCompanions.length === 0}
+              disabled={controlsBlocked || availableCompanions.length === 0}
             >
               {ui("cardRoom.summonAll")}
             </button>
@@ -3514,6 +3284,8 @@ export const CardRoomApp = () => {
             >
               {ui("cardRoom.freeRoam")}
             </button>
+            {criticalPending ? <p className="card-room-message" role="status">{ui("storage.saving")}</p> : null}
+            {saveFailed ? <div role="alert"><p>{ui("storage.saveFailed")}</p><button type="button" className="pixel-button" onClick={retryCriticalSave} disabled={criticalPending}>{ui("storage.retry")}</button></div> : null}
             {statusMessage ? <p className="card-room-message">{statusMessage}</p> : null}
           </section>
 
@@ -3581,6 +3353,7 @@ export const CardRoomApp = () => {
                         type="button"
                         className={selectedSlotIds.includes(character.slotId) ? "active" : ""}
                         tabIndex={companionsPanelCollapsed ? -1 : undefined}
+                        disabled={controlsBlocked}
                         onClick={() => toggleCompanion(character.slotId)}
                       >
                         <span>{character.avatarName}</span>
@@ -3646,7 +3419,7 @@ export const CardRoomApp = () => {
                 type="button"
                 className="pixel-button"
                 disabled={
-                  normalizeHouseBits(houseBank.vaultBits) <= 0 ||
+                  controlsBlocked || normalizeHouseBits(houseBank.vaultBits) <= 0 ||
                   normalizePayoutDebtBits(houseBank.payoutDebtBits) <= 0
                 }
                 onClick={settleHouseDebt}
@@ -3700,7 +3473,7 @@ export const CardRoomApp = () => {
                           <button
                             type="button"
                             className="pixel-button"
-                            disabled={!exchangeEnabled}
+                            disabled={controlsBlocked || !exchangeEnabled}
                             tabIndex={chipShopPanelCollapsed ? -1 : undefined}
                             onClick={() => exchangeCharacterChips(character)}
                           >
@@ -3720,7 +3493,7 @@ export const CardRoomApp = () => {
                             <button
                               type="button"
                               className="pixel-button"
-                              disabled={!ownerCanGiftChips || handInProgress}
+                              disabled={controlsBlocked || !ownerCanGiftChips || handInProgress}
                               tabIndex={chipShopPanelCollapsed ? -1 : undefined}
                               onClick={() => giftCharacterChips(character)}
                             >
@@ -3733,7 +3506,7 @@ export const CardRoomApp = () => {
                             <button
                               type="button"
                               className="pixel-button"
-                              disabled={!redeemEnabled}
+                              disabled={controlsBlocked || !redeemEnabled}
                               tabIndex={chipShopPanelCollapsed ? -1 : undefined}
                               onClick={() => redeemCharacterBits(character)}
                             >
@@ -3798,7 +3571,7 @@ export const CardRoomApp = () => {
                   <button
                     type="button"
                     className="pixel-button"
-                    disabled={normalizeHouseBits(houseBank.vaultBits) <= 0}
+                    disabled={controlsBlocked || normalizeHouseBits(houseBank.vaultBits) <= 0}
                     tabIndex={decorShopPanelCollapsed ? -1 : undefined}
                     onClick={withdrawHouseBits}
                   >
@@ -3808,7 +3581,7 @@ export const CardRoomApp = () => {
                     type="button"
                     className="pixel-button"
                     disabled={
-                      normalizeHouseBits(houseBank.vaultBits) <= 0 ||
+                      controlsBlocked || normalizeHouseBits(houseBank.vaultBits) <= 0 ||
                       normalizePayoutDebtBits(houseBank.payoutDebtBits) <= 0
                     }
                     tabIndex={decorShopPanelCollapsed ? -1 : undefined}
@@ -3864,7 +3637,7 @@ export const CardRoomApp = () => {
                         <button
                           type="button"
                           className="pixel-button"
-                          disabled={handInProgress || active || !canAfford}
+                          disabled={controlsBlocked || handInProgress || active || !canAfford}
                           tabIndex={decorShopPanelCollapsed ? -1 : undefined}
                           onClick={() => buyOrApplyDecorItem(item)}
                         >

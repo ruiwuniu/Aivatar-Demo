@@ -1164,7 +1164,7 @@ assert.doesNotMatch(
 );
 assert.doesNotMatch(
   parkText,
-  /localStorage\.(?:getItem|setItem)\([^\n]*parkRenderProfile/,
+  /(?:localStorage|appStorage)\.(?:getItem|setItem)\([^\n]*parkRenderProfile/,
   "render profiles must remain non-persistent diagnostics",
 );
 assert.match(
@@ -1250,7 +1250,8 @@ assert.match(parkText, /updateParkAmbientAudioWeather\([\s\S]*ambientAudioRef\.c
 assert.match(parkText, /parkWeatherAudioThunderInMs/);
 assert.match(appText, /const loadInitialParkAmbientAudioVolume/);
 assert.match(appText, /const \[parkAmbientAudioVolume, setParkAmbientAudioVolume\]/);
-assert.match(appText, /localStorage\.setItem\(\s*PARK_AMBIENT_AUDIO_VOLUME_KEY/);
+assert.match(appText, /appStorage\.setItem\(\s*PARK_AMBIENT_AUDIO_VOLUME_KEY/);
+assert.doesNotMatch(storageText, /\blocalStorage\b/, "park persistence must use the hydrated application store");
 assert.match(appText, /parkAmbientVolumeLabel/);
 assert.match(appText, /setParkAmbientAudioVolume\(Number\(event\.target\.value\) \/ 100\)/);
 assert.match(appText, /const SHOW_DEBUG_CARD = false/);
@@ -1274,7 +1275,7 @@ assert.match(tauriText, /WEBVIEW2_USER_DATA_FOLDER/);
 assert.match(tauriText, /aivatar-webview2-dev/);
 assert.equal(
   (tauriText.match(/\.additional_browser_args\(WEBVIEW2_BROWSER_ARGS\)/g) ?? []).length,
-  5,
+  (tauriText.match(/WebviewWindowBuilder::new\(/g) ?? []).length,
   "every dynamically created WebView must use the same bounded cache arguments",
 );
 assert.match(tauriText, /fn set_main_window_visibility_for_park_profile/);
@@ -1582,7 +1583,7 @@ assert.match(parkText, /setParkWeatherDebugMode/);
 assert.match(parkText, /weather,\s*\}\);/);
 assert.doesNotMatch(
   parkText,
-  /localStorage\.(?:getItem|setItem)\([^\n]*WeatherDebugMode/,
+  /(?:localStorage|appStorage)\.(?:getItem|setItem)\([^\n]*WeatherDebugMode/,
   "manual weather previews must not persist",
 );
 assert.match(parkText, /aria-label="公园角色预览"/);

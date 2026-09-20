@@ -1,6 +1,13 @@
-export interface JsonStorage {
+export interface JsonReadView {
   getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
+}
+
+export interface JsonStorage extends JsonReadView {
+  setItem(key: string, value: string): void | Promise<void>;
+  transact?<T>(builder: (view: JsonReadView) => {
+    changes: Record<string, string | null>;
+    result: T;
+  }): Promise<T>;
 }
 
 export interface SaveFlushResult {
@@ -15,6 +22,7 @@ export interface SavePersistenceOptions {
   setTimer?: (callback: () => void, delayMs: number) => unknown;
   clearTimer?: (timer: unknown) => void;
   onError?: (error: unknown, key: string) => void;
+  additionalChanges?: (key: string, snapshot: unknown, view: JsonReadView) => Record<string, string>;
 }
 
 // Passive movement/runtime state is crash-safety checkpointed at most once per
@@ -45,16 +53,26 @@ export const jsonEqual = (left: unknown, right: unknown): boolean => {
 
 // Always compare with storage itself: another window may have changed this key
 // since our last write. Object key order alone is not a meaningful save change.
-export const writeJsonIfChanged = (
+export const writeJsonIfChanged = async (
   storage: JsonStorage,
   key: string,
   value: unknown,
-): boolean => {
+): Promise<boolean> => {
   const serialized = JSON.stringify(value);
   if (serialized === undefined) {
     throw new TypeError("A save snapshot must be JSON serializable.");
   }
+  if (storage.transact) return storage.transact((view) => {
+    const written = jsonChanged(view.getItem(key), serialized);
+    return { changes: written ? { [key]: serialized } : {}, result: written };
+  });
   const previous = storage.getItem(key);
+  if (!jsonChanged(previous, serialized)) return false;
+  await storage.setItem(key, serialized);
+  return true;
+};
+
+const jsonChanged = (previous: string | null, serialized: string): boolean => {
   if (previous === serialized) return false;
   if (previous !== null) {
     try {
@@ -63,7 +81,6 @@ export const writeJsonIfChanged = (
       // A malformed old value must not prevent writing a valid snapshot.
     }
   }
-  storage.setItem(key, serialized);
   return true;
 };
 
@@ -100,7 +117,7 @@ export const mergeSaveChanges = <T>(base: T, local: T, remote: T): T =>
   mergeValue(base, local, remote) as T;
 
 type PendingSave = {
-  getSnapshot: () => unknown;
+  getSnapshot: (view: JsonReadView) => unknown;
   onPersisted?: (snapshot: unknown, written: boolean) => void;
   timer?: unknown;
 };
@@ -117,6 +134,7 @@ export const createSavePersistence = (options: SavePersistenceOptions) => {
   const clearTimer = options.clearTimer
     ?? ((timer: unknown) => globalThis.clearTimeout(timer as ReturnType<typeof setTimeout>));
   const pending = new Map<string, PendingSave>();
+  const inFlight = new Map<string, Promise<SaveFlushResult>>();
 
   const reportError = (error: unknown, key: string) => {
     try {
@@ -131,14 +149,14 @@ export const createSavePersistence = (options: SavePersistenceOptions) => {
     const timer = setTimer(() => {
       const current = pending.get(key);
       if (current && current.timer === timer) current.timer = undefined;
-      flush(key);
+      void flush(key);
     }, delayMs);
     entry.timer = timer;
   };
 
   const schedule = <T>(
     key: string,
-    getSnapshot: () => T | undefined,
+    getSnapshot: (view: JsonReadView) => T | undefined,
     onPersisted?: (snapshot: T | undefined, written: boolean) => void,
   ) => {
     const entry: PendingSave = {
@@ -153,48 +171,80 @@ export const createSavePersistence = (options: SavePersistenceOptions) => {
     armTimer(key, entry);
   };
 
-  const flush = <T>(
+  const flush = async <T>(
     key: string,
-    getSnapshot?: () => T | undefined,
+    getSnapshot?: (view: JsonReadView) => T | undefined,
     onPersisted?: (snapshot: T | undefined, written: boolean) => void,
-  ): SaveFlushResult => {
+  ): Promise<SaveFlushResult> => {
     if (getSnapshot) schedule(key, getSnapshot, onPersisted);
+    const running = inFlight.get(key);
+    if (running) {
+      const result = await running;
+      if (!result.ok || !pending.has(key)) return result;
+      const next = await flush(key);
+      return { ok: next.ok, written: result.written || next.written };
+    }
     const entry = pending.get(key);
     if (!entry) return { ok: true, written: false };
     if (entry.timer !== undefined) clearTimer(entry.timer);
     entry.timer = undefined;
 
-    let snapshot: unknown;
-    let written = false;
-    try {
-      snapshot = entry.getSnapshot();
-      // Undefined explicitly means the destination no longer exists. Do not
-      // recreate a deleted slot or store the non-JSON string "undefined".
-      if (snapshot !== undefined) {
+    // Install the in-flight barrier before calling any user getter. A getter
+    // or an acknowledgement may schedule another generation synchronously.
+    const operation = Promise.resolve().then(async (): Promise<SaveFlushResult> => {
+      let snapshot: unknown;
+      let written = false;
+      try {
         const storage = typeof options.storage === "function" ? options.storage() : options.storage;
-        written = writeJsonIfChanged(storage, key, snapshot);
+        const build = (view: JsonReadView) => {
+          const value = entry.getSnapshot(view);
+          const changes: Record<string, string> = {};
+          if (value === undefined) return { changes, result: { snapshot: undefined, written: false } };
+          const serialized = JSON.stringify(value);
+          if (serialized === undefined) throw new TypeError("A save snapshot must be JSON serializable.");
+          const snapshot = JSON.parse(serialized) as unknown;
+          const written = jsonChanged(view.getItem(key), serialized);
+          if (written) {
+            changes[key] = serialized;
+            for (const [extraKey, extraValue] of Object.entries(options.additionalChanges?.(key, snapshot, view) ?? {})) {
+              if (jsonChanged(view.getItem(extraKey), extraValue)) changes[extraKey] = extraValue;
+            }
+          }
+          return { changes, result: { snapshot, written } };
+        };
+        if (storage.transact) {
+          ({ snapshot, written } = await storage.transact(build));
+        } else {
+          const built = build(storage);
+          for (const [target, serialized] of Object.entries(built.changes)) await storage.setItem(target, serialized);
+          ({ snapshot, written } = built.result);
+        }
+      } catch (error) {
+        const current = pending.get(key);
+        if (current) {
+          if (current.timer !== undefined) clearTimer(current.timer);
+          current.timer = undefined;
+          armTimer(key, current, retryWaitMs);
+        }
+        reportError(error, key);
+        return { ok: false, written: false };
       }
-    } catch (error) {
-      const current = pending.get(key);
-      if (current) {
-        if (current.timer !== undefined) clearTimer(current.timer);
-        current.timer = undefined;
-        armTimer(key, current, retryWaitMs);
-      }
-      reportError(error, key);
-      return { ok: false, written: false };
-    }
 
-    // A snapshot callback may have scheduled newer work for this same key.
-    if (pending.get(key) === entry) pending.delete(key);
+      if (pending.get(key) === entry) pending.delete(key);
+      try {
+        entry.onPersisted?.(snapshot, written);
+      } catch (error) {
+        // A consumer callback must not replay an already committed operation.
+        reportError(error, key);
+      }
+      return { ok: true, written };
+    });
+    inFlight.set(key, operation);
     try {
-      entry.onPersisted?.(snapshot, written);
-    } catch (error) {
-      // The storage write already succeeded. Do not replay a committed change
-      // merely because a consumer's completion callback failed.
-      reportError(error, key);
+      return await operation;
+    } finally {
+      if (inFlight.get(key) === operation) inFlight.delete(key);
     }
-    return { ok: true, written };
   };
 
   const cancel = (key: string) => {
@@ -203,11 +253,25 @@ export const createSavePersistence = (options: SavePersistenceOptions) => {
     pending.delete(key);
   };
 
+  const flushAll = async () => {
+    const results: Array<SaveFlushResult & { key: string }> = [];
+    while (pending.size || inFlight.size) {
+      const keys = [...new Set([...pending.keys(), ...inFlight.keys()])];
+      for (const key of keys) results.push({ key, ...await flush(key) });
+      if (results.some((result) => !result.ok)) break;
+    }
+    return results;
+  };
+
   return {
     schedule,
     flush,
-    flushAll: () => [...pending.keys()].map((key) => ({ key, ...flush(key) })),
+    flushAll,
+    drain: flushAll,
     cancel,
-    hasPending: (key?: string) => key === undefined ? pending.size > 0 : pending.has(key),
+    isInFlight: (key: string) => inFlight.has(key),
+    hasPending: (key?: string) => key === undefined
+      ? pending.size > 0 || inFlight.size > 0
+      : pending.has(key) || inFlight.has(key),
   };
 };

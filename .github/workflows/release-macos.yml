@@ -6,11 +6,10 @@ on:
       tag:
         description: Draft GitHub release tag to upload the macOS installer to.
         required: true
-        default: v0.4.4
+        default: v0.4.5
       ref:
-        description: Git ref to build; use a full commit SHA for a release.
+        description: Full 40-character commit SHA to build.
         required: true
-        default: main
 
 permissions:
   contents: write
@@ -19,39 +18,98 @@ jobs:
   build-macos:
     name: Build and verify the Universal macOS installer
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      SOURCE_SHA: ${{ inputs.ref }}
+      RELEASE_TAG: ${{ inputs.tag }}
     defaults:
       run:
         shell: bash
     steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Require an immutable source commit
+        shell: python
+        run: |
+          import os
+          import re
+          if not re.fullmatch(r"[0-9a-fA-F]{40}", os.environ["SOURCE_SHA"]):
+              raise SystemExit("Supply ref as a full 40-character commit SHA, not a branch or tag.")
+
       - name: Checkout the requested source
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
 
-      - name: Check version and draft release
+      - name: Check source, versions, draft release and tag
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
+        shell: python
         run: |
-          set -euo pipefail
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName > "$RUNNER_TEMP/aivatar-release.json"
-          python3 - <<'PY'
           import json
           import os
           import pathlib
+          import re
+          import subprocess
           import tomllib
 
-          version = json.loads(pathlib.Path("package.json").read_text())["version"]
-          tauri_version = json.loads(pathlib.Path("src-tauri/tauri.conf.json").read_text())["version"]
-          rust_version = tomllib.loads(pathlib.Path("src-tauri/Cargo.toml").read_text())["package"]["version"]
-          release = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-release.json").read_text())
-          if not (version == tauri_version == rust_version):
-              raise SystemExit("Package, Tauri, and Cargo versions must match.")
-          if release["tagName"] != f"v{version}" or not release["isDraft"]:
-              raise SystemExit("The requested release must be a draft matching the source version.")
-          print(f"Building version {version} for draft {release['tagName']}.")
-          PY
+          root = pathlib.Path.cwd()
+          sha = os.environ["SOURCE_SHA"].lower()
+          tag = os.environ["RELEASE_TAG"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          if not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("ref must be a full 40-character commit SHA.")
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if head != sha:
+              raise SystemExit(f"Checkout HEAD {head} does not match requested source {sha}.")
+          package = json.loads((root / "package.json").read_text())
+          lock = json.loads((root / "package-lock.json").read_text())
+          tauri = json.loads((root / "src-tauri/tauri.conf.json").read_text())
+          cargo = tomllib.loads((root / "src-tauri/Cargo.toml").read_text())
+          cargo_lock = tomllib.loads((root / "src-tauri/Cargo.lock").read_text())
+          rust_packages = [entry for entry in cargo_lock["package"] if entry["name"] == cargo["package"]["name"]]
+          version = package["version"]
+          versions = [lock["version"], lock["packages"][""]["version"], tauri["version"], cargo["package"]["version"]]
+          if len(rust_packages) != 1 or rust_packages[0]["version"] != version or any(value != version for value in versions):
+              raise SystemExit("Package, npm lock, Tauri, Cargo manifest and Cargo lock versions must match.")
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) or tag != f"v{version}":
+              raise SystemExit("Release tag must match the stable source version.")
+          expected_resources = {"../plugins/aivatar-session-bridge/", "../scripts/*.mjs", "../scripts/*.py", "../scripts/*.swift"}
+          if set(tauri["bundle"]["resources"]) != expected_resources:
+              raise SystemExit("Resources must use the approved plugin directory and top-level script globs.")
+          subprocess.run(["git", "diff", "--exit-code", "HEAD", "--", "package.json", "package-lock.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"], check=True)
+
+          def api(endpoint):
+              return json.loads(subprocess.check_output(["gh", "api", f"repos/{repo}/{endpoint}"], text=True))
+
+          release = api(f"releases/tags/{tag}")
+          if release["tag_name"] != tag or not release["draft"]:
+              raise SystemExit("The requested existing release must still be a draft matching the source version.")
+          if release["target_commitish"].lower() != sha:
+              raise SystemExit("Create the draft with --target set to the requested full source SHA.")
+          references = api(f"git/matching-refs/tags/{tag}")
+          matching = [entry for entry in references if entry["ref"] == f"refs/tags/{tag}"]
+          if len(matching) > 1:
+              raise SystemExit("Ambiguous release tag reference.")
+          if matching:
+              target_object = matching[0]["object"]
+              for _ in range(10):
+                  if target_object["type"] != "tag":
+                      break
+                  target_object = api(f"git/tags/{target_object['sha']}")["object"]
+              if target_object["type"] != "commit" or target_object["sha"] != sha:
+                  raise SystemExit("The existing release tag does not point to the requested source commit.")
+          # A draft may not create its tag until publication; its full target SHA was checked above.
+          with pathlib.Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as stream:
+              stream.write(f"RELEASE_VERSION={version}\n")
+          # Re-run this exact check immediately before uploading to catch draft/tag drift.
+          guard_path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-release-guard.py"
+          if pathlib.Path(__file__).resolve() != guard_path.resolve():
+              guard_path.write_text(pathlib.Path(__file__).read_text(), encoding="utf-8")
+          print(f"Verified draft {tag}, source {sha}, versions and resource allowlist.")
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -67,8 +125,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check persistence without launching the application
+        shell: python
+        run: |
+          import subprocess
+          for script in (
+              "aivatar-save-store-smoke.mjs", "aivatar-save-persistence-smoke.mjs",
+              "aivatar-room-save-persistence-smoke.mjs", "aivatar-close-save-smoke.mjs",
+              "aivatar-park-persistence-smoke.mjs", "aivatar-card-room-close-save-smoke.mjs",
+              "aivatar-park-smoke.mjs", "card-room-holdem-rules-smoke.mjs",
+          ):
+              subprocess.run(["node", f"scripts/{script}"], check=True)
+          import os
+          import pathlib
+          test_env = dict(os.environ, CARGO_TARGET_DIR=str(pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-storage-core-target"))
+          subprocess.run(["cargo", "test", "--locked", "--manifest-path", "scripts/wal-diagnostics/save-store-rust-tests/Cargo.toml"], check=True, env=test_env)
+
       - name: Build the Tauri Universal DMG
-        run: npm run tauri -- build --target universal-apple-darwin --bundles dmg --ci
+        run: npm run tauri -- build --target universal-apple-darwin --bundles dmg --ci -- --locked
 
       - name: Verify the mounted installer and write checksums
         run: |
@@ -119,16 +193,32 @@ jobs:
               for relative in required:
                   if not (resource_root / relative).is_file():
                       raise SystemExit(f"Missing packaged resource: {relative}")
-              resource_count = 0
-              for directory in ("scripts", "plugins/aivatar-session-bridge"):
-                  for source in sorted((root / directory).rglob("*")):
-                      if not source.is_file():
-                          continue
-                      relative = source.relative_to(root)
-                      packaged = resource_root / relative
-                      if not packaged.is_file() or source.read_bytes() != packaged.read_bytes():
-                          raise SystemExit(f"Packaged resource mismatch: {relative}")
-                      resource_count += 1
+              expected_resources = {
+                  source.relative_to(root)
+                  for extension in ("*.mjs", "*.py", "*.swift")
+                  for source in (root / "scripts").glob(extension)
+                  if source.is_file()
+              }
+              expected_resources.update(
+                  source.relative_to(root)
+                  for source in (root / "plugins/aivatar-session-bridge").rglob("*")
+                  if source.is_file()
+              )
+              forbidden = {"wal-diagnostics", "target", "node_modules", "synthetic-test-data"}
+              for packaged in resource_root.rglob("*"):
+                  relative = packaged.relative_to(resource_root)
+                  if forbidden.intersection(relative.parts):
+                      raise SystemExit(f"Forbidden test/build resource: {relative}")
+                  if relative.parts[0] == "scripts" and (packaged.is_dir() or len(relative.parts) != 2 or packaged.suffix not in {".mjs", ".py", ".swift"}):
+                      if relative != pathlib.Path("scripts"):
+                          raise SystemExit(f"Only top-level scripts may be packaged: {relative}")
+              actual_resources = {source.relative_to(resource_root) for source in resource_root.rglob("*") if source.is_file()}
+              if actual_resources != expected_resources:
+                  raise SystemExit(f"Resource allowlist mismatch; missing={expected_resources - actual_resources}, extra={actual_resources - expected_resources}")
+              for relative in sorted(expected_resources):
+                  if (root / relative).read_bytes() != (resource_root / relative).read_bytes():
+                      raise SystemExit(f"Packaged resource mismatch: {relative}")
+              resource_count = len(expected_resources)
               with dmg.open("rb") as stream:
                   checksum = hashlib.file_digest(stream, "sha256").hexdigest()
               report = {
@@ -168,5 +258,5 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
+          python "$RUNNER_TEMP/aivatar-release-guard.py"
           gh release upload "$RELEASE_TAG" src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg macos-release-checksums.json --repo "$GITHUB_REPOSITORY"

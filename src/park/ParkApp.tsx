@@ -38,6 +38,7 @@ import {
 } from "./parkStorage";
 import type { SaveFlushResult } from "../persistence/savePersistence";
 import { installCloseSaveHandler } from "../persistence/closeSave";
+import { isStoreClosing, subscribeStore } from "../persistence/saveStore";
 import {
   isParkGrassPoint,
   parkFishingSpotById,
@@ -258,6 +259,7 @@ export const ParkApp = () => {
   const [hostSlotId] = useState(initialHostSlotId);
   const [debugOpen, setDebugOpen] = useState(true);
   const [debugMessage, setDebugMessage] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [activeRenderProfile, setActiveRenderProfile] =
     useState<ParkRenderProfile>("full");
   const renderProfileRef = useRef<ParkRenderProfile>("full");
@@ -302,17 +304,21 @@ export const ParkApp = () => {
   const lastMoodAtRef = useRef(0);
   const lastWeatherUiAtRef = useRef(Number.NEGATIVE_INFINITY);
 
-  const flushCurrentParkSave = (): SaveFlushResult => {
+  const flushCurrentParkSave = async (): Promise<SaveFlushResult> => {
     if (!hostSlotId) return { ok: true, written: false };
     const simulation = simulationRef.current;
     if (simulation && visitRef.current && !debugPreviewRef.current) {
       persistParkRuntime(hostSlotId, simulation.avatar, simulation.navMemory);
     }
-    return flushParkSaveSlotResult(hostSlotId).result;
+    const { result } = await flushParkSaveSlotResult(hostSlotId);
+    setSaveError(result.ok ? "" : "Could not save Park progress. Your changes are retained; please retry.");
+    return result;
   };
 
-  const replaceParkVisit = (visit: AivatarVisitSession | null) => {
-    if (visitRef.current?.visitId !== visit?.visitId) flushCurrentParkSave();
+  const replaceParkVisit = async (visit: AivatarVisitSession | null) => {
+    if (visitRef.current?.visitId !== visit?.visitId && !(await flushCurrentParkSave()).ok) {
+      throw new Error("Cannot change the Park visit until its progress has been saved.");
+    }
     visitRef.current = visit;
   };
 
@@ -390,7 +396,7 @@ export const ParkApp = () => {
         requestPlayback();
       }
     };
-    const handleStorage = (event: StorageEvent) => {
+    const handleStorage = (event: { key: string }) => {
       if (event.key === PARK_AMBIENT_AUDIO_VOLUME_KEY) requestPlayback();
     };
 
@@ -398,14 +404,14 @@ export const ParkApp = () => {
     window.addEventListener("pointerdown", requestPlayback, true);
     window.addEventListener("keydown", requestPlayback, true);
     window.addEventListener("touchstart", requestPlayback, true);
-    window.addEventListener("storage", handleStorage);
+    const unsubscribeStorage = subscribeStore(handleStorage);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       window.removeEventListener("pointerdown", requestPlayback, true);
       window.removeEventListener("keydown", requestPlayback, true);
       window.removeEventListener("touchstart", requestPlayback, true);
-      window.removeEventListener("storage", handleStorage);
+      unsubscribeStorage();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       ambientAudioRef.current = null;
       weatherAudioRef.current = null;
@@ -424,16 +430,17 @@ export const ParkApp = () => {
 
   useEffect(() => {
     const refreshLayout = () => setObjects(readParkLayout());
-    const handleStorage = (event: StorageEvent) => {
+    const handleStorage = (event: { key: string; source: "local" | "remote" }) => {
+      if (event.source === "local") return;
       if (event.key === PARK_LAYOUT_STORAGE_KEY) refreshLayout();
       if (hostSlotId && event.key === `aivatar.saveSlot.v1.${hostSlotId}`) {
         setSave(readParkSaveSlot(hostSlotId));
       }
     };
-    window.addEventListener("storage", handleStorage);
+    const unsubscribeStorage = subscribeStore(handleStorage);
     window.addEventListener(PARK_LAYOUT_EVENT, refreshLayout);
     return () => {
-      window.removeEventListener("storage", handleStorage);
+      unsubscribeStorage();
       window.removeEventListener(PARK_LAYOUT_EVENT, refreshLayout);
     };
   }, [hostSlotId]);
@@ -459,6 +466,7 @@ export const ParkApp = () => {
     let stopped = false;
 
     const sync = async () => {
+      if (isStoreClosing()) return;
       try {
         const activeVisit = visitRef.current;
         await postJson(
@@ -468,18 +476,18 @@ export const ParkApp = () => {
         const response = await fetch(ROOMS_URL);
         if (!response.ok) throw new Error(`Park rooms snapshot failed: ${response.status}`);
         const snapshot = normalizeSnapshot(await response.json());
-        if (stopped) return;
+        if (stopped || isStoreClosing()) return;
 
         if (activeVisit) {
           const latest = snapshot.visits.find((visit) => visit.visitId === activeVisit.visitId);
           if (!latest || latest.phase === "cancelled" || latest.phase === "ended") {
-            replaceParkVisit(null);
+            await replaceParkVisit(null);
             if (!debugPreviewRef.current) simulationRef.current = null;
             const restored = await restoreMainWindowAfterPark();
             if (restored) invitationStartedRef.current = false;
             return;
           }
-          replaceParkVisit(latest);
+          await replaceParkVisit(latest);
           const handoffComplete =
             latest.phase !== "invited" &&
             latest.guestRuntimeRoomInstanceId === instanceIdRef.current;
@@ -540,7 +548,7 @@ export const ParkApp = () => {
         });
         if (!visit) return;
         invitationStartedRef.current = true;
-        replaceParkVisit(visit);
+        await replaceParkVisit(visit);
         await postJson(VISIT_INVITE_URL, visit);
       } catch {
         // The park remains an empty animated landscape until the main room bridge is available.
@@ -564,6 +572,11 @@ export const ParkApp = () => {
     let animation = 0;
     const loop = (now: number) => {
       if (stopped) return;
+      if (isStoreClosing()) {
+        previous = now;
+        animation = window.requestAnimationFrame(loop);
+        return;
+      }
       const elapsed = Math.min(0.08, Math.max(0, (now - previous) / 1000));
       previous = now;
       frame += elapsed * 60;
@@ -605,15 +618,18 @@ export const ParkApp = () => {
           if (result.events.length > 0 || now - lastPersistAtRef.current >= 2000) {
             lastPersistAtRef.current = now;
             // Refresh the pending snapshot; the shared writer commits ordinary
-            // progress at most once per 20 seconds. A catch commits it immediately.
+            // progress at most once per five minutes. A catch commits immediately.
             persistParkRuntime(hostSlotId, result.state.avatar, result.state.navMemory);
           }
           result.events.forEach((event) => {
-            const nextSave = recordParkCatch(hostSlotId, event.fishId);
-            if (nextSave) {
-              saveRef.current = nextSave;
-              setSave(nextSave);
-            }
+            void recordParkCatch(hostSlotId, event.fishId).then((nextSave) => {
+              if (stopped) return;
+              if (nextSave) {
+                saveRef.current = nextSave;
+                setSave(nextSave);
+                setSaveError("");
+              } else setSaveError("Could not save the catch. It remains queued; please retry saving.");
+            }, () => setSaveError("Could not save the catch. Please retry saving."));
           });
 
           if (now - lastMoodAtRef.current >= 18_000) {
@@ -738,11 +754,11 @@ export const ParkApp = () => {
     window.addEventListener("pagehide", finishVisit);
     window.addEventListener("beforeunload", finishVisit);
     document.addEventListener("visibilitychange", flushWhenHidden);
-    if ("__TAURI_INTERNALS__" in window) {
-      void installCloseSaveHandler(flushCurrentParkSave, {
+    void installCloseSaveHandler(flushCurrentParkSave, {
         onFailure: (message, error) => {
           console.error("Could not finish saving the Park before close.", error);
           setDebugMessage(message);
+          setSaveError(message);
           window.alert(message);
         },
       })
@@ -751,7 +767,6 @@ export const ParkApp = () => {
           else unlistenSave = unlisten;
         })
         .catch(() => undefined);
-    }
     return () => {
       stopped = true;
       flushCurrentParkSave();
@@ -831,12 +846,13 @@ export const ParkApp = () => {
     }
   };
 
-  const summonDebugAvatar = () => {
+  const summonDebugAvatar = async () => {
+    if (isStoreClosing()) return;
     if (!hostSlotId) {
       setDebugMessage("当前公园窗口没有关联角色存档。");
       return;
     }
-    flushCurrentParkSave();
+    if (!(await flushCurrentParkSave()).ok) return;
     const currentSave = readParkSaveSlot(hostSlotId) ?? saveRef.current;
     if (!currentSave) {
       setDebugMessage("未找到当前角色存档，无法召唤。");
@@ -853,12 +869,13 @@ export const ParkApp = () => {
     setDebugMessage("角色已强制召唤；Debug 行为不会写入存档。");
   };
 
-  const forceDebugFishing = () => {
+  const forceDebugFishing = async () => {
+    if (isStoreClosing()) return;
     if (!hostSlotId) {
       setDebugMessage("当前公园窗口没有关联角色存档。");
       return;
     }
-    flushCurrentParkSave();
+    if (!(await flushCurrentParkSave()).ok) return;
     const currentSave = readParkSaveSlot(hostSlotId) ?? saveRef.current;
     if (!currentSave) {
       setDebugMessage("未找到当前角色存档，无法开始钓鱼。");
@@ -880,12 +897,13 @@ export const ParkApp = () => {
     setDebugMessage("已临时配发钓竿，角色正在前往池边；不会修改背包。");
   };
 
-  const forceDebugBench = (intent: "relax" | "read") => {
+  const forceDebugBench = async (intent: "relax" | "read") => {
+    if (isStoreClosing()) return;
     if (!hostSlotId) {
       setDebugMessage("当前公园窗口没有关联角色存档。");
       return;
     }
-    flushCurrentParkSave();
+    if (!(await flushCurrentParkSave()).ok) return;
     const currentSave = readParkSaveSlot(hostSlotId) ?? saveRef.current;
     if (!currentSave) {
       setDebugMessage("未找到当前角色存档，无法前往长椅。");
@@ -940,6 +958,7 @@ export const ParkApp = () => {
 
   return (
     <main className="park-app" aria-label="Aivatar Hilltop Park">
+      {saveError && <div role="alert">{saveError} <button type="button" onClick={() => void flushCurrentParkSave()}>Retry save</button></div>}
       <canvas ref={canvasRef} className="park-canvas" />
       {SHOW_PARK_DEBUG ? (
         <div className="park-debug">

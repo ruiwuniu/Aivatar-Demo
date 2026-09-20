@@ -286,16 +286,16 @@ try {
     "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
     "--headless=new", "--window-size=1000,800", "about:blank"], { stdio: "ignore" });
   const first = await addPage(debugPort, null, origin);
-  await first.evaluate("__persistenceSmoke.advance(21000)");
+  await first.evaluate("__persistenceSmoke.advance(301000)");
 
-  for (const [duration, marker] of [[120000, 0], [300000, 1000]]) {
+  for (const [duration, marker] of [[600000, 0], [900000, 2000]]) {
     const result = await telemetry(first, duration, marker);
-    const expected = duration / 20000;
+    const expected = duration / 300000;
     reports.push({ case: "continuous-navigation", ...result, savedCharacters: result.writes.reduce((sum, entry) => sum + entry.characters, 0) });
     console.log(`Navigation ${duration}ms: ${result.writes.length} writes, latest marker ${result.marker}`);
     assert.ok(result.writes.length >= expected - 1, `Continuous navigation starved ${duration}ms save deadline`);
     assert.ok(result.writes.length <= expected + 2, `Excessive slot writes: ${result.writes.length} for ${duration}ms`);
-    assert.ok(result.marker >= marker + duration / 500 - 40, "Persisted navigation is more than one interval stale");
+    assert.ok(result.marker >= marker + duration / 500 - 600, "Persisted navigation is more than one interval stale");
   }
 
   const purchase = await first.evaluate(`(async () => {
@@ -309,7 +309,7 @@ try {
     button.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 })); await h.drain();
     return { before, after: h.read().wallet.bits, quantity: h.read().inventory.find((entry) => entry.itemId === 'cookie')?.quantity ?? 0 };
   })()`);
-  assert.equal(purchase.before - purchase.after, 6, "Purchase was not persisted without a 20-second wait");
+  assert.equal(purchase.before - purchase.after, 6, "Purchase was not persisted without waiting for the passive interval");
   assert.equal(purchase.quantity, 1);
   reports.push({ case: "immediate-purchase", ...purchase });
 
@@ -325,20 +325,20 @@ try {
 
   const created = await first.send("Target.createTarget", { url: "about:blank", background: true });
   const second = await addPage(debugPort, created.targetId, origin);
-  await first.evaluate("__persistenceSmoke.advance(21000)");
-  await second.evaluate("__persistenceSmoke.advance(21000)");
+  await first.evaluate("__persistenceSmoke.advance(301000)");
+  await second.evaluate("__persistenceSmoke.advance(301000)");
   await first.evaluate("__persistenceSmoke.changeNavigation(9001)");
   await second.evaluate(`(async () => {
     const park = await import('/src/park/parkStorage.ts');
     const cards = await import('/src/cardRoom/saveRoster.ts');
-    park.recordParkCatch(${JSON.stringify(slotA)}, 'raw-rainbow-trout');
-    park.mutateParkSaveSlot(${JSON.stringify(slotA)}, (save) => ({ ...save, inventory: [...save.inventory, { itemId: 'fishing-rod', quantity: 1 }] }));
-    cards.writeCardRoomSaveSlotPokerChips(${JSON.stringify(slotA)}, 321);
+    await park.recordParkCatch(${JSON.stringify(slotA)}, 'raw-rainbow-trout');
+    await park.mutateParkSaveSlot(${JSON.stringify(slotA)}, (save) => ({ ...save, inventory: [...save.inventory, { itemId: 'fishing-rod', quantity: 1 }] }));
+    await cards.writeCardRoomSaveSlotPokerChips(${JSON.stringify(slotA)}, 321);
     await __persistenceSmoke.drain();
   })()`);
   await first.evaluate("__persistenceSmoke.drain()");
-  await first.evaluate("__persistenceSmoke.advance(21000)");
-  await second.evaluate("__persistenceSmoke.advance(21000)");
+  await first.evaluate("__persistenceSmoke.advance(301000)");
+  await second.evaluate("__persistenceSmoke.advance(301000)");
   const external = await first.evaluate("__persistenceSmoke.read()");
   assert.equal(external.wallet.pokerChips, 321, "Old main-room draft overwrote external chips");
   assert.ok(external.inventory.some((entry) => entry.itemId === "fishing-rod" && entry.quantity === 1), "External inventory was overwritten");
@@ -348,13 +348,13 @@ try {
 
   const beforeEcho = await Promise.all(clients.map((client) => client.evaluate(`__persistenceSmoke.writes.filter((entry) => entry.key === ${JSON.stringify(keyA)}).length`)));
   for (let step = 0; step < 3; step++) {
-    await first.evaluate("__persistenceSmoke.advance(21000)");
-    await second.evaluate("__persistenceSmoke.advance(21000)");
+    await first.evaluate("__persistenceSmoke.advance(301000)");
+    await second.evaluate("__persistenceSmoke.advance(301000)");
   }
   const afterEcho = await Promise.all(clients.map((client) => client.evaluate(`__persistenceSmoke.writes.filter((entry) => entry.key === ${JSON.stringify(keyA)}).length`)));
   const echoedWrites = afterEcho.reduce((sum, count, index) => sum + count - beforeEcho[index], 0);
   assert.equal(echoedWrites, 0, "Two idle windows echoed storage updates back into localStorage");
-  reports.push({ case: "two-window-storage-echo", millisecondsPerWindow: 63000, writes: echoedWrites });
+  reports.push({ case: "two-window-storage-echo", millisecondsPerWindow: 903000, writes: echoedWrites });
 
   const switchResult = await first.evaluate(`(async () => {
     const h = __persistenceSmoke;
@@ -372,11 +372,16 @@ try {
   reports.push({ case: "immediate-slot-switch", ...switchResult });
 
   await second.evaluate("__persistenceSmoke.changeNavigation(9003)");
+  await second.evaluate(`(async () => {
+    window.dispatchEvent(new PageTransitionEvent('pagehide'));
+    await __persistenceSmoke.drain();
+    await (await import('/src/persistence/saveStore.ts')).drainStore();
+  })()`);
   await second.send("Page.navigate", { url: "about:blank" });
   await delay(100);
   const closedMarker = await first.evaluate("__persistenceSmoke.read().navMemory.exploredCells['persistence-smoke']");
-  assert.equal(closedMarker, 9003, "Document unload did not flush pending navigation");
-  reports.push({ case: "document-unload-flush", marker: closedMarker });
+  assert.equal(closedMarker, 9003, "Awaited pagehide flush did not preserve pending navigation");
+  reports.push({ case: "awaited-pagehide-flush-before-navigation", marker: closedMarker });
   for (const client of clients) assert.equal(client.networkBridgeRequests.length, 0, "Bridge URL reached the browser network stack despite the synthetic adapter");
   const output = { ok: true, temporary, scope: "Mounted React App; controlled navigation/timers; paused Canvas animation; synthetic bridge and saves", reports };
   fs.writeFileSync(path.join(temporary, "report.json"), JSON.stringify(output, null, 2));

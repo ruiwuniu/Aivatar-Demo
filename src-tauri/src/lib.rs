@@ -3,14 +3,388 @@ use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Mutex,
+    Arc, Mutex, OnceLock,
 };
 
 use tauri::{path::BaseDirectory, Emitter, Manager, Size};
 
 mod codex_discovery;
 mod local_bridge;
+mod save_store;
 mod workbuddy_discovery;
+
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyntheticProfile {
+    #[serde(skip)]
+    root: std::path::PathBuf,
+    format: String,
+    identifier: String,
+    data_store_identifier: [u8; 16],
+}
+
+const SYNTHETIC_NETWORK_ISOLATION: &str = r#"
+(() => {
+  if (window.__AIVATAR_SYNTHETIC_NETWORK_ISOLATED__) return;
+  Object.defineProperty(window, '__AIVATAR_SYNTHETIC_NETWORK_ISOLATED__', {value: true});
+  const blocked = value => {
+    try { const url = new URL(typeof value === 'string' ? value : (value instanceof URL ? value.href : value.url), location.href); return url.port === '38987' || url.port === '38988'; }
+    catch { return false; }
+  };
+  const denied = () => new DOMException('Live agent bridge is disabled for synthetic persistence tests', 'SecurityError');
+  const audit = { blocked: 0 };
+  Object.defineProperty(window, '__AIVATAR_SYNTHETIC_NETWORK_AUDIT__', {value: audit});
+  const idle = {agent: 'aivatar', sessionId: 'synthetic-isolated', status: 'idle', phase: 'synthetic', timestamp: new Date().toISOString()};
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input, options) => {
+    if (!blocked(input)) return originalFetch(input, options);
+    audit.blocked += 1;
+    const url = String(typeof input === 'string' ? input : (input instanceof URL ? input.href : input.url));
+    const body = url.includes('/rooms') ? {rooms: [], visits: []} : url.includes('/agent-status') ? {type: 'aivatar.status.snapshot', currentStatus: idle, sessions: []} : {ok: true};
+    return Promise.resolve(new Response(JSON.stringify(body), {status: 200, headers: {'content-type': 'application/json'}}));
+  };
+  const originalOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) { if (blocked(String(url))) throw denied(); return originalOpen.call(this, method, url, ...rest); };
+  class SyntheticSocket extends EventTarget {
+    constructor(url) { super(); this.url = String(url); this.readyState = 0; audit.blocked += 1; queueMicrotask(() => { if (this.readyState === 3) return; this.readyState = 1; this.onopen?.(new Event('open')); this.dispatchEvent(new Event('open')); }); }
+    send() {}
+    close() { if (this.readyState === 3) return; this.readyState = 3; this.onclose?.(new Event('close')); this.dispatchEvent(new Event('close')); }
+  }
+  for (const name of ['WebSocket', 'EventSource']) {
+    const Original = window[name];
+    if (Original) window[name] = new Proxy(Original, {construct(Target, args, NewTarget) { if (blocked(String(args[0]))) return new SyntheticSocket(args[0]); return Reflect.construct(Target, args, NewTarget); }});
+  }
+  const originalBeacon = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
+  if (originalBeacon) navigator.sendBeacon = (url, data) => { if (blocked(String(url))) { audit.blocked += 1; return true; } return originalBeacon(url, data); };
+})();
+"#;
+
+/// A debug-only test entry point. No profile override is accepted without an
+/// explicitly generated marker, a separate identifier and a separate WebKit UUID.
+fn synthetic_profile() -> Result<Option<SyntheticProfile>, String> {
+    static PROFILE: OnceLock<Result<Option<SyntheticProfile>, String>> = OnceLock::new();
+    PROFILE
+        .get_or_init(|| {
+            let Some(root) = std::env::var_os("AIVATAR_SYNTHETIC_ROOT") else {
+                return Ok(None);
+            };
+            if !cfg!(debug_assertions) {
+                return Err(
+                    "Synthetic persistence profiles are unavailable in release builds.".into(),
+                );
+            }
+            let root = std::path::PathBuf::from(root)
+                .canonicalize()
+                .map_err(|error| format!("Invalid synthetic root: {error}"))?;
+            let marker = root.join("synthetic-profile.json");
+            let metadata = std::fs::symlink_metadata(&marker)
+                .map_err(|error| format!("Synthetic profile marker is required: {error}"))?;
+            if !metadata.file_type().is_file() || metadata.len() > 16_384 {
+                return Err("Synthetic profile marker is not a bounded regular file.".into());
+            }
+            let mut profile: SyntheticProfile =
+                serde_json::from_slice(&std::fs::read(&marker).map_err(|error| error.to_string())?)
+                    .map_err(|error| format!("Invalid synthetic profile marker: {error}"))?;
+            if profile.format != "aivatar-synthetic-profile-v1"
+                || !profile.identifier.starts_with("com.aivatar.synthetic.")
+                || profile.identifier.len() > 180
+                || !profile
+                    .identifier
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-')
+                || profile.data_store_identifier == [0; 16]
+            {
+                return Err(
+                    "Synthetic profile must have a separate identifier and nonzero WebKit UUID."
+                        .into(),
+                );
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let output = std::process::Command::new("/usr/bin/sw_vers")
+                    .arg("-productVersion")
+                    .output()
+                    .map_err(|error| error.to_string())?;
+                let major = String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .split('.')
+                    .next()
+                    .and_then(|part| part.parse::<u32>().ok())
+                    .unwrap_or(0);
+                if !output.status.success() || major < 14 {
+                    return Err("Synthetic WebKit isolation requires macOS 14 or later.".into());
+                }
+            }
+            profile.root = root;
+            Ok(Some(profile))
+        })
+        .clone()
+}
+
+fn app_owned_data_directory(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    if let Some(profile) = synthetic_profile()? {
+        return Ok(profile.root.join("app-data"));
+    }
+    app.path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not resolve app data directory: {error}"))
+}
+
+fn reject_synthetic_agent_access() -> Result<(), String> {
+    if synthetic_profile()?.is_some() {
+        return Err("Agent integrations, discovery and the status bridge are disabled in the synthetic persistence profile.".into());
+    }
+    Ok(())
+}
+
+fn isolate_synthetic_window<'a>(
+    builder: tauri::WebviewWindowBuilder<'a, tauri::Wry, tauri::AppHandle>,
+) -> Result<tauri::WebviewWindowBuilder<'a, tauri::Wry, tauri::AppHandle>, String> {
+    Ok(if let Some(profile) = synthetic_profile()? {
+        builder
+            .data_store_identifier(profile.data_store_identifier)
+            .data_directory(profile.root.join("webview"))
+    } else {
+        builder
+    })
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveStoreChanged {
+    #[serde(flatten)]
+    snapshot: save_store::Snapshot,
+    origin_session_id: String,
+}
+
+#[tauri::command]
+async fn save_store_bootstrap(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Arc<save_store::SaveStore>>,
+) -> Result<save_store::Bootstrap, String> {
+    let store = Arc::clone(state.inner());
+    let label = window.label().to_string();
+    let generation = store.window_generation(&label)?;
+    tauri::async_runtime::spawn_blocking(move || store.bootstrap_window(&label, generation))
+        .await
+        .map_err(|error| format!("Native storage worker failed: {error}"))?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn save_store_migrate(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Arc<save_store::SaveStore>>,
+    session_id: String,
+    entries: std::collections::BTreeMap<String, String>,
+    raw_entries: std::collections::BTreeMap<String, String>,
+    origin: String,
+) -> Result<save_store::Snapshot, String> {
+    let store = Arc::clone(state.inner());
+    let label = window.label().to_string();
+    let origin_session_id = session_id.clone();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        store.migrate(
+            &label,
+            save_store::MigrateRequest {
+                session_id,
+                entries,
+                raw_entries,
+                origin,
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("Native storage worker failed: {error}"))??;
+    let _ = app.emit(
+        "aivatar://store-changed",
+        SaveStoreChanged {
+            snapshot: snapshot.clone(),
+            origin_session_id,
+        },
+    );
+    Ok(snapshot)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn save_store_read(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Arc<save_store::SaveStore>>,
+    session_id: String,
+) -> Result<save_store::Snapshot, String> {
+    let store = Arc::clone(state.inner());
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || store.read(&label, &session_id))
+        .await
+        .map_err(|error| format!("Native storage worker failed: {error}"))?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn save_store_commit(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Arc<save_store::SaveStore>>,
+    session_id: String,
+    operation_id: u64,
+    expected: std::collections::BTreeMap<String, u64>,
+    changes: std::collections::BTreeMap<String, Option<String>>,
+) -> Result<save_store::CommitResult, String> {
+    let store = Arc::clone(state.inner());
+    let label = window.label().to_string();
+    let origin_session_id = session_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        store.commit(
+            &label,
+            save_store::CommitRequest {
+                session_id,
+                operation_id,
+                expected,
+                changes,
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("Native storage worker failed: {error}"))??;
+    if result.ok {
+        if let Some(snapshot) = result.snapshot.as_ref() {
+            let _ = app.emit(
+                "aivatar://store-changed",
+                SaveStoreChanged {
+                    snapshot: snapshot.clone(),
+                    origin_session_id,
+                },
+            );
+        }
+    }
+    Ok(result)
+}
+
+#[derive(Default)]
+struct SyntheticHarnessState {
+    reports: Mutex<HashMap<String, serde_json::Value>>,
+}
+
+fn synthetic_harness_phase() -> Result<Option<String>, String> {
+    let phase = std::env::var("AIVATAR_SYNTHETIC_PHASE").ok();
+    if let Some(value) = phase.as_deref() {
+        if !["initial", "restart", "crash", "after-crash"].contains(&value) {
+            return Err("Unknown synthetic persistence phase.".into());
+        }
+    }
+    Ok(phase)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn save_store_synthetic_control(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    action: String,
+    peer: Option<String>,
+    report: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let profile = synthetic_profile()?
+        .ok_or("Synthetic control is disabled outside a marked debug profile")?;
+    let target = match peer.as_deref() {
+        Some("alpha") => "save-slot-synthetic-alpha",
+        Some("beta") => "save-slot-synthetic-beta",
+        None => window.label(),
+        _ => return Err("Invalid synthetic peer".into()),
+    };
+    match action.as_str() {
+        "open-peer" => {
+            if target == window.label() {
+                return Err("A synthetic peer name is required".into());
+            }
+            if app.get_webview_window(target).is_none() {
+                let role = peer.as_deref().ok_or("Missing peer")?;
+                let phase = synthetic_harness_phase()?.unwrap_or_else(|| "initial".into());
+                let url = format!("./?nativeStoreHarness=peer&role={role}&phase={phase}");
+                let peer_window = isolate_synthetic_window(tauri::WebviewWindowBuilder::new(
+                    &app,
+                    target,
+                    tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
+                ))?
+                .title(format!("Aivatar synthetic store — {role}"))
+                .inner_size(600.0, 420.0)
+                .additional_browser_args(WEBVIEW2_BROWSER_ARGS)
+                .build()
+                .map_err(|error| error.to_string())?;
+                attach_save_before_close_handler(peer_window);
+            }
+            Ok(serde_json::json!({"label":target}))
+        }
+        "start-work" => {
+            app.emit_to(target, "aivatar://synthetic-work", ())
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "request-close" => {
+            app.get_webview_window(target)
+                .ok_or("Synthetic window is absent")?
+                .close()
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "status" => {
+            let reports = app
+                .state::<SyntheticHarnessState>()
+                .reports
+                .lock()
+                .map_err(|_| "Synthetic reports lock was poisoned")?
+                .clone();
+            let windows: Vec<String> = app.webview_windows().keys().cloned().collect();
+            Ok(serde_json::json!({"reports":reports,"windows":windows}))
+        }
+        "report" => {
+            let report = report.ok_or("Missing synthetic report")?;
+            let encoded = serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?;
+            if encoded.len() > 1024 * 1024 {
+                return Err("Synthetic report exceeds 1 MiB".into());
+            }
+            let label = window.label().to_string();
+            app.state::<SyntheticHarnessState>()
+                .reports
+                .lock()
+                .map_err(|_| "Synthetic reports lock was poisoned")?
+                .insert(label.clone(), report);
+            let phase = synthetic_harness_phase()?.unwrap_or_else(|| "manual".into());
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos();
+            let directory = profile.root.join("reports");
+            let name = format!(
+                "{}-{phase}-{stamp}.json",
+                safe_social_room_memory_key(&label)
+            );
+            tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+                use std::io::Write;
+                std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(directory.join(name))
+                    .map_err(|error| error.to_string())?;
+                file.write_all(&encoded)
+                    .map_err(|error| error.to_string())?;
+                file.sync_all().map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| error.to_string())??;
+            Ok(serde_json::Value::Null)
+        }
+        #[cfg(debug_assertions)]
+        "diagnostics" => {
+            let store = Arc::clone(app.state::<Arc<save_store::SaveStore>>().inner());
+            tauri::async_runtime::spawn_blocking(move || store.synthetic_diagnostics())
+                .await.map_err(|error| error.to_string())?
+        }
+        "crash" => {
+            std::process::exit(74);
+        }
+        _ => Err("Unknown synthetic control action".into()),
+    }
+}
 
 #[derive(serde::Serialize)]
 struct BridgeStartResult {
@@ -214,7 +588,28 @@ fn url_component(value: &str) -> String {
     encoded
 }
 
+fn attach_store_window_lifecycle(window: &tauri::WebviewWindow) {
+    let store = Arc::clone(window.state::<Arc<save_store::SaveStore>>().inner());
+    let label = window.label().to_string();
+    let generation = store
+        .register_window(&label)
+        .expect("could not register native window lifetime");
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::Destroyed = event {
+            // Expire authorization synchronously using a short metadata-only lock.
+            // Deferred cleanup carries this exact generation, never just a label.
+            let _ = store.expire_window(&label, generation);
+            let store = Arc::clone(&store);
+            let label = label.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = store.end_window_generation(&label, generation);
+            });
+        }
+    });
+}
+
 fn attach_save_before_close_handler(window: tauri::WebviewWindow) {
+    attach_store_window_lifecycle(&window);
     let app = window.app_handle().clone();
     let label = window.label().to_string();
     let window_for_event = window.clone();
@@ -244,7 +639,8 @@ fn attach_save_before_close_handler(window: tauri::WebviewWindow) {
             drop(windows);
 
             if window_for_event
-                .emit(
+                .emit_to(
+                    label.as_str(),
                     "aivatar://save-before-close",
                     SaveBeforeCloseRequest { request_id },
                 )
@@ -496,9 +892,7 @@ fn resolve_command(command: &str) -> Option<std::path::PathBuf> {
     use std::os::windows::process::CommandExt;
     process.creation_flags(0x08000000);
 
-    let output = process
-        .output()
-        .ok()?;
+    let output = process.output().ok()?;
 
     if !output.status.success() {
         return windows_command_fallback(command);
@@ -580,7 +974,10 @@ fn claude_wrapper_paths() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
 #[cfg(not(target_os = "windows"))]
 fn claude_wrapper_paths() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let dir = user_home_dir()?.join(".claude");
-    Some((dir.join("aivatar-hook.sh"), dir.join("aivatar-statusline.sh")))
+    Some((
+        dir.join("aivatar-hook.sh"),
+        dir.join("aivatar-statusline.sh"),
+    ))
 }
 
 fn json_contains_aivatar(value: &serde_json::Value) -> bool {
@@ -727,7 +1124,10 @@ fn upsert_claude_hook(
 
 #[cfg(target_os = "windows")]
 fn windows_shell_path_quote(path: &std::path::Path) -> String {
-    format!("\"{}\"", path_text(path).replace('\\', "/").replace('"', ""))
+    format!(
+        "\"{}\"",
+        path_text(path).replace('\\', "/").replace('"', "")
+    )
 }
 
 #[cfg(target_os = "windows")]
@@ -768,7 +1168,10 @@ fn claude_status_line_command(path: &std::path::Path) -> String {
 
 #[cfg(not(target_os = "windows"))]
 fn claude_status_line_command(path: &std::path::Path) -> String {
-    format!("/bin/sh '{}' status-line", path_text(path).replace('\'', "'\\''"))
+    format!(
+        "/bin/sh '{}' status-line",
+        path_text(path).replace('\'', "'\\''")
+    )
 }
 
 #[cfg(target_os = "windows")]
@@ -822,8 +1225,8 @@ fi
 fn enable_claude_code_integration() -> Result<(), String> {
     let settings_path =
         claude_settings_path().ok_or_else(|| "Could not resolve ~/.claude.".to_string())?;
-    let (hook_path, status_line_path) =
-        claude_wrapper_paths().ok_or_else(|| "Could not resolve Claude wrapper path.".to_string())?;
+    let (hook_path, status_line_path) = claude_wrapper_paths()
+        .ok_or_else(|| "Could not resolve Claude wrapper path.".to_string())?;
     atomic_write_text(&hook_path, &claude_wrapper_content("hook"))?;
     atomic_write_text(&status_line_path, &claude_wrapper_content("status-line"))?;
     make_executable(&hook_path)?;
@@ -839,7 +1242,10 @@ fn enable_claude_code_integration() -> Result<(), String> {
             .or_insert_with(|| serde_json::json!({}))
             .as_object_mut()
             .ok_or_else(|| "Claude settings env must be a JSON object.".to_string())?;
-        env.insert("AIVATAR_LEARNING_ENABLED".to_string(), serde_json::json!("1"));
+        env.insert(
+            "AIVATAR_LEARNING_ENABLED".to_string(),
+            serde_json::json!("1"),
+        );
         env.insert(
             "AIVATAR_LEARNING_PROVIDER".to_string(),
             serde_json::json!("claude-code"),
@@ -903,8 +1309,8 @@ fn enable_claude_code_integration() -> Result<(), String> {
 }
 
 fn enable_opencode_integration(app: Option<&tauri::AppHandle>) -> Result<(), String> {
-    let target =
-        opencode_plugin_path().ok_or_else(|| "Could not resolve opencode plugin path.".to_string())?;
+    let target = opencode_plugin_path()
+        .ok_or_else(|| "Could not resolve opencode plugin path.".to_string())?;
     let scripts = scripts_root(app)
         .ok_or_else(|| "Aivatar scripts were not found in the app resources.".to_string())?;
     let source = scripts.join("aivatar-opencode-plugin.mjs");
@@ -916,7 +1322,9 @@ fn enable_opencode_integration(app: Option<&tauri::AppHandle>) -> Result<(), Str
     } else {
         String::new()
     };
-    let node_value = resolve_command("node").map(|path| path_text(&path)).unwrap_or_default();
+    let node_value = resolve_command("node")
+        .map(|path| path_text(&path))
+        .unwrap_or_default();
     content = content.replace(
         "\"__AIVATAR_LEARNING_SCRIPT__\"",
         &serde_json::to_string(&learning_script_value).map_err(|error| error.to_string())?,
@@ -952,7 +1360,8 @@ fn claude_code_integration_status() -> AgentIntegrationStatus {
         detail: if enabled {
             "Hooks/statusLine installed for Claude Code, Chat, and Cowork sessions.".to_string()
         } else if has_aivatar_config {
-            "Aivatar Claude hooks are incomplete; repair to restore Chat and Cowork tracking.".to_string()
+            "Aivatar Claude hooks are incomplete; repair to restore Chat and Cowork tracking."
+                .to_string()
         } else if detected {
             "Claude Code detected; enable Aivatar hooks from this app.".to_string()
         } else {
@@ -970,7 +1379,12 @@ fn opencode_integration_status() -> AgentIntegrationStatus {
     #[cfg(target_os = "windows")]
     let desktop_detected = std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
-        .map(|path| path.join("Programs").join("@opencode-aidesktop").join("OpenCode.exe").is_file())
+        .map(|path| {
+            path.join("Programs")
+                .join("@opencode-aidesktop")
+                .join("OpenCode.exe")
+                .is_file()
+        })
         .unwrap_or(false);
     #[cfg(target_os = "macos")]
     let desktop_detected = [
@@ -1010,6 +1424,9 @@ fn opencode_integration_status() -> AgentIntegrationStatus {
 
 #[tauri::command]
 fn get_agent_integrations() -> Result<Vec<AgentIntegrationStatus>, String> {
+    if synthetic_profile()?.is_some() {
+        return Ok(Vec::new());
+    }
     Ok(vec![
         claude_code_integration_status(),
         opencode_integration_status(),
@@ -1021,6 +1438,7 @@ fn enable_agent_integration(
     app: tauri::AppHandle,
     request: AgentIntegrationRequest,
 ) -> Result<AgentIntegrationStatus, String> {
+    reject_synthetic_agent_access()?;
     match request.agent.as_str() {
         "claude-code" => {
             enable_claude_code_integration()?;
@@ -1043,6 +1461,7 @@ fn is_status_bridge_running() -> bool {
 }
 
 fn start_status_bridge_inner(app: Option<&tauri::AppHandle>) -> Result<BridgeStartResult, String> {
+    reject_synthetic_agent_access()?;
     let connector = connector_root(app);
     let learning_script = scripts_root(app).map(|path| path.join("aivatar-learning-worker.mjs"));
     if is_status_bridge_running() {
@@ -1347,6 +1766,7 @@ fn start_agent_cli(
     app: tauri::AppHandle,
     request: AgentCliLaunchRequest,
 ) -> Result<AgentCliLaunchResult, String> {
+    reject_synthetic_agent_access()?;
     let cwd = std::path::PathBuf::from(request.cwd.trim());
     if !cwd.is_dir() {
         return Err("Working directory does not exist.".to_string());
@@ -1374,9 +1794,7 @@ fn start_agent_cli(
     let _ = start_status_bridge_inner(Some(&app))?;
 
     let Some(scripts) = scripts_root(Some(&app)) else {
-        return Err(
-            "Aivatar connected CLI runner was not found in the app resources.".to_string(),
-        );
+        return Err("Aivatar connected CLI runner was not found in the app resources.".to_string());
     };
 
     let runner = scripts.join("aivatar-connected-run.mjs");
@@ -1427,6 +1845,7 @@ fn start_task_agent(
     app: tauri::AppHandle,
     request: TaskAgentLaunchRequest,
 ) -> Result<TaskAgentLaunchResult, String> {
+    reject_synthetic_agent_access()?;
     let cwd = std::path::PathBuf::from(request.cwd.trim());
     if !cwd.is_dir() {
         return Err("Working directory does not exist.".to_string());
@@ -1583,11 +2002,11 @@ async fn open_save_slot_window(
         .map(|name| format!("Aivatar - {name}"))
         .unwrap_or_else(|| "Aivatar".to_string());
     let url = format!("./?slotId={}", url_component(slot_id));
-    let window = tauri::WebviewWindowBuilder::new(
+    let window = isolate_synthetic_window(tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
-    )
+    ))?
     .title(title)
     .inner_size(MAIN_WINDOW_DEFAULT_WIDTH, MAIN_WINDOW_DEFAULT_HEIGHT)
     .min_inner_size(MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT)
@@ -1603,6 +2022,17 @@ async fn open_save_slot_window(
     attach_save_before_close_handler(window);
 
     Ok(SaveSlotWindowResult { label })
+}
+
+// Only the explicitly marked debug integration run appends this harness route.
+// Ordinary development/release windows retain their existing URLs.
+fn synthetic_view_url(url: String, view: &str) -> Result<String, String> {
+    if synthetic_profile()?.is_some() {
+        if let Some(phase) = synthetic_harness_phase()? {
+            return Ok(format!("{url}&nativeStoreHarness=view&role={view}&phase={phase}"));
+        }
+    }
+    Ok(url)
 }
 
 #[tauri::command]
@@ -1624,15 +2054,15 @@ async fn open_card_room_window(
         return Ok(CardRoomWindowResult { label });
     }
 
-    let url = format!(
+    let url = synthetic_view_url(format!(
         "./?view=card-room&hostSlotId={}",
         url_component(host_slot_id)
-    );
-    let window = tauri::WebviewWindowBuilder::new(
+    ), "card-room")?;
+    let window = isolate_synthetic_window(tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
-    )
+    ))?
     .title("Aivatar - Card Room")
     .inner_size(1180.0, 900.0)
     .min_inner_size(1180.0, 900.0)
@@ -1669,12 +2099,12 @@ async fn open_park_window(
         return Ok(ParkWindowResult { label });
     }
 
-    let url = format!("./?view=park&hostSlotId={}", url_component(host_slot_id));
-    let window = tauri::WebviewWindowBuilder::new(
+    let url = synthetic_view_url(format!("./?view=park&hostSlotId={}", url_component(host_slot_id)), "park")?;
+    let window = isolate_synthetic_window(tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
-    )
+    ))?
     .title("Aivatar - Hilltop Park")
     .inner_size(1180.0, 900.0)
     .min_inner_size(1180.0, 900.0)
@@ -1717,15 +2147,15 @@ async fn open_park_developer_window(
         return Ok(ParkWindowResult { label });
     }
 
-    let url = format!(
+    let url = synthetic_view_url(format!(
         "./?view=park-developer&hostSlotId={}",
         url_component(host_slot_id)
-    );
-    tauri::WebviewWindowBuilder::new(
+    ), "park-developer")?;
+    let window = isolate_synthetic_window(tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
-    )
+    ))?
     .title("Aivatar - Park Developer")
     .inner_size(1180.0, 900.0)
     .min_inner_size(960.0, 720.0)
@@ -1737,6 +2167,8 @@ async fn open_park_developer_window(
     .additional_browser_args(WEBVIEW2_BROWSER_ARGS)
     .build()
     .map_err(|error| format!("Could not open park developer: {error}"))?;
+
+    attach_save_before_close_handler(window);
 
     Ok(ParkWindowResult { label })
 }
@@ -1764,11 +2196,11 @@ async fn open_park_animation_preview_window(
         "./?view=park-animation-preview&hostSlotId={}",
         url_component(host_slot_id)
     );
-    tauri::WebviewWindowBuilder::new(
+    let window = isolate_synthetic_window(tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App(std::path::PathBuf::from(url)),
-    )
+    ))?
     .title("Aivatar - Character Animation Preview")
     .inner_size(760.0, 600.0)
     .min_inner_size(680.0, 520.0)
@@ -1780,6 +2212,8 @@ async fn open_park_animation_preview_window(
     .additional_browser_args(WEBVIEW2_BROWSER_ARGS)
     .build()
     .map_err(|error| format!("Could not open park animation preview: {error}"))?;
+
+    attach_store_window_lifecycle(&window);
 
     Ok(ParkWindowResult { label })
 }
@@ -1808,20 +2242,16 @@ fn safe_social_room_memory_key(key: &str) -> String {
     }
 }
 
-fn social_room_memory_path(app: &tauri::AppHandle, key: &str) -> Result<std::path::PathBuf, String> {
-    let directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Could not resolve app data directory: {error}"))?
-        .join("social-room-memory");
+fn social_room_memory_path(
+    app: &tauri::AppHandle,
+    key: &str,
+) -> Result<std::path::PathBuf, String> {
+    let directory = app_owned_data_directory(app)?.join("social-room-memory");
     Ok(directory.join(format!("{}.json", safe_social_room_memory_key(key))))
 }
 
 #[tauri::command]
-fn read_social_room_memory(
-    app: tauri::AppHandle,
-    key: String,
-) -> Result<Option<String>, String> {
+fn read_social_room_memory(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
     let path = social_room_memory_path(&app, &key)?;
     if !path.is_file() {
         return Ok(None);
@@ -1854,6 +2284,26 @@ fn write_social_room_memory(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let synthetic = synthetic_profile().expect("invalid synthetic persistence profile");
+    let mut context = tauri::generate_context!();
+    if context.config().identifier.starts_with("com.aivatar.synthetic.") && synthetic.is_none() {
+        panic!("a generated synthetic build requires its explicit profile marker");
+    }
+    if let Some(profile) = synthetic.as_ref() {
+        assert_eq!(context.config().identifier, profile.identifier, "synthetic marker must match the generated build identifier");
+        context.config_mut().identifier = profile.identifier.clone();
+        for window in &mut context.config_mut().app.windows {
+            window.data_store_identifier = Some(profile.data_store_identifier);
+            window.data_directory = Some(profile.root.join("webview"));
+            if let Some(phase) = synthetic_harness_phase().expect("invalid synthetic phase") {
+                window.url = tauri::WebviewUrl::App(std::path::PathBuf::from(format!(
+                    "./?nativeStoreHarness=main&phase={phase}"
+                )));
+            }
+        }
+        #[cfg(target_os = "windows")]
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", profile.root.join("webview"));
+    }
     #[cfg(all(debug_assertions, target_os = "windows"))]
     if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_none() {
         let dev_profile = format!(
@@ -1866,17 +2316,31 @@ pub fn run() {
         );
     }
 
-    let app = tauri::Builder::default()
-        .manage(ParkProfileWindowState::default())
-        .manage(CloseSaveState::default())
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+    let mut builder =
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }
-        }))
+        }));
+    if synthetic.is_some() {
+        builder = builder.plugin(
+            tauri::plugin::Builder::<tauri::Wry, ()>::new("synthetic-persistence-isolation")
+                .js_init_script_on_all_frames(SYNTHETIC_NETWORK_ISOLATION)
+                .build(),
+        );
+    }
+    let app = builder
+        .manage(ParkProfileWindowState::default())
+        .manage(CloseSaveState::default())
+        .manage(SyntheticHarnessState::default())
         .invoke_handler(tauri::generate_handler![
+            save_store_synthetic_control,
+            save_store_bootstrap,
+            save_store_migrate,
+            save_store_read,
+            save_store_commit,
             start_status_bridge,
             pick_markdown_task_file,
             pick_launcher_directory,
@@ -1896,6 +2360,14 @@ pub fn run() {
             write_social_room_memory
         ])
         .setup(|app| {
+            let directory =
+                app_owned_data_directory(app.handle()).map_err(std::io::Error::other)?;
+            // Debug/dev WebViews use a separate legacy origin. Never let a dev
+            // launch activate an empty release store in the shared app-data root.
+            let development = cfg!(debug_assertions) && synthetic_profile()?.is_none();
+            app.manage(Arc::new(save_store::SaveStore::new(
+                directory.join(save_store::storage_directory_name(development)),
+            )));
             if let Some(window) = app.get_webview_window("main") {
                 normalize_main_window_size(&window);
                 attach_save_before_close_handler(window);
@@ -1904,7 +2376,7 @@ pub fn run() {
             let _ = start_status_bridge_inner(Some(&app_handle));
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building Aivatar");
 
     app.run(|app_handle, event| {

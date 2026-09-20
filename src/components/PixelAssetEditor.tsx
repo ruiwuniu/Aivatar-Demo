@@ -1,3 +1,4 @@
+import { appStorage } from "../persistence/saveStore";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PixelAsset, PixelAssetFrame, PixelCell } from "../types";
 
@@ -71,7 +72,7 @@ const normalizeAsset = (asset: PixelAsset): PixelAsset => {
 
 const loadAsset = (): PixelAsset => {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = appStorage.getItem(STORAGE_KEY);
     if (!raw) return createDefaultAsset();
     return normalizeAsset(JSON.parse(raw) as PixelAsset);
   } catch {
@@ -222,8 +223,12 @@ export const PixelAssetEditor = () => {
     );
   };
 
-  const saveAsset = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(asset));
+  const saveAsset = async () => {
+    try {
+      await appStorage.setItem(STORAGE_KEY, JSON.stringify(asset));
+    } catch (error) {
+      console.error("Could not save pixel asset.", error);
+    }
   };
 
   const addFrame = () => {

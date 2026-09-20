@@ -102,8 +102,9 @@ import {
   gasOvenRangeCookingFacing,
 } from "./game/gasOvenRangeSprites";
 import { useCodexStatus } from "./hooks/useCodexStatus";
-import { writeJsonIfChanged } from "./persistence/savePersistence";
-import { createRoomSavePersistence } from "./persistence/roomSavePersistence";
+import { appStorage, transactStore, subscribeStore, subscribeStorePause, drainStore, isStoreClosing, pauseStoreUpdates, reportSaveError, type StoreChange } from "./persistence/saveStore";
+import { createRoomSavePersistence, REWARDED_COMPLETION_ID_LIMIT } from "./persistence/roomSavePersistence";
+import { validateSaveValue } from "./persistence/legacySaveMigration";
 import {
   aggregateSaveFlushResults,
   installCloseSaveHandler,
@@ -378,7 +379,6 @@ const TOKEN_REWARD_DEFAULT_MAX_BITS = 100;
 const TOKEN_REWARD_EXTREME_USAGE_TOKEN_THRESHOLD = 1_000_000;
 const TOKEN_REWARD_EXTREME_USAGE_MAX_BITS = 1000;
 const TOKEN_REWARD_CACHED_INPUT_WEIGHT = 0.1;
-const REWARDED_COMPLETION_ID_LIMIT = 256;
 const INTERACTION_ARRIVAL_DISTANCE = 8;
 const AVATAR_FOOTPRINT_HALF_WIDTH = 6;
 const AVATAR_FOOTPRINT_TOP_OFFSET = 6;
@@ -660,7 +660,7 @@ const UI_THEME_OPTIONS: Array<{ id: UiThemeId; copyKey: string }> = [
 ];
 
 const loadInitialUiTheme = (): UiThemeId => {
-  const saved = localStorage.getItem(UI_THEME_KEY);
+  const saved = appStorage.getItem(UI_THEME_KEY);
   if (saved === "terminal-amber") return "terminal-amber";
   if (saved === "arcade-cabinet") return "arcade-cabinet";
   if (saved === "starship-console") return "starship-console";
@@ -671,7 +671,7 @@ const loadInitialUiTheme = (): UiThemeId => {
 const uiThemeForScene = (theme: UiThemeId): SceneUiThemeId => theme;
 
 const loadInitialAudioVolume = () => {
-  const stored = localStorage.getItem(AUDIO_VOLUME_KEY);
+  const stored = appStorage.getItem(AUDIO_VOLUME_KEY);
   if (stored === null) return DEFAULT_AUDIO_VOLUME;
   const saved = Number(stored);
   if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
@@ -679,7 +679,7 @@ const loadInitialAudioVolume = () => {
 };
 
 const loadInitialParkAmbientAudioVolume = () => {
-  const stored = localStorage.getItem(PARK_AMBIENT_AUDIO_VOLUME_KEY);
+  const stored = appStorage.getItem(PARK_AMBIENT_AUDIO_VOLUME_KEY);
   if (stored === null) return DEFAULT_PARK_AMBIENT_AUDIO_VOLUME;
   const saved = Number(stored);
   if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
@@ -687,22 +687,22 @@ const loadInitialParkAmbientAudioVolume = () => {
 };
 
 const loadInitialGameConsoleVolume = () => {
-  const saved = Number(localStorage.getItem(GAME_CONSOLE_VOLUME_KEY));
+  const saved = Number(appStorage.getItem(GAME_CONSOLE_VOLUME_KEY));
   if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
   return DEFAULT_GAME_CONSOLE_VOLUME;
 };
 
 const loadInitialStartupSoundEnabled = () =>
-  localStorage.getItem(STARTUP_SOUND_KEY) === "true";
+  appStorage.getItem(STARTUP_SOUND_KEY) === "true";
 
 const loadInitialBgmVolume = () => {
-  const saved = Number(localStorage.getItem(BGM_VOLUME_KEY));
+  const saved = Number(appStorage.getItem(BGM_VOLUME_KEY));
   if (Number.isFinite(saved)) return Math.min(1, Math.max(0, saved));
   return DEFAULT_BGM_VOLUME;
 };
 
 const loadInitialBgmTrackId = (): BgmTrackId => {
-  const saved = localStorage.getItem(BGM_TRACK_KEY);
+  const saved = appStorage.getItem(BGM_TRACK_KEY);
   return BGM_TRACKS.some((track) => track.id === saved)
     ? (saved as BgmTrackId)
     : DEFAULT_BGM_TRACK_ID;
@@ -715,10 +715,10 @@ const randomBgmTrackId = (currentTrackId: BgmTrackId): BgmTrackId => {
 };
 
 const loadInitialAutoMusicEnabled = () =>
-  localStorage.getItem(AUTO_MUSIC_KEY) !== "false";
+  appStorage.getItem(AUTO_MUSIC_KEY) !== "false";
 
 const loadInitialAlwaysOnTopEnabled = () =>
-  localStorage.getItem(ALWAYS_ON_TOP_KEY) === "true";
+  appStorage.getItem(ALWAYS_ON_TOP_KEY) === "true";
 
 const TASK_CABINET_STATUSES: TaskCabinetStatus[] = [
   "ready",
@@ -836,6 +836,13 @@ const isRewardEligiblePreviousStatus = (status: CodexStatusMessage["status"]) =>
 const statusSessionKey = (
   status: Pick<CodexStatusMessage, "agent" | "sessionId">,
 ) => `${status.agent ?? "agent"}:${status.sessionId ?? "default"}`;
+
+// Presence or another session changing in a full snapshot is not a new
+// completion/learning event for this session.
+const statusArrivalSignature = (status: CodexStatusMessage) => JSON.stringify([
+  status.status, status.timestamp, status.phase ?? null,
+  status.rewardId ?? null, status.learning?.id ?? null,
+]);
 
 const explicitStatusSessionKey = (
   status: Pick<CodexStatusMessage, "agent" | "sessionId">,
@@ -2725,7 +2732,7 @@ const loadDefaultLayout = (content: AivatarContent): DefaultLayoutState => {
   const fallback = defaultLayoutFromContent(content);
 
   try {
-    const raw = localStorage.getItem(DEFAULT_LAYOUT_KEY);
+    const raw = appStorage.getItem(DEFAULT_LAYOUT_KEY);
     if (!raw) return fallback;
 
     const parsed = JSON.parse(raw) as Partial<DefaultLayoutState>;
@@ -2887,7 +2894,7 @@ const loadSave = (content: AivatarContent, storageKey = SAVE_KEY): AivatarSaveSt
   };
 
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = appStorage.getItem(storageKey);
     if (!raw) return fallback;
 
     const parsed = JSON.parse(raw) as Partial<AivatarSaveState>;
@@ -2897,15 +2904,6 @@ const loadSave = (content: AivatarContent, storageKey = SAVE_KEY): AivatarSaveSt
   }
 };
 
-const persistSave = (save: AivatarSaveState, storageKey = SAVE_KEY) => {
-  try {
-    writeJsonIfChanged(localStorage, storageKey, save);
-    return true;
-  } catch (error) {
-    console.warn("Could not persist Aivatar save.", error);
-    return false;
-  }
-};
 
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -2927,6 +2925,7 @@ const parseImportedSave = (content: AivatarContent, raw: string): AivatarSaveSta
   ];
   if (!recognizableKeys.some((key) => key in parsed)) return null;
 
+  validateSaveValue(parsed, "imported character save");
   return normalizeSavePayload(content, parsed as Partial<AivatarSaveState>);
 };
 
@@ -2974,7 +2973,7 @@ const normalizeSaveSlotSummary = (
 
 const readSaveSlots = () => {
   try {
-    const raw = localStorage.getItem(SAVE_SLOTS_KEY);
+    const raw = appStorage.getItem(SAVE_SLOTS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -2993,17 +2992,6 @@ const readSaveSlots = () => {
   }
 };
 
-const writeSaveSlots = (slots: SaveSlotSummary[]) => {
-  const sortedSlots = slots
-    .filter((slot) => slot.slotIndex >= 0 && slot.slotIndex < MAX_SAVE_SLOTS)
-    .sort((a, b) => a.slotIndex - b.slotIndex);
-
-  try {
-    writeJsonIfChanged(localStorage, SAVE_SLOTS_KEY, sortedSlots);
-  } catch (error) {
-    console.warn("Could not persist Aivatar save slots.", error);
-  }
-};
 
 const createSaveSlotSummary = (
   id: string,
@@ -3035,7 +3023,7 @@ const updateSaveSlotSummaryFromSave = (
 });
 
 const resolveActiveSaveSlotId = (slots: SaveSlotSummary[]) => {
-  const activeSlotId = localStorage.getItem(ACTIVE_SAVE_SLOT_KEY);
+  const activeSlotId = appStorage.getItem(ACTIVE_SAVE_SLOT_KEY);
   if (activeSlotId && slots.some((slot) => slot.id === activeSlotId)) {
     return activeSlotId;
   }
@@ -3058,36 +3046,8 @@ const resolveRequestedSaveSlotId = (slots: SaveSlotSummary[]) => {
   return null;
 };
 
-const persistActiveSaveSlotId = (slotId: string | null) => {
-  try {
-    if (slotId) {
-      localStorage.setItem(ACTIVE_SAVE_SLOT_KEY, slotId);
-    } else {
-      localStorage.removeItem(ACTIVE_SAVE_SLOT_KEY);
-    }
-  } catch (error) {
-    console.warn("Could not persist active Aivatar save slot.", error);
-  }
-};
-
-const ensureSaveSlotRegistry = (content: AivatarContent) => {
-  const existingSlots = readSaveSlots();
-  if (existingSlots.length > 0) return existingSlots;
-
-  const legacyRaw = localStorage.getItem(SAVE_KEY);
-  if (!legacyRaw) return [];
-
-  const slotId = createSaveSlotId();
-  const migratedSave = loadSave(content, SAVE_KEY);
-  const timestamp = new Date().toISOString();
-  const migratedSlot = createSaveSlotSummary(slotId, 0, migratedSave, timestamp);
-
-  persistSave(migratedSave, saveSlotStorageKey(slotId));
-  writeSaveSlots([migratedSlot]);
-  persistActiveSaveSlotId(slotId);
-
-  return [migratedSlot];
-};
+// Legacy conversion is completed atomically during bootstrap, before React mounts.
+const ensureSaveSlotRegistry = (_content: AivatarContent) => readSaveSlots();
 
 const isTaskCabinetStatus = (value: unknown): value is TaskCabinetStatus =>
   typeof value === "string" &&
@@ -3394,7 +3354,7 @@ const normalizeTaskCabinetEntry = (value: unknown): TaskCabinetEntry | null => {
 
 const loadTaskCabinetEntries = (): TaskCabinetEntry[] => {
   try {
-    const raw = localStorage.getItem(TASK_CABINET_STORAGE_KEY);
+    const raw = appStorage.getItem(TASK_CABINET_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -3410,7 +3370,7 @@ const loadTaskCabinetEntries = (): TaskCabinetEntry[] => {
 
 const persistTaskCabinetEntries = (entries: TaskCabinetEntry[]) => {
   try {
-    localStorage.setItem(TASK_CABINET_STORAGE_KEY, JSON.stringify(entries));
+    appStorage.setItem(TASK_CABINET_STORAGE_KEY, JSON.stringify(entries));
   } catch (error) {
     console.warn("Could not persist Task Cabinet entries.", error);
   }
@@ -3788,49 +3748,141 @@ export const App = () => {
   const [scenePanelWidth, setScenePanelWidth] = useState<number | null>(null);
   const previousExpandedWindowWidthRef = useRef(DEFAULT_EXPANDED_WINDOW_WIDTH);
   const sidePanelTimerRef = useRef<number | null>(null);
-  const [save, setSave] = useState<AivatarSaveState>(() => loadInitialSave());
+  const [save, setSaveState] = useState<AivatarSaveState>(() => loadInitialSave());
   const saveRef = useRef(save);
+  const [storePaused, setStorePaused] = useState(isStoreClosing);
+  const deferredSaveUpdatesRef = useRef(new Map<string | null, Array<React.SetStateAction<AivatarSaveState>>>());
+  const deferredStatusFramesRef = useRef<Array<{
+    slotId: string | null;
+    effectiveStatus: CodexStatusMessage | null;
+    memoryStatus: CodexStatusMessage | null;
+    sessions: CodexStatusMessage[];
+    arrivedAt: number;
+  }>>([]);
+  const capturedStatusInputRef = useRef<{
+    effectiveStatus: CodexStatusMessage;
+    sessions: CodexStatusMessage[];
+  } | null>(null);
+  const observedStatusArrivalsRef = useRef(new Map<string, string>());
+  useEffect(() => subscribeStorePause(setStorePaused), []);
+  const setSaveForSlot = (slotId: string | null, update: React.SetStateAction<AivatarSaveState>) => {
+    if (isStoreClosing() || slotId !== activeSaveSlotIdRef.current) {
+      const pending = deferredSaveUpdatesRef.current.get(slotId) ?? [];
+      pending.push(update);
+      deferredSaveUpdatesRef.current.set(slotId, pending);
+      if (!isStoreClosing()) void flushDeferredSaveUpdates().catch(reportSaveError);
+      return;
+    }
+    // Keep the close snapshot current even before React's next layout effect.
+    const next = typeof update === "function" ? update(saveRef.current) : update;
+    saveRef.current = next;
+    setSaveState(next);
+  };
+  const setSave: typeof setSaveState = (update) => setSaveForSlot(activeSaveSlotIdRef.current, update);
   const urgentSaveRef = useRef(false);
   const saveContentRef = useRef(contentBase);
   saveContentRef.current = contentBase;
-  const updateSaveSlotSummary = (
-    slotId: string,
-    savedState: AivatarSaveState,
-    syncState = true,
-  ) => {
-    const timestamp = new Date().toISOString();
-    const currentSlots = readSaveSlots();
-    if (!currentSlots.some((slot) => slot.id === slotId)) return;
-    const nextSlots = currentSlots.map((slot) =>
-      slot.id === slotId ? updateSaveSlotSummaryFromSave(slot, savedState, timestamp) : slot,
-    );
-
-    saveSlotsRef.current = nextSlots;
-    writeSaveSlots(nextSlots);
-    if (syncState) setSaveSlots(nextSlots);
+  const updateSaveSlotSummary = (_slotId: string, _savedState: AivatarSaveState, syncState = true) => {
+    const slots = readSaveSlots();
+    saveSlotsRef.current = slots;
+    if (syncState) setSaveSlots(slots);
+  };
+  const prepareSaveSlotSummary = (slotId: string, savedState: AivatarSaveState, raw: string | null) => {
+    const slots = raw ? JSON.parse(raw) as SaveSlotSummary[] : [];
+    if (!slots.some((slot) => slot.id === slotId)) return undefined;
+    return JSON.stringify(slots.map((slot) => slot.id === slotId
+      ? updateSaveSlotSummaryFromSave(slot, savedState, new Date().toISOString()) : slot));
   };
   const roomSavePersistenceRef = useRef<ReturnType<typeof createRoomSavePersistence> | null>(null);
   if (!roomSavePersistenceRef.current) {
     roomSavePersistenceRef.current = createRoomSavePersistence({
-      storage: localStorage,
+      storage: appStorage,
       storageKey: saveSlotStorageKey,
       normalize: (value) => normalizeSavePayload(saveContentRef.current, value),
       runtime: (slotId) => activeSaveSlotIdRef.current === slotId
         ? runtimeRef.current
         : undefined,
       onPersisted: updateSaveSlotSummary,
-      onError: (error) => console.warn("Could not persist Aivatar save; will retry.", error),
+      updateRegistry: prepareSaveSlotSummary,
+      onMerged: (slotId, merged) => {
+        if (slotId !== activeSaveSlotIdRef.current) return;
+        saveRef.current = merged;
+        setSaveState(merged);
+      },
+      onError: reportSaveError,
     });
     if (activeSaveSlotIdRef.current) {
       roomSavePersistenceRef.current.activate(activeSaveSlotIdRef.current, save);
     }
   }
-  const persistCurrentSaveSlot = (syncState = true) => {
+  const persistCurrentSaveSlot = async (syncState = true) => {
     const slotId = activeSaveSlotIdRef.current;
     if (!slotId) return { ok: true, written: false };
 
     return roomSavePersistenceRef.current?.flush(slotId, saveRef.current, syncState)
       ?? { ok: false, written: false };
+  };
+  const deferredDrainRef = useRef<Promise<void> | null>(null);
+  const flushDeferredSaveUpdates = async () => {
+    if (deferredDrainRef.current) await deferredDrainRef.current;
+    const work = (async () => {
+      while (deferredSaveUpdatesRef.current.size) {
+        const [slotId, updates] = deferredSaveUpdatesRef.current.entries().next().value!;
+        deferredSaveUpdatesRef.current.delete(slotId);
+        let applied = false;
+        try {
+          const active = slotId === activeSaveSlotIdRef.current;
+          if (slotId === null && !active) continue;
+          if (slotId && appStorage.getItem(saveSlotStorageKey(slotId)) === null) continue;
+          let next = active ? saveRef.current
+            : loadSave(saveContentRef.current, saveSlotStorageKey(slotId!));
+          if (slotId && !active) next = roomSavePersistenceRef.current!.activate(slotId, next);
+          for (const update of updates) next = typeof update === "function" ? update(next) : update;
+          if (active) {
+            saveRef.current = next;
+            setSaveState(next);
+          }
+          applied = true;
+          if (slotId && !(await roomSavePersistenceRef.current!.flush(slotId, next)).ok) {
+            throw new Error("Could not save a deferred character update. Its draft has been retained.");
+          }
+        } catch (error) {
+          if (!applied) deferredSaveUpdatesRef.current.set(slotId, [
+            ...updates, ...(deferredSaveUpdatesRef.current.get(slotId) ?? []),
+          ]);
+          throw error;
+        }
+      }
+    })();
+    deferredDrainRef.current = work;
+    try { await work; }
+    finally { if (deferredDrainRef.current === work) deferredDrainRef.current = null; }
+  };
+  useEffect(() => {
+    if (!storePaused) void flushDeferredSaveUpdates().catch(reportSaveError);
+  }, [storePaused]);
+  const slotActionRef = useRef<Promise<void> | null>(null);
+  const runSlotAction = (action: () => Promise<void>) => {
+    if (slotActionRef.current || isStoreClosing()) return Promise.resolve();
+    const resume = pauseStoreUpdates();
+    const pending = (async () => {
+      try {
+        if (!(await persistCurrentSaveSlot()).ok) throw new Error("Could not save the current character.");
+        await flushDeferredSaveUpdates();
+        await drainStore();
+        await action();
+        await flushDeferredSaveUpdates();
+        await drainStore();
+      } catch (error) {
+        reportSaveError(error);
+        setSaveSlotMessage(String(error));
+      } finally {
+        resume();
+        slotActionRef.current = null;
+      }
+    })();
+    slotActionRef.current = pending;
+    return pending;
   };
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
   const [uiTheme, setUiTheme] = useState<UiThemeId>(() => loadInitialUiTheme());
@@ -3950,14 +4002,11 @@ export const App = () => {
     new Map<string, "complete" | "error">(),
   );
   const taskCabinetVisualFlowRef = useRef<TaskCabinetVisualFlow | null>(null);
-  const rewardedCompleteKeysRef = useRef(
-    new Set<string>(save.rewardedCompletionIds ?? []),
-  );
-  const appliedLearningIdsRef = useRef(new Set<string>());
+  const appliedLearningIdsRef = useRef(new Map<string | null, Set<string>>());
   const paintingPlanRequestsRef = useRef(new Set<string>());
   const behaviorDemoTimerRef = useRef<number | null>(null);
   const previousSessionStatusRef = useRef(
-    new Map<string, CodexStatusMessage["status"]>(),
+    new Map<string | null, Map<string, CodexStatusMessage["status"]>>(),
   );
   const roomInstanceIdRef = useRef(createRoomInstanceId());
   const [roomSnapshot, setRoomSnapshot] = useState<AivatarRoomsSnapshot | null>(null);
@@ -4261,7 +4310,7 @@ export const App = () => {
       parsed = payload ? JSON.parse(payload) : null;
     } catch {
       try {
-        const payload = localStorage.getItem(key);
+        const payload = appStorage.getItem(key);
         parsed = payload ? JSON.parse(payload) : null;
       } catch {
         parsed = null;
@@ -4293,7 +4342,7 @@ export const App = () => {
       return;
     } catch {
       try {
-        localStorage.setItem(key, payload);
+        await appStorage.setItem(key, payload);
       } catch {
         console.warn("Could not persist social room memory.");
       }
@@ -4306,7 +4355,7 @@ export const App = () => {
   ): AivatarSocialRelationship => {
     const key = socialRelationshipStorageKey(leftAvatarId, rightAvatarId);
     try {
-      const payload = localStorage.getItem(key);
+      const payload = appStorage.getItem(key);
       return normalizeSocialRelationship(
         payload ? JSON.parse(payload) as Partial<AivatarSocialRelationship> : undefined,
         leftAvatarId,
@@ -4321,7 +4370,7 @@ export const App = () => {
     const [leftAvatarId, rightAvatarId] = relationship.avatarIds;
     const key = socialRelationshipStorageKey(leftAvatarId, rightAvatarId);
     try {
-      localStorage.setItem(key, JSON.stringify(relationship));
+      appStorage.setItem(key, JSON.stringify(relationship));
     } catch {
       console.warn("Could not persist social relationship.");
     }
@@ -4342,7 +4391,7 @@ export const App = () => {
 
   const readPairCooldownUntil = (leftAvatarId: string, rightAvatarId: string) => {
     try {
-      const raw = localStorage.getItem(pairCooldownKey(leftAvatarId, rightAvatarId));
+      const raw = appStorage.getItem(pairCooldownKey(leftAvatarId, rightAvatarId));
       const value = raw ? Number(raw) : 0;
       return Number.isFinite(value) ? value : 0;
     } catch {
@@ -4356,7 +4405,7 @@ export const App = () => {
     untilMs: number,
   ) => {
     try {
-      localStorage.setItem(pairCooldownKey(leftAvatarId, rightAvatarId), String(untilMs));
+      appStorage.setItem(pairCooldownKey(leftAvatarId, rightAvatarId), String(untilMs));
     } catch {
       console.warn("Could not persist room visit cooldown.");
     }
@@ -5979,30 +6028,27 @@ export const App = () => {
     setActiveRecordPlayerId(null);
     runtimeRef.current = nextSave.avatarRuntime ?? initialAvatarRuntime();
     setAvatar(runtimeRef.current);
-    rewardedCompleteKeysRef.current = new Set(
-      nextSave.rewardedCompletionIds ?? [],
-    );
-    setSave(nextSave);
+    setSaveState(nextSave);
   };
 
-  const selectSaveSlot = (slotId: string) => {
-    const slot = saveSlotsRef.current.find((entry) => entry.id === slotId);
-    if (!slot) return;
+  const selectSaveSlot = (slotId: string) => runSlotAction(async () => {
+    await transactStore((view) => {
+      const slots = JSON.parse(view.getItem(SAVE_SLOTS_KEY) ?? "[]") as SaveSlotSummary[];
+      if (!slots.some((slot) => slot.id === slotId) || view.getItem(saveSlotStorageKey(slotId)) === null) {
+        throw new Error("This character was removed in another window.");
+      }
+      return { changes: { [ACTIVE_SAVE_SLOT_KEY]: slotId }, result: undefined };
+    });
+    applySaveSlotState(slotId, loadSave(contentBase, saveSlotStorageKey(slotId)));
+  });
 
-    setSaveSlotMessage("");
-    persistCurrentSaveSlot();
-    const nextSave = loadSave(contentBase, saveSlotStorageKey(slot.id));
-    applySaveSlotState(slot.id, nextSave);
-  };
-
-  const openSaveSlotManager = () => {
+  const openSaveSlotManager = () => runSlotAction(async () => {
     setSaveSlotMessage("");
     setDeleteSaveSlot(null);
     setCreatingSaveSlotIndex(null);
-    persistCurrentSaveSlot();
     setSaveMenuOpenedFromRoom(true);
     setSaveMenuOpen(true);
-  };
+  });
 
   const openSaveSlotWindow = async (slot: SaveSlotSummary) => {
     setSaveSlotMessage("");
@@ -6011,7 +6057,10 @@ export const App = () => {
       return;
     }
 
-    persistCurrentSaveSlot();
+    if (!(await persistCurrentSaveSlot()).ok) {
+      reportSaveError(new Error("Could not save before opening the window."));
+      return;
+    }
 
     try {
       const { invoke } = await import("@tauri-apps/api/core");
@@ -6036,7 +6085,10 @@ export const App = () => {
       return;
     }
 
-    persistCurrentSaveSlot();
+    if (!(await persistCurrentSaveSlot()).ok) {
+      reportSaveError(new Error("Could not save before opening the window."));
+      return;
+    }
 
     try {
       const { invoke } = await import("@tauri-apps/api/core");
@@ -6060,7 +6112,10 @@ export const App = () => {
       return;
     }
 
-    persistCurrentSaveSlot();
+    if (!(await persistCurrentSaveSlot()).ok) {
+      reportSaveError(new Error("Could not save before opening the window."));
+      return;
+    }
 
     try {
       const { invoke } = await import("@tauri-apps/api/core");
@@ -6082,23 +6137,25 @@ export const App = () => {
     setNewSaveAvatarName(contentBase.avatar.name);
   };
 
-  const installSaveIntoSlot = (slotIndex: number, nextSave: AivatarSaveState) => {
-    if (saveSlotsRef.current.some((slot) => slot.slotIndex === slotIndex)) return;
-    persistCurrentSaveSlot();
-
+  const installSaveIntoSlot = (slotIndex: number, nextSave: AivatarSaveState) => runSlotAction(async () => {
     const slotId = createSaveSlotId();
     const timestamp = new Date().toISOString();
     const nextSlot = createSaveSlotSummary(slotId, slotIndex, nextSave, timestamp);
-    const nextSlots = [...saveSlotsRef.current, nextSlot].sort(
-      (a, b) => a.slotIndex - b.slotIndex,
-    );
-
-    if (!persistSave(nextSave, saveSlotStorageKey(slotId))) return;
+    const nextSlots = await transactStore((view) => {
+      const slots = JSON.parse(view.getItem(SAVE_SLOTS_KEY) ?? "[]") as SaveSlotSummary[];
+      if (slots.some((slot) => slot.slotIndex === slotIndex)) throw new Error("This slot is already occupied.");
+      if (view.getItem(saveSlotStorageKey(slotId)) !== null) throw new Error("The generated save ID already exists.");
+      const updated = [...slots, nextSlot].sort((a, b) => a.slotIndex - b.slotIndex);
+      return { changes: {
+        [saveSlotStorageKey(slotId)]: JSON.stringify(nextSave),
+        [SAVE_SLOTS_KEY]: JSON.stringify(updated),
+        [ACTIVE_SAVE_SLOT_KEY]: slotId,
+      }, result: updated };
+    });
     saveSlotsRef.current = nextSlots;
-    writeSaveSlots(nextSlots);
     setSaveSlots(nextSlots);
     applySaveSlotState(slotId, nextSave);
-  };
+  });
 
   const createSaveSlot = () => {
     if (creatingSaveSlotIndex === null) return;
@@ -6139,7 +6196,7 @@ export const App = () => {
         return;
       }
 
-      installSaveIntoSlot(creatingSaveSlotIndex, importedSave);
+      await installSaveIntoSlot(creatingSaveSlotIndex, importedSave);
     } catch (error) {
       console.warn("Could not import Aivatar save.", error);
       setSaveSlotMessage(ui("saveSlots.importFailed"));
@@ -6174,39 +6231,51 @@ export const App = () => {
 
   const confirmDeleteSaveSlot = () => {
     if (!deleteSaveSlot) return;
-
-    try {
-      localStorage.removeItem(saveSlotStorageKey(deleteSaveSlot.id));
-      roomSavePersistenceRef.current?.forget(deleteSaveSlot.id);
-    } catch (error) {
-      console.warn("Could not delete Aivatar save slot.", error);
-    }
-
-    const nextSlots = saveSlotsRef.current.filter((slot) => slot.id !== deleteSaveSlot.id);
-    saveSlotsRef.current = nextSlots;
-    writeSaveSlots(nextSlots);
-    setSaveSlots(nextSlots);
-    setSaveSlotMessage(
-      ui("saveSlots.deleted", {
-        name: deleteSaveSlot.avatarName,
-      }),
-    );
-
-    if (activeSaveSlotIdRef.current === deleteSaveSlot.id) {
-      activeSaveSlotIdRef.current = null;
-      hadSavedStateRef.current = false;
-      persistActiveSaveSlotId(null);
-      setActiveSaveSlotId(null);
-      runtimeRef.current = initialAvatarRuntime();
-      setAvatar(runtimeRef.current);
-      setSave(saveFromContent(contentBase));
-      setSaveMenuOpenedFromRoom(false);
-      setSaveMenuOpen(true);
-      setCreatingSaveSlotIndex(nextSlots.length === 0 ? 0 : null);
-    }
-
-    setDeleteSaveSlot(null);
+    const deleted = deleteSaveSlot;
+    return runSlotAction(async () => {
+      const nextSlots = await transactStore((view) => {
+        const slots = JSON.parse(view.getItem(SAVE_SLOTS_KEY) ?? "[]") as SaveSlotSummary[];
+        const updated = slots.filter((slot) => slot.id !== deleted.id);
+        const active = view.getItem(ACTIVE_SAVE_SLOT_KEY);
+        return { changes: {
+          [saveSlotStorageKey(deleted.id)]: null,
+          [SAVE_SLOTS_KEY]: JSON.stringify(updated),
+          ...(active === deleted.id ? { [ACTIVE_SAVE_SLOT_KEY]: null } : {}),
+        }, result: updated };
+      });
+      roomSavePersistenceRef.current?.forget(deleted.id);
+      saveSlotsRef.current = nextSlots;
+      setSaveSlots(nextSlots);
+      setSaveSlotMessage(ui("saveSlots.deleted", { name: deleted.avatarName }));
+      if (activeSaveSlotIdRef.current === deleted.id) {
+        activeSaveSlotIdRef.current = null;
+        hadSavedStateRef.current = false;
+        setActiveSaveSlotId(null);
+        runtimeRef.current = initialAvatarRuntime();
+        setAvatar(runtimeRef.current);
+        const fresh = saveFromContent(contentBase);
+        saveRef.current = fresh;
+        setSaveState(fresh);
+        setSaveMenuOpenedFromRoom(false);
+        setSaveMenuOpen(true);
+        setCreatingSaveSlotIndex(nextSlots.length === 0 ? 0 : null);
+      }
+      setDeleteSaveSlot(null);
+    });
   };
+
+  const exportCurrentSave = () => runSlotAction(async () => {
+    const slotId = activeSaveSlotIdRef.current;
+    if (!slotId) return;
+    const raw = appStorage.getItem(saveSlotStorageKey(slotId));
+    if (!raw) throw new Error("This save is no longer available.");
+    const url = URL.createObjectURL(new Blob([raw], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `aivatar-save-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -6364,7 +6433,7 @@ export const App = () => {
 
   useEffect(() => {
     activeSaveSlotIdRef.current = activeSaveSlotId;
-    persistActiveSaveSlotId(activeSaveSlotId);
+    if (activeSaveSlotId) void appStorage.setItem(ACTIVE_SAVE_SLOT_KEY, activeSaveSlotId);
   }, [activeSaveSlotId]);
 
   useEffect(() => {
@@ -6385,8 +6454,8 @@ export const App = () => {
   useEffect(() => {
     if (!activeSaveSlotId) return;
     const storageKey = saveSlotStorageKey(activeSaveSlotId);
-    const mergeExternalSave = (event: StorageEvent) => {
-      if (event.key !== storageKey) return;
+    const mergeExternalSave = (event: StoreChange) => {
+      if (event.key !== storageKey || event.source === "local") return;
       try {
         // Read the latest stored snapshot: queued storage events can be stale.
         const merged = roomSavePersistenceRef.current!.mergeExternal(
@@ -6394,14 +6463,13 @@ export const App = () => {
         );
         if (merged !== saveRef.current) {
           saveRef.current = merged;
-          setSave(merged);
+          setSaveState(merged);
         }
       } catch {
         // Keep the local draft when an external snapshot cannot be read.
       }
     };
-    window.addEventListener("storage", mergeExternalSave);
-    return () => window.removeEventListener("storage", mergeExternalSave);
+    return subscribeStore(mergeExternalSave);
   }, [activeSaveSlotId, contentBase]);
 
   useEffect(() => {
@@ -6558,6 +6626,7 @@ export const App = () => {
   };
 
   const requestPaintingPlanForDraft = async (draft: AivatarPaintingDraft) => {
+    const sourceSlotId = activeSaveSlotIdRef.current;
     const controller = new AbortController();
     const timer = window.setTimeout(
       () => controller.abort(),
@@ -6580,7 +6649,7 @@ export const App = () => {
       const paintingPlan = parsed.paintingPlan ?? parsed.plan;
       if (!paintingPlan || typeof paintingPlan !== "object") return;
 
-      setSave((current) => {
+      setSaveForSlot(sourceSlotId, (current) => {
         const gallery = normalizePaintingGallery(current.paintingGallery);
         const activeDraft = gallery.activeDraft;
         if (!activeDraft || activeDraft.id !== draft.id) return current;
@@ -6660,10 +6729,16 @@ export const App = () => {
   }, [contentBase.avatar.name, save.avatarId, save.avatarName, save.memory]);
 
   useEffect(() => {
-    const flushSave = () => {
-      const activeResult = persistCurrentSaveSlot(false);
-      const remainingResults = roomSavePersistenceRef.current?.flushAll();
-      return aggregateSaveFlushResults(activeResult, remainingResults);
+    const flushSave = async () => {
+      await slotActionRef.current;
+      const results = [];
+      do {
+        await flushDeferredSaveUpdates();
+        results.push(await persistCurrentSaveSlot(false));
+        results.push(...await roomSavePersistenceRef.current!.flushAll());
+        await drainStore();
+      } while (deferredSaveUpdatesRef.current.size > 0);
+      return aggregateSaveFlushResults(results);
     };
     const flushOnVisibilityHidden = () => {
       if (document.visibilityState === "hidden") flushSave();
@@ -6691,12 +6766,12 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(LOCALE_KEY, locale);
+    appStorage.setItem(LOCALE_KEY, locale);
     localeRef.current = locale;
   }, [locale]);
 
   useEffect(() => {
-    localStorage.setItem(UI_THEME_KEY, uiTheme);
+    appStorage.setItem(UI_THEME_KEY, uiTheme);
     uiThemeRef.current = uiTheme;
   }, [uiTheme]);
 
@@ -6840,7 +6915,7 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(AUDIO_VOLUME_KEY, String(audioVolume));
+    appStorage.setItem(AUDIO_VOLUME_KEY, String(audioVolume));
     [
       keyboardTypingAudioRef.current,
       coffeeMachineBrewAudioRef.current,
@@ -6869,14 +6944,14 @@ export const App = () => {
   }, [audioVolume]);
 
   useEffect(() => {
-    localStorage.setItem(
+    appStorage.setItem(
       PARK_AMBIENT_AUDIO_VOLUME_KEY,
       String(parkAmbientAudioVolume),
     );
   }, [parkAmbientAudioVolume]);
 
   useEffect(() => {
-    localStorage.setItem(GAME_CONSOLE_VOLUME_KEY, String(gameConsoleVolume));
+    appStorage.setItem(GAME_CONSOLE_VOLUME_KEY, String(gameConsoleVolume));
     const audio = gameConsoleAudioRef.current;
     if (!audio) return;
     audio.volume = Math.min(1, Math.max(0, audioVolume * gameConsoleVolume));
@@ -6886,11 +6961,11 @@ export const App = () => {
   }, [audioVolume, gameConsoleVolume]);
 
   useEffect(() => {
-    localStorage.setItem(STARTUP_SOUND_KEY, String(startupSoundEnabled));
+    appStorage.setItem(STARTUP_SOUND_KEY, String(startupSoundEnabled));
   }, [startupSoundEnabled]);
 
   useEffect(() => {
-    localStorage.setItem(BGM_VOLUME_KEY, String(bgmVolume));
+    appStorage.setItem(BGM_VOLUME_KEY, String(bgmVolume));
     if (bgmGainRef.current) {
       bgmGainRef.current.gain.value = scaledBgmGainValue(currentBgmTrack());
     }
@@ -6901,7 +6976,7 @@ export const App = () => {
   }, [bgmVolume]);
 
   useEffect(() => {
-    localStorage.setItem(BGM_TRACK_KEY, bgmTrackId);
+    appStorage.setItem(BGM_TRACK_KEY, bgmTrackId);
     bgmTrackIdRef.current = bgmTrackId;
     bgmStepRef.current = 0;
     if (activeRecordPlayerIdRef.current) {
@@ -6911,12 +6986,12 @@ export const App = () => {
   }, [bgmTrackId]);
 
   useEffect(() => {
-    localStorage.setItem(AUTO_MUSIC_KEY, String(autoMusicEnabled));
+    appStorage.setItem(AUTO_MUSIC_KEY, String(autoMusicEnabled));
     autoMusicEnabledRef.current = autoMusicEnabled;
   }, [autoMusicEnabled]);
 
   useEffect(() => {
-    localStorage.setItem(ALWAYS_ON_TOP_KEY, String(alwaysOnTopEnabled));
+    appStorage.setItem(ALWAYS_ON_TOP_KEY, String(alwaysOnTopEnabled));
     void import("@tauri-apps/api/window")
       .then(({ getCurrentWindow }) =>
         getCurrentWindow().setAlwaysOnTop(alwaysOnTopEnabled),
@@ -8754,6 +8829,11 @@ export const App = () => {
 
     const pumpLogic = (now: number, maxSteps: number) => {
       if (stopped) return;
+      if (isStoreClosing()) {
+        lastLogicPumpAt = now;
+        logicAccumulatorMs = 0;
+        return;
+      }
       const rawElapsedMs = now - lastLogicPumpAt;
       lastLogicPumpAt = now;
       const elapsedMs = Number.isFinite(rawElapsedMs)
@@ -8872,130 +8952,124 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
-    const statusCandidatesBySession = new Map<string, CodexStatusMessage>();
-    [effectiveStatus, ...sessions].forEach((candidate) => {
-      statusCandidatesBySession.set(statusSessionKey(candidate), candidate);
+    // Only a new status input creates an arrival. Unpausing or changing the
+    // active character must never give the previous status a new owner.
+    const previous = capturedStatusInputRef.current;
+    if (previous?.effectiveStatus === effectiveStatus && previous.sessions === sessions) return;
+    capturedStatusInputRef.current = { effectiveStatus, sessions };
+    // Error/waiting memories keep the existing followed-session policy. Their
+    // effective arrival is separate from reward/learning candidates in sessions.
+    const memoryStatusChanged = !previous ||
+      statusSessionKey(previous.effectiveStatus) !== statusSessionKey(effectiveStatus) ||
+      statusArrivalSignature(previous.effectiveStatus) !== statusArrivalSignature(effectiveStatus);
+    const memoryStatus = memoryStatusChanged && effectiveStatus.phase !== "session-learning" &&
+      (effectiveStatus.status === "error" || effectiveStatus.status === "waiting_for_user")
+      ? effectiveStatus : null;
+    const observed = observedStatusArrivalsRef.current;
+    const effectiveIsNew = observed.get(statusSessionKey(effectiveStatus)) !== statusArrivalSignature(effectiveStatus);
+    const candidates = new Map<string, CodexStatusMessage>();
+    [effectiveStatus, ...sessions].forEach((candidate) => candidates.set(statusSessionKey(candidate), candidate));
+    const arrived = [...candidates].filter(([key, candidate]) => observed.get(key) !== statusArrivalSignature(candidate));
+    candidates.forEach((candidate, key) => observed.set(key, statusArrivalSignature(candidate)));
+    if (!effectiveIsNew && !arrived.length && !memoryStatus) return;
+    deferredStatusFramesRef.current.push({
+      slotId: activeSaveSlotIdRef.current,
+      effectiveStatus: effectiveIsNew ? effectiveStatus : null,
+      memoryStatus,
+      sessions: arrived.map(([, candidate]) => candidate),
+      arrivedAt: Date.now(),
     });
+  }, [effectiveStatus, sessions]);
 
-    const previousStatusesBySession = new Map<
-      string,
-      CodexStatusMessage["status"] | undefined
-    >();
-    statusCandidatesBySession.forEach((candidate, candidateSessionKey) => {
-      previousStatusesBySession.set(
-        candidateSessionKey,
-        previousSessionStatusRef.current.get(candidateSessionKey),
-      );
-      previousSessionStatusRef.current.set(candidateSessionKey, candidate.status);
-    });
+  useEffect(() => {
+    if (isStoreClosing()) return;
+    const frames = deferredStatusFramesRef.current.splice(0);
+    for (const { slotId, effectiveStatus, memoryStatus, sessions, arrivedAt } of frames) {
+      if (slotId && appStorage.getItem(saveSlotStorageKey(slotId)) === null) continue;
+      if (slotId === null && activeSaveSlotIdRef.current !== null) continue;
+      setSaveForSlot(slotId, (current) => {
+        const statusCandidatesBySession = new Map<string, CodexStatusMessage>();
+        [...(effectiveStatus ? [effectiveStatus] : []), ...sessions].forEach((candidate) => {
+          statusCandidatesBySession.set(statusSessionKey(candidate), candidate);
+        });
+        const previousStatuses = previousSessionStatusRef.current.get(slotId) ?? new Map<
+          string, CodexStatusMessage["status"]
+        >();
+        previousSessionStatusRef.current.set(slotId, previousStatuses);
+        const previousStatusesBySession = new Map<string, CodexStatusMessage["status"] | undefined>();
+        statusCandidatesBySession.forEach((candidate, candidateSessionKey) => {
+          previousStatusesBySession.set(candidateSessionKey, previousStatuses.get(candidateSessionKey));
+          previousStatuses.set(candidateSessionKey, candidate.status);
+        });
 
-    const learning = effectiveStatus.learning;
-    if (learning) {
-      const learningKey = [
-        effectiveStatus.agent ?? "agent",
-        effectiveStatus.sessionId ?? "default",
-        learning.id,
-      ].join(":");
-      if (!appliedLearningIdsRef.current.has(learningKey)) {
-        appliedLearningIdsRef.current.add(learningKey);
-        setSave((current) => ({
-          ...current,
-          memory: recordSessionLearningMemory(current.memory, effectiveStatus),
-        }));
-      }
-    }
+        let next = current;
+        // Apply each new candidate's learning even if another session is
+        // followed; later snapshots may make this already-observed one current.
+        statusCandidatesBySession.forEach((candidate) => {
+          const learning = candidate.learning;
+          if (learning) {
+            const learningKey = [
+              candidate.agent ?? "agent", candidate.sessionId ?? "default", learning.id,
+            ].join(":");
+            const learningIds = appliedLearningIdsRef.current.get(slotId) ?? new Set<string>();
+            appliedLearningIdsRef.current.set(slotId, learningIds);
+            if (!learningIds.has(learningKey)) {
+              learningIds.add(learningKey);
+              next = { ...next, memory: recordSessionLearningMemory(next.memory, candidate) };
+            }
+          }
+        });
+        if (memoryStatus && isRewardAgent(memoryStatus)) {
+          next = { ...next, memory: recordStatusMemory(next.memory, memoryStatus) };
+        }
 
-    const isSessionLearningStatus = effectiveStatus.phase === "session-learning";
-    if (
-      !isSessionLearningStatus &&
-      isRewardAgent(effectiveStatus) &&
-      (effectiveStatus.status === "error" ||
-        effectiveStatus.status === "waiting_for_user")
-    ) {
-      setSave((current) => ({
-        ...current,
-        memory: recordStatusMemory(current.memory, effectiveStatus),
-      }));
-    }
-
-    statusCandidatesBySession.forEach((candidate, candidateSessionKey) => {
-      if (candidate.status !== "complete") return;
-      if (candidate.phase === "session-learning") return;
-      if (!isRewardAgent(candidate)) return;
-
-      const previousStatus = previousStatusesBySession.get(candidateSessionKey);
-      const activeTransition =
-        previousStatus && isRewardEligiblePreviousStatus(previousStatus);
-      const completedAt = Date.parse(candidate.timestamp);
-      const freshComplete =
-        !Number.isNaN(completedAt) &&
-        Date.now() - completedAt <= COMPLETE_REWARD_FRESH_MS;
-      if (!activeTransition && !freshComplete) return;
-
-      const completeKey = candidate.rewardId?.trim() || [
-        candidate.agent,
-        candidate.sessionId ?? "default",
-        candidate.timestamp,
-      ].join(":");
-      if (rewardedCompleteKeysRef.current.has(completeKey)) return;
-      rewardedCompleteKeysRef.current.add(completeKey);
-
-      const workBoostBits =
-        getWorkBoostRemainingSeconds(save.workBoostUntil, Date.now()) > 0
-          ? WORK_BOOST_COMPLETE_BONUS
-          : 0;
-      const rewardBits = Math.min(
-        maxRewardBitsForUsage(candidate.usage),
-        rewardBitsForUsage(candidate.usage) + workBoostBits,
-      );
-
-      setSave((current) => ({
-        ...current,
-        wallet: { ...current.wallet, bits: current.wallet.bits + rewardBits },
-        rewardedCompletionIds: [
-          ...(current.rewardedCompletionIds ?? []).filter(
-            (entry) => entry !== completeKey,
-          ),
-          completeKey,
-        ].slice(-REWARDED_COMPLETION_ID_LIMIT),
-        memory: recordTaskCompleteMemory(
-          current.memory,
-          candidate,
-          previousStatus,
-          rewardBits,
-        ),
-      }));
-      playOneShotAudio(
-        agentCompleteAudioRef.current,
-        AGENT_COMPLETE_AUDIO_VOLUME_MULTIPLIER,
-      );
-      const now = performance.now();
-      const rewardAgentName = agentDisplayName(candidate);
-      updateActiveInteraction({
-        kind: "none",
-        furnitureId: candidate.agent ?? "agent",
-        furnitureName: rewardAgentName,
-        message: `${rewardAgentName} complete: +${rewardBits} ${ui("currency.bits")}${
-          workBoostBits > 0 ? ui("message.withBoost") : ""
-        }.`,
-        startedAt: now,
-        endsAt: now + REWARD_BUBBLE_SECONDS * 1000,
-        bubbleText: `+${rewardBits} ${ui("currency.bits")}`,
-        rewardBits,
+        statusCandidatesBySession.forEach((candidate, candidateSessionKey) => {
+          if (candidate.status !== "complete" || candidate.phase === "session-learning" || !isRewardAgent(candidate)) return;
+          const previousStatus = previousStatusesBySession.get(candidateSessionKey);
+          const activeTransition = previousStatus && isRewardEligiblePreviousStatus(previousStatus);
+          const completedAt = Date.parse(candidate.timestamp);
+          const freshComplete = !Number.isNaN(completedAt) && arrivedAt - completedAt <= COMPLETE_REWARD_FRESH_MS;
+          if (!activeTransition && !freshComplete) return;
+          const completeKey = candidate.rewardId?.trim() || [
+            candidate.agent, candidate.sessionId ?? "default", candidate.timestamp,
+          ].join(":");
+          // Inspect the source character's draft when the queued update runs,
+          // including earlier frames that have not reached disk yet.
+          if (next.rewardedCompletionIds?.includes(completeKey)) return;
+          const workBoostBits = getWorkBoostRemainingSeconds(next.workBoostUntil, arrivedAt) > 0
+            ? WORK_BOOST_COMPLETE_BONUS : 0;
+          const rewardBits = Math.min(
+            maxRewardBitsForUsage(candidate.usage),
+            rewardBitsForUsage(candidate.usage) + workBoostBits,
+          );
+          next = {
+            ...next,
+            wallet: { ...next.wallet, bits: next.wallet.bits + rewardBits },
+            rewardedCompletionIds: [...(next.rewardedCompletionIds ?? []), completeKey]
+              .slice(-REWARDED_COMPLETION_ID_LIMIT),
+            memory: recordTaskCompleteMemory(next.memory, candidate, previousStatus, rewardBits),
+          };
+          if (slotId !== activeSaveSlotIdRef.current) return;
+          playOneShotAudio(agentCompleteAudioRef.current, AGENT_COMPLETE_AUDIO_VOLUME_MULTIPLIER);
+          const now = performance.now();
+          const rewardAgentName = agentDisplayName(candidate);
+          updateActiveInteraction({
+            kind: "none",
+            furnitureId: candidate.agent ?? "agent",
+            furnitureName: rewardAgentName,
+            message: `${rewardAgentName} complete: +${rewardBits} ${ui("currency.bits")}${
+              workBoostBits > 0 ? ui("message.withBoost") : ""
+            }.`,
+            startedAt: now,
+            endsAt: now + REWARD_BUBBLE_SECONDS * 1000,
+            bubbleText: `+${rewardBits} ${ui("currency.bits")}`,
+            rewardBits,
+          });
+        });
+        return next;
       });
-    });
-  }, [
-    activeSessionKey,
-    connectedSessionKey,
-    effectiveStatus.agent,
-    effectiveStatus.sessionId,
-    effectiveStatus.learning?.id,
-    effectiveStatus.timestamp,
-    effectiveStatus.status,
-    locale,
-    save.workBoostUntil,
-    sessions,
-  ]);
+    }
+  }, [effectiveStatus, sessions, storePaused]);
 
   const inventoryEntriesForPanel = [
     ...save.inventory,
@@ -10100,7 +10174,7 @@ export const App = () => {
     });
   };
 
-  const clearSaveState = () => {
+  const clearSaveState = () => runSlotAction(async () => {
     const activeSlotId = activeSaveSlotIdRef.current;
     if (!activeSlotId) {
       setSaveMenuOpenedFromRoom(false);
@@ -10111,6 +10185,13 @@ export const App = () => {
 
     const freshSave = saveFromContent(contentBase, {
       avatarAppearanceId: normalizeAvatarAppearanceId(saveRef.current.avatarAppearanceId),
+    });
+    await transactStore((view) => {
+      const raw = view.getItem(saveSlotStorageKey(activeSlotId));
+      if (raw === null) throw new Error("This character was removed in another window.");
+      const registry = prepareSaveSlotSummary(activeSlotId, freshSave, view.getItem(SAVE_SLOTS_KEY));
+      return { changes: { [saveSlotStorageKey(activeSlotId)]: JSON.stringify(freshSave),
+        ...(registry === undefined ? {} : { [SAVE_SLOTS_KEY]: registry }) }, result: undefined };
     });
     hadSavedStateRef.current = true;
     selectedFurnitureRef.current = null;
@@ -10128,16 +10209,14 @@ export const App = () => {
     updateActiveInteraction(null);
     runtimeRef.current = initialAvatarRuntime();
     setAvatar(runtimeRef.current);
-    if (persistSave(freshSave, saveSlotStorageKey(activeSlotId))) {
-      roomSavePersistenceRef.current?.forget(activeSlotId);
-      roomSavePersistenceRef.current?.activate(activeSlotId, freshSave);
-      updateSaveSlotSummary(activeSlotId, freshSave);
-    }
+    roomSavePersistenceRef.current?.forget(activeSlotId);
+    roomSavePersistenceRef.current?.activate(activeSlotId, freshSave);
+    updateSaveSlotSummary(activeSlotId, freshSave);
     saveRef.current = freshSave;
-    setSave(freshSave);
-  };
+    setSaveState(freshSave);
+  });
 
-  const saveCurrentLayoutAsDefault = () => {
+  const saveCurrentLayoutAsDefault = async () => {
     const layout: DefaultLayoutState = {
       placedItems: save.placedItems,
       activeWindowId: save.activeWindowId,
@@ -10145,7 +10224,8 @@ export const App = () => {
       furniturePlacements: save.furniturePlacements,
     };
 
-    localStorage.setItem(DEFAULT_LAYOUT_KEY, JSON.stringify(layout));
+    try { await appStorage.setItem(DEFAULT_LAYOUT_KEY, JSON.stringify(layout)); }
+    catch { return; }
     updateActiveInteraction({
       kind: "none",
       furnitureId: "room-edit",
@@ -13168,6 +13248,9 @@ export const App = () => {
               </div>
             </div>
 
+            {activeSaveSlotId && <button type="button" onClick={() => void exportCurrentSave()}>
+              {ui("storage.export")}
+            </button>}
             <div className="save-slot-grid">
               {saveSlotCells.map(({ index, slot }) => {
                 const slotSave = slot

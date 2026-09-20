@@ -1,3 +1,4 @@
+import { appStorage } from "./persistence/saveStore";
 import type {
   AivatarContent,
   BehaviorName,
@@ -2517,7 +2518,7 @@ export const isLocale = (value: string | null): value is Locale =>
   value === "zh-Hant" || value === "zh-Hans" || value === "en";
 
 export const resolveInitialLocale = (): Locale => {
-  const saved = localStorage.getItem(LOCALE_KEY);
+  const saved = appStorage.getItem(LOCALE_KEY);
   if (isLocale(saved)) return saved;
 
   const language = navigator.language.toLowerCase();
@@ -2526,9 +2527,15 @@ export const resolveInitialLocale = (): Locale => {
   return fallbackLocale;
 };
 
+const storageCopy: Record<Locale, Record<string, string>> = {
+  en: { "storage.saving": "Saving…", "storage.saveFailed": "Could not save. Retry before continuing.", "storage.retry": "Retry save", "storage.export": "Export current save" },
+  "zh-Hans": { "storage.saving": "正在保存…", "storage.saveFailed": "保存失败，请重试后继续。", "storage.retry": "重试保存", "storage.export": "导出当前存档" },
+  "zh-Hant": { "storage.saving": "正在儲存…", "storage.saveFailed": "儲存失敗，請重試後繼續。", "storage.retry": "重試儲存", "storage.export": "匯出目前存檔" },
+};
+
 export const t = (locale: Locale, key: string, params?: CopyParams) => {
   const dictionary = getDictionary(locale);
-  return format(dictionary[key] ?? key, params);
+  return format(storageCopy[locale]?.[key] ?? dictionary[key] ?? key, params);
 };
 
 export const statusLabel = (locale: Locale, status: CodexStatusName) =>

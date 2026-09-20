@@ -3,10 +3,17 @@ import type {
   AivatarGrowthTraits,
   AvatarAppearanceId,
 } from "../types";
-import type { CardRoomCharacter } from "./holdemEngine";
-import { writeJsonIfChanged } from "../persistence/savePersistence";
+import type { CardRoomCharacter, HoldemPlayer } from "./holdemEngine";
+import { appStorage, transactStore } from "../persistence/saveStore";
 import {
   CARD_ROOM_CHIP_BUNDLE_CHIPS,
+  CARD_ROOM_CHIP_BUNDLE_BITS,
+  addHouseVaultBits,
+  normalizeHouseBank,
+  spendOwnerBits,
+  normalizeChipDebt,
+  type CardRoomHouseBank,
+  type PlayerChipWallet,
   cashOutPokerChipsForBits,
   canExchangePokerChips,
   canRedeemPokerChipsForBits,
@@ -137,7 +144,7 @@ export const deriveDarkTraits = (
 
 const readJson = (storageKey: string): unknown => {
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = appStorage.getItem(storageKey);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -146,7 +153,7 @@ const readJson = (storageKey: string): unknown => {
 
 export const readActiveSaveSlotId = () => {
   try {
-    return localStorage.getItem(ACTIVE_SAVE_SLOT_KEY);
+    return appStorage.getItem(ACTIVE_SAVE_SLOT_KEY);
   } catch {
     return null;
   }
@@ -205,277 +212,170 @@ export const readCardRoomRoster = (): CardRoomCharacter[] => {
     .sort((left, right) => left.slotIndex - right.slotIndex);
 };
 
-export const writeCardRoomSaveSlotDarkTraitChanges = (
+export const CARD_ROOM_PLAYER_WALLET_KEY = "aivatar.cardRoom.playerWallet.v1";
+export const CARD_ROOM_HOUSE_BANK_KEY = "aivatar.cardRoom.houseBank.v1";
+
+type StoreView = { getItem(key: string): string | null };
+const readRecord = (view: StoreView, key: string): Record<string, unknown> | null => {
+  const raw = view.getItem(key);
+  if (raw === null) return null;
+  const parsed: unknown = JSON.parse(raw);
+  if (!isRecord(parsed)) throw new Error(`Invalid Card Room record: ${key}`);
+  return parsed;
+};
+
+// The builder is deliberately pure: every CAS retry recomputes both sides from
+// the latest snapshot, so a wallet transfer cannot commit only its first half.
+const transactSlot = async <T>(
+  slotId: string | null,
+  update: (save: Record<string, unknown>, bank: CardRoomHouseBank) => {
+    save: Record<string, unknown>; bank?: CardRoomHouseBank; result: T;
+  } | null,
+): Promise<T | null> => {
+  if (!slotId) return null;
+  return transactStore<T | null>((view) => {
+    const key = `${SAVE_SLOT_KEY_PREFIX}${slotId}`;
+    const save = readRecord(view, key);
+    if (!save) return { changes: {}, result: null };
+    const bank = normalizeHouseBank(readRecord(view, CARD_ROOM_HOUSE_BANK_KEY));
+    const next = update(save, bank);
+    if (!next) return { changes: {}, result: null };
+    const changes: Record<string, string | null> = { [key]: JSON.stringify(next.save) };
+    if (next.bank) changes[CARD_ROOM_HOUSE_BANK_KEY] = JSON.stringify(next.bank);
+    return { changes, result: next.result };
+  });
+};
+
+export const writeCardRoomSaveSlotDarkTraitChanges = async (
   slotId: string | null,
   changes: Partial<AivatarDarkTraits>,
-) => {
-  if (!slotId) return null;
-  const hasChanges = Object.values(changes).some(
-    (value) => typeof value === "number" && value !== 0,
-  );
-  if (!hasChanges) return null;
-
-  const save = readJson(`${SAVE_SLOT_KEY_PREFIX}${slotId}`);
-  if (!isRecord(save)) return null;
-
-  const memory = isRecord(save.memory) ? save.memory : {};
-  const growth = isRecord(memory.growth) ? memory.growth : {};
-  const traits = normalizeGrowthTraits(growth.traits);
-  const currentDarkTraits =
-    normalizeDarkTraits(memory.darkTraits) ??
-    deriveDarkTraits(traits, `${slotId}:${save.avatarId ?? ""}`) ??
-    defaultDarkTraits();
-  const nextDarkTraits = applyDarkTraitChanges(currentDarkTraits, changes);
-
-  try {
-    writeJsonIfChanged(
-      localStorage,
-      `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      {
-        ...save,
-        memory: {
-          ...memory,
-          darkTraits: nextDarkTraits,
-        },
-      },
-    );
-    return nextDarkTraits;
-  } catch {
-    return null;
-  }
+): Promise<AivatarDarkTraits | null> => {
+  if (!Object.values(changes).some((value) => typeof value === "number" && value !== 0)) return null;
+  return transactSlot(slotId, (save) => {
+    const memory = isRecord(save.memory) ? save.memory : {};
+    const growth = isRecord(memory.growth) ? memory.growth : {};
+    const traits = normalizeGrowthTraits(growth.traits);
+    const current = normalizeDarkTraits(memory.darkTraits)
+      ?? deriveDarkTraits(traits, `${slotId}:${save.avatarId ?? ""}`)
+      ?? defaultDarkTraits();
+    const next = applyDarkTraitChanges(current, changes);
+    return { save: { ...save, memory: { ...memory, darkTraits: next } }, result: next };
+  });
 };
 
-export const exchangeCardRoomSaveSlotPokerChips = (
-  slotId: string | null,
-  pokerChipsOverride?: number,
-) => {
-  if (!slotId) return null;
-  const save = readJson(`${SAVE_SLOT_KEY_PREFIX}${slotId}`);
-  if (!isRecord(save)) return null;
-
+const walletForSave = (save: Record<string, unknown>) => {
   const wallet = isRecord(save.wallet) ? save.wallet : {};
-  const currentWallet = {
-    ...wallet,
-    bits: normalizeWalletBits(wallet.bits),
-    pokerChips: normalizePokerChips(pokerChipsOverride ?? wallet.pokerChips),
-  };
-  if (!canExchangePokerChips(currentWallet)) return null;
-
-  const nextWallet = exchangePokerChips(currentWallet);
-  const nextBits = normalizeWalletBits(nextWallet.bits);
-  const nextPokerChips = normalizePokerChips(nextWallet.pokerChips);
-  const spentBits = normalizeWalletBits(currentWallet.bits) - nextBits;
-
-  try {
-    writeJsonIfChanged(
-      localStorage,
-      `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      {
-        ...save,
-        wallet: {
-          ...wallet,
-          bits: nextBits,
-          pokerChips: nextPokerChips,
-        },
-      },
-    );
-    return {
-      bits: nextBits,
-      pokerChips: nextPokerChips,
-      spentBits,
-    };
-  } catch {
-    return null;
-  }
+  return { ...wallet, bits: normalizeWalletBits(wallet.bits), pokerChips: normalizePokerChips(wallet.pokerChips) };
 };
 
-export const redeemCardRoomSaveSlotPokerChipsForBits = (
-  slotId: string | null,
-  pokerChipsOverride?: number,
-) => {
-  if (!slotId) return null;
-  const save = readJson(`${SAVE_SLOT_KEY_PREFIX}${slotId}`);
-  if (!isRecord(save)) return null;
-
-  const wallet = isRecord(save.wallet) ? save.wallet : {};
-  const currentWallet = {
-    ...wallet,
-    bits: normalizeWalletBits(wallet.bits),
-    pokerChips: normalizePokerChips(pokerChipsOverride ?? wallet.pokerChips),
-  };
-  if (!canRedeemPokerChipsForBits(currentWallet)) return null;
-
-  const nextWallet = redeemPokerChipsForBits(currentWallet);
-  const nextBits = normalizeWalletBits(nextWallet.bits);
-  const nextPokerChips = normalizePokerChips(nextWallet.pokerChips);
-  const redeemedBits = nextBits - normalizeWalletBits(currentWallet.bits);
-
-  try {
-    writeJsonIfChanged(
-      localStorage,
-      `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      {
-        ...save,
-        wallet: {
-          ...wallet,
-          bits: nextBits,
-          pokerChips: nextPokerChips,
-        },
-      },
-    );
+export const exchangeCardRoomSaveSlotPokerChips = async (slotId: string | null) =>
+  transactSlot(slotId, (save, bank) => {
+    const wallet = walletForSave(save);
+    if (!canExchangePokerChips(wallet)) return null;
+    const next = exchangePokerChips(wallet);
+    const spentBits = wallet.bits - next.bits;
+    const nextBank = addHouseVaultBits(bank, spentBits);
     return {
-      bits: nextBits,
-      pokerChips: nextPokerChips,
-      redeemedBits,
+      save: { ...save, wallet: next }, bank: nextBank,
+      result: { bits: next.bits, pokerChips: normalizePokerChips(next.pokerChips), spentBits, bank: nextBank },
     };
-  } catch {
-    return null;
-  }
-};
+  });
 
-export const giftCardRoomSaveSlotPokerChips = (
+export const redeemCardRoomSaveSlotPokerChipsForBits = async (slotId: string | null) =>
+  transactSlot(slotId, (save, bank) => {
+    const wallet = walletForSave(save);
+    if (!canRedeemPokerChipsForBits(wallet)) return null;
+    const next = redeemPokerChipsForBits(wallet);
+    const redeemedBits = next.bits - wallet.bits;
+    const nextBank = addHouseVaultBits(bank, -redeemedBits);
+    return {
+      save: { ...save, wallet: next }, bank: nextBank,
+      result: { bits: next.bits, pokerChips: normalizePokerChips(next.pokerChips), redeemedBits, bank: nextBank },
+    };
+  });
+
+export const giftCardRoomSaveSlotPokerChips = async (
   slotId: string | null,
-  pokerChipsOverride?: number,
   chips = CARD_ROOM_CHIP_BUNDLE_CHIPS,
-) => {
-  if (!slotId) return null;
-  const giftChips = Math.max(0, Math.round(chips));
-  if (giftChips <= 0) return null;
-  const save = readJson(`${SAVE_SLOT_KEY_PREFIX}${slotId}`);
-  if (!isRecord(save)) return null;
-
-  const wallet = isRecord(save.wallet) ? save.wallet : {};
-  const nextBits = normalizeWalletBits(wallet.bits);
-  const nextPokerChips =
-    normalizePokerChips(pokerChipsOverride ?? wallet.pokerChips) + giftChips;
-
-  try {
-    writeJsonIfChanged(
-      localStorage,
-      `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      {
-        ...save,
-        wallet: {
-          ...wallet,
-          bits: nextBits,
-          pokerChips: nextPokerChips,
-        },
-      },
-    );
-    return {
-      bits: nextBits,
-      pokerChips: nextPokerChips,
-      giftedChips: giftChips,
-    };
-  } catch {
-    return null;
-  }
-};
-
-export const cashOutCardRoomSaveSlotPokerChips = (
-  slotId: string | null,
-  pokerChipsOverride?: number,
-) => {
-  if (!slotId) return null;
-  const save = readJson(`${SAVE_SLOT_KEY_PREFIX}${slotId}`);
-  if (!isRecord(save)) return null;
-
-  const wallet = isRecord(save.wallet) ? save.wallet : {};
-  const currentWallet = {
-    ...wallet,
-    bits: normalizeWalletBits(wallet.bits),
-    pokerChips: normalizePokerChips(pokerChipsOverride ?? wallet.pokerChips),
+) => transactSlot(slotId, (save, bank) => {
+  const giftedChips = normalizePokerChips(chips);
+  if (giftedChips <= 0) return null;
+  const nextBank = spendOwnerBits(bank, CARD_ROOM_CHIP_BUNDLE_BITS);
+  if (!nextBank) return null;
+  const wallet = walletForSave(save);
+  const next = { ...wallet, pokerChips: wallet.pokerChips + giftedChips };
+  return {
+    save: { ...save, wallet: next }, bank: nextBank,
+    result: { ...next, giftedChips, bank: nextBank },
   };
-  const nextWallet = cashOutPokerChipsForBits(currentWallet);
-  if (nextWallet.redeemedBits <= 0 || nextWallet.cashedOutChips <= 0) return null;
+});
 
+export const cashOutCardRoomSaveSlotPokerChips = async (slotId: string | null) =>
+  transactSlot(slotId, (save, bank) => {
+    const wallet = walletForSave(save);
+    const next = cashOutPokerChipsForBits(wallet);
+    if (next.redeemedBits <= 0 || next.cashedOutChips <= 0) return null;
+    const nextBank = addHouseVaultBits(bank, -next.redeemedBits);
+    return {
+      save: { ...save, wallet: { ...wallet, bits: next.bits, pokerChips: next.pokerChips } },
+      bank: nextBank, result: { ...next, bank: nextBank },
+    };
+  });
+
+export type CardRoomSaveSlotPokerChipsWriteResult = {
+  ok: boolean; written: boolean; skipped: boolean; pokerChips: number | null;
+};
+
+// Explicit stack assignment retained for callers that intentionally set a value.
+// Live table settlement uses deltas below, never this absolute-value operation.
+export const writeCardRoomSaveSlotPokerChipsResult = async (
+  slotId: string | null, pokerChips: number,
+): Promise<CardRoomSaveSlotPokerChipsWriteResult> => {
+  if (!slotId) return { ok: true, written: false, skipped: true, pokerChips: null };
   try {
-    writeJsonIfChanged(
-      localStorage,
-      `${SAVE_SLOT_KEY_PREFIX}${slotId}`,
-      {
-        ...save,
-        wallet: {
-          ...wallet,
-          bits: nextWallet.bits,
-          pokerChips: nextWallet.pokerChips,
-        },
-      },
-    );
-    return nextWallet;
+    const result = await transactSlot(slotId, (save) => {
+      const nextPokerChips = normalizePokerChips(pokerChips);
+      const next = { ...save, wallet: { ...walletForSave(save), pokerChips: nextPokerChips } };
+      return { save: next, result: {
+        ok: true, written: JSON.stringify(save) !== JSON.stringify(next),
+        skipped: false, pokerChips: nextPokerChips,
+      } };
+    });
+    return result ?? { ok: true, written: false, skipped: true, pokerChips: null };
   } catch {
-    return null;
+    return { ok: false, written: false, skipped: false, pokerChips: null };
   }
 };
 
-export const writeCardRoomSaveSlotPokerChips = (
-  slotId: string | null,
-  pokerChips: number,
-) => {
-  const result = writeCardRoomSaveSlotPokerChipsResult(slotId, pokerChips);
+export const writeCardRoomSaveSlotPokerChips = async (slotId: string | null, pokerChips: number) => {
+  const result = await writeCardRoomSaveSlotPokerChipsResult(slotId, pokerChips);
   return result.ok && !result.skipped ? result.pokerChips : null;
 };
 
-export type CardRoomSaveSlotPokerChipsWriteResult = {
-  ok: boolean;
-  written: boolean;
-  skipped: boolean;
-  pokerChips: number | null;
-};
-
-export const writeCardRoomSaveSlotPokerChipsResult = (
-  slotId: string | null,
-  pokerChips: number,
-): CardRoomSaveSlotPokerChipsWriteResult => {
-  if (!slotId) {
-    return { ok: true, written: false, skipped: true, pokerChips: null };
-  }
-
-  const storageKey = `${SAVE_SLOT_KEY_PREFIX}${slotId}`;
-  let raw: string | null;
-  try {
-    raw = localStorage.getItem(storageKey);
-  } catch {
-    return { ok: false, written: false, skipped: false, pokerChips: null };
-  }
-  if (raw === null) {
-    // Another window may have deleted this slot while the table was open.
-    return { ok: true, written: false, skipped: true, pokerChips: null };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ok: false, written: false, skipped: false, pokerChips: null };
-  }
-  if (!isRecord(parsed)) {
-    return { ok: false, written: false, skipped: false, pokerChips: null };
-  }
-
-  const wallet = isRecord(parsed.wallet) ? parsed.wallet : {};
-  const nextPokerChips = normalizePokerChips(pokerChips);
-
-  try {
-    const written = writeJsonIfChanged(
-      localStorage,
-      storageKey,
-      {
-        ...parsed,
-        wallet: {
-          ...wallet,
-          bits: normalizeWalletBits(wallet.bits),
-          pokerChips: nextPokerChips,
-        },
-      },
-    );
-    return {
-      ok: true,
-      written,
-      skipped: false,
-      pokerChips: nextPokerChips,
-    };
-  } catch {
-    return { ok: false, written: false, skipped: false, pokerChips: null };
-  }
+export const settleCardRoomTable = async (
+  players: readonly HoldemPlayer[], before: readonly HoldemPlayer[],
+): Promise<void> => {
+  const previous = new Map(before.map((player) => [player.avatarId, player.stack]));
+  // Freeze the submitted delta outside the retry callback. Remote updates are
+  // added to, while this table's change is applied exactly once on commit.
+  const deltas = players.map((player) => ({
+    player, delta: player.stack - (previous.get(player.avatarId) ?? player.pokerChips),
+  })).filter(({ delta }) => delta !== 0);
+  if (!deltas.length) return;
+  await transactStore((view) => {
+    const changes: Record<string, string | null> = {};
+    for (const { player, delta } of deltas) {
+      const key = player.isUser ? CARD_ROOM_PLAYER_WALLET_KEY : `${SAVE_SLOT_KEY_PREFIX}${player.slotId}`;
+      const save = readRecord(view, key);
+      if (!player.isUser && !save) throw new Error("A table participant's save was deleted. Settlement was not committed.");
+      const wallet = player.isUser ? (save ?? {}) : walletForSave(save!);
+      const pokerChips = normalizePokerChips(wallet.pokerChips) + delta;
+      if (pokerChips < 0) throw new Error("Chips changed in another window. Settlement was not committed.");
+      const nextWallet = { ...wallet, pokerChips };
+      changes[key] = JSON.stringify(player.isUser
+        ? { ...nextWallet, chipDebt: normalizeChipDebt((wallet as Record<string, unknown>).chipDebt) } satisfies PlayerChipWallet
+        : { ...save, wallet: nextWallet });
+    }
+    return { changes, result: undefined };
+  });
 };

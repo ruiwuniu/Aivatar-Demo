@@ -1,3 +1,4 @@
+import { appStorage } from "../persistence/saveStore";
 export interface ParkAmbientAudioController {
   audio: HTMLAudioElement;
   playPending: boolean;
@@ -13,7 +14,7 @@ const PARK_AMBIENT_AUDIO_SOURCE = "/audio/park-sea-cliff-ambience.ogg";
 export const readParkAmbientAudioVolume = () => {
   try {
     const stored = Number.parseFloat(
-      localStorage.getItem(PARK_AMBIENT_AUDIO_VOLUME_KEY) ?? "",
+      appStorage.getItem(PARK_AMBIENT_AUDIO_VOLUME_KEY) ?? "",
     );
     return Number.isFinite(stored)
       ? Math.max(0, Math.min(1, stored))

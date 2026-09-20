@@ -4,26 +4,112 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: GitHub release tag to upload Windows installers to.
+        description: Existing draft GitHub release tag for the Windows installers.
         required: true
-        default: v0.4.4
+        default: v0.4.5
       ref:
-        description: Git ref to build.
+        description: Full 40-character commit SHA to build.
         required: true
-        default: main
 
 permissions:
   contents: write
 
 jobs:
   build-windows:
-    name: Build and upload Windows installers
+    name: Build and verify Windows installers
     runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      SOURCE_SHA: ${{ inputs.ref }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    defaults:
+      run:
+        shell: pwsh
     steps:
-      - name: Checkout
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Require an immutable source commit
+        shell: python
+        run: |
+          import os
+          import re
+          if not re.fullmatch(r"[0-9a-fA-F]{40}", os.environ["SOURCE_SHA"]):
+              raise SystemExit("Supply ref as a full 40-character commit SHA, not a branch or tag.")
+
+      - name: Checkout the requested source
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+
+      - name: Check source, versions, draft release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import tomllib
+
+          root = pathlib.Path.cwd()
+          sha = os.environ["SOURCE_SHA"].lower()
+          tag = os.environ["RELEASE_TAG"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          if not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("ref must be a full 40-character commit SHA.")
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if head != sha:
+              raise SystemExit(f"Checkout HEAD {head} does not match requested source {sha}.")
+          package = json.loads((root / "package.json").read_text())
+          lock = json.loads((root / "package-lock.json").read_text())
+          tauri = json.loads((root / "src-tauri/tauri.conf.json").read_text())
+          cargo = tomllib.loads((root / "src-tauri/Cargo.toml").read_text())
+          cargo_lock = tomllib.loads((root / "src-tauri/Cargo.lock").read_text())
+          rust_packages = [entry for entry in cargo_lock["package"] if entry["name"] == cargo["package"]["name"]]
+          version = package["version"]
+          versions = [lock["version"], lock["packages"][""]["version"], tauri["version"], cargo["package"]["version"]]
+          if len(rust_packages) != 1 or rust_packages[0]["version"] != version or any(value != version for value in versions):
+              raise SystemExit("Package, npm lock, Tauri, Cargo manifest and Cargo lock versions must match.")
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) or tag != f"v{version}":
+              raise SystemExit("Release tag must match the stable source version.")
+          expected_resources = {"../plugins/aivatar-session-bridge/", "../scripts/*.mjs", "../scripts/*.py", "../scripts/*.swift"}
+          if set(tauri["bundle"]["resources"]) != expected_resources:
+              raise SystemExit("Resources must use the approved plugin directory and top-level script globs.")
+          subprocess.run(["git", "diff", "--exit-code", "HEAD", "--", "package.json", "package-lock.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"], check=True)
+
+          def api(endpoint):
+              return json.loads(subprocess.check_output(["gh", "api", f"repos/{repo}/{endpoint}"], text=True))
+
+          release = api(f"releases/tags/{tag}")
+          if release["tag_name"] != tag or not release["draft"]:
+              raise SystemExit("The requested existing release must still be a draft matching the source version.")
+          if release["target_commitish"].lower() != sha:
+              raise SystemExit("Create the draft with --target set to the requested full source SHA.")
+          references = api(f"git/matching-refs/tags/{tag}")
+          matching = [entry for entry in references if entry["ref"] == f"refs/tags/{tag}"]
+          if len(matching) > 1:
+              raise SystemExit("Ambiguous release tag reference.")
+          if matching:
+              target_object = matching[0]["object"]
+              for _ in range(10):
+                  if target_object["type"] != "tag":
+                      break
+                  target_object = api(f"git/tags/{target_object['sha']}")["object"]
+              if target_object["type"] != "commit" or target_object["sha"] != sha:
+                  raise SystemExit("The existing release tag does not point to the requested source commit.")
+          # A draft may not create its tag until publication; its full target SHA was checked above.
+          with pathlib.Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as stream:
+              stream.write(f"RELEASE_VERSION={version}\n")
+          # Re-run this exact check immediately before uploading to catch draft/tag drift.
+          guard_path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-release-guard.py"
+          if pathlib.Path(__file__).resolve() != guard_path.resolve():
+              guard_path.write_text(pathlib.Path(__file__).read_text(), encoding="utf-8")
+          print(f"Verified draft {tag}, source {sha}, versions and resource allowlist.")
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -37,74 +123,122 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Install Windows installer tools
-        shell: pwsh
         run: |
           choco install nsis wixtoolset --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Installer tool setup failed." }
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Check persistence without launching the application
+        shell: python
+        run: |
+          import subprocess
+          for script in (
+              "aivatar-save-store-smoke.mjs", "aivatar-save-persistence-smoke.mjs",
+              "aivatar-room-save-persistence-smoke.mjs", "aivatar-close-save-smoke.mjs",
+              "aivatar-park-persistence-smoke.mjs", "aivatar-card-room-close-save-smoke.mjs",
+              "aivatar-park-smoke.mjs", "card-room-holdem-rules-smoke.mjs",
+          ):
+              subprocess.run(["node", f"scripts/{script}"], check=True)
+          import os
+          import pathlib
+          test_env = dict(os.environ, CARGO_TARGET_DIR=str(pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-storage-core-target"))
+          subprocess.run(["cargo", "test", "--locked", "--manifest-path", "scripts/wal-diagnostics/save-store-rust-tests/Cargo.toml"], check=True, env=test_env)
+
       - name: Build Tauri Windows bundles
-        shell: pwsh
-        run: |
-          npm run tauri build -- --target x86_64-pc-windows-msvc
+        run: npm run tauri -- build --target x86_64-pc-windows-msvc --bundles "nsis,msi" --ci -- --locked
 
-      - name: List Windows bundles
-        shell: pwsh
-        run: |
-          Get-ChildItem -Path src-tauri/target/x86_64-pc-windows-msvc/release/bundle -Recurse |
-            Select-Object FullName, Length |
-            Format-Table -AutoSize
-
-      - name: Write Windows checksums
-        shell: pwsh
+      - name: Verify installer metadata and write checksums
         run: |
           $ErrorActionPreference = "Stop"
+          $version = $env:RELEASE_VERSION
           $bundleRoot = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
-          $assets = @()
-          $assets += Get-ChildItem -Path "$bundleRoot/nsis" -Filter "*.exe" -File -ErrorAction SilentlyContinue
-          $assets += Get-ChildItem -Path "$bundleRoot/msi" -Filter "*.msi" -File -ErrorAction SilentlyContinue
-          if ($assets.Count -eq 0) {
-            throw "No Windows installer assets found under $bundleRoot."
+          $exes = @(Get-ChildItem -Path "$bundleRoot/nsis" -Filter "*.exe" -File)
+          $msis = @(Get-ChildItem -Path "$bundleRoot/msi" -Filter "*.msi" -File)
+          if ($exes.Count -ne 1 -or $exes[0].Name -ne "Aivatar_${version}_x64-setup.exe") {
+            throw "Expected exactly one Aivatar_${version}_x64-setup.exe."
           }
-          $assets |
-            ForEach-Object {
-              $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
-              [PSCustomObject]@{
-                name = $_.Name
-                size = $_.Length
-                sha256 = $hash.Hash.ToLowerInvariant()
-              }
-            } |
-            ConvertTo-Json |
-            Out-File -FilePath windows-release-checksums.json -Encoding utf8
+          if ($msis.Count -ne 1 -or $msis[0].Name -ne "Aivatar_${version}_x64_en-US.msi") {
+            throw "Expected exactly one Aivatar_${version}_x64_en-US.msi."
+          }
+          $expectedVersion = "$version.0"
+          function Read-FileVersion($file) {
+            $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($file)
+            return "$($info.FileMajorPart).$($info.FileMinorPart).$($info.FileBuildPart).$($info.FilePrivatePart)"
+          }
+          $exeVersion = Read-FileVersion $exes[0].FullName
+          $application = (Get-Item "$bundleRoot/../aivatar.exe").FullName
+          $applicationVersion = Read-FileVersion $application
+          if ($exeVersion -ne $expectedVersion -or $applicationVersion -ne $expectedVersion) {
+            throw "EXE installer or application version differs from $expectedVersion."
+          }
+          $binary = [System.IO.File]::ReadAllBytes($application)
+          $peOffset = [BitConverter]::ToInt32($binary, 0x3c)
+          if ([BitConverter]::ToUInt32($binary, $peOffset) -ne 0x00004550 -or [BitConverter]::ToUInt16($binary, $peOffset + 4) -ne 0x8664) {
+            throw "The freshly built application must be an x64 PE executable."
+          }
+          $installer = $database = $view = $record = $summary = $null
+          try {
+            $installer = New-Object -ComObject WindowsInstaller.Installer
+            # OpenDatabase mode 0 and SummaryInformation maxProperties 0 are read-only.
+            $database = $installer.OpenDatabase($msis[0].FullName, 0)
+            $view = $database.OpenView("SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = 'ProductVersion'")
+            $view.Execute()
+            $record = $view.Fetch()
+            if ($null -eq $record) { throw "MSI ProductVersion is missing." }
+            $msiVersion = $record.StringData(1)
+            $summary = $database.SummaryInformation(0)
+            $template = $summary.Property(7)
+            if ($msiVersion -ne $version -or ($template -split ';')[0] -ne "x64") {
+              throw "MSI ProductVersion or platform does not match $version / x64."
+            }
+          } finally {
+            if ($null -ne $view) { $view.Close() }
+            foreach ($item in @($summary, $record, $view, $database, $installer)) {
+              if ($null -ne $item) { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($item) }
+            }
+          }
+          $assets = @($exes[0], $msis[0]) | ForEach-Object {
+            $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
+            [PSCustomObject]@{ name = $_.Name; size = $_.Length; sha256 = $hash.Hash.ToLowerInvariant() }
+          }
+          $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:SOURCE_SHA.ToLowerInvariant()) { throw "Source commit changed." }
+          [PSCustomObject]@{
+            version = $version
+            sourceCommit = $head
+            assets = @($assets)
+            verification = [PSCustomObject]@{
+              exeFileVersion = $exeVersion
+              applicationFileVersion = $applicationVersion
+              applicationArchitecture = "x64"
+              msiProductVersion = $msiVersion
+              msiTemplate = $template
+              msiOpenedReadOnly = $true
+              applicationLaunched = $false
+            }
+          } | ConvertTo-Json -Depth 5 | Set-Content -Path windows-release-checksums.json -Encoding utf8
           Get-Content windows-release-checksums.json
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: aivatar-windows-installers-${{ inputs.tag }}
+          if-no-files-found: error
           path: |
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
             windows-release-checksums.json
 
-      - name: Upload release assets to GitHub Release
-        shell: pwsh
+      - name: Upload assets to the draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           $ErrorActionPreference = "Stop"
+          python (Join-Path $env:RUNNER_TEMP "aivatar-release-guard.py")
+          if ($LASTEXITCODE -ne 0) { throw "Draft release/source recheck failed." }
           $bundleRoot = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
-          $assets = @()
-          $assets += Get-ChildItem -Path "$bundleRoot/nsis" -Filter "*.exe" -File -ErrorAction SilentlyContinue
-          $assets += Get-ChildItem -Path "$bundleRoot/msi" -Filter "*.msi" -File -ErrorAction SilentlyContinue
-          if ($assets.Count -eq 0) {
-            throw "No Windows installer assets found under $bundleRoot."
-          }
-          $assets += Get-Item -Path "windows-release-checksums.json"
-          foreach ($asset in $assets) {
-            gh release upload $env:RELEASE_TAG $asset.FullName --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw "Release upload failed for $($asset.Name)." }
-          }
+          $version = $env:RELEASE_VERSION
+          gh release upload $env:RELEASE_TAG "$bundleRoot/nsis/Aivatar_${version}_x64-setup.exe" "$bundleRoot/msi/Aivatar_${version}_x64_en-US.msi" windows-release-checksums.json --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw "Release asset upload failed." }
