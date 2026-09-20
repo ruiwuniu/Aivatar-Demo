@@ -135,6 +135,7 @@ pub fn is_allowed_key(key: &str) -> bool {
         "aivatar.cardRoom.decor.v1",
     ];
     const PREFIXES: &[&str] = &[
+        "aivatar.desktopLayout.v1.",
         "aivatar.saveSlot.v1.",
         "aivatar.roomVisitPairCooldown.v1.",
         "aivatar.socialRelationship.v1.",

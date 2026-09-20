@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Aivatar",
@@ -23,6 +24,8 @@
         "backgroundThrottling": "throttle",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --disk-cache-size=134217728",
         "alwaysOnTop": false,
+        "transparent": true,
+        "acceptFirstMouse": true,
         "decorations": true
       }
     ],

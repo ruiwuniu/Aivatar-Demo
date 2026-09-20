@@ -2493,6 +2493,42 @@ const paintingDictionary: Record<Locale, Record<string, string>> = {
   },
 };
 
+const desktopCopy: Record<Locale, Record<string, string>> = {
+  "zh-Hans": {
+    "desktop.enter": "到桌面",
+    "desktop.return": "回到房间",
+    "desktop.entering": "正在前往桌面…",
+    "desktop.returning": "正在回到房间…",
+    "desktop.busy": "请先结束房间互动或外出活动，再前往桌面。",
+    "desktop.unavailable": "桌面模式需要在 Aivatar 桌面应用中打开。",
+    "desktop.failure": "桌面模式切换失败，请重试。",
+    "desktop.title": "桌面伙伴",
+    "desktop.hint": "拖动角色或电脑调整位置；右键角色回到房间。",
+  },
+  "zh-Hant": {
+    "desktop.enter": "到桌面",
+    "desktop.return": "回到房間",
+    "desktop.entering": "正在前往桌面…",
+    "desktop.returning": "正在回到房間…",
+    "desktop.busy": "請先結束房間互動或外出活動，再前往桌面。",
+    "desktop.unavailable": "桌面模式需要在 Aivatar 桌面應用中開啟。",
+    "desktop.failure": "桌面模式切換失敗，請重試。",
+    "desktop.title": "桌面夥伴",
+    "desktop.hint": "拖動角色或電腦調整位置；右鍵角色回到房間。",
+  },
+  en: {
+    "desktop.enter": "Go to desktop",
+    "desktop.return": "Return to room",
+    "desktop.entering": "Going to desktop…",
+    "desktop.returning": "Returning to room…",
+    "desktop.busy": "Finish the room interaction or outing before going to the desktop.",
+    "desktop.unavailable": "Desktop mode is available in the Aivatar desktop app.",
+    "desktop.failure": "Could not switch desktop mode. Please try again.",
+    "desktop.title": "Desktop companion",
+    "desktop.hint": "Drag the character or computer to move it. Right-click the character to return to the room.",
+  },
+};
+
 const dictionaryCache = new Map<Locale, Record<string, string>>();
 
 const getDictionary = (locale: Locale): Record<string, string> => {
@@ -2503,6 +2539,7 @@ const getDictionary = (locale: Locale): Record<string, string> => {
     ...englishDictionary,
     ...(locale === "en" ? {} : dictionaries[locale]),
     ...paintingDictionary[locale],
+    ...desktopCopy[locale],
   };
   dictionaryCache.set(locale, dictionary);
   return dictionary;

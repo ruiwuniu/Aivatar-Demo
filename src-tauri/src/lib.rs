@@ -9,6 +9,7 @@ use std::sync::{
 use tauri::{path::BaseDirectory, Emitter, Manager, Size};
 
 mod codex_discovery;
+mod desktop_mode;
 mod local_bridge;
 mod save_store;
 mod workbuddy_discovery;
@@ -616,6 +617,10 @@ fn attach_save_before_close_handler(window: tauri::WebviewWindow) {
 
     window.on_window_event(move |event| match event {
         tauri::WindowEvent::CloseRequested { api, .. } => {
+            // If saving fails or times out, leave an ordinary, reachable room window.
+            if desktop_mode::is_active(&app, &label) {
+                desktop_mode::restore_async(window_for_event.clone(), "close-requested");
+            }
             let close_state = app.state::<CloseSaveState>();
             let mut windows = match close_state.windows.lock() {
                 Ok(windows) => windows,
@@ -669,6 +674,7 @@ fn attach_save_before_close_handler(window: tauri::WebviewWindow) {
             });
         }
         tauri::WindowEvent::Destroyed => {
+            desktop_mode::forget_window(&app, &label);
             if let Ok(mut windows) = app.state::<CloseSaveState>().windows.lock() {
                 windows.pending.remove(&label);
                 windows.approved.remove(&label);
@@ -731,6 +737,9 @@ fn set_main_window_visibility_for_park_owner(
     owner_label: &str,
     visible: bool,
 ) -> Result<(), String> {
+    if !visible && desktop_mode::is_active(app, "main") {
+        return Err("Return the avatar to its room before hiding it for the park.".into());
+    }
     let profile_state = app.state::<ParkProfileWindowState>();
     let mut hidden_by = profile_state
         .hidden_by
@@ -1947,6 +1956,10 @@ fn resize_main_window_for_side_panel(
     min_width: f64,
     height: f64,
 ) -> Result<(), String> {
+    if desktop_mode::is_active(window.app_handle(), window.label()) {
+        return Ok(());
+    }
+    desktop_mode::record_room_min_width(window.app_handle(), window.label(), min_width);
     let _ = window.set_maximizable(false);
     if window.is_maximized().unwrap_or(false) {
         window
@@ -2014,6 +2027,8 @@ async fn open_save_slot_window(
     .maximizable(false)
     .always_on_top(false)
     .decorations(true)
+    .transparent(true)
+    .accept_first_mouse(true)
     .focused(true)
     .additional_browser_args(WEBVIEW2_BROWSER_ARGS)
     .build()
@@ -2318,6 +2333,7 @@ pub fn run() {
 
     let mut builder =
         tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            desktop_mode::restore_all_async(app, "second-launch");
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
@@ -2332,6 +2348,7 @@ pub fn run() {
         );
     }
     let app = builder
+        .manage(desktop_mode::DesktopModeState::default())
         .manage(ParkProfileWindowState::default())
         .manage(CloseSaveState::default())
         .manage(SyntheticHarnessState::default())
@@ -2347,6 +2364,9 @@ pub fn run() {
             start_agent_cli,
             start_task_agent,
             resize_main_window_for_side_panel,
+            desktop_mode::enter_desktop_mode,
+            desktop_mode::exit_desktop_mode,
+            desktop_mode::update_desktop_hit_regions,
             set_main_window_visibility_for_park_profile,
             confirm_close_after_save,
             open_save_slot_window,
@@ -2380,6 +2400,10 @@ pub fn run() {
         .expect("error while building Aivatar");
 
     app.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
+        if matches!(&event, tauri::RunEvent::Reopen { .. }) {
+            desktop_mode::restore_all_async(app_handle, "dock-reopen");
+        }
         if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
             let windows = app_handle.webview_windows();
             let close_state = app_handle.state::<CloseSaveState>();

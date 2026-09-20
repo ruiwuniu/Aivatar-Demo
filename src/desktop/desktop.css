@@ -1,0 +1,71 @@
+html.aivatar-desktop-mode,
+body.aivatar-desktop-mode,
+body.aivatar-desktop-mode #root {
+  background: transparent !important;
+  background-image: none !important;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.desktop-companion {
+  position: fixed;
+  inset: 0;
+  isolation: isolate;
+  user-select: none;
+  -webkit-user-select: none;
+  background: transparent;
+}
+
+.desktop-companion-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  border: 0;
+  background: transparent;
+  image-rendering: pixelated;
+  touch-action: none;
+  cursor: grab;
+}
+
+.desktop-companion-menu {
+  position: absolute;
+  z-index: 2;
+  width: 216px;
+  padding: 5px;
+  border: 2px solid #1c2638;
+  border-radius: 6px;
+  background: #fffbea;
+  box-shadow: 3px 4px 0 #0004;
+  color: #182537;
+  font: 14px system-ui, sans-serif;
+}
+
+.desktop-companion-menu button {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px;
+  border: 0;
+  border-radius: 3px;
+  color: #182537;
+  background: #fffbea;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.desktop-companion-menu button:hover,
+.desktop-companion-menu button:focus-visible {
+  color: #fff;
+  background: #284972;
+  outline: none;
+}
+
+.desktop-companion-menu button:disabled { opacity: 0.6; cursor: wait; }
+.desktop-companion-menu p { margin: 6px; overflow-wrap: anywhere; font-size: 12px; }

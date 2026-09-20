@@ -10,6 +10,7 @@ export const LEGACY_KEYS = [
   "aivatar.cardRoom.houseBank.v1", "aivatar.cardRoom.decor.v1",
 ] as const;
 export const LEGACY_PREFIXES = [
+  "aivatar.desktopLayout.v1.",
   "aivatar.saveSlot.v1.", "aivatar.roomVisitPairCooldown.v1.",
   "aivatar.socialRelationship.v1.", "aivatar.socialRoomMemory.v1.",
   "aivatar.cardRoom.playerName.v1.", "aivatar.cardRoom.navMemory.v1.",

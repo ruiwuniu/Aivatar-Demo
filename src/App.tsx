@@ -35,6 +35,8 @@ import {
   normalizePlacedItemPoint,
 } from "./game/interactions";
 import { renderScene } from "./game/renderScene";
+import { DesktopCompanion } from "./desktop/DesktopCompanion";
+import type { DesktopLayout, DesktopViewport } from "./desktop/desktopTypes";
 import {
   applyConsumableEffect,
   applyPetTick,
@@ -3723,6 +3725,17 @@ export const App = () => {
   const [saveSlotMessage, setSaveSlotMessage] = useState("");
   const [cardRoomMessage, setCardRoomMessage] = useState("");
   const [parkMessage, setParkMessage] = useState("");
+  const [desktopViewport, setDesktopViewport] = useState<DesktopViewport | null>(null);
+  const [desktopTransitioning, setDesktopTransitioning] = useState(false);
+  const [desktopMessage, setDesktopMessage] = useState("");
+  const [desktopTyping, setDesktopTyping] = useState(false);
+  const desktopModeRef = useRef(false);
+  const desktopTransitionRef = useRef(false);
+  const desktopEpochRef = useRef(0);
+  const desktopLayoutRef = useRef<DesktopLayout | null>(null);
+  const desktopLayoutSlotRef = useRef<string | null>(null);
+  const desktopCaptureRef = useRef<(() => DesktopLayout) | null>(null);
+  const desktopReturnRef = useRef<(nativeEnded?: boolean) => Promise<void>>(async () => {});
   const [contentBase, setContentBase] = useState(defaultContent);
   const [configState, setConfigState] = useState<"builtin" | "config" | "fallback">(
     "builtin",
@@ -4288,7 +4301,7 @@ export const App = () => {
       slotIndex,
       saveRef.current,
       normalizeMemory(saveRef.current.memory),
-      status,
+      desktopModeRef.current ? "busy" : status,
       visitId,
     );
   };
@@ -4744,7 +4757,7 @@ export const App = () => {
     }
   };
 
-  const isRoomVisitSessionBusy = () => isHighPriorityStatus(statusRef.current.status);
+  const isRoomVisitSessionBusy = () => desktopModeRef.current || isHighPriorityStatus(statusRef.current.status);
 
   const syncHostAvatarWithRoomVisitor = (
     visitor: AivatarRoomVisitor,
@@ -5198,6 +5211,7 @@ export const App = () => {
     });
 
   const canStartAutonomousRoomVisit = (nowMs: number) => {
+    if (desktopModeRef.current) return false;
     if (!activeSaveSlotIdRef.current || saveMenuOpenRef.current) return false;
     if (roomVisitMenuOpenRef.current || activeVisitRef.current || avatarAwayRef.current) return false;
     if (nowMs < autonomousRoomVisitCooldownUntilRef.current) return false;
@@ -5304,6 +5318,7 @@ export const App = () => {
     open: boolean,
     collapsedWidth = COLLAPSED_WINDOW_MIN_WIDTH,
   ) => {
+    if (desktopModeRef.current) return;
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const minWidth = open ? EXPANDED_WINDOW_MIN_WIDTH : collapsedWidth;
@@ -5322,6 +5337,7 @@ export const App = () => {
           await new Promise<void>((resolve) => {
             window.setTimeout(resolve, COLLAPSED_WINDOW_RESIZE_RETRY_DELAY_MS);
           });
+          if (desktopModeRef.current) return;
 
           const widthDeficit = Math.ceil(collapsedWidth - window.innerWidth);
           if (widthDeficit <= 0) break;
@@ -6031,6 +6047,133 @@ export const App = () => {
     setSaveState(nextSave);
   };
 
+  const persistDesktopLayout = async () => {
+    const latest = desktopCaptureRef.current?.() ?? desktopLayoutRef.current;
+    const slotId = desktopLayoutSlotRef.current;
+    if (!latest || !slotId) return;
+    desktopLayoutRef.current = latest;
+    await appStorage.setItem(`aivatar.desktopLayout.v1.${slotId}`, JSON.stringify(latest));
+  };
+
+  const rememberDesktopLayout = (layout: DesktopLayout) => {
+    desktopLayoutRef.current = layout;
+    if (desktopModeRef.current && !isStoreClosing()) {
+      void persistDesktopLayout().catch(reportSaveError);
+    }
+  };
+
+  const restoreRoomPresentation = () => {
+    desktopModeRef.current = false;
+    desktopTransitionRef.current = false;
+    setDesktopViewport(null);
+    setDesktopTransitioning(false);
+    setDesktopTyping(false);
+    // The desktop has its own coordinates. Resume from the saved room position
+    // with no stale furniture action or accumulated simulation backlog.
+    runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
+    setAvatar(runtimeRef.current);
+  };
+
+  const returnFromDesktop = async (nativeEnded = false) => {
+    if (!desktopModeRef.current) return;
+    if (desktopTransitionRef.current && !nativeEnded) return;
+    desktopEpochRef.current += 1;
+    const latest = desktopCaptureRef.current?.();
+    if (latest) desktopLayoutRef.current = latest;
+    if (nativeEnded) {
+      // A native recovery already restored window decorations and input. Restore
+      // the room immediately even if its pending position save needs a retry.
+      restoreRoomPresentation();
+      await persistDesktopLayout();
+      return;
+    }
+    desktopTransitionRef.current = true;
+    setDesktopTransitioning(true);
+    try {
+      await persistDesktopLayout();
+      await drainStore();
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("exit_desktop_mode");
+      restoreRoomPresentation();
+    } catch (error) {
+      desktopTransitionRef.current = false;
+      setDesktopTransitioning(false);
+      throw error;
+    }
+  };
+  desktopReturnRef.current = returnFromDesktop;
+
+  const enterDesktopMode = async () => {
+    if (desktopModeRef.current || desktopTransitionRef.current || isStoreClosing()) return;
+    setDesktopMessage("");
+    if (!("__TAURI_INTERNALS__" in window)) {
+      setDesktopMessage(ui("desktop.unavailable"));
+      return;
+    }
+    const slotId = activeSaveSlotIdRef.current;
+    if (!slotId || saveMenuOpenRef.current || activeVisitRef.current || avatarAwayRef.current
+      || roomVisitorRef.current || isBlockingInteraction(activeInteractionRef.current)
+      || pendingWorldInteractionRef.current || sidePanelAnimating) {
+      setDesktopMessage(ui("desktop.busy"));
+      return;
+    }
+    desktopTransitionRef.current = true;
+    setDesktopTransitioning(true);
+    const epoch = ++desktopEpochRef.current;
+    try {
+      if (!(await persistCurrentSaveSlot()).ok) throw new Error(ui("storage.saveFailed"));
+      await drainStore();
+      let savedLayout: DesktopLayout | null = null;
+      try {
+        const raw = appStorage.getItem(`aivatar.desktopLayout.v1.${slotId}`);
+        savedLayout = raw ? JSON.parse(raw) as DesktopLayout : null;
+      } catch {
+        // Desktop layout is optional; malformed coordinates do not invalidate
+        // the character save. The desktop runtime validates every coordinate.
+      }
+      desktopLayoutSlotRef.current = slotId;
+      desktopLayoutRef.current = savedLayout;
+      desktopModeRef.current = true;
+      stopBehaviorDemo();
+      taskCabinetVisualFlowRef.current = null;
+      clearPendingFurnitureInteraction();
+      updateActiveInteraction(null);
+      clearSelectedRoomObject();
+      setRoomVisitMenuOpen(false);
+      const { invoke } = await import("@tauri-apps/api/core");
+      const viewport = await invoke<DesktopViewport>("enter_desktop_mode", {
+        preferredMonitor: typeof savedLayout?.monitorId === "string" ? savedLayout.monitorId : null,
+      });
+      if (epoch !== desktopEpochRef.current) return;
+      setDesktopViewport(viewport);
+    } catch (error) {
+      restoreRoomPresentation();
+      setDesktopMessage(`${ui("desktop.failure")} ${String(error)}`);
+    } finally {
+      desktopTransitionRef.current = false;
+      setDesktopTransitioning(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const target = { kind: "WebviewWindow" as const, label: getCurrentWebviewWindow().label };
+      const ended = await listen("aivatar://desktop-mode-ended", () => {
+        void desktopReturnRef.current(true).catch(reportSaveError);
+      }, { target });
+      const resized = await listen<DesktopViewport>("aivatar://desktop-viewport", ({ payload }) => {
+        if (desktopModeRef.current) setDesktopViewport(payload);
+      }, { target });
+      if (disposed) { ended(); resized(); }
+      else unlisteners.push(ended, resized);
+    }).catch((error) => { if (!disposed) console.error("Desktop mode recovery listener failed", error); });
+    return () => { disposed = true; unlisteners.forEach((unlisten) => unlisten()); };
+  }, []);
+
   const selectSaveSlot = (slotId: string) => runSlotAction(async () => {
     await transactStore((view) => {
       const slots = JSON.parse(view.getItem(SAVE_SLOTS_KEY) ?? "[]") as SaveSlotSummary[];
@@ -6350,6 +6493,7 @@ export const App = () => {
   };
 
   useLayoutEffect(() => {
+    if (desktopModeRef.current) return;
     if (avatarAway && awayRoomFrameRenderedRef.current) return;
     if (canvasRef.current) {
       renderScene(
@@ -6731,6 +6875,7 @@ export const App = () => {
   useEffect(() => {
     const flushSave = async () => {
       await slotActionRef.current;
+      await persistDesktopLayout();
       const results = [];
       do {
         await flushDeferredSaveUpdates();
@@ -6992,6 +7137,7 @@ export const App = () => {
 
   useEffect(() => {
     appStorage.setItem(ALWAYS_ON_TOP_KEY, String(alwaysOnTopEnabled));
+    if (desktopModeRef.current) return;
     void import("@tauri-apps/api/window")
       .then(({ getCurrentWindow }) =>
         getCurrentWindow().setAlwaysOnTop(alwaysOnTopEnabled),
@@ -7019,6 +7165,23 @@ export const App = () => {
   }, [startupSoundEnabled, audioVolume]);
 
   useEffect(() => {
+    if (desktopViewport) {
+      // Keep audio owned by this App too. Room loops and delayed drinks must
+      // stop when the room disappears; only the desktop typing loop remains.
+      [coffeeMachineBrewAudioRef, gameConsoleAudioRef, sleepSnoreAudioRef,
+        fridgeDoorOpenAudioRef, fridgeDoorCloseAudioRef, colaCanOpenAudioRef,
+        colaDrinkAudioRef, coffeeDrinkAudioRef, bentoEatAudioRef,
+        gasRangeIgniteAudioRef, fishPanSizzleAudioRef, gasRangeShutoffAudioRef,
+      ].forEach((audio) => pauseAudio(audio.current));
+      if (colaDrinkAudioTimeoutRef.current !== null) {
+        window.clearTimeout(colaDrinkAudioTimeoutRef.current);
+        colaDrinkAudioTimeoutRef.current = null;
+      }
+      stopRecordPlayerBgm();
+      setAudioPlaying(keyboardTypingAudioRef.current,
+        desktopTyping && audioVolume > 0 && audioUnlockedRef.current);
+      return;
+    }
     const activeBehavior = runtimeActionBehavior(avatar);
     const terminal = contentRef.current.placedItems?.find(
       (item) =>
@@ -7229,6 +7392,8 @@ export const App = () => {
     bgmVolume,
     gameConsoleVolume,
     avatar,
+    desktopViewport,
+    desktopTyping,
   ]);
 
   useEffect(() => {
@@ -7302,6 +7467,18 @@ export const App = () => {
       if (stopped) return;
       statAccumulator += elapsedSeconds;
       uiAccumulator += elapsedSeconds;
+
+      if (desktopModeRef.current) {
+        // The shared passive stats/rewards continue once. Desktop locomotion
+        // never advances room furniture interactions or consumes inventory.
+        if (statAccumulator >= PET_STATS_TICK_INTERVAL_SECONDS) {
+          const elapsedStats = statAccumulator;
+          statAccumulator = 0;
+          setSave((current) => ({ ...current, petStats: applyPetTick(current.petStats, elapsedStats) }));
+        }
+        syncUiMirror();
+        return;
+      }
 
       if (avatarAwayRef.current) {
         syncUiMirror();
@@ -8861,6 +9038,7 @@ export const App = () => {
     };
 
     const renderCurrentScene = () => {
+      if (desktopModeRef.current) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
       const avatarIsAway = avatarAwayRef.current;
@@ -9592,6 +9770,7 @@ export const App = () => {
     `task-${agent}-${Date.now().toString(36)}-${taskId.slice(0, 8)}`;
 
   const startTaskCabinetVisualFlow = (sessionId: string, taskName: string) => {
+    if (desktopModeRef.current) return;
     taskCabinetVisualFlowRef.current = {
       sessionId,
       taskName,
@@ -13206,6 +13385,22 @@ export const App = () => {
   const windowPreviewDisplayHour = windowPreviewHour ?? new Date(nowMs).getHours();
   const windowPreviewTimeLabel = `${String(windowPreviewDisplayHour).padStart(2, "0")}:00`;
 
+  if (desktopViewport) {
+    return <DesktopCompanion
+      content={content}
+      status={effectiveStatus}
+      memory={save.memory}
+      appearanceId={normalizeAvatarAppearanceId(save.avatarAppearanceId)}
+      viewport={desktopViewport}
+      initialLayout={desktopLayoutRef.current}
+      onLayoutChange={rememberDesktopLayout}
+      onReturn={() => returnFromDesktop()}
+      onTypingChange={setDesktopTyping}
+      captureLayoutRef={desktopCaptureRef}
+      locale={locale}
+    />;
+  }
+
   return (
     <main
       lang={locale}
@@ -13689,6 +13884,17 @@ export const App = () => {
           </div>
           <span className={`status-dot status-${effectiveStatus.status}`} />
         </header>
+
+        <button
+          type="button"
+          className="pixel-button desktop-mode-entry"
+          onClick={() => void enterDesktopMode()}
+          disabled={desktopTransitioning || storePaused || saveMenuOpen}
+          title={ui("desktop.hint")}
+        >
+          {desktopTransitioning ? ui("desktop.entering") : ui("desktop.enter")}
+        </button>
+        {desktopMessage ? <p role="status">{desktopMessage}</p> : null}
 
         <section className="settings-card" aria-label={ui("settings.title")}>
           <button

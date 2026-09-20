@@ -8742,6 +8742,7 @@ const drawAvatarBubble = (
   avatar: AvatarRuntime,
   interaction?: FurnitureInteractionState | null,
   uiTheme: UiThemeId = "classic",
+  viewport = sceneSize,
 ) => {
   if (!interaction?.bubbleText) return;
 
@@ -8761,7 +8762,7 @@ const drawAvatarBubble = (
   const maxTextWidth = 118;
   const text = ellipsizeToWidth(ctx, interaction.bubbleText, maxTextWidth);
   const width = Math.max(38, Math.ceil(measurePixelText(ctx, text)) + 14);
-  const x = Math.round(Math.min(sceneSize.width - width - 8, Math.max(8, avatar.x - width / 2)));
+  const x = Math.round(Math.max(8, Math.min(viewport.width - width - 8, avatar.x - width / 2)));
   const y = Math.round(Math.max(18, avatar.y - 64));
   const palette = bubblePaletteForTheme(uiTheme);
 
@@ -8806,6 +8807,7 @@ const drawPixelBubble = (
   shape: "pixel" | "rounded" = "pixel",
   options: { maxLines?: number } = {},
   uiTheme: UiThemeId = "classic",
+  viewport = sceneSize,
 ) => {
   const maxLines = options.maxLines ?? 1;
   ctx.font = "8px monospace";
@@ -8816,7 +8818,7 @@ const drawPixelBubble = (
   );
   const width = Math.ceil(Math.max(54, textWidth + 14));
   const height = lines.length > 1 ? 28 : 18;
-  const x = Math.round(Math.min(sceneSize.width - width - 8, Math.max(8, anchorX - width / 2)));
+  const x = Math.round(Math.max(8, Math.min(viewport.width - width - 8, anchorX - width / 2)));
   const y = Math.round(Math.max(12, anchorY));
   const palette = bubblePaletteForTheme(uiTheme);
   const textColor =
@@ -8860,6 +8862,7 @@ const drawComputerStatusBubble = (
   content: AivatarContent,
   status: CodexStatusMessage,
   uiTheme: UiThemeId = "classic",
+  viewport = sceneSize,
 ) => {
   if (!isTerminalBubbleAgent(status)) return;
   if (status.status === "idle" || status.status === "thinking") return;
@@ -8887,6 +8890,7 @@ const drawComputerStatusBubble = (
     "pixel",
     { maxLines: 2 },
     uiTheme,
+    viewport,
   );
 };
 
@@ -8896,6 +8900,7 @@ const drawCodexThinkingBubble = (
   status: CodexStatusMessage,
   memory?: AivatarMemory,
   uiTheme: UiThemeId = "classic",
+  viewport = sceneSize,
 ) => {
   if (status.status !== "thinking") return;
   if (!isStatusBubbleVisible(status)) return;
@@ -8911,6 +8916,7 @@ const drawCodexThinkingBubble = (
     "rounded",
     { maxLines: 2 },
     uiTheme,
+    viewport,
   );
 };
 
@@ -8919,6 +8925,7 @@ const drawActivityBubble = (
   avatar: AvatarRuntime,
   memory?: AivatarMemory,
   uiTheme: UiThemeId = "classic",
+  viewport = sceneSize,
 ) => {
   if (["coding", "thinking", "waiting", "sleep"].includes(avatar.behavior)) {
     return;
@@ -8942,7 +8949,7 @@ const drawActivityBubble = (
     message: text,
     startedAt: performance.now(),
     bubbleText: text,
-  }, uiTheme);
+  }, uiTheme, viewport);
 };
 
 const drawSmallItemSprite = (
@@ -13818,4 +13825,59 @@ export const renderScene = (
   }
   drawComputerStatusBubble(ctx, content, status, uiTheme);
   drawStatusLights(ctx, visibleRoomStatus(status), uiTheme);
+};
+
+export interface DesktopSceneOptions {
+  width: number;
+  height: number;
+  scaleFactor: number;
+  pixelScale: number;
+  avatar: AvatarRuntime;
+  computer: { x: number; y: number };
+  content: AivatarContent;
+  status: CodexStatusMessage;
+  frame: number;
+  memory?: AivatarMemory;
+  appearanceId: AvatarAppearanceId;
+}
+
+/** The desktop uses exactly the room's sprites, without drawing its backdrop. */
+export const renderDesktopScene = (canvas: HTMLCanvasElement, options: DesktopSceneOptions) => {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const scale = options.pixelScale;
+  const dpr = Math.min(3, Math.max(1, options.scaleFactor || 1));
+  const backingWidth = Math.max(1, Math.round(options.width * dpr));
+  const backingHeight = Math.max(1, Math.round(options.height * dpr));
+  if (canvas.width !== backingWidth || canvas.height !== backingHeight) {
+    canvas.width = backingWidth;
+    canvas.height = backingHeight;
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.scale(dpr * scale, dpr * scale);
+  const viewport = { width: options.width / scale, height: options.height / scale };
+  const avatar: AvatarRuntime = {
+    ...options.avatar, x: options.avatar.x / scale, y: options.avatar.y / scale,
+    targetX: options.avatar.targetX / scale, targetY: options.avatar.targetY / scale,
+  };
+  const roomTerminal = options.content.placedItems?.find((item) => item.id === BUILTIN_TERMINAL_PLACED_ITEM_ID)
+    ?? options.content.placedItems?.find((item) => item.itemId === TERMINAL_MONITOR_ITEM_ID);
+  const terminal: PlacedItem = {
+    id: BUILTIN_TERMINAL_PLACED_ITEM_ID, itemId: TERMINAL_MONITOR_ITEM_ID,
+    x: options.computer.x / scale, y: options.computer.y / scale,
+    skinId: roomTerminal?.skinId,
+  };
+  // One canvas guarantees computer < avatar < speech, independently of native
+  // focus changes, and preserves the avatar's room appearance and typing pose.
+  drawTerminalMonitor(ctx, terminal.x, terminal.y, "none", options.frame, avatar, terminal.skinId);
+  drawAvatar(ctx, avatar, options.frame, options.content.petStats, options.status,
+    options.memory, options.appearanceId);
+  if (options.status.status === "thinking") {
+    drawCodexThinkingBubble(ctx, avatar, options.status, options.memory, "classic", viewport);
+  } else if (options.status.status === "idle" || deriveBehaviorFromCodex(options.status) === null) {
+    drawActivityBubble(ctx, avatar, options.memory, "classic", viewport);
+  }
+  drawComputerStatusBubble(ctx, { ...options.content, placedItems: [terminal] }, options.status, "classic", viewport);
 };
