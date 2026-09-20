@@ -8,6 +8,7 @@ use std::sync::{
 
 use tauri::{path::BaseDirectory, Emitter, Manager, Size};
 
+mod app_updater;
 mod codex_discovery;
 mod desktop_mode;
 mod local_bridge;
@@ -490,6 +491,45 @@ struct CloseSaveWindows {
     approved: HashSet<String>,
     pending_exit_code: Option<Option<i32>>,
     replaying_exit: bool,
+    persistent: HashSet<String>,
+    updating: bool,
+    opening_windows: usize,
+}
+
+impl CloseSaveWindows {
+    fn can_start_update(&self) -> bool {
+        !self.updating
+            && self.opening_windows == 0
+            && self.pending.is_empty()
+            && self.approved.is_empty()
+            && self.pending_exit_code.is_none()
+            && !self.replaying_exit
+    }
+}
+
+// Reserve window creation before dispatching native UI work. Installation
+// takes the same short lock, so it cannot miss a window still being created.
+struct WindowOpenGuard(tauri::AppHandle);
+
+impl WindowOpenGuard {
+    fn acquire(app: &tauri::AppHandle) -> Result<Self, String> {
+        let close = app.state::<CloseSaveState>();
+        let mut windows = close.windows.lock()
+            .map_err(|_| "Could not lock window state.".to_string())?;
+        if windows.updating {
+            return Err("Please wait until the application update has finished.".into());
+        }
+        windows.opening_windows += 1;
+        Ok(Self(app.clone()))
+    }
+}
+
+impl Drop for WindowOpenGuard {
+    fn drop(&mut self) {
+        if let Ok(mut windows) = self.0.state::<CloseSaveState>().windows.lock() {
+            windows.opening_windows = windows.opening_windows.saturating_sub(1);
+        }
+    }
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -614,19 +654,28 @@ fn attach_save_before_close_handler(window: tauri::WebviewWindow) {
     let app = window.app_handle().clone();
     let label = window.label().to_string();
     let window_for_event = window.clone();
+    if let Ok(mut windows) = app.state::<CloseSaveState>().windows.lock() {
+        windows.persistent.insert(label.clone());
+    }
 
     window.on_window_event(move |event| match event {
         tauri::WindowEvent::CloseRequested { api, .. } => {
+            let close_state = app.state::<CloseSaveState>();
+            let mut windows = match close_state.windows.lock() {
+                Ok(windows) => windows,
+                Err(_) => {
+                    api.prevent_close();
+                    return;
+                }
+            };
+            if windows.updating {
+                api.prevent_close();
+                return;
+            }
             // If saving fails or times out, leave an ordinary, reachable room window.
             if desktop_mode::is_active(&app, &label) {
                 desktop_mode::restore_async(window_for_event.clone(), "close-requested");
             }
-            let close_state = app.state::<CloseSaveState>();
-            let mut windows = match close_state.windows.lock() {
-                Ok(windows) => windows,
-                Err(_) => return,
-            };
-
             if windows.approved.remove(&label) {
                 return;
             }
@@ -678,7 +727,9 @@ fn attach_save_before_close_handler(window: tauri::WebviewWindow) {
             if let Ok(mut windows) = app.state::<CloseSaveState>().windows.lock() {
                 windows.pending.remove(&label);
                 windows.approved.remove(&label);
+                windows.persistent.remove(&label);
             }
+            app_updater::window_destroyed(&app, &label);
         }
         _ => {}
     });
@@ -1994,6 +2045,7 @@ async fn open_save_slot_window(
     app: tauri::AppHandle,
     request: SaveSlotWindowRequest,
 ) -> Result<SaveSlotWindowResult, String> {
+    let _opening = WindowOpenGuard::acquire(&app)?;
     let slot_id = request.slot_id.trim();
     if slot_id.is_empty() {
         return Err("Save slot id is required.".to_string());
@@ -2055,6 +2107,7 @@ async fn open_card_room_window(
     app: tauri::AppHandle,
     request: CardRoomWindowRequest,
 ) -> Result<CardRoomWindowResult, String> {
+    let _opening = WindowOpenGuard::acquire(&app)?;
     let host_slot_id = request
         .host_slot_id
         .as_deref()
@@ -2100,6 +2153,7 @@ async fn open_park_window(
     app: tauri::AppHandle,
     request: ParkWindowRequest,
 ) -> Result<ParkWindowResult, String> {
+    let _opening = WindowOpenGuard::acquire(&app)?;
     let host_slot_id = request
         .host_slot_id
         .as_deref()
@@ -2148,6 +2202,7 @@ async fn open_park_developer_window(
     app: tauri::AppHandle,
     request: ParkWindowRequest,
 ) -> Result<ParkWindowResult, String> {
+    let _opening = WindowOpenGuard::acquire(&app)?;
     let host_slot_id = request
         .host_slot_id
         .as_deref()
@@ -2193,6 +2248,7 @@ async fn open_park_animation_preview_window(
     app: tauri::AppHandle,
     request: ParkWindowRequest,
 ) -> Result<ParkWindowResult, String> {
+    let _opening = WindowOpenGuard::acquire(&app)?;
     let host_slot_id = request
         .host_slot_id
         .as_deref()
@@ -2348,6 +2404,8 @@ pub fn run() {
         );
     }
     let app = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(app_updater::AppUpdaterState::new(cfg!(debug_assertions) || synthetic.is_some()))
         .manage(desktop_mode::DesktopModeState::default())
         .manage(ParkProfileWindowState::default())
         .manage(CloseSaveState::default())
@@ -2369,6 +2427,11 @@ pub fn run() {
             desktop_mode::update_desktop_hit_regions,
             set_main_window_visibility_for_park_profile,
             confirm_close_after_save,
+            app_updater::app_update_status,
+            app_updater::app_update_check,
+            app_updater::app_update_download,
+            app_updater::app_update_install,
+            app_updater::app_update_confirm_save,
             open_save_slot_window,
             open_card_room_window,
             open_park_window,
@@ -2405,12 +2468,21 @@ pub fn run() {
             desktop_mode::restore_all_async(app_handle, "dock-reopen");
         }
         if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+            // This restart follows an already completed all-window save barrier.
+            if app_updater::installed_exit(app_handle) {
+                return;
+            }
             let windows = app_handle.webview_windows();
             let close_state = app_handle.state::<CloseSaveState>();
             let mut close_windows = match close_state.windows.lock() {
                 Ok(windows) => windows,
                 Err(_) => return,
             };
+
+            if close_windows.updating {
+                api.prevent_exit();
+                return;
+            }
 
             if close_windows.replaying_exit {
                 close_windows.replaying_exit = false;

@@ -37,6 +37,8 @@ import {
 import { renderScene } from "./game/renderScene";
 import { DesktopCompanion } from "./desktop/DesktopCompanion";
 import type { DesktopLayout, DesktopViewport } from "./desktop/desktopTypes";
+import { useAppUpdater } from "./updater/useAppUpdater";
+import { UpdateNotice, UpdateSettings } from "./updater/UpdateSettings";
 import {
   applyConsumableEffect,
   applyPetTick,
@@ -3898,6 +3900,7 @@ export const App = () => {
     return pending;
   };
   const [locale, setLocale] = useState<Locale>(() => resolveInitialLocale());
+  const updater = useAppUpdater();
   const [uiTheme, setUiTheme] = useState<UiThemeId>(() => loadInitialUiTheme());
   const [audioVolume, setAudioVolume] = useState(() => loadInitialAudioVolume());
   const [parkAmbientAudioVolume, setParkAmbientAudioVolume] = useState(() =>
@@ -13895,6 +13898,7 @@ export const App = () => {
           {desktopTransitioning ? ui("desktop.entering") : ui("desktop.enter")}
         </button>
         {desktopMessage ? <p role="status">{desktopMessage}</p> : null}
+        <UpdateNotice updater={updater} locale={locale} onOpen={() => setSoundPanelOpen(true)} />
 
         <section className="settings-card" aria-label={ui("settings.title")}>
           <button
@@ -13942,6 +13946,7 @@ export const App = () => {
           </button>
 
           <SidePanelCollapsible open={soundPanelOpen} className="settings-submenu">
+              <UpdateSettings updater={updater} locale={locale} />
               <label className="name-editor settings-name-editor">
                 <span>{ui("avatar.name")}</span>
                 <input

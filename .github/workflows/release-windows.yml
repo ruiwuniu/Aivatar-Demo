@@ -6,13 +6,17 @@ on:
       tag:
         description: Existing draft GitHub release tag for the Windows installers.
         required: true
-        default: v0.4.5
+        default: v0.5.0
       ref:
         description: Full 40-character commit SHA to build.
         required: true
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-windows-${{ inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
   build-windows:
@@ -77,6 +81,10 @@ jobs:
               raise SystemExit("Package, npm lock, Tauri, Cargo manifest and Cargo lock versions must match.")
           if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) or tag != f"v{version}":
               raise SystemExit("Release tag must match the stable source version.")
+          if tauri["bundle"].get("createUpdaterArtifacts") is not True:
+              raise SystemExit("Signed updater artifacts must be enabled for this release.")
+          if not tauri.get("plugins", {}).get("updater", {}).get("pubkey"):
+              raise SystemExit("The updater public key is missing.")
           expected_resources = {"../plugins/aivatar-session-bridge/", "../scripts/*.mjs", "../scripts/*.py", "../scripts/*.swift"}
           if set(tauri["bundle"]["resources"]) != expected_resources:
               raise SystemExit("Resources must use the approved plugin directory and top-level script globs.")
@@ -139,6 +147,8 @@ jobs:
               "aivatar-room-save-persistence-smoke.mjs", "aivatar-close-save-smoke.mjs",
               "aivatar-park-persistence-smoke.mjs", "aivatar-card-room-close-save-smoke.mjs",
               "aivatar-park-smoke.mjs", "card-room-holdem-rules-smoke.mjs",
+              "aivatar-desktop-mode-smoke.mjs", "aivatar-updater-release-smoke.mjs",
+              "aivatar-updater-frontend-smoke.mjs",
           ):
               subprocess.run(["node", f"scripts/{script}"], check=True)
           import os
@@ -147,7 +157,15 @@ jobs:
           subprocess.run(["cargo", "test", "--locked", "--manifest-path", "scripts/wal-diagnostics/save-store-rust-tests/Cargo.toml"], check=True, env=test_env)
 
       - name: Build Tauri Windows bundles
-        run: npm run tauri -- build --target x86_64-pc-windows-msvc --bundles "nsis,msi" --ci -- --locked
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY must be configured before building release updates."
+          }
+          npm run tauri -- build --target x86_64-pc-windows-msvc --bundles "nsis,msi" --ci -- --locked
+          if ($LASTEXITCODE -ne 0) { throw "Signed Windows bundle build failed." }
 
       - name: Verify installer metadata and write checksums
         run: |
@@ -221,6 +239,14 @@ jobs:
           } | ConvertTo-Json -Depth 5 | Set-Content -Path windows-release-checksums.json -Encoding utf8
           Get-Content windows-release-checksums.json
 
+      - name: Verify updater signatures and write Windows update metadata
+        run: |
+          node scripts/aivatar-updater-release.mjs platform `
+            --platform windows --bundle-root src-tauri/target/x86_64-pc-windows-msvc/release/bundle `
+            --version $env:RELEASE_VERSION --source $env:SOURCE_SHA --repo $env:GITHUB_REPOSITORY `
+            --config src-tauri/tauri.conf.json --checksums windows-release-checksums.json --output updater-windows.json
+          if ($LASTEXITCODE -ne 0) { throw "Updater artifact signature verification failed." }
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -228,8 +254,11 @@ jobs:
           if-no-files-found: error
           path: |
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.sig
             windows-release-checksums.json
+            updater-windows.json
 
       - name: Upload assets to the draft GitHub Release
         env:
@@ -240,5 +269,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Draft release/source recheck failed." }
           $bundleRoot = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
           $version = $env:RELEASE_VERSION
-          gh release upload $env:RELEASE_TAG "$bundleRoot/nsis/Aivatar_${version}_x64-setup.exe" "$bundleRoot/msi/Aivatar_${version}_x64_en-US.msi" windows-release-checksums.json --repo $env:GITHUB_REPOSITORY
+          # latest.json is deliberately assembled only after BOTH platform jobs pass.
+          gh release upload $env:RELEASE_TAG `
+            "$bundleRoot/nsis/Aivatar_${version}_x64-setup.exe" "$bundleRoot/nsis/Aivatar_${version}_x64-setup.exe.sig" `
+            "$bundleRoot/msi/Aivatar_${version}_x64_en-US.msi" "$bundleRoot/msi/Aivatar_${version}_x64_en-US.msi.sig" `
+            windows-release-checksums.json updater-windows.json --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE -ne 0) { throw "Release asset upload failed." }

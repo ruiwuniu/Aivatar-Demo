@@ -6,13 +6,17 @@ on:
       tag:
         description: Draft GitHub release tag to upload the macOS installer to.
         required: true
-        default: v0.4.5
+        default: v0.5.0
       ref:
         description: Full 40-character commit SHA to build.
         required: true
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-macos-${{ inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
   build-macos:
@@ -77,6 +81,10 @@ jobs:
               raise SystemExit("Package, npm lock, Tauri, Cargo manifest and Cargo lock versions must match.")
           if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) or tag != f"v{version}":
               raise SystemExit("Release tag must match the stable source version.")
+          if tauri["bundle"].get("createUpdaterArtifacts") is not True:
+              raise SystemExit("Signed updater artifacts must be enabled for this release.")
+          if not tauri.get("plugins", {}).get("updater", {}).get("pubkey"):
+              raise SystemExit("The updater public key is missing.")
           expected_resources = {"../plugins/aivatar-session-bridge/", "../scripts/*.mjs", "../scripts/*.py", "../scripts/*.swift"}
           if set(tauri["bundle"]["resources"]) != expected_resources:
               raise SystemExit("Resources must use the approved plugin directory and top-level script globs.")
@@ -134,6 +142,8 @@ jobs:
               "aivatar-room-save-persistence-smoke.mjs", "aivatar-close-save-smoke.mjs",
               "aivatar-park-persistence-smoke.mjs", "aivatar-card-room-close-save-smoke.mjs",
               "aivatar-park-smoke.mjs", "card-room-holdem-rules-smoke.mjs",
+              "aivatar-desktop-mode-smoke.mjs", "aivatar-updater-release-smoke.mjs",
+              "aivatar-updater-frontend-smoke.mjs",
           ):
               subprocess.run(["node", f"scripts/{script}"], check=True)
           import os
@@ -142,7 +152,16 @@ jobs:
           subprocess.run(["cargo", "test", "--locked", "--manifest-path", "scripts/wal-diagnostics/save-store-rust-tests/Cargo.toml"], check=True, env=test_env)
 
       - name: Build the Tauri Universal DMG
-        run: npm run tauri -- build --target universal-apple-darwin --bundles dmg --ci -- --locked
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        run: |
+          set -euo pipefail
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY must be configured before building release updates." >&2
+            exit 1
+          fi
+          npm run tauri -- build --target universal-apple-darwin --bundles "app,dmg" --ci -- --locked
 
       - name: Verify the mounted installer and write checksums
         run: |
@@ -154,6 +173,7 @@ jobs:
           import pathlib
           import plistlib
           import subprocess
+          import tarfile
           import tempfile
 
           root = pathlib.Path.cwd()
@@ -218,6 +238,32 @@ jobs:
               for relative in sorted(expected_resources):
                   if (root / relative).read_bytes() != (resource_root / relative).read_bytes():
                       raise SystemExit(f"Packaged resource mismatch: {relative}")
+              updater_archive = bundle_root / "macos/Aivatar.app.tar.gz"
+              # Inspect the archive without extracting or launching it. Every updater
+              # file must be identical to the already verified application in the DMG.
+              archive_files = set()
+              with tarfile.open(updater_archive, "r:gz") as archive:
+                  for member in archive.getmembers():
+                      relative = pathlib.PurePosixPath(member.name)
+                      if relative.is_absolute() or ".." in relative.parts or not relative.parts or relative.parts[0] != "Aivatar.app":
+                          raise SystemExit(f"Unsafe updater archive path: {member.name}")
+                      target = mount.joinpath(*relative.parts)
+                      if member.isdir():
+                          if not target.is_dir():
+                              raise SystemExit(f"Unexpected updater directory: {member.name}")
+                      elif member.issym():
+                          if not target.is_symlink() or os.readlink(target) != member.linkname:
+                              raise SystemExit(f"Updater symlink mismatch: {member.name}")
+                          archive_files.add(relative)
+                      elif member.isfile():
+                          if relative in archive_files or not target.is_file() or archive.extractfile(member).read() != target.read_bytes():
+                              raise SystemExit(f"Updater archive file mismatch: {member.name}")
+                          archive_files.add(relative)
+                      else:
+                          raise SystemExit(f"Unsupported updater archive member: {member.name}")
+              mounted_files = {pathlib.PurePosixPath(path.relative_to(mount).as_posix()) for path in app.rglob("*") if path.is_file() or path.is_symlink()}
+              if archive_files != mounted_files:
+                  raise SystemExit("Updater archive file list differs from the mounted application.")
               resource_count = len(expected_resources)
               with dmg.open("rb") as stream:
                   checksum = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -232,6 +278,7 @@ jobs:
                       "architectures": architectures,
                       "mountedExecutableMatchesBuild": True,
                       "resourceFilesMatchSource": resource_count,
+                      "updaterArchiveMatchesMountedApplication": True,
                       "requiredResources": required,
                       "applicationLaunched": False,
                   },
@@ -243,6 +290,13 @@ jobs:
                   subprocess.run(["hdiutil", "detach", str(mount)], check=True)
           PY
 
+      - name: Verify updater signatures and write macOS update metadata
+        run: |
+          node scripts/aivatar-updater-release.mjs platform \
+            --platform macos --bundle-root src-tauri/target/universal-apple-darwin/release/bundle \
+            --version "$RELEASE_VERSION" --source "$SOURCE_SHA" --repo "$GITHUB_REPOSITORY" \
+            --config src-tauri/tauri.conf.json --checksums macos-release-checksums.json --output updater-macos.json
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -250,7 +304,10 @@ jobs:
           if-no-files-found: error
           path: |
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
             macos-release-checksums.json
+            updater-macos.json
 
       - name: Upload assets to the draft GitHub Release
         env:
@@ -259,4 +316,9 @@ jobs:
         run: |
           set -euo pipefail
           python "$RUNNER_TEMP/aivatar-release-guard.py"
-          gh release upload "$RELEASE_TAG" src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg macos-release-checksums.json --repo "$GITHUB_REPOSITORY"
+          # latest.json is deliberately assembled only after BOTH platform jobs pass.
+          gh release upload "$RELEASE_TAG" \
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg \
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz \
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig \
+            macos-release-checksums.json updater-macos.json --repo "$GITHUB_REPOSITORY"

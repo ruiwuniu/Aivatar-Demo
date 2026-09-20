@@ -2529,6 +2529,72 @@ const desktopCopy: Record<Locale, Record<string, string>> = {
   },
 };
 
+const updaterCopy: Record<Locale, Record<string, string>> = {
+  "zh-Hans": {
+    "update.title": "软件更新",
+    "update.check": "检查更新",
+    "update.download": "下载 {version}",
+    "update.install": "安装并重启",
+    "update.notes": "更新说明",
+    "update.notice": "新版本 {version} · 查看更新",
+    "update.downloading": "正在下载…",
+    "update.error": "更新未完成，可重试。",
+    "update.hint": "启动后自动检查更新。安装前会保存所有房间并重启，请在方便时安装。",
+    "update.latest": "已是最新版本。",
+    "update.phase.idle": "启动后会自动检查更新，也可手动检查。",
+    "update.phase.checking": "正在检查更新…",
+    "update.phase.available": "发现新版本 {version}。",
+    "update.phase.downloading": "正在下载 {version}…",
+    "update.phase.downloaded": "{version} 已下载并通过签名验证，可以安装。",
+    "update.phase.saving": "正在保存所有房间，准备安装…",
+    "update.phase.installing": "正在安装更新，应用即将重启…",
+    "update.phase.error": "暂时无法检查更新，请稍后重试。",
+    "update.phase.disabled": "自动更新仅在正式桌面安装版中可用。",
+  },
+  "zh-Hant": {
+    "update.title": "軟體更新",
+    "update.check": "檢查更新",
+    "update.download": "下載 {version}",
+    "update.install": "安裝並重新啟動",
+    "update.notes": "更新說明",
+    "update.notice": "新版本 {version} · 查看更新",
+    "update.downloading": "正在下載…",
+    "update.error": "更新未完成，可重試。",
+    "update.hint": "啟動後自動檢查更新。安裝前會儲存所有房間並重新啟動，請在方便時安裝。",
+    "update.latest": "已是最新版本。",
+    "update.phase.idle": "啟動後會自動檢查更新，也可手動檢查。",
+    "update.phase.checking": "正在檢查更新…",
+    "update.phase.available": "發現新版本 {version}。",
+    "update.phase.downloading": "正在下載 {version}…",
+    "update.phase.downloaded": "{version} 已下載並通過簽章驗證，可以安裝。",
+    "update.phase.saving": "正在儲存所有房間，準備安裝…",
+    "update.phase.installing": "正在安裝更新，應用程式即將重新啟動…",
+    "update.phase.error": "暫時無法檢查更新，請稍後重試。",
+    "update.phase.disabled": "自動更新僅在正式桌面安裝版中可用。",
+  },
+  en: {
+    "update.title": "Software updates",
+    "update.check": "Check for updates",
+    "update.download": "Download {version}",
+    "update.install": "Install and restart",
+    "update.notes": "Release notes",
+    "update.notice": "Version {version} available · View update",
+    "update.downloading": "Downloading…",
+    "update.error": "The update could not finish. You can retry.",
+    "update.hint": "Updates are checked automatically after launch. Installation saves all rooms and restarts Aivatar; install when convenient.",
+    "update.latest": "You're up to date.",
+    "update.phase.idle": "Updates are checked after launch. You can also check manually.",
+    "update.phase.checking": "Checking for updates…",
+    "update.phase.available": "Version {version} is available.",
+    "update.phase.downloading": "Downloading {version}…",
+    "update.phase.downloaded": "{version} is downloaded and its signature is verified. Ready to install.",
+    "update.phase.saving": "Saving all rooms before installation…",
+    "update.phase.installing": "Installing the update. Aivatar will restart shortly…",
+    "update.phase.error": "Could not check for updates. Please try again later.",
+    "update.phase.disabled": "Updates are available in release desktop builds.",
+  },
+};
+
 const dictionaryCache = new Map<Locale, Record<string, string>>();
 
 const getDictionary = (locale: Locale): Record<string, string> => {
@@ -2540,6 +2606,7 @@ const getDictionary = (locale: Locale): Record<string, string> => {
     ...(locale === "en" ? {} : dictionaries[locale]),
     ...paintingDictionary[locale],
     ...desktopCopy[locale],
+    ...updaterCopy[locale],
   };
   dictionaryCache.set(locale, dictionary);
   return dictionary;

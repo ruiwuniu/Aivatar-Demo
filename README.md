@@ -1,65 +1,44 @@
 # Aivatar
 
-![Aivatar 0.4 series pixel companion world with local AI work, Hilltop Park fishing, cooking, reading, and Card Room play](docs/assets/aivatar-readme-hero-0.4-hilltop-park.png)
+![Aivatar 0.5.0: a pixel companion steps out of its cozy room onto the desktop with its computer](docs/assets/aivatar-readme-hero-0.5-desktop.png)
 
-**EN** | Aivatar is a local-first desktop companion for AI coding agents. Your pixel companion lives across a customizable main room, Card Room, and Hilltop Park while reacting to Codex, Claude Code, opencode, Tencent WorkBuddy, or a custom local agent bridge.
+**EN** | Aivatar is a local-first desktop companion for AI coding agents. Your pixel companion can roam your desktop with its computer, or live across a customizable main room, Card Room, and Hilltop Park while reacting to Codex, Claude Code, opencode, Tencent WorkBuddy, or a custom local agent bridge.
 
-**中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。像素小伙伴会生活在可装修的主房间、纸牌屋和山顶公园中，并对 Codex、Claude Code、opencode、腾讯 WorkBuddy 或自定义本地 agent 桥接的实时状态作出反应。
+**中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。像素小伙伴可以带着电脑来到桌面自由活动，也可以生活在可装修的主房间、纸牌屋和山顶公园中，并对 Codex、Claude Code、opencode、腾讯 WorkBuddy 或自定义本地 agent 桥接的实时状态作出反应。
 
 <p align="center">
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.5/Aivatar_0.4.5_universal.dmg"><strong>Download macOS DMG 0.4.5</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.0/Aivatar_0.5.0_universal.dmg"><strong>Download macOS DMG 0.5.0</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.5/Aivatar_0.4.5_x64-setup.exe"><strong>Download Windows EXE 0.4.5</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.0/Aivatar_0.5.0_x64-setup.exe"><strong>Download Windows EXE 0.5.0</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.4.5/Aivatar_0.4.5_x64_en-US.msi"><strong>Download Windows MSI 0.4.5</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.0/Aivatar_0.5.0_x64_en-US.msi"><strong>Download Windows MSI 0.5.0</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.4.5">Release 0.4.5</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.5.0">Release 0.5.0</a>
 </p>
 
-## 0.4.5 Highlights / 0.4.5 更新亮点
-
-- Desktop saves and settings now use application-owned SQLite with an atomic first-run migration. Original legacy values remain available; existing WebKit databases and WAL files are retained. 桌面端存档与设置改用应用自管 SQLite，首次升级原子迁移并保留旧值；已有 WebKit 数据库和 WAL 文件原地保留。
-- Multi-window save-slot and wallet transactions now wait for durable commit, retry conflicts against current data, and preserve pending changes on failure. 关窗仅在保存确认后完成；多窗口存档和余额事务会基于最新数据处理冲突，保存失败时保留待保存进度。
-- Rewards and learning received while saving or switching characters stay with their original character, and close notifications reach only the intended window. 修复保存暂停、切换角色期间奖励和学习记录归属，以及关闭通知串窗的问题。
-- Export the current character after saving to keep a portable JSON copy. 保存后可导出当前角色 JSON 存档。Migration behavior, rollback limits, and validation scope are documented in [Storage v2](docs/storage-v2.md).
-
-## 0.4.4 Highlights / 0.4.4 更新亮点
-
-- Closing a persistent Aivatar window now waits for an acknowledged save. If saving fails or times out, the window remains open instead of silently discarding the latest state. 关闭持久化窗口时，Aivatar 现在会等待存档确认；保存失败或超时会保留窗口，避免静默丢失最新状态。
-- Passive movement and simulation state is checkpointed at most once every five minutes, with identical JSON skipped. Purchases, rewards, room edits, preferences, and normal close still save immediately. 被动移动和模拟状态最多每五分钟检查点保存一次，并跳过相同 JSON；购买、奖励、房间编辑、偏好设置和正常关闭仍会立即保存。
-- The update reduces future localStorage/LevelDB write amplification, constrains WebView2 disk-cache behavior, and removes newly created worker context files after use. It does not delete existing user data or historic cache files. 本次更新减少后续 localStorage/LevelDB 写入放大、约束 WebView2 磁盘缓存行为，并在使用后删除本次创建的工作进程上下文文件；不会删除已有用户数据或历史缓存。
-
-## 0.4.3 Highlights / 0.4.3 更新亮点
-
-- Codex turn completion and late events now preserve the correct finished state. 修复 Codex 任务结束后仍显示工作中的问题。
-- Ordinary save changes are batched every 20 seconds and unchanged content is skipped; purchases, rewards, save switching, and exit still save immediately. 普通状态变化每 20 秒合并保存，内容未变时跳过写入；购买、奖励、切档和退出仍立即保存。
-- Cross-window updates preserve pending progress and external inventory changes without repeated write-back. 多窗口同步保留待保存的进度及其他窗口新增的物品，避免重复回写。
-
-## 0.4.2 Highlights / 0.4.2 更新亮点
+## 0.5.0 Highlights / 0.5.0 更新亮点
 
 **EN**
 
-- Raw fish can now be sold directly from the inventory at rarity-based prices. Selecting a fish opens a dedicated sale action with a clear payout and sound feedback instead of squeezing sale text into the inventory button.
-- Raw-fish eating now uses correctly positioned fish artwork rather than reusing the bento animation with a displaced cooked fish; Gas Range depth sorting also remains stable after appliance interactions.
-- Cute Penguin fishing has been redrawn so its wings visibly grip the rod during casting, waiting, and reeling. Front/side grip placement, rod layering, single visible side wing, and wing-root alignment now match the character body and the action preview.
-- Codex, Claude Code, opencode, and Tencent WorkBuddy now share persistent exactly-once bits settlement. Stable reward IDs prevent duplicate payouts across repeated terminal events, reconnects, save reloads, and learning updates.
-- Claude Code uses current-turn transcript usage without carrying stale usage into a later turn; opencode aggregates assistant token fields per turn; WorkBuddy locks its first terminal baseline delta; Codex binds rewards to the final rollout record.
-- Main-room and Hilltop Park Debug controls remain available in source for focused QA but are hidden in normal release builds.
+- **A companion on your desktop.** Choose **Go to desktop** to hide the room and bring the character and its computer onto a transparent desktop surface. Drag them independently; the character stays in front of the computer.
+- **Alive between tasks, focused during work.** The companion wanders and shares short idle bubbles, then walks to the computer to reflect thinking, typing, waiting, completion, and error states from the followed agent.
+- **Return and resume.** Right-click the character to return to its room. The next desktop visit restores the saved character and computer positions. Compact sprites keep the desktop usable, and empty space lets clicks through.
+- **Updates inside Aivatar.** Version 0.5.0 checks for new releases automatically and adds update controls to Settings. Read the release notes, download a signed update, then choose when to save all open rooms and install/restart. A failed save stops installation.
+- **One shared save and task state.** Desktop mode reuses the room's status and reward processing, while its positions are saved separately. See [automatic updates](docs/automatic-updates.md) for platform behavior and the one-time upgrade from older versions.
 
 **中文**
 
-- 背包中的生鱼现在可以直接出售，并按照稀有度获得不同价格。单击鱼类后会显示独立的出售操作、明确的价格和音效，不再把出售文字挤在背包按钮内。
-- 吃生鱼不再复用便当动画并叠加错位的熟鱼；灶台与咖啡机等家具交互后的绘制层级也会保持稳定。
-- 可爱企鹅在甩杆、垂钓和收杆期间会真正用翅膀握住鱼竿；正面/侧面握点、鱼竿层级、侧面单翅显示和翅膀根部黑白交界对齐均已修正，并同步到动作预览。
-- Codex、Claude Code、opencode 和腾讯 WorkBuddy 现在共享可持久化的 exactly-once bits 结算。稳定 reward ID 可阻止重复终态、重连、存档重载和学习更新造成重复奖励。
-- Claude Code 仅结算当前 turn 的 transcript 用量；opencode 按 turn 聚合 assistant token；WorkBuddy 锁定首次终态的 baseline 增量；Codex 将奖励绑定到最终 rollout 记录。
-- 主房间和山顶公园的 Debug 控件仍保留在源码中用于专项 QA，但在正式发布界面中隐藏。
+- **小伙伴来到桌面。** 点击「到桌面」，房间自动隐藏，角色和电脑以透明悬浮方式出现在桌面；两者可分别拖动，角色始终位于电脑上层。
+- **闲时散步，工作时专注。** 空闲时自由走动并冒出短句气泡；接到任务后走到电脑前，映射所跟随 agent 的思考、敲字、等待、完成和出错状态。
+- **随时回房，位置保留。** 右键角色选择「回到房间」；下次来到桌面时恢复上次位置。紧凑尺寸减少遮挡，透明空白处可点击下层窗口。
+- **在软件里获取新版。** 0.5.0 起自动检查更新，设置中也可手动检查；查看说明、下载带签名的更新包，再自行选择保存所有已打开房间并安装重启。保存失败会停止安装。
+- **延续同一份存档和任务状态。** 桌面模式复用房间的状态与奖励处理，桌面位置独立保存。平台行为及旧版首次升级说明见[自动更新](docs/automatic-updates.md)。
 
-### UI Showcase / UI 展示
+## UI Showcase / UI 展示
 
-**EN** | These GIFs show the core room and Card Room experience introduced in 0.3.0, including companion routines, room visits, live status, and everyday work/life moments.
+**EN** | These GIFs show the core room and Card Room experience, including companion routines, room visits, live status, and everyday work/life moments.
 
-**中文** | 以下 GIF 展示 0.3.0 引入的主房间与纸牌屋核心体验，包括小伙伴日常、串门、实时状态，以及工作和生活场景。
+**中文** | 以下 GIF 展示主房间与纸牌屋核心体验，包括小伙伴日常、串门、实时状态，以及工作和生活场景。
 
 #### Card Room / 纸牌屋
 
@@ -133,74 +112,6 @@
 **EN:** The companion reacts to coding status while the room stays usable as a desktop companion.<br>
 **中文：** 小伙伴会跟随编程状态变化，同时房间仍可作为桌面陪伴空间使用。
 
-## 0.3.2 Windows Patch Highlights / 0.3.2 Windows 补丁亮点
-
-**EN**
-
-- The Windows main room now avoids the native maximize/restore path that could leave the fixed-size room at a stale, odd restore size.
-- The desktop shell normalizes the main window size on startup and side-panel resizing, including clearing maximized state before applying the fixed room bounds.
-- Tencent WorkBuddy discovery now supports the China mainland home at `%USERPROFILE%\.workbuddy` while continuing to support the international `%USERPROFILE%\.workbuddy-ai` home.
-- Both the JavaScript discovery helper and packaged Tauri native discovery scan the mainland and international WorkBuddy homes by default, read only session metadata, and keep token baselines separated by home.
-- WorkBuddy discovery smoke coverage now exercises missing, mainland-style, and international-style homes together.
-- This patch publishes Windows NSIS EXE and MSI installers for 0.3.2. The macOS universal DMG remains on 0.3.0 until the next macOS build.
-
-**中文**
-
-- Windows 主房间现在避开原生最大化/还原路径，避免固定尺寸房间在还原后留下异常的旧窗口大小。
-- 桌面壳会在启动和右侧面板缩放时重新规范主窗口尺寸，并在应用固定房间边界前先清除最大化状态。
-- 腾讯 WorkBuddy 发现现在支持中国大陆版目录 `%USERPROFILE%\.workbuddy`，同时继续支持国际版 `%USERPROFILE%\.workbuddy-ai`。
-- JavaScript 发现脚本和打包后的 Tauri 原生发现都会默认扫描大陆版与国际版 WorkBuddy 目录，只读取会话元数据，并按目录隔离 token baseline。
-- WorkBuddy 发现烟测现在会同时覆盖缺失目录、大陆版风格目录和国际版风格目录。
-- 本补丁发布 0.3.2 Windows NSIS EXE 和 MSI 安装包；macOS universal DMG 仍暂时沿用 0.3.0，等待下一次 macOS 打包。
-
-## 0.3.0 Major Highlights / 0.3.0 大版本亮点
-
-**EN**
-
-- 0.3.0 introduces Card Room, a standalone poker side room with a fixed desktop window size, a casino-style table scene, companion seating, hand controls, and room-specific save/economy state.
-- Hold'em play is now backed by stricter rule handling, including blinds, betting rounds, all-in side pots, showdown reveal order, timeout flow, and focused smoke coverage for Card Room rule paths.
-- The Card Room economy adds player and companion chip balances, house-bank accounting, debt settlement, owner gifts, chip exchange, and a dedicated Chip Shop.
-- Card Room also adds hidden dark-trait growth: greed, foolishness, recklessness, cowardice, arrogance, and coldness can evolve through poker play and shape companion betting behavior without replacing the main-room Growth personality.
-- Card Room decor is now a real content surface: upgraded wall materials, floor materials, window assets, poker furniture, and shop filtering let the side room visually evolve independently from the main room.
-- Desktop rendering is hardened for the heavier poker scene with cached static room layers and WebAudio-based deal-card sounds to avoid WKWebView short-audio stutter during deal animations.
-- Windows 0.3.0 installers were refreshed with Tencent WorkBuddy support: Aivatar can discover local WorkBuddy `working` and `coding` sessions, map their live status into avatar bubbles, show context token usage, and settle eligible completions into `bits`.
-- This release publishes a new universal macOS DMG, Windows NSIS EXE, and Windows MSI installer for 0.3.0.
-
-**中文**
-
-- 0.3.0 新增纸牌屋 Card Room：一个独立的扑克侧房间，拥有固定桌面窗口比例、赌场风格牌桌场景、小伙伴入座、手牌操作和独立的房间存档/经济状态。
-- 德州扑克流程更接近正式规则：包含盲注、下注轮、all-in 边池、摊牌顺序、叫钟/超时流程，并加入针对纸牌屋规则路径的烟测。
-- 纸牌屋经济系统加入玩家与小伙伴筹码余额、房主银行、债务结算、老板赠送、筹码兑换和专用 Chip Shop。
-- 纸牌屋还加入隐藏的黑化人格成长：贪婪、愚钝、鲁莽、怯懦、傲慢和冷漠会随打牌过程变化，并影响小伙伴的下注风格，但不会取代主房间的普通 Growth 人格。
-- 纸牌屋装修成为独立内容面：升级墙纸、地板、窗户、扑克家具与商店筛选，使侧房间可以独立于主房间演进视觉风格。
-- 为更重的扑克场景加固桌面渲染：缓存静态房间层，并把发牌短音效改为 WebAudio 播放，避免 macOS WKWebView 在发牌动画中因短音频连续触发而卡顿。
-- Windows 0.3.0 安装包已刷新，加入腾讯 WorkBuddy 支持：Aivatar 可以发现本地 WorkBuddy 的 `working` 与 `coding` 会话，把实时状态映射到头像气泡，显示 context token 用量，并将符合条件的完成会话结算为 `bits`。
-- 本版本发布新的 0.3.0 macOS universal DMG、Windows NSIS EXE 和 Windows MSI 安装包。
-
-## 0.2.3 Patch Highlights / 0.2.3 补丁亮点
-
-**EN**
-
-- 0.2.3 focuses on desktop stability: shop buy buttons now debounce rapid clicks, long press buys up to 10 repeatable items, and DOM-level smoke coverage verifies the purchase path remains responsive.
-- Rendering and runtime resilience are tighter, with stable canvas backing-store sizing, cached placed-item render passes, and a React error boundary fallback.
-- Local bridge security is hardened with explicit CSP plus Origin/CORS checks for HTTP and WebSocket status traffic.
-- Desktop launches now use a single-instance guard so repeat launches focus the existing window instead of leaving extra WebView processes alive.
-- New companion appearances and room polish: Little Octopus, Rush Spark, Mood Slime, Red Crayfish, Cute Ghost, Cute Penguin, Green Lizard, richer furniture/floor/window materials, the Starship console UI skin, bundled Antonio/Smiley Sans fonts, and quieter sleep snore audio.
-- Broader AI agent support for Codex Desktop, Codex CLI, Claude Code, opencode, scheduled CLI tasks, custom local status sources, and Codex 5-hour/weekly token-limit HUD readouts.
-- Room Visit now supports autonomous visits, pair affinity, shared activities, and generated guest/host social dialogue through the local bridge with safe heuristic fallbacks.
-- Task Cabinet/File Cabinet polish adds deeper visible cabinet-top sprite depth, expanded top placement area, and a larger lower collision footprint for better room editing and pathing.
-
-**中文**
-
-- 0.2.3 重点加固桌面稳定性：商店购买按钮现在会抑制快速连点，长按可一次购买最多 10 个可重复物品，并新增 DOM 级烟测确认购买路径保持响应。
-- 渲染和运行时韧性进一步增强：稳定 canvas backing store 尺寸、缓存摆放物渲染分类/排序，并增加 React Error Boundary 兜底。
-- 本地桥接安全加固：显式 CSP，并对 HTTP/WebSocket 状态流量做 Origin/CORS 校验。
-- 桌面启动加入 single-instance 防护，重复启动会聚焦已有窗口，不再留下额外 WebView 进程。
-- 新增并打磨多个角色与房间视觉：小章鱼、急急 Spark、心情史莱姆、红色小龙虾、半透明小幽灵、可爱小企鹅、绿色小蜥蜴，以及更丰富的家具/地板/窗景材质、Starship 控制台主题、内置 Antonio/Smiley Sans 字体和更安静的睡眠呼噜音效。
-- 扩展 AI agent 工作流：Codex Desktop、Codex CLI、Claude Code、opencode、定时 CLI 任务、自定义本地状态源，以及 Codex 5 小时/每周 token 限额 HUD。
-- Room Visit 串门支持自动拜访、关系亲密度、共享活动，以及通过本地桥接生成 guest/host 社交对话，并带安全的启发式回退。
-- Task Cabinet/File Cabinet 细节升级：文件柜顶部 sprite 视觉纵深加深，顶部可放置面积扩大，脚底碰撞范围加大，房间编辑和路径移动更稳定。
-
 <p align="center">
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4">
     <img src="docs/assets/aivatar-30s-vertical-promo-thumbnail.jpg" width="360" alt="Watch the 30-second Aivatar vertical demo video" />
@@ -211,7 +122,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.4.5 is available through GitHub Releases as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer. These builds are unsigned and intended for GitHub tester distribution while signing, notarization, and release-mode integrations continue to harden.
+> Current status / 当前状态: 0.5.0 is available through GitHub Releases as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer. Update artifacts carry a dedicated updater signature. OS code signing and Apple notarization are not yet configured; these installers remain intended for GitHub tester distribution.
 
 ## Contents / 目录
 
@@ -683,9 +594,9 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 ## Assets And Attribution / 资源与署名
 
-**EN** | Bundled asset provenance is tracked in [ATTRIBUTIONS.md](ATTRIBUTIONS.md), [public/audio/README.md](public/audio/README.md), and [public/assets/art/README.md](public/assets/art/README.md). The current 0.4 series README banner was generated for this repository and saved at `docs/assets/aivatar-readme-hero-0.4-hilltop-park.png`.
+**EN** | Bundled asset provenance is tracked in [ATTRIBUTIONS.md](ATTRIBUTIONS.md), [public/audio/README.md](public/audio/README.md), and [public/assets/art/README.md](public/assets/art/README.md). The 0.5.0 README banner was generated with imagegen for this repository: [image](docs/assets/aivatar-readme-hero-0.5-desktop.png), [generation prompt](docs/assets/aivatar-readme-hero-0.5-desktop.prompt.md). It is promotional artwork, not a screenshot.
 
-**中文** | 内置资源来源记录在 [ATTRIBUTIONS.md](ATTRIBUTIONS.md)、[public/audio/README.md](public/audio/README.md) 和 [public/assets/art/README.md](public/assets/art/README.md)。当前 0.4 系列 README 顶部宣传图是为本仓库生成的，保存于 `docs/assets/aivatar-readme-hero-0.4-hilltop-park.png`。
+**中文** | 内置资源来源记录在 [ATTRIBUTIONS.md](ATTRIBUTIONS.md)、[public/audio/README.md](public/audio/README.md) 和 [public/assets/art/README.md](public/assets/art/README.md)。0.5.0 首页头图由 imagegen 为本仓库绘制：[图片](docs/assets/aivatar-readme-hero-0.5-desktop.png)、[生成提示词](docs/assets/aivatar-readme-hero-0.5-desktop.prompt.md)。它是宣传插画，不是软件截图。
 
 ## Roadmap Notes / 路线图说明
 
@@ -693,9 +604,9 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 Current release-prep notes:
 
-- The 0.4.5 release is available through GitHub Releases as a universal macOS `.dmg`, Windows NSIS `.exe`, and Windows MSI installer. The current artifacts are unsigned.
+- The 0.5.0 release is available through GitHub Releases as a universal macOS `.dmg`, Windows NSIS `.exe`, and Windows MSI installer. Updater artifacts are signature-verified; OS code signing and Apple notarization remain future work.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
-- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, Card Room, Hilltop Park, fishing, directional gas-range cooking, dynamic rain/weather, and the 0.4.2 interaction/rendering and reward-settlement fixes are now part of the preview surface.
+- Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, Card Room, Hilltop Park, fishing, directional gas-range cooking, dynamic rain/weather, desktop companion mode, automatic updates, and interaction/rendering and reward-settlement fixes are now part of the preview surface.
 - Native bridge support exists for local status, Codex Desktop session discovery, Tencent WorkBuddy China mainland/international `working`/`coding` session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
 - A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
 - Linux packaging remains planned after the desktop integration path is stable.
@@ -704,9 +615,9 @@ Current release-prep notes:
 
 当前发布准备阶段说明：
 
-- 0.4.5 已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包；当前产物尚未签名。
+- 0.5.0 已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包；更新包带有更新专用签名；系统级代码签名及 Apple 公证仍待完成。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
-- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、纸牌屋 Card Room、山顶公园、钓鱼、四向燃气灶烹饪、动态雨天系统，以及 0.4.2 交互/渲染和奖励结算修复，已经纳入预览体验。
+- 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、纸牌屋 Card Room、山顶公园、钓鱼、四向燃气灶烹饪、动态雨天系统，桌面伙伴模式、自动更新，以及交互/渲染和奖励结算修复，已经纳入预览体验。
 - 本地状态、Codex Desktop 会话发现、腾讯 WorkBuddy 大陆版/国际版 `working`/`coding` 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。
 - 完全 Rust-native 的 connected runner 和面向发布模式的 provider-backed learning 仍是后续加固工作。
 - Linux 打包计划会在桌面集成路径继续稳定后推进。
