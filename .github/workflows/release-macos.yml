@@ -85,10 +85,10 @@ jobs:
           def api(endpoint):
               return json.loads(subprocess.check_output(["gh", "api", f"repos/{repo}/{endpoint}"], text=True))
 
-          release = api(f"releases/tags/{tag}")
-          if release["tag_name"] != tag or not release["draft"]:
+          release = json.loads(subprocess.check_output(["gh", "release", "view", tag, "--repo", repo, "--json", "tagName,isDraft,targetCommitish"], text=True))
+          if release["tagName"] != tag or not release["isDraft"]:
               raise SystemExit("The requested existing release must still be a draft matching the source version.")
-          if release["target_commitish"].lower() != sha:
+          if release["targetCommitish"].lower() != sha:
               raise SystemExit("Create the draft with --target set to the requested full source SHA.")
           references = api(f"git/matching-refs/tags/{tag}")
           matching = [entry for entry in references if entry["ref"] == f"refs/tags/{tag}"]
