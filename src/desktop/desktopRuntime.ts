@@ -1,13 +1,14 @@
 import type { AvatarRuntime, BehaviorName } from "../types";
 import type {
   DesktopActivityArea, DesktopAreaHandle, DesktopDragTarget, DesktopHitRegion, DesktopLayout, DesktopPoint,
-  DesktopRuntime, DesktopViewport, DesktopVendingProductId, DesktopVendingPurchaseRequest,
+  DesktopRuntime, DesktopViewport, DesktopVendingProductId, DesktopVendingPurchaseRequest, DesktopVendingSkinId,
 } from "./desktopTypes";
 import {
   DESKTOP_PIXEL_SCALE, DESKTOP_FURNITURE_GAP, DESKTOP_VENDING_PRESS_MS,
   DESKTOP_VENDING_DISPENSE_MS, DESKTOP_VENDING_CONSUME_MS,
   desktopFurniturePairFits, desktopTerminalVisualBounds, desktopTerminalFrontBounds,
   desktopVendingVisualBounds, desktopVendingFrontBounds, desktopVendingInteractionPoint,
+  normalizeDesktopVendingSkinId,
 } from "./desktopVendingMachine";
 
 export { DESKTOP_PIXEL_SCALE } from "./desktopVendingMachine";
@@ -175,12 +176,14 @@ export const normalizeDesktopLayout = (
   const vendingMachine = preferredMachine ? findDesktopFurniturePlacement(
     { computer, vendingMachine: null, activityArea }, "vendingMachine", preferredMachine, viewport,
   ) : null;
+  const vendingMachineSkinId = normalizeDesktopVendingSkinId(valid ? candidate.vendingMachineSkinId : undefined);
   return {
     version: 1, monitorId: viewport.monitorId,
     viewport: { width: viewport.width, height: viewport.height },
     avatar: point("avatar", { x: viewport.width * 0.60, y: viewport.height * 0.72 }),
     computer,
     activityArea,
+    ...(vendingMachineSkinId === "original" ? {} : { vendingMachineSkinId }),
     ...(vendingMachine ? { vendingMachine } : preferredMachine
       ? { vendingMachine: null, vendingMachineParked: preferredMachine } : {}),
   };
@@ -200,21 +203,35 @@ export const createDesktopRuntime = (layout: DesktopLayout): DesktopRuntime => {
     activityArea, nextDecisionAt: 0, dragPauseUntil: 0, lastTaskBehavior: null,
     vendingMachine: normalized.vendingMachine ?? null,
     vendingMachineParked: normalized.vendingMachineParked ?? null,
+    vendingMachineSkinId: normalizeDesktopVendingSkinId(normalized.vendingMachineSkinId),
     vendingInteraction: null, navigationPath: [],
   };
 };
 
 export const desktopLayoutFromRuntime = (
   runtime: DesktopRuntime, viewport: DesktopViewport,
-): DesktopLayout => ({
-  version: 1, monitorId: viewport.monitorId,
-  viewport: { width: viewport.width, height: viewport.height },
-  avatar: { x: runtime.avatar.x, y: runtime.avatar.y },
-  computer: { ...runtime.computer },
-  activityArea: { ...runtime.activityArea },
-  ...(runtime.vendingMachine ? { vendingMachine: { ...runtime.vendingMachine } }
-    : runtime.vendingMachineParked ? { vendingMachine: null, vendingMachineParked: { ...runtime.vendingMachineParked } } : {}),
-});
+): DesktopLayout => {
+  const vendingMachineSkinId = normalizeDesktopVendingSkinId(runtime.vendingMachineSkinId);
+  return {
+    version: 1, monitorId: viewport.monitorId,
+    viewport: { width: viewport.width, height: viewport.height },
+    avatar: { x: runtime.avatar.x, y: runtime.avatar.y },
+    computer: { ...runtime.computer },
+    activityArea: { ...runtime.activityArea },
+    // Keep a non-default choice even when the machine has been packed away.
+    ...(vendingMachineSkinId === "original" ? {} : { vendingMachineSkinId }),
+    ...(runtime.vendingMachine ? { vendingMachine: { ...runtime.vendingMachine } }
+      : runtime.vendingMachineParked ? { vendingMachine: null, vendingMachineParked: { ...runtime.vendingMachineParked } } : {}),
+  };
+};
+
+export const setDesktopVendingSkin = (
+  runtime: DesktopRuntime, skinId: DesktopVendingSkinId,
+): DesktopRuntime => {
+  const vendingMachineSkinId = normalizeDesktopVendingSkinId(skinId);
+  return vendingMachineSkinId === runtime.vendingMachineSkinId
+    ? runtime : { ...runtime, vendingMachineSkinId };
+};
 
 export const canApplyDesktopActivityArea = (
   runtime: DesktopRuntime, area: DesktopActivityArea, viewport: DesktopViewport,

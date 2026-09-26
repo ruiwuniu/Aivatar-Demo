@@ -4,6 +4,7 @@ export interface DesktopPoint { x: number; y: number }
 export interface DesktopActivityArea extends DesktopPoint { width: number; height: number }
 export type DesktopAreaHandle = "move" | "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 export type DesktopVendingProductId = "cookie" | "cola" | "coffee";
+export type DesktopVendingSkinId = "original" | "red" | "dark-green";
 export type DesktopVendingPhase = "approach" | "press" | "awaitingPurchase" | "dispense" | "consume";
 export interface DesktopVendingInteraction {
   requestId: string;
@@ -32,6 +33,8 @@ export interface DesktopLayout {
   vendingMachine?: DesktopPoint | null;
   /** Retain a placed machine while a temporarily smaller screen cannot fit it. */
   vendingMachineParked?: DesktopPoint;
+  /** Independent of placement, so packing the machine retains its appearance. */
+  vendingMachineSkinId?: DesktopVendingSkinId;
 }
 
 export interface DesktopRuntime {
@@ -40,6 +43,7 @@ export interface DesktopRuntime {
   activityArea: DesktopActivityArea;
   vendingMachine: DesktopPoint | null;
   vendingMachineParked: DesktopPoint | null;
+  vendingMachineSkinId: DesktopVendingSkinId;
   vendingInteraction: DesktopVendingInteraction | null;
   navigationPath: DesktopPoint[];
   navigationKey?: string;

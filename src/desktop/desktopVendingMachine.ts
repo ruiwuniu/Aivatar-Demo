@@ -1,4 +1,4 @@
-import type { DesktopHitRegion, DesktopPoint } from "./desktopTypes";
+import type { DesktopHitRegion, DesktopPoint, DesktopVendingSkinId } from "./desktopTypes";
 
 export const DESKTOP_PIXEL_SCALE = 4 / 3;
 export const DESKTOP_FURNITURE_GAP = 4 * DESKTOP_PIXEL_SCALE;
@@ -11,6 +11,33 @@ export const DESKTOP_VENDING_SPRITE = {
   width: 60,
   height: 114,
 } as const;
+
+export const DESKTOP_VENDING_SKIN_IDS = ["original", "red", "dark-green"] as const satisfies readonly DesktopVendingSkinId[];
+export const DESKTOP_VENDING_SKIN_SPRITES = {
+  original: DESKTOP_VENDING_SPRITE,
+  red: {
+    ...DESKTOP_VENDING_SPRITE,
+    src: "/assets/furniture/desktop-vending-machine-red.png",
+    source: { x: 142, y: 63, width: 740, height: 1407 },
+  },
+  "dark-green": {
+    ...DESKTOP_VENDING_SPRITE,
+    src: "/assets/furniture/desktop-vending-machine-dark-green.png",
+    source: { x: 142, y: 65, width: 740, height: 1406 },
+  },
+} as const satisfies Record<DesktopVendingSkinId, {
+  src: string;
+  source: { x: number; y: number; width: number; height: number };
+  width: number;
+  height: number;
+}>;
+
+/** Whitelist before indexing: persisted values may be missing or malformed. */
+export const normalizeDesktopVendingSkinId = (value: unknown): DesktopVendingSkinId =>
+  value === "red" || value === "dark-green" ? value : "original";
+
+export const getDesktopVendingSprite = (value: unknown) =>
+  DESKTOP_VENDING_SKIN_SPRITES[normalizeDesktopVendingSkinId(value)];
 
 /** All public geometry is in CSS pixels; vending anchors are bottom-centre. */
 export const desktopVendingVisualBounds = (point: DesktopPoint): DesktopHitRegion => ({

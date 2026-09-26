@@ -86,6 +86,15 @@ body.aivatar-desktop-mode #root {
 .desktop-vending-menu-heading span { font-size: 11px; font-variant-numeric: tabular-nums; }
 .desktop-companion-menu .desktop-vending-product { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .desktop-vending-product strong { font-size: 12px; white-space: nowrap; }
+.desktop-vending-colors { margin: 6px 0; padding: 5px 0; border-top: 1px solid #c6bda6; border-bottom: 1px solid #c6bda6; }
+.desktop-companion-menu .desktop-vending-colors-label { margin: 3px 8px 5px; font-weight: 600; }
+.desktop-companion-menu .desktop-vending-color { display: flex; align-items: center; gap: 9px; }
+.desktop-vending-color[aria-checked="true"] { font-weight: 600; }
+.desktop-vending-swatch { width: 16px; height: 16px; flex: 0 0 16px; border: 1px solid #182537; border-radius: 2px; box-shadow: inset 1px 1px 0 #fff5; }
+.desktop-vending-swatch-original { background: #e6d8b4; }
+.desktop-vending-swatch-red { background: #a93636; }
+.desktop-vending-swatch-dark-green { background: #234e40; }
+.desktop-vending-color-check { width: 16px; margin-left: auto; text-align: center; }
 .desktop-vending-notice {
   position: absolute;
   z-index: 2;

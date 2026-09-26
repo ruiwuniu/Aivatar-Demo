@@ -1,7 +1,7 @@
 import { isTerminalBubbleAgent } from "../agentRegistry";
 import { MACINTOSH_TERMINAL_SKIN_ID, drawMacintoshTerminal } from "./macintoshTerminal";
-import type { DesktopHitRegion, DesktopPoint, DesktopVendingInteraction, DesktopVendingProductId } from "../desktop/desktopTypes";
-import { DESKTOP_VENDING_SPRITE, DESKTOP_VENDING_DISPENSE_MS, desktopVendingVisualBounds } from "../desktop/desktopVendingMachine";
+import type { DesktopHitRegion, DesktopPoint, DesktopVendingInteraction, DesktopVendingProductId, DesktopVendingSkinId } from "../desktop/desktopTypes";
+import { getDesktopVendingSprite, DESKTOP_VENDING_DISPENSE_MS, desktopVendingVisualBounds } from "../desktop/desktopVendingMachine";
 import type {
   AivatarContent,
   AivatarMemory,
@@ -13911,12 +13911,13 @@ export interface DesktopSceneOptions {
   memory?: AivatarMemory;
   appearanceId: AvatarAppearanceId;
   vendingMachine?: DesktopPoint | null;
+  vendingMachineSkinId?: DesktopVendingSkinId;
   vendingInteraction?: DesktopVendingInteraction | null;
   invalidPlacement?: DesktopHitRegion;
   nowMs?: number;
 }
 
-let desktopVendingImage: HTMLImageElement | undefined;
+const desktopVendingImages = new Map<string, HTMLImageElement>();
 const drawDesktopVendingProduct = (ctx: CanvasRenderingContext2D, product: DesktopVendingProductId, x: number, y: number) => {
   ctx.fillStyle = "#392c24";
   if (product === "cookie") {
@@ -13936,11 +13937,13 @@ const drawDesktopVendingProduct = (ctx: CanvasRenderingContext2D, product: Deskt
 
 const drawDesktopVendingMachine = (ctx: CanvasRenderingContext2D, options: DesktopSceneOptions) => {
   if (!options.vendingMachine) return;
-  const { source, src } = DESKTOP_VENDING_SPRITE;
+  const { source, src } = getDesktopVendingSprite(options.vendingMachineSkinId);
+  let desktopVendingImage = desktopVendingImages.get(src);
   if (!desktopVendingImage && typeof Image !== "undefined") {
     desktopVendingImage = new Image();
     desktopVendingImage.decoding = "async";
     desktopVendingImage.src = src;
+    desktopVendingImages.set(src, desktopVendingImage);
   }
   const bounds = desktopVendingVisualBounds(options.vendingMachine);
   const scale = options.pixelScale;
@@ -13951,7 +13954,9 @@ const drawDesktopVendingMachine = (ctx: CanvasRenderingContext2D, options: Deskt
   } else {
     // Keep the interactive device visible while its asset is loading.
     ctx.fillStyle = "#423930"; ctx.fillRect(x, y, width, height);
-    ctx.fillStyle = "#e1cba4"; ctx.fillRect(x + 2, y + 2, width - 4, height - 4);
+    ctx.fillStyle = options.vendingMachineSkinId === "red" ? "#ad3432"
+      : options.vendingMachineSkinId === "dark-green" ? "#173f32" : "#e1cba4";
+    ctx.fillRect(x + 2, y + 2, width - 4, height - 4);
   }
   const interaction = options.vendingInteraction;
   if (!interaction || interaction.phase === "approach") return;

@@ -14,8 +14,10 @@ import {
   beginDesktopVendingInteraction, cancelDesktopVendingInteraction,
   takeDesktopVendingPurchaseRequest, settleDesktopVendingPurchase,
   placeDesktopVendingMachine, removeDesktopVendingMachine, isDesktopFurniturePlacementValid,
+  setDesktopVendingSkin,
 } from "./desktopRuntime";
-import type { DesktopActivityArea, DesktopAreaHandle, DesktopDragTarget, DesktopHitRegion, DesktopLayout, DesktopPoint, DesktopViewport, DesktopVendingProductId } from "./desktopTypes";
+import type { DesktopActivityArea, DesktopAreaHandle, DesktopDragTarget, DesktopHitRegion, DesktopLayout, DesktopPoint, DesktopViewport, DesktopVendingProductId, DesktopVendingSkinId } from "./desktopTypes";
+import { DESKTOP_VENDING_SKIN_IDS } from "./desktopVendingMachine";
 import type { DesktopVendingPurchaseRequest, DesktopVendingPurchaseReceipt, VendingProductOffer, VendingSoundCue } from "./desktopVendingTransactions";
 import { startDesktopAnimation } from "./desktopAnimation";
 import "./desktop.css";
@@ -39,7 +41,7 @@ export interface DesktopCompanionProps {
   locale: Locale;
 }
 
-interface DragState { target: DesktopDragTarget; pointerId: number; offset: DesktopPoint; origin: DesktopPoint; moved: boolean; element: HTMLElement }
+interface DragState { target: DesktopDragTarget; pointerId: number; offset: DesktopPoint; element: HTMLElement }
 interface AreaEdit { committed: DesktopLayout; draft: DesktopActivityArea }
 interface AreaDrag { handle: DesktopAreaHandle; pointerId: number; origin: DesktopPoint; area: DesktopActivityArea; element: HTMLElement }
 const AREA_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
@@ -68,6 +70,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
   const [returning, setReturning] = useState(false);
   const [error, setError] = useState("");
   const [vendingPhase, setVendingPhase] = useState("");
+  const [, refreshVendingSkin] = useState(0);
   const [notice, setNotice] = useState("");
   const noticeUntilRef = useRef(0);
   const phaseKeyRef = useRef("");
@@ -130,6 +133,14 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
     ?? desktopLayoutFromRuntime(runtimeRef.current, viewportRef.current);
   const checkpoint = () => {
     if (!areaEditRef.current && !isStoreClosing()) propsRef.current.onLayoutChange(captureLayout());
+  };
+  const selectVendingSkin = (skinId: DesktopVendingSkinId) => {
+    if (returningRef.current || areaEditRef.current || isStoreClosing() || renderFailedRef.current
+      || !runtimeRef.current.vendingMachine || runtimeRef.current.vendingMachineSkinId === skinId) return;
+    runtimeRef.current = setDesktopVendingSkin(runtimeRef.current, skinId);
+    // Keep the menu and focused option in place while updating its selection.
+    refreshVendingSkin((version) => version + 1);
+    checkpoint();
   };
   const setTyping = (active: boolean) => {
     if (typingRef.current === active) return;
@@ -334,6 +345,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
             status: current.status, frame: Math.floor(frame), memory: current.memory,
             appearanceId: current.appearanceId,
             vendingMachine: runtimeRef.current.vendingMachine,
+            vendingMachineSkinId: runtimeRef.current.vendingMachineSkinId,
             vendingInteraction: runtimeRef.current.vendingInteraction,
             invalidPlacement: invalidPlacementRef.current, nowMs: now,
           });
@@ -408,7 +420,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
       : target === "vendingMachine" ? runtimeRef.current.vendingMachine : runtimeRef.current.computer;
     if (!object) return;
     dragRef.current = { target, pointerId: event.pointerId, offset: { x: point.x - object.x, y: point.y - object.y },
-      origin: point, moved: false, element: event.currentTarget };
+      element: event.currentTarget };
     event.currentTarget.setPointerCapture(event.pointerId);
     runtimeRef.current = moveDesktopObject(runtimeRef.current, target, object, viewportRef.current, performance.now());
     setTyping(false);
@@ -462,7 +474,6 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
   const pointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId || returningRef.current || isStoreClosing()) return;
-    drag.moved ||= Math.hypot(event.clientX - drag.origin.x, event.clientY - drag.origin.y) > 4;
     const point = { x: event.clientX - drag.offset.x, y: event.clientY - drag.offset.y };
     const invalid = drag.target !== "avatar" && !isDesktopFurniturePlacementValid(
       runtimeRef.current, drag.target, point, viewportRef.current);
@@ -489,10 +500,6 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     event.currentTarget.style.cursor = "grab";
     checkpoint();
-    if (event.type === "pointerup" && !drag.moved && drag.target === "vendingMachine"
-      && !returningRef.current && !isStoreClosing()) {
-      setMenu({ target: "vendingMachine", x: Math.max(8, event.clientX), y: Math.max(8, event.clientY) });
-    }
     updateHitRegions();
   };
   const toggleVending = () => {
@@ -546,6 +553,17 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
             <span>{product.name}</span><strong>{product.price} bits</strong>
           </button>)}
           <p>{t(props.locale, deriveBehaviorFromCodex(props.status) ? "desktop.vending.busy" : "desktop.vending.hint")}</p>
+          <div className="desktop-vending-colors" role="group" aria-label={t(props.locale, "desktop.vending.colors")}>
+            <p className="desktop-vending-colors-label">{t(props.locale, "desktop.vending.colors")}</p>
+            {DESKTOP_VENDING_SKIN_IDS.map((skinId) => <button type="button" role="menuitemradio" key={skinId}
+              className="desktop-vending-color" data-vending-skin={skinId}
+              aria-checked={runtimeRef.current.vendingMachineSkinId === skinId}
+              disabled={returning || renderFailedRef.current} onClick={() => selectVendingSkin(skinId)}>
+              <span className={`desktop-vending-swatch desktop-vending-swatch-${skinId}`} aria-hidden="true" />
+              <span>{t(props.locale, `desktop.vending.color.${skinId}`)}</span>
+              <span className="desktop-vending-color-check" aria-hidden="true">{runtimeRef.current.vendingMachineSkinId === skinId ? "✓" : ""}</span>
+            </button>)}
+          </div>
         </>}
         {(menu.target === "computer" || menu.target === "vendingMachine") && <button type="button" role="menuitem"
           disabled={returning || renderFailedRef.current} onClick={toggleVending}>

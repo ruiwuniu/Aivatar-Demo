@@ -278,6 +278,71 @@ for (const preferred of [{ x: -1e6, y: -1e6 }, { x: 1e6, y: 1e6 }, { x: 1e6, y: 
   assert(runtime.isDesktopFurniturePlacementValid(resizedMachine, "vendingMachine", resizedMachine.vendingMachine, viewport));
 }
 
+assert.deepEqual(vendingGeometry.DESKTOP_VENDING_SKIN_IDS, ["original", "red", "dark-green"]);
+assert.equal(vendingGeometry.getDesktopVendingSprite("original"), vendingGeometry.DESKTOP_VENDING_SPRITE,
+  "the original asset remains the default public sprite");
+assert.deepEqual(vendingGeometry.getDesktopVendingSprite("red").source, { x: 142, y: 63, width: 740, height: 1407 });
+assert.deepEqual(vendingGeometry.getDesktopVendingSprite("dark-green").source, { x: 142, y: 65, width: 740, height: 1406 });
+assert.equal(vendingBase.vendingMachineSkinId, "original", "old v1 layouts need no skin migration");
+assert(!("vendingMachineSkinId" in machineLayout), "original skin omits the optional field for unchanged v1 round-trips");
+for (const invalidSkin of [undefined, null, "", "unknown", "RED", "__proto__", "constructor", 1, false, [], {}, Object.create(null)]) {
+  assert.equal(vendingGeometry.normalizeDesktopVendingSkinId(invalidSkin), "original");
+  assert.equal(vendingGeometry.getDesktopVendingSprite(invalidSkin), vendingGeometry.DESKTOP_VENDING_SPRITE,
+    "untrusted skin values cannot index inherited registry properties");
+  const normalized = runtime.normalizeDesktopLayout({ ...machineLayout, vendingMachineSkinId: invalidSkin }, viewport);
+  assert(!("vendingMachineSkinId" in normalized));
+  assert.equal(runtime.createDesktopRuntime(normalized).vendingMachineSkinId, "original");
+}
+assert.equal(runtime.createDesktopRuntime({ ...machineLayout, version: 2, vendingMachineSkinId: "red" }).vendingMachineSkinId,
+  "original", "unrecognized layout versions cannot introduce an unvalidated skin");
+const assertSavedSkin = (layout, skinId) => {
+  assert.equal(layout.vendingMachineSkinId ?? "original", skinId);
+  if (skinId === "original") assert(!("vendingMachineSkinId" in layout));
+};
+for (const skinId of vendingGeometry.DESKTOP_VENDING_SKIN_IDS) {
+  const sprite = vendingGeometry.getDesktopVendingSprite(skinId);
+  assert.equal(sprite.width, 60);
+  assert.equal(sprite.height, 114, "every skin shares collision and interaction geometry");
+  assert(readFileSync(new URL(`../public${sprite.src}`, import.meta.url)).length > 8, "registered skin assets exist");
+  const changed = runtime.setDesktopVendingSkin(vendingState, skinId);
+  assert.equal(runtime.setDesktopVendingSkin(changed, skinId), changed, "selecting the same skin is a no-op");
+  assert.deepEqual(changed, { ...vendingState, vendingMachineSkinId: skinId }, "skin setter changes no placement, timers or movement");
+  const skinLayout = runtime.desktopLayoutFromRuntime(changed, viewport);
+  assertSavedSkin(skinLayout, skinId);
+  assert.deepEqual(runtime.normalizeDesktopLayout(JSON.parse(JSON.stringify(skinLayout)), viewport), skinLayout,
+    "each selected skin survives serialized layout round-trip");
+  const packed = runtime.removeDesktopVendingMachine(changed, 0);
+  assert.equal(packed.vendingMachine, null);
+  assert.equal(packed.vendingMachineParked, null);
+  assert.equal(packed.vendingMachineSkinId, skinId);
+  const packedLayout = runtime.desktopLayoutFromRuntime(packed, viewport);
+  assertSavedSkin(packedLayout, skinId);
+  const reentered = runtime.createDesktopRuntime(runtime.normalizeDesktopLayout(JSON.parse(JSON.stringify(packedLayout)), viewport));
+  assert.equal(reentered.vendingMachine, null);
+  const replaced = runtime.placeDesktopVendingMachine(reentered, viewport, 0);
+  assert(replaced.ok);
+  assert.equal(replaced.runtime.vendingMachineSkinId, skinId, "packing, leaving, returning and placing preserve color");
+  const skinParked = runtime.normalizeDesktopLayout(skinLayout, tinyScreen);
+  assert.equal(skinParked.vendingMachine, null);
+  assert(skinParked.vendingMachineParked);
+  assertSavedSkin(skinParked, skinId);
+  const parkedRoundTrip = runtime.desktopLayoutFromRuntime(runtime.createDesktopRuntime(skinParked), tinyScreen);
+  assertSavedSkin(parkedRoundTrip, skinId);
+  const restored = runtime.createDesktopRuntime(runtime.normalizeDesktopLayout(parkedRoundTrip, viewport));
+  assert(restored.vendingMachine && !restored.vendingMachineParked);
+  assert.equal(restored.vendingMachineSkinId, skinId, "restoring a larger monitor restores the selected color");
+  const resizedColor = runtime.createDesktopRuntime(runtime.normalizeDesktopLayout(skinLayout, largerScreen));
+  assert.equal(resizedColor.vendingMachineSkinId, skinId);
+  const editSnapshot = JSON.stringify(changed);
+  const acceptedArea = runtime.applyDesktopActivityArea(changed, minimumArea, viewport, 0);
+  assert.equal(acceptedArea.vendingMachineSkinId, skinId);
+  assert.equal(JSON.stringify(changed), editSnapshot, "activity preview preserves the committed color snapshot");
+  assert.equal(runtime.applyDesktopActivityArea(changed, wholeScreen, tinyScreen, 0), changed,
+    "rejected activity edit preserves the color and original runtime");
+  assert.equal(runtime.moveDesktopObject(changed, "vendingMachine", { x: 500, y: 550 }, viewport, 0).vendingMachineSkinId, skinId);
+}
+console.log("Desktop vending skin smoke passed: original/red/dark-green registry, malformed defaults, v1 compatibility, pack/reentry/re-place, monitor parking and activity changes.");
+
 const reachPress = (productId = "cookie", requestId = `order-${productId}`) => {
   let current = runtime.beginDesktopVendingInteraction(vendingState, productId, requestId, viewport, 0);
   assert.equal(current.vendingInteraction.phase, "approach");
@@ -339,6 +404,13 @@ const phases = [
 phases.push(runtime.settleDesktopVendingPurchase(phases[2], "phase-order", true, 20000));
 phases.push(runtime.tickDesktopRuntime(phases[3], null, viewport, 0, 21000));
 for (const phaseState of phases) {
+  for (const skinId of vendingGeometry.DESKTOP_VENDING_SKIN_IDS) {
+    const changed = runtime.setDesktopVendingSkin(phaseState, skinId);
+    assert.equal(changed.vendingInteraction, phaseState.vendingInteraction,
+      `changing color leaves ${phaseState.vendingInteraction.phase} and its order untouched`);
+    assert.deepEqual(changed, { ...phaseState, vendingMachineSkinId: skinId },
+      "appearance does not settle purchases, restart phases or alter task behavior");
+  }
   for (const task of ["thinking", "coding", "waiting", "error", "success"]) {
     const preempted = runtime.tickDesktopRuntime(phaseState, task, viewport, 1 / 30, 25000);
     assert.equal(preempted.vendingInteraction, null, `${task} preempts ${phaseState.vendingInteraction.phase}`);
