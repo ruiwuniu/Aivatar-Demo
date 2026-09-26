@@ -8,6 +8,7 @@ Run: python scripts/security/updater-build-guard-smoke.py
      python scripts/security/updater-build-guard-smoke.py --workflow-dir PATH
 """
 import argparse
+import ast
 from contextlib import redirect_stdout
 import io
 import json
@@ -15,6 +16,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
 from unittest.mock import patch
 
@@ -67,8 +69,50 @@ def no_external_io(*args, **kwargs):
     raise AssertionError("Unexpected external process or network access")
 
 
+def check_windows_utf8(source):
+    """Exercise startup UTF-8 mode and real pipe decoding, outside the API mocks."""
+    global COUNT
+    build = source.split("  build-windows:\n", 1)[1].split("\n  sign-and-upload:", 1)[0]
+    environment = build.split("\n    env:\n", 1)[1].split("\n    defaults:", 1)[0]
+    values = [ast.literal_eval(line.partition(":")[2].strip())
+              for line in environment.splitlines() if line.startswith("      PYTHONUTF8:")]
+    assert values == ["1"], "Windows build job must explicitly set string PYTHONUTF8='1'"
+    directory = ROOT / "windows-utf8"
+    directory.mkdir()
+    fixture = directory / "annotated-tag.json"
+    payload = {"tagger": {"name": "测试者吴"}, "message": "桌面伙伴 🐙 — café",
+               "object": {"type": "commit", "sha": SHA}}
+    fixture.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    probe = '''
+import json
+from pathlib import Path
+import subprocess
+import sys
+assert sys.flags.utf8_mode == 1, "UTF-8 mode must be enabled at interpreter startup"
+source = Path(sys.argv[1])
+expected = json.loads(source.read_text())
+producer = "from pathlib import Path; import sys; sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())"
+output = subprocess.check_output([sys.executable, "-c", producer, str(source)], text=True)
+assert json.loads(output) == expected
+copy = source.with_name("roundtrip.json")
+copy.write_text(json.dumps(expected, ensure_ascii=False))
+assert copy.read_bytes() == source.read_bytes()
+print(json.dumps(expected, ensure_ascii=False))
+'''
+    child_env = {"PYTHONUTF8": values[0], "PYTHONCOERCECLOCALE": "0", "LC_ALL": "C", "LANG": "C"}
+    if os.name == "nt":
+        child_env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+    result = subprocess.run([sys.executable, "-c", probe, str(fixture)], env=child_env,
+                            check=True, capture_output=True, text=True, encoding="utf-8")
+    assert json.loads(result.stdout) == payload
+    COUNT += 1
+    print("PASS windows job UTF-8 mode handles real Unicode JSON files and subprocess output")
+
+
 for platform in ("macos", "windows"):
     source = (options.workflow_dir / f"release-{platform}.yml").read_text(encoding="utf-8")
+    if platform == "windows":
+        check_windows_utf8(source)
     guards = [inline_step(source, name) for name in (
         "Require an immutable source commit", "Check source, versions, release mode and tag")]
 

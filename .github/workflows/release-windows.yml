@@ -37,6 +37,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     env:
+      PYTHONUTF8: '1'
       SOURCE_SHA: ${{ inputs.ref }}
       RELEASE_TAG: ${{ inputs.tag }}
       REPLACE_RELEASE: ${{ inputs.replace_release && 'true' || 'false' }}
