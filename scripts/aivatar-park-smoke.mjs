@@ -1774,12 +1774,12 @@ assert.match(appText, /shouldChooseCooking\(warmth\)/);
 assert.match(
   appText,
   /const cookingInteractionInFlight =\s*pendingWorldInteractionRef\.current\?\.kind === "cook" \|\|\s*activeInteractionRef\.current\?\.kind === "cook";/,
-  "pending or active cooking must reserve the shared brew behavior from autonomous coffee",
+  "pending or active cooking must block autonomous coffee",
 );
 assert.match(
   appText,
   /runtimeActionBehavior\(runtimeRef\.current\) === "brew" &&\s*!cookingInteractionInFlight &&/,
-  "autonomous coffee must not run while cooking owns the shared brew behavior",
+  "autonomous coffee must not run during a queued or active cooking interaction",
 );
 assert.match(
   avatarRendererText,
@@ -2418,5 +2418,7 @@ for (const [name, image, expectedHash] of [
     `${name} park fish sprite must remain stable`,
   );
 }
+
+await import("./aivatar-cooking-smoke.mjs");
 
 console.log("Park smoke passed: deterministic two-day weekly rain scheduling, staged weather previews, layered rain ambience and storm thunder, weather-scaled sea haze/pond ripples/grass splashes, static rock/shrub occluders, independent grass ripples, single-draw pond atlas, independent park ambience, foam and cliff-fog motion, looping clouds, handoff, traits, fish, cooking, and window size markers are present.");

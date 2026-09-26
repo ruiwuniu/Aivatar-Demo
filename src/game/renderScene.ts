@@ -6130,6 +6130,7 @@ const drawMoodSlimeAvatar = (
   const needsPseudopods =
     avatar.behavior === "interact" ||
     avatar.behavior === "brew" ||
+    avatar.behavior === "cook" ||
     avatar.behavior === "play" ||
     avatar.behavior === "music";
 

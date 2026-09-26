@@ -5772,7 +5772,7 @@ export const App = () => {
       kind === "brew"
         ? "brew"
         : kind === "cook"
-          ? "brew"
+          ? "cook"
         : kind === "paint"
           ? "paint"
           : kind === "play"
@@ -8441,7 +8441,7 @@ export const App = () => {
                 {
                   type: "item_used",
                   summary: `Cooked ${rawFishId}`,
-                  behavior: "brew",
+                  behavior: "cook",
                   itemId: cookedFishId,
                 },
                 { warmth: 1 },
@@ -8973,7 +8973,8 @@ export const App = () => {
         !pendingWorldInteractionRef.current &&
         !isBlockingInteraction(activeInteractionRef.current) &&
         !taskCabinetVisualFlowActive &&
-        runtimeActionBehavior(runtimeRef.current) !== "brew";
+        runtimeActionBehavior(runtimeRef.current) !== "brew" &&
+        runtimeActionBehavior(runtimeRef.current) !== "cook";
       if (canConsiderCooking) {
         cookingDecisionAccumulator += elapsedSeconds;
         if (cookingDecisionAccumulator >= 30) {
@@ -11661,6 +11662,8 @@ export const App = () => {
       contentRef.current.itemDefinitions.find((item) => item.id === GAS_OVEN_RANGE_ITEM_ID)
         ?.name ?? "Gas Range with Oven";
     if (!rawFishId) {
+      runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
+      setAvatar(runtimeRef.current);
       updateActiveInteraction({
         kind: "blocked",
         furnitureId: placedItem.id,
@@ -11672,16 +11675,21 @@ export const App = () => {
       return;
     }
     const cookedFishId = COOKED_FISH_BY_RAW_ID[rawFishId];
+    // Arrival already resolved the selected stove. Hold that position instead
+    // of selecting another appliance (or another stove) through setBehavior.
     runtimeRef.current = {
-      ...setBehavior(
-        runtimeRef.current,
-        "brew",
-        contentRef.current,
-        FISH_COOK_SECONDS,
-        "Cooking fish",
-        { startImmediately: true },
-      ),
+      ...runtimeRef.current,
+      targetX: runtimeRef.current.x,
+      targetY: runtimeRef.current.y,
+      behavior: "cook",
+      behaviorTimer: FISH_COOK_SECONDS,
+      expression: "calm",
+      activityLabel: "Cooking fish",
       facing: gasOvenRangeCookingFacing(placedItem.rotation),
+      actionIntent: undefined,
+      actionActivityLabel: undefined,
+      interactionTargetAlternates: undefined,
+      navigationFailure: undefined,
     };
     setAvatar(runtimeRef.current);
     const now = performance.now();

@@ -101,6 +101,7 @@ export type BehaviorName =
   | "fish"
   | "cookie"
   | "brew"
+  | "cook"
   | "relax"
   | "admire"
   | "snack"

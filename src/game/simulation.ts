@@ -69,6 +69,7 @@ const ARRIVAL_GATED_BEHAVIORS: BehaviorName[] = [
   "fish",
   "cookie",
   "brew",
+  "cook",
   "relax",
   "admire",
   "snack",
@@ -864,6 +865,17 @@ const behaviorInteractionAlternates = (
       : undefined;
   }
 
+  if (behavior === "cook") {
+    const gasRange = chooseNearestOrRandom(
+      from,
+      placedItems.filter((item) => item.itemId === GAS_OVEN_RANGE_ITEM_ID),
+      (item) => ({ x: item.x, y: item.y }),
+    );
+    return gasRange
+      ? getPlacedItemInteractionStandpoints(gasRange, content)
+      : undefined;
+  }
+
   if (behavior === "relax" || behavior === "sleep") {
     const bed = content.room.furniture.find((item) => item.id === "bed");
     return bed ? getFurnitureInteractionStandpoints(bed, content, behavior) : undefined;
@@ -1018,6 +1030,15 @@ export const targetForBehavior = (
       (item) => ({ x: item.x, y: item.y }),
     );
     return targetNearPlacedItem(coffeeMachine, content, from);
+  }
+
+  if (behavior === "cook") {
+    const gasRange = chooseNearestOrRandom(
+      from,
+      (content.placedItems ?? []).filter((item) => item.itemId === GAS_OVEN_RANGE_ITEM_ID),
+      (item) => ({ x: item.x, y: item.y }),
+    );
+    return targetNearPlacedItem(gasRange, content, from);
   }
 
   if (behavior === "relax") {
@@ -1215,6 +1236,7 @@ const interactionStopDistanceForBehavior = (behavior: BehaviorName) => {
       "cookie",
       "snack",
       "brew",
+      "cook",
       "paint",
       "play",
       "music",
@@ -2094,6 +2116,8 @@ const activityLabelForBehavior = (behavior: BehaviorName): string => {
       return "Checking snacks";
     case "brew":
       return "Brewing coffee";
+    case "cook":
+      return "Cooking fish";
     case "coffee":
       return "Drinking coffee";
     case "cola":
