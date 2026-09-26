@@ -6,7 +6,7 @@ on:
       tag:
         description: Existing stable release tag (draft unless explicitly replacing).
         required: true
-        default: v0.5.0
+        default: v0.5.1
       ref:
         description: Full 40-character commit SHA to build.
         required: true
@@ -180,7 +180,10 @@ jobs:
               "aivatar-room-save-persistence-smoke.mjs", "aivatar-close-save-smoke.mjs",
               "aivatar-park-persistence-smoke.mjs", "aivatar-card-room-close-save-smoke.mjs",
               "aivatar-park-smoke.mjs", "card-room-holdem-rules-smoke.mjs",
-              "aivatar-desktop-mode-smoke.mjs", "aivatar-updater-release-smoke.mjs",
+              "aivatar-desktop-mode-smoke.mjs", "aivatar-desktop-vending-smoke.mjs",
+              "aivatar-desktop-vending-menu-smoke.mjs", "aivatar-macintosh-terminal-smoke.mjs",
+              "aivatar-terminal-macintosh-shop-smoke.mjs", "aivatar-macintosh-render-integration-smoke.mjs",
+              "aivatar-updater-release-smoke.mjs",
               "aivatar-updater-frontend-smoke.mjs",
           ):
               subprocess.run(["node", f"scripts/{script}"], check=True)
