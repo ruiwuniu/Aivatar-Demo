@@ -36,7 +36,11 @@ body.aivatar-desktop-mode #root {
 .desktop-companion-menu {
   position: absolute;
   z-index: 2;
-  width: 216px;
+  box-sizing: border-box;
+  width: 248px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   padding: 5px;
   border: 2px solid #1c2638;
   border-radius: 6px;
@@ -67,8 +71,39 @@ body.aivatar-desktop-mode #root {
   outline: none;
 }
 
-.desktop-companion-menu button:disabled { opacity: 0.6; cursor: wait; }
+.desktop-companion-menu button:disabled { opacity: 0.6; cursor: not-allowed; }
 .desktop-companion-menu p { margin: 6px; overflow-wrap: anywhere; font-size: 12px; }
+
+.desktop-vending-menu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 7px;
+  border-bottom: 1px solid #c6bda6;
+  margin-bottom: 4px;
+}
+.desktop-vending-menu-heading span { font-size: 11px; font-variant-numeric: tabular-nums; }
+.desktop-companion-menu .desktop-vending-product { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.desktop-vending-product strong { font-size: 12px; white-space: nowrap; }
+.desktop-vending-notice {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 48px);
+  padding: 8px 12px;
+  border: 2px solid #243247;
+  border-radius: 6px;
+  background: #fffbea;
+  box-shadow: 2px 3px 0 #0003;
+  color: #182537;
+  font: 12px/1.4 system-ui, sans-serif;
+  text-align: center;
+  pointer-events: none;
+}
+.desktop-area-toolbar .desktop-area-error { color: #a22923; font-weight: 600; }
 
 .desktop-area-editor {
   position: absolute;

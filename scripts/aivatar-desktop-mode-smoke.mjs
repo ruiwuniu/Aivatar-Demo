@@ -3,10 +3,17 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 
 const source = readFileSync(new URL("../src/desktop/desktopRuntime.ts", import.meta.url), "utf8");
+const geometrySource = readFileSync(new URL("../src/desktop/desktopVendingMachine.ts", import.meta.url), "utf8");
+const geometryOutput = ts.transpileModule(geometrySource, {
+  compilerOptions: { module: ts.ModuleKind.ES2020, target: ts.ScriptTarget.ES2020 },
+}).outputText;
+const geometryUrl = `data:text/javascript;base64,${Buffer.from(geometryOutput).toString("base64")}`;
+const vendingGeometry = await import(geometryUrl);
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2020, target: ts.ScriptTarget.ES2020 },
 });
-const runtime = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const linkedOutput = outputText.replaceAll('"./desktopVendingMachine"', JSON.stringify(geometryUrl));
+const runtime = await import(`data:text/javascript;base64,${Buffer.from(linkedOutput).toString("base64")}`);
 const viewport = { width: 1440, height: 900, scaleFactor: 2, monitorId: "test-monitor" };
 const layout = runtime.normalizeDesktopLayout(null, viewport);
 let state = runtime.createDesktopRuntime(layout);
@@ -213,6 +220,168 @@ for (let frame = 0; frame < 1200; frame += 1) {
   assertObjectInsideArea(boundedState, "computer");
 }
 console.log("Desktop activity area smoke passed: eight resize handles, moving, size limits, screen edges, v1 compatibility, monitor scaling, cancellation snapshots, persisted bounds, dragging and bounded task/wander paths.");
+
+const vendingScale = runtime.DESKTOP_PIXEL_SCALE;
+assert.deepEqual(vendingGeometry.DESKTOP_VENDING_SPRITE.source, { x: 142, y: 65, width: 740, height: 1404 });
+assert.deepEqual(vendingGeometry.desktopVendingVisualBounds({ x: 500, y: 400 }),
+  { x: 500 - 30 * vendingScale, y: 400 - 114 * vendingScale, width: 60 * vendingScale, height: 114 * vendingScale });
+const vendingBase = runtime.createDesktopRuntime({ ...boundedLayout, computer: { x: 800, y: 450 }, avatar: { x: 500, y: 580 } });
+const placement = runtime.placeDesktopVendingMachine(vendingBase, viewport, 0, { x: 800, y: 450 });
+assert(placement.ok, "an occupied preferred position moves to the nearest legal furniture position");
+let vendingState = placement.runtime;
+assert(runtime.isDesktopFurniturePlacementValid(vendingState, "vendingMachine", vendingState.vendingMachine, viewport));
+assert(vendingGeometry.desktopFurniturePairFits(vendingState.computer, vendingState.vendingMachine));
+assert.equal(runtime.placeDesktopVendingMachine(vendingState, viewport, 0).ok, false, "only one vending machine may be configured");
+assertObjectInsideArea(vendingState, "vendingMachine");
+const pickup = vendingGeometry.desktopVendingInteractionPoint(vendingState.vendingMachine);
+closeTo(pickup.x, vendingState.vendingMachine.x - 6.1 * vendingScale);
+closeTo(pickup.y, vendingState.vendingMachine.y + 28 * vendingScale);
+assert.equal(runtime.desktopAvatarPointBlocked(vendingState, pickup), false, "pickup stays in front of the body");
+const machineBeforeDrag = { ...vendingState.vendingMachine };
+const computerBeforeDrag = { ...vendingState.computer };
+vendingState = runtime.moveDesktopObject(vendingState, "vendingMachine", vendingState.computer, viewport, 0);
+assert.deepEqual(vendingState.vendingMachine, machineBeforeDrag, "machine cannot be dragged onto the terminal");
+vendingState = runtime.moveDesktopObject(vendingState, "computer", vendingState.vendingMachine, viewport, 0);
+assert.deepEqual(vendingState.computer, computerBeforeDrag, "terminal cannot be dragged onto the machine");
+const frontConflictComputer = { x: 700, y: 500 };
+const frontConflictVending = { x: 700, y: 440 };
+assert.equal(vendingGeometry.desktopRectsOverlap(vendingGeometry.desktopTerminalVisualBounds(frontConflictComputer),
+  vendingGeometry.desktopVendingVisualBounds(frontConflictVending)), false, "fixture has separated device bodies");
+assert.equal(vendingGeometry.desktopFurniturePairFits(frontConflictComputer, frontConflictVending), false,
+  "a terminal cannot occupy the vending interaction reserve even without visible body overlap");
+
+const machineLayout = runtime.desktopLayoutFromRuntime(vendingState, viewport);
+assert.deepEqual(runtime.normalizeDesktopLayout(machineLayout, viewport), machineLayout, "machine anchors round-trip exactly");
+assert(!("vendingInteraction" in machineLayout), "orders and phases never enter the persisted layout");
+const doubledMachine = runtime.normalizeDesktopLayout(machineLayout, { ...viewport, width: 2880, height: 1800 });
+closeTo(doubledMachine.vendingMachine.x, machineLayout.vendingMachine.x * 2);
+closeTo(doubledMachine.vendingMachine.y, machineLayout.vendingMachine.y * 2);
+const tinyScreen = { ...viewport, width: 100, height: 100 };
+const parkedLayout = runtime.normalizeDesktopLayout(machineLayout, tinyScreen);
+assert.equal(parkedLayout.vendingMachine, null, "an impossible forced monitor resize parks the machine");
+assert(parkedLayout.vendingMachineParked, "parking retains its placement for a larger screen");
+const parkedState = runtime.createDesktopRuntime(parkedLayout);
+assert.equal(runtime.placeDesktopVendingMachine(parkedState, tinyScreen, 0).ok, false, "parking does not allow duplicate placement");
+const restoredMachine = runtime.normalizeDesktopLayout(runtime.desktopLayoutFromRuntime(parkedState, tinyScreen), viewport);
+assert(restoredMachine.vendingMachine && !restoredMachine.vendingMachineParked, "larger monitor restores the parked configuration");
+const removedParked = runtime.removeDesktopVendingMachine(parkedState, 0);
+assert.equal(removedParked.vendingMachine, null);
+assert.equal(removedParked.vendingMachineParked, null);
+assert.equal(runtime.canApplyDesktopActivityArea(vendingState, wholeScreen, tinyScreen), false);
+assert.equal(runtime.applyDesktopActivityArea(vendingState, wholeScreen, tinyScreen, 0), vendingState,
+  "manual activity changes refuse impossible packing and preserve the edit snapshot");
+for (const preferred of [{ x: -1e6, y: -1e6 }, { x: 1e6, y: 1e6 }, { x: 1e6, y: -1e6 }, { x: -1e6, y: 1e6 }]) {
+  const moved = runtime.moveDesktopObject(vendingState, "vendingMachine", preferred, viewport, 0);
+  assert(runtime.isDesktopFurniturePlacementValid(moved, "vendingMachine", moved.vendingMachine, viewport));
+  const resizedMachine = runtime.applyDesktopActivityArea(moved, minimumArea, viewport, 0);
+  assert.deepEqual(resizedMachine.activityArea, minimumArea);
+  assert(runtime.isDesktopFurniturePlacementValid(resizedMachine, "vendingMachine", resizedMachine.vendingMachine, viewport));
+}
+
+const reachPress = (productId = "cookie", requestId = `order-${productId}`) => {
+  let current = runtime.beginDesktopVendingInteraction(vendingState, productId, requestId, viewport, 0);
+  assert.equal(current.vendingInteraction.phase, "approach");
+  assert.equal(runtime.takeDesktopVendingPurchaseRequest(current).request, null, "walking cannot charge an order");
+  for (let frame = 1; frame <= 900 && current.vendingInteraction.phase === "approach"; frame += 1) {
+    current = runtime.tickDesktopRuntime(current, null, viewport, 1 / 30, frame * 1000 / 30);
+    assert.equal(runtime.desktopAvatarPointBlocked(current, current.avatar), false, "vending approach routes around bodies");
+  }
+  assert.equal(current.vendingInteraction.phase, "press", "avatar reaches the front pickup point");
+  closeTo(current.avatar.x, pickup.x);
+  closeTo(current.avatar.y, pickup.y);
+  assert.equal(current.avatar.facing, "back");
+  return current;
+};
+const reachAwaiting = (productId = "cookie", requestId = `order-${productId}`) => {
+  let current = reachPress(productId, requestId);
+  const pressedAt = current.vendingInteraction.phaseStartedAt;
+  current = runtime.tickDesktopRuntime(current, null, viewport, 0, pressedAt + 449);
+  assert.equal(current.vendingInteraction.phase, "press");
+  current = runtime.tickDesktopRuntime(current, null, viewport, 0, pressedAt + 450);
+  assert.equal(current.vendingInteraction.phase, "awaitingPurchase");
+  return current;
+};
+for (const productId of ["cookie", "cola", "coffee"]) {
+  const requestId = `order-${productId}`;
+  let current = reachAwaiting(productId, requestId);
+  const now = current.vendingInteraction.phaseStartedAt;
+  assert.equal(runtime.settleDesktopVendingPurchase(current, requestId, true, now), current, "no receipt before request delivery");
+  const taken = runtime.takeDesktopVendingPurchaseRequest(current);
+  current = taken.runtime;
+  assert.deepEqual(taken.request, { requestId, productId });
+  assert.equal(runtime.takeDesktopVendingPurchaseRequest(current).request, null, "each request is delivered exactly once");
+  assert.equal(runtime.settleDesktopVendingPurchase(current, "stale-order", true, now), current, "stale receipt is ignored");
+  current = runtime.settleDesktopVendingPurchase(current, requestId, true, now);
+  assert.equal(current.vendingInteraction.phase, "dispense");
+  assert.equal(runtime.settleDesktopVendingPurchase(current, requestId, true, now + 10), current, "duplicate receipt cannot restart dispensing");
+  current = runtime.tickDesktopRuntime(current, null, viewport, 0, now + 999);
+  assert.equal(current.vendingInteraction.phase, "dispense", "full dispense sound completes before pickup");
+  current = runtime.tickDesktopRuntime(current, null, viewport, 0, now + 1000);
+  assert.equal(current.vendingInteraction.phase, "consume");
+  assert.equal(current.avatar.behavior, productId, "consumption uses the existing food animation");
+  assert.equal(current.avatar.facing, "front");
+  assert.equal(current.avatar.behaviorTimer, 4);
+  current = runtime.tickDesktopRuntime(current, null, viewport, 0, now + 4999);
+  assert.equal(current.vendingInteraction.phase, "consume");
+  current = runtime.tickDesktopRuntime(current, null, viewport, 0, now + 5000);
+  assert.equal(current.vendingInteraction, null);
+  assert.equal(current.avatar.behavior, "idle");
+  assert.equal(runtime.takeDesktopVendingPurchaseRequest(current).request, null);
+}
+const unpaid = runtime.takeDesktopVendingPurchaseRequest(reachAwaiting("coffee", "rejected")).runtime;
+const rejected = runtime.settleDesktopVendingPurchase(unpaid, "rejected", false, 50000);
+assert.equal(rejected.vendingInteraction, null, "failed purchase ends without dispensing");
+const phases = [
+  runtime.beginDesktopVendingInteraction(vendingState, "cookie", "phase-order", viewport, 0),
+  reachPress("cookie", "phase-order"),
+  runtime.takeDesktopVendingPurchaseRequest(reachAwaiting("cookie", "phase-order")).runtime,
+];
+phases.push(runtime.settleDesktopVendingPurchase(phases[2], "phase-order", true, 20000));
+phases.push(runtime.tickDesktopRuntime(phases[3], null, viewport, 0, 21000));
+for (const phaseState of phases) {
+  for (const task of ["thinking", "coding", "waiting", "error", "success"]) {
+    const preempted = runtime.tickDesktopRuntime(phaseState, task, viewport, 1 / 30, 25000);
+    assert.equal(preempted.vendingInteraction, null, `${task} preempts ${phaseState.vendingInteraction.phase}`);
+    assert.equal(runtime.settleDesktopVendingPurchase(preempted, "phase-order", true, 25001), preempted,
+      "a late receipt cannot resurrect a preempted interaction");
+  }
+  for (const target of ["avatar", "computer", "vendingMachine"]) {
+    const moved = runtime.moveDesktopObject(phaseState, target, { x: 500, y: 500 }, viewport, 25000);
+    assert.equal(moved.vendingInteraction, null, `${target} drag cancels ${phaseState.vendingInteraction.phase}`);
+  }
+  assert.equal(runtime.moveDesktopObject(phaseState, "computer", phaseState.vendingMachine, viewport, 25000).vendingInteraction,
+    null, "even a rejected collision drag cancels pending purchase");
+  assert.equal(runtime.removeDesktopVendingMachine(phaseState, 25000).vendingInteraction, null);
+  assert.equal(runtime.applyDesktopActivityArea(phaseState, minimumArea, viewport, 25000).vendingInteraction, null);
+}
+
+const obstacleLayout = { ...boundedLayout, computer: { x: 1000, y: 390 }, vendingMachine: { x: 700, y: 520 },
+  avatar: { x: 430, y: 450 } };
+const obstacleState = runtime.createDesktopRuntime(obstacleLayout);
+const destination = { x: 920, y: 450 };
+const route = runtime.findDesktopPath(obstacleState, destination, viewport);
+assert(route.length > 1, "cross-machine movement needs a detour");
+assert.deepEqual(route.at(-1), destination);
+let navigating = { ...obstacleState, avatar: { ...obstacleState.avatar, targetX: destination.x, targetY: destination.y }, nextDecisionAt: 1e9 };
+for (let frame = 0; frame < 900; frame += 1) {
+  navigating = runtime.tickDesktopRuntime(navigating, null, viewport, 1 / 30, frame * 1000 / 30);
+  assert.equal(runtime.desktopAvatarPointBlocked(navigating, navigating.avatar), false, "walking never crosses an expanded device body");
+}
+closeTo(navigating.avatar.x, destination.x);
+closeTo(navigating.avatar.y, destination.y);
+let trapped = runtime.moveDesktopObject(obstacleState, "avatar", { x: 700, y: 450 }, viewport, 0);
+assert.equal(runtime.desktopAvatarPointBlocked(trapped, trapped.avatar), true, "fixture manually drops the avatar inside the machine");
+let escaped = false;
+for (let frame = 0; frame < 900; frame += 1) {
+  trapped = runtime.tickDesktopRuntime(trapped, "coding", viewport, 1 / 30, 4001 + frame * 1000 / 30);
+  const blocked = runtime.desktopAvatarPointBlocked(trapped, trapped.avatar);
+  if (escaped) assert.equal(blocked, false, "after escaping a manual drop the avatar never reenters a body");
+  if (!blocked) escaped = true;
+}
+assert(escaped, "manual drop inside furniture can escape");
+assert.equal(trapped.avatar.behavior, "coding");
+assert.deepEqual({ x: trapped.avatar.x, y: trapped.avatar.y }, runtime.desktopWorkPoint(trapped.computer, viewport, trapped.activityArea));
+console.log("Desktop vending smoke passed: geometry, two-way collision, front reserves, persistence/parking, placement/area resizing, all products, single request settlement, phase timing, interruption and obstacle escape.");
 
 const animationSource = readFileSync(new URL("../src/desktop/desktopAnimation.ts", import.meta.url), "utf8");
 const animationOutput = ts.transpileModule(animationSource, {

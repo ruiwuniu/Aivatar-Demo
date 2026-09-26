@@ -1,4 +1,6 @@
 import { isTerminalBubbleAgent } from "../agentRegistry";
+import type { DesktopHitRegion, DesktopPoint, DesktopVendingInteraction, DesktopVendingProductId } from "../desktop/desktopTypes";
+import { DESKTOP_VENDING_SPRITE, DESKTOP_VENDING_DISPENSE_MS, desktopVendingVisualBounds } from "../desktop/desktopVendingMachine";
 import type {
   AivatarContent,
   AivatarMemory,
@@ -13840,7 +13842,74 @@ export interface DesktopSceneOptions {
   frame: number;
   memory?: AivatarMemory;
   appearanceId: AvatarAppearanceId;
+  vendingMachine?: DesktopPoint | null;
+  vendingInteraction?: DesktopVendingInteraction | null;
+  invalidPlacement?: DesktopHitRegion;
+  nowMs?: number;
 }
+
+let desktopVendingImage: HTMLImageElement | undefined;
+const drawDesktopVendingProduct = (ctx: CanvasRenderingContext2D, product: DesktopVendingProductId, x: number, y: number) => {
+  ctx.fillStyle = "#392c24";
+  if (product === "cookie") {
+    ctx.fillRect(x - 3, y - 3, 6, 6);
+    ctx.fillStyle = "#eab75e"; ctx.fillRect(x - 2, y - 2, 4, 4);
+    ctx.fillStyle = "#715035"; ctx.fillRect(x - 1, y - 1, 1, 1); ctx.fillRect(x + 1, y + 1, 1, 1);
+  } else if (product === "cola") {
+    ctx.fillRect(x - 2, y - 4, 5, 8);
+    ctx.fillStyle = "#df7454"; ctx.fillRect(x - 1, y - 3, 3, 6);
+    ctx.fillStyle = "#f7ead1"; ctx.fillRect(x - 1, y - 4, 3, 1); ctx.fillRect(x - 1, y, 3, 1);
+  } else {
+    ctx.fillRect(x - 3, y - 3, 6, 6);
+    ctx.fillStyle = "#f4ead2"; ctx.fillRect(x - 2, y - 2, 4, 4); ctx.fillRect(x + 3, y - 2, 2, 3);
+    ctx.fillStyle = "#694329"; ctx.fillRect(x - 2, y - 3, 4, 1);
+  }
+};
+
+const drawDesktopVendingMachine = (ctx: CanvasRenderingContext2D, options: DesktopSceneOptions) => {
+  if (!options.vendingMachine) return;
+  const { source, src } = DESKTOP_VENDING_SPRITE;
+  if (!desktopVendingImage && typeof Image !== "undefined") {
+    desktopVendingImage = new Image();
+    desktopVendingImage.decoding = "async";
+    desktopVendingImage.src = src;
+  }
+  const bounds = desktopVendingVisualBounds(options.vendingMachine);
+  const scale = options.pixelScale;
+  const x = bounds.x / scale, y = bounds.y / scale;
+  const width = bounds.width / scale, height = bounds.height / scale;
+  if (desktopVendingImage?.complete && desktopVendingImage.naturalWidth > 0) {
+    ctx.drawImage(desktopVendingImage, source.x, source.y, source.width, source.height, x, y, width, height);
+  } else {
+    // Keep the interactive device visible while its asset is loading.
+    ctx.fillStyle = "#423930"; ctx.fillRect(x, y, width, height);
+    ctx.fillStyle = "#e1cba4"; ctx.fillRect(x + 2, y + 2, width - 4, height - 4);
+  }
+  const interaction = options.vendingInteraction;
+  if (!interaction || interaction.phase === "approach") return;
+  const elapsed = Math.max(0, (options.nowMs ?? performance.now()) - interaction.phaseStartedAt);
+  const selectedY = { cookie: 0.459, cola: 0.535, coffee: 0.612 }[interaction.productId];
+  if (interaction.phase === "press" || interaction.phase === "awaitingPurchase" || interaction.phase === "dispense") {
+    ctx.fillStyle = Math.floor(elapsed / 120) % 2 ? "#ffe59b" : "#a6f8a1";
+    ctx.fillRect(Math.round(x + width * 0.89), Math.round(y + height * selectedY), 3, 3);
+  }
+  const opening = { x: x + width * 0.11, y: y + height * 0.78, width: width * 0.6, height: height * 0.15 };
+  if (interaction.phase === "dispense") {
+    const progress = Math.min(1, elapsed / DESKTOP_VENDING_DISPENSE_MS);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(opening.x, opening.y, opening.width, opening.height); ctx.clip();
+    drawDesktopVendingProduct(ctx, interaction.productId, x + width * 0.398,
+      opening.y - 5 + (opening.height + 1) * Math.min(1, progress / 0.6));
+    ctx.restore();
+  } else if (interaction.phase === "consume" && elapsed < 400) {
+    // A short pickup moves from the opening to the same avatar consuming pose.
+    const progress = elapsed / 400;
+    const fromX = x + width * 0.398, fromY = y + height * 0.87;
+    const toX = options.avatar.x / scale, toY = options.avatar.y / scale - 15;
+    drawDesktopVendingProduct(ctx, interaction.productId,
+      fromX + (toX - fromX) * progress, fromY + (toY - fromY) * progress);
+  }
+};
 
 /** The desktop uses exactly the room's sprites, without drawing its backdrop. */
 export const renderDesktopScene = (canvas: HTMLCanvasElement, options: DesktopSceneOptions) => {
@@ -13870,9 +13939,18 @@ export const renderDesktopScene = (canvas: HTMLCanvasElement, options: DesktopSc
     x: options.computer.x / scale, y: options.computer.y / scale,
     skinId: roomTerminal?.skinId,
   };
-  // One canvas guarantees computer < avatar < speech, independently of native
+  if (options.invalidPlacement) {
+    const bounds = options.invalidPlacement;
+    ctx.fillStyle = "#e7525238";
+    ctx.strokeStyle = "#ff7161";
+    ctx.lineWidth = 1;
+    ctx.fillRect(bounds.x / scale, bounds.y / scale, bounds.width / scale, bounds.height / scale);
+    ctx.strokeRect(bounds.x / scale, bounds.y / scale, bounds.width / scale, bounds.height / scale);
+  }
+  // One canvas guarantees devices < avatar < speech, independently of native
   // focus changes, and preserves the avatar's room appearance and typing pose.
   drawTerminalMonitor(ctx, terminal.x, terminal.y, "none", options.frame, avatar, terminal.skinId);
+  drawDesktopVendingMachine(ctx, options);
   drawAvatar(ctx, avatar, options.frame, options.content.petStats, options.status,
     options.memory, options.appearanceId);
   if (options.status.status === "thinking") {

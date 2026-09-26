@@ -37,6 +37,12 @@ import {
 import { renderScene } from "./game/renderScene";
 import { DesktopCompanion } from "./desktop/DesktopCompanion";
 import type { DesktopLayout, DesktopViewport } from "./desktop/desktopTypes";
+import {
+  createDesktopVendingTransactions,
+  desktopVendingProducts,
+  type DesktopVendingPurchaseRequest,
+  type VendingSoundCue,
+} from "./desktop/desktopVendingTransactions";
 import { useAppUpdater } from "./updater/useAppUpdater";
 import { UpdateNotice, UpdateSettings } from "./updater/UpdateSettings";
 import {
@@ -456,6 +462,14 @@ const BITS_EARN_AUDIO_SRC = "/audio/card-room-chip-payout.mp3";
 const COLA_CAN_OPEN_AUDIO_SRC = "/audio/cola-can-open.mp3";
 const COLA_DRINK_AUDIO_SRC = "/audio/cola-drink.mp3";
 const COFFEE_DRINK_AUDIO_SRC = "/audio/coffee-drink-slurping.mp3";
+const DESKTOP_VENDING_AUDIO = {
+  press: { src: "/audio/vending-press.wav", volume: 0.75 },
+  dispense: { src: "/audio/vending-dispense.wav", volume: 0.7 },
+  pickup: { src: "/audio/vending-pickup.wav", volume: 0.75 },
+  colaOpen: { src: COLA_CAN_OPEN_AUDIO_SRC, volume: 0.55 },
+  colaDrink: { src: COLA_DRINK_AUDIO_SRC, volume: 0.45 },
+  coffeeDrink: { src: COFFEE_DRINK_AUDIO_SRC, volume: 0.42 },
+} as const;
 const BENTO_EAT_AUDIO_SRC = "/audio/bento-eat-munchin.mp3";
 const SLEEP_SNORE_AUDIO_SRC = "/audio/sleep-snore.mp3";
 const GAS_RANGE_IGNITE_AUDIO_SRC = "/audio/gas-range-ignite.mp3";
@@ -3738,6 +3752,8 @@ export const App = () => {
   const desktopLayoutSlotRef = useRef<string | null>(null);
   const desktopCaptureRef = useRef<(() => DesktopLayout) | null>(null);
   const desktopReturnRef = useRef<(nativeEnded?: boolean) => Promise<void>>(async () => {});
+  const desktopVendingTransactionsRef = useRef<ReturnType<typeof createDesktopVendingTransactions> | null>(null);
+  if (!desktopVendingTransactionsRef.current) desktopVendingTransactionsRef.current = createDesktopVendingTransactions();
   const [contentBase, setContentBase] = useState(defaultContent);
   const [configState, setConfigState] = useState<"builtin" | "config" | "fallback">(
     "builtin",
@@ -3948,6 +3964,11 @@ export const App = () => {
   const colaDrinkAudioTimeoutRef = useRef<number | null>(null);
   const coffeeDrinkAudioRef = useRef<HTMLAudioElement | null>(null);
   const coffeeSippingAudioRef = useRef(false);
+  const desktopVendingAudioRef = useRef<Partial<Record<keyof typeof DESKTOP_VENDING_AUDIO, HTMLAudioElement>>>({});
+  const desktopVendingAudioTimerRef = useRef<number | null>(null);
+  const desktopVendingAudioGenerationRef = useRef(0);
+  const desktopVendingAudioVolumeRef = useRef(audioVolume);
+  desktopVendingAudioVolumeRef.current = audioVolume;
   const bentoEatAudioRef = useRef<HTMLAudioElement | null>(null);
   const bentoEatingAudioRef = useRef(false);
   const sleepSnoreAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -5552,6 +5573,75 @@ export const App = () => {
     audio.currentTime = 0;
   };
 
+  const stopDesktopVendingAudio = () => {
+    desktopVendingAudioGenerationRef.current += 1;
+    if (desktopVendingAudioTimerRef.current !== null) {
+      window.clearTimeout(desktopVendingAudioTimerRef.current);
+      desktopVendingAudioTimerRef.current = null;
+    }
+    Object.values(desktopVendingAudioRef.current).forEach((audio) => {
+      audio.pause();
+      audio.currentTime = 0;
+    });
+  };
+
+  const playDesktopVendingSound = (cue: VendingSoundCue) => {
+    // The renderer emits pickup immediately before consume. Let its 0.38s
+    // chime finish before a drink, and preserve it for the silent cookie pose.
+    const consuming = cue.startsWith("consume_");
+    if (!consuming) stopDesktopVendingAudio();
+    if (cue === "stop") return;
+    if (!desktopModeRef.current || desktopTransitionRef.current || isStoreClosing()) {
+      stopDesktopVendingAudio();
+      return;
+    }
+    const generation = desktopVendingAudioGenerationRef.current;
+    const play = (key: keyof typeof DESKTOP_VENDING_AUDIO) => {
+      const audio = desktopVendingAudioRef.current[key];
+      const volume = desktopVendingAudioVolumeRef.current;
+      if (!audio || volume <= 0 || !audioUnlockedRef.current || isStoreClosing()
+        || !desktopModeRef.current || desktopTransitionRef.current
+        || generation !== desktopVendingAudioGenerationRef.current) return;
+      audio.volume = Math.min(1, Math.max(0, volume * DESKTOP_VENDING_AUDIO[key].volume));
+      void audio.play().catch(() => undefined);
+    };
+    if (cue === "press" || cue === "dispense" || cue === "pickup") play(cue);
+    if (cue === "consume_coffee" || cue === "consume_cola") {
+      desktopVendingAudioTimerRef.current = window.setTimeout(() => {
+        desktopVendingAudioTimerRef.current = null;
+        if (generation !== desktopVendingAudioGenerationRef.current) return;
+        if (cue === "consume_coffee") play("coffeeDrink");
+        else {
+          play("colaOpen");
+          desktopVendingAudioTimerRef.current = window.setTimeout(() => {
+            desktopVendingAudioTimerRef.current = null;
+            play("colaDrink");
+          }, COLA_DRINK_AFTER_CAN_OPEN_DELAY_MS);
+        }
+      }, 400);
+    }
+  };
+
+  useEffect(() => {
+    for (const key of Object.keys(DESKTOP_VENDING_AUDIO) as Array<keyof typeof DESKTOP_VENDING_AUDIO>) {
+      const audio = new Audio(DESKTOP_VENDING_AUDIO[key].src);
+      audio.preload = "auto";
+      desktopVendingAudioRef.current[key] = audio;
+    }
+    return () => {
+      stopDesktopVendingAudio();
+      desktopVendingAudioRef.current = {};
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!desktopViewport || storePaused || audioVolume <= 0) stopDesktopVendingAudio();
+    for (const key of Object.keys(DESKTOP_VENDING_AUDIO) as Array<keyof typeof DESKTOP_VENDING_AUDIO>) {
+      const audio = desktopVendingAudioRef.current[key];
+      if (audio) audio.volume = Math.min(1, Math.max(0, audioVolume * DESKTOP_VENDING_AUDIO[key].volume));
+    }
+  }, [audioVolume, desktopViewport, storePaused, activeSaveSlotId]);
+
   const setAudioPlaying = (
     audio: HTMLAudioElement | null,
     shouldPlay: boolean,
@@ -6029,6 +6119,7 @@ export const App = () => {
   };
 
   const applySaveSlotState = (slotId: string, nextSave: AivatarSaveState) => {
+    stopDesktopVendingAudio();
     nextSave = roomSavePersistenceRef.current!.activate(slotId, nextSave);
     urgentSaveRef.current = false;
     saveRef.current = nextSave;
@@ -6066,6 +6157,7 @@ export const App = () => {
   };
 
   const restoreRoomPresentation = () => {
+    stopDesktopVendingAudio();
     desktopModeRef.current = false;
     desktopTransitionRef.current = false;
     setDesktopViewport(null);
@@ -6080,6 +6172,7 @@ export const App = () => {
   const returnFromDesktop = async (nativeEnded = false) => {
     if (!desktopModeRef.current) return;
     if (desktopTransitionRef.current && !nativeEnded) return;
+    stopDesktopVendingAudio();
     desktopEpochRef.current += 1;
     const latest = desktopCaptureRef.current?.();
     if (latest) desktopLayoutRef.current = latest;
@@ -6877,6 +6970,7 @@ export const App = () => {
 
   useEffect(() => {
     const flushSave = async () => {
+      if (isStoreClosing()) stopDesktopVendingAudio();
       await slotActionRef.current;
       await persistDesktopLayout();
       const results = [];
@@ -7170,7 +7264,7 @@ export const App = () => {
   useEffect(() => {
     if (desktopViewport) {
       // Keep audio owned by this App too. Room loops and delayed drinks must
-      // stop when the room disappears; only the desktop typing loop remains.
+      // stop when the room disappears. Desktop vending has separate one-shots.
       [coffeeMachineBrewAudioRef, gameConsoleAudioRef, sleepSnoreAudioRef,
         fridgeDoorOpenAudioRef, fridgeDoorCloseAudioRef, colaCanOpenAudioRef,
         colaDrinkAudioRef, coffeeDrinkAudioRef, bentoEatAudioRef,
@@ -13393,6 +13487,37 @@ export const App = () => {
     );
   };
 
+  // The callback is bound to this rendered desktop session. A stale child
+  // callback cannot charge a newly selected character or a later entry.
+  const desktopPurchaseSlotId = activeSaveSlotId;
+  const desktopPurchaseEpoch = desktopEpochRef.current;
+  const purchaseDesktopConsumable = (request: DesktopVendingPurchaseRequest) => {
+    const result = desktopVendingTransactionsRef.current!.purchase(request, {
+      save: saveRef.current,
+      content: contentRef.current,
+      ownerSlotId: desktopPurchaseSlotId,
+      activeSlotId: activeSaveSlotIdRef.current,
+      closing: isStoreClosing() || Boolean(slotActionRef.current),
+      busy: isHighPriorityStatus(effectiveStatus) || isHighPriorityStatus(statusRef.current.status),
+      desktopActive: desktopModeRef.current && !desktopTransitionRef.current
+        && desktopPurchaseEpoch === desktopEpochRef.current,
+      canPurchase: (current, item) => affordableShopPurchaseQuantity(current, item, 1) === 1,
+      recordMemory: (memory, offer, consumable, requestId) => recordLifeMemory(
+        recordLifeMemory(memory, {
+          id: `desktop-vending-bought:${requestId}`,
+          type: "item_bought", summary: `Bought ${offer.name}`, itemId: offer.id,
+        }, traitChangesForPurchase(offer)),
+        {
+          id: `desktop-vending-used:${requestId}`,
+          type: "item_used", summary: `Used ${consumable.name}`, itemId: consumable.id,
+          behavior: behaviorForConsumable(consumable),
+        }, traitChangesForConsumable(consumable),
+      ),
+    });
+    if (result.applied) setSave(result.save);
+    return result.receipt;
+  };
+
   const windowPreviewDisplayHour = windowPreviewHour ?? new Date(nowMs).getHours();
   const windowPreviewTimeLabel = `${String(windowPreviewDisplayHour).padStart(2, "0")}:00`;
 
@@ -13409,6 +13534,12 @@ export const App = () => {
       onTypingChange={setDesktopTyping}
       captureLayoutRef={desktopCaptureRef}
       locale={locale}
+      vendingProducts={desktopVendingProducts(content, (item) =>
+        normalizeMemory(save.memory).growth.level >= getShopItemUnlockLevel(item))}
+      walletBits={save.wallet.bits}
+      petStats={save.petStats}
+      onPurchaseAndConsume={purchaseDesktopConsumable}
+      onVendingSound={playDesktopVendingSound}
     />;
   }
 

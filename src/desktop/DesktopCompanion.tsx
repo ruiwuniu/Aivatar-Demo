@@ -5,14 +5,18 @@ import { t, type Locale } from "../i18n";
 import { isStoreClosing } from "../persistence/saveStore";
 import { deriveBehaviorFromCodex } from "../game/simulation";
 import { renderDesktopScene } from "../game/renderScene";
-import type { AivatarContent, AivatarMemory, AvatarAppearanceId, CodexStatusMessage } from "../types";
+import type { AivatarContent, AivatarMemory, AvatarAppearanceId, CodexStatusMessage, PetStats } from "../types";
 import {
   createDesktopRuntime, DESKTOP_PIXEL_SCALE, desktopLayoutFromRuntime,
   desktopObjectAtPoint, desktopObjectBounds, moveDesktopObject,
-  normalizeDesktopLayout, tickDesktopRuntime, applyDesktopActivityArea,
+  normalizeDesktopLayout, tickDesktopRuntime, applyDesktopActivityArea, canApplyDesktopActivityArea,
   resizeDesktopActivityArea, DESKTOP_MIN_ACTIVITY_SIZE,
+  beginDesktopVendingInteraction, cancelDesktopVendingInteraction,
+  takeDesktopVendingPurchaseRequest, settleDesktopVendingPurchase,
+  placeDesktopVendingMachine, removeDesktopVendingMachine, isDesktopFurniturePlacementValid,
 } from "./desktopRuntime";
-import type { DesktopActivityArea, DesktopAreaHandle, DesktopDragTarget, DesktopHitRegion, DesktopLayout, DesktopPoint, DesktopViewport } from "./desktopTypes";
+import type { DesktopActivityArea, DesktopAreaHandle, DesktopDragTarget, DesktopHitRegion, DesktopLayout, DesktopPoint, DesktopViewport, DesktopVendingProductId } from "./desktopTypes";
+import type { DesktopVendingPurchaseRequest, DesktopVendingPurchaseReceipt, VendingProductOffer, VendingSoundCue } from "./desktopVendingTransactions";
 import { startDesktopAnimation } from "./desktopAnimation";
 import "./desktop.css";
 
@@ -27,13 +31,19 @@ export interface DesktopCompanionProps {
   onReturn: () => Promise<void>;
   onTypingChange?: (active: boolean) => void;
   captureLayoutRef?: MutableRefObject<(() => DesktopLayout) | null>;
+  vendingProducts?: VendingProductOffer[];
+  walletBits?: number;
+  petStats?: PetStats;
+  onPurchaseAndConsume?: (request: DesktopVendingPurchaseRequest) => DesktopVendingPurchaseReceipt;
+  onVendingSound?: (cue: VendingSoundCue) => void;
   locale: Locale;
 }
 
-interface DragState { target: DesktopDragTarget; pointerId: number; offset: DesktopPoint; element: HTMLElement }
+interface DragState { target: DesktopDragTarget; pointerId: number; offset: DesktopPoint; origin: DesktopPoint; moved: boolean; element: HTMLElement }
 interface AreaEdit { committed: DesktopLayout; draft: DesktopActivityArea }
 interface AreaDrag { handle: DesktopAreaHandle; pointerId: number; origin: DesktopPoint; area: DesktopActivityArea; element: HTMLElement }
 const AREA_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
+const VENDING_COOLDOWN_MS = 3 * 60_000;
 
 export function DesktopCompanion(props: DesktopCompanionProps) {
   const propsRef = useRef(props);
@@ -57,6 +67,63 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
   const [areaDraft, setAreaDraft] = useState<DesktopActivityArea | null>(null);
   const [returning, setReturning] = useState(false);
   const [error, setError] = useState("");
+  const [vendingPhase, setVendingPhase] = useState("");
+  const [notice, setNotice] = useState("");
+  const noticeUntilRef = useRef(0);
+  const phaseKeyRef = useRef("");
+  const invalidPlacementRef = useRef<DesktopHitRegion | undefined>();
+  const autoVendingAfterRef = useRef(performance.now() + 30_000);
+
+  const vendingSound = (cue: VendingSoundCue) => {
+    try { propsRef.current.onVendingSound?.(cue); } catch { /* Audio never changes an order. */ }
+  };
+  const showNotice = (key: string) => {
+    setNotice(t(propsRef.current.locale, key));
+    noticeUntilRef.current = performance.now() + 4500;
+  };
+  const cancelVending = () => {
+    if (!runtimeRef.current.vendingInteraction) return;
+    runtimeRef.current = cancelDesktopVendingInteraction(runtimeRef.current, performance.now());
+    phaseKeyRef.current = "";
+    setVendingPhase("");
+    vendingSound("stop");
+  };
+  const startVending = (productId: DesktopVendingProductId) => {
+    if (returningRef.current || areaEditRef.current || isStoreClosing() || renderFailedRef.current) return;
+    if (deriveBehaviorFromCodex(propsRef.current.status)) {
+      showNotice("desktop.vending.busy");
+      return;
+    }
+    const offer = propsRef.current.vendingProducts?.find((item) => item.id === productId);
+    if (!offer?.available || !propsRef.current.onPurchaseAndConsume) {
+      showNotice("desktop.vending.unavailable");
+      return;
+    }
+    if ((propsRef.current.walletBits ?? 0) < offer.price) {
+      autoVendingAfterRef.current = performance.now() + VENDING_COOLDOWN_MS;
+      showNotice("desktop.vending.insufficient-funds");
+      return;
+    }
+    const now = performance.now();
+    autoVendingAfterRef.current = now + VENDING_COOLDOWN_MS;
+    cancelVending();
+    runtimeRef.current = beginDesktopVendingInteraction(runtimeRef.current, productId, crypto.randomUUID(), viewportRef.current, now);
+    if (!runtimeRef.current.vendingInteraction) showNotice("desktop.vending.noSpace");
+    setMenu(null);
+  };
+  const updateVendingPhase = () => {
+    const interaction = runtimeRef.current.vendingInteraction;
+    const key = interaction ? `${interaction.requestId}:${interaction.phase}` : "";
+    if (key === phaseKeyRef.current) return;
+    phaseKeyRef.current = key;
+    setVendingPhase(interaction?.phase ?? "");
+    if (interaction?.phase === "press") vendingSound("press");
+    else if (interaction?.phase === "dispense") vendingSound("dispense");
+    else if (interaction?.phase === "consume") {
+      vendingSound("pickup");
+      vendingSound(`consume_${interaction.productId}`);
+    } else if (!interaction) vendingSound("stop");
+  };
 
   // Unconfirmed edits must never escape through close-save or native recovery.
   const captureLayout = () => areaEditRef.current?.committed
@@ -76,6 +143,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
   const updateHitRegions = () => {
     if (!aliveRef.current || returningRef.current || !isTauri()) return;
     const regions = [desktopObjectBounds(runtimeRef.current, "computer"), desktopObjectBounds(runtimeRef.current, "avatar")];
+    if (runtimeRef.current.vendingMachine) regions.push(desktopObjectBounds(runtimeRef.current, "vendingMachine"));
     if (menuRef.current) {
       const rect = menuRef.current.getBoundingClientRect();
       regions.push({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
@@ -103,6 +171,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
     const gestures = [dragRef.current, areaDragRef.current];
     dragRef.current = null;
     areaDragRef.current = null;
+    invalidPlacementRef.current = undefined;
     for (const gesture of gestures) {
       if (gesture?.element.hasPointerCapture(gesture.pointerId)) {
         gesture.element.releasePointerCapture(gesture.pointerId);
@@ -118,6 +187,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
   const beginAreaEdit = () => {
     if (returningRef.current || isStoreClosing() || renderFailedRef.current) return;
     releaseGesture();
+    cancelVending();
     const committed = captureLayout();
     const draft = { ...runtimeRef.current.activityArea };
     areaEditRef.current = { committed, draft };
@@ -129,6 +199,10 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
     const edit = areaEditRef.current;
     if (!edit || returningRef.current || isStoreClosing()) return;
     releaseGesture();
+    if (!canApplyDesktopActivityArea(runtimeRef.current, edit.draft, viewportRef.current)) {
+      showNotice("desktop.vending.noSpace");
+      return;
+    }
     runtimeRef.current = applyDesktopActivityArea(runtimeRef.current, edit.draft, viewportRef.current, performance.now());
     areaEditRef.current = null;
     setAreaDraft(null);
@@ -139,6 +213,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
   const returnToRoom = async () => {
     if (returningRef.current || isStoreClosing()) return;
     returningRef.current = true;
+    cancelVending();
     cancelAreaEdit();
     pendingHitRef.current = null;
     setReturning(true);
@@ -172,6 +247,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
     if (props.captureLayoutRef) props.captureLayoutRef.current = captureLayout;
     return () => {
       aliveRef.current = false;
+      vendingSound("stop");
       releaseGesture();
       pendingHitRef.current = null;
       if (props.captureLayoutRef) props.captureLayoutRef.current = null;
@@ -188,6 +264,9 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
       || previous.monitorId !== next.monitorId || previous.scaleFactor !== next.scaleFactor) {
       const layout = normalizeDesktopLayout(desktopLayoutFromRuntime(runtimeRef.current, previous), next);
       runtimeRef.current = createDesktopRuntime(layout);
+      phaseKeyRef.current = "";
+      setVendingPhase("");
+      vendingSound("stop");
       cancelAreaEdit();
       setMenu(null);
     }
@@ -201,12 +280,48 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
     const pump = (now: number, elapsed: number, initial: boolean) => {
       if (!aliveRef.current || renderFailedRef.current) return;
       const current = propsRef.current;
+      const taskBehavior = deriveBehaviorFromCodex(current.status);
+      if (noticeUntilRef.current && now >= noticeUntilRef.current) {
+        noticeUntilRef.current = 0;
+        setNotice("");
+      }
       if (isStoreClosing()) {
+        cancelVending();
         setTyping(false);
       } else if (!returningRef.current) {
-        if (!dragRef.current && !menuRef.current && !areaEditRef.current) {
+        if (taskBehavior) cancelVending();
+        if (!dragRef.current && !areaEditRef.current && (!menuRef.current || taskBehavior)) {
+          if (!taskBehavior && runtimeRef.current.vendingMachine && !runtimeRef.current.vendingInteraction
+            && now >= runtimeRef.current.dragPauseUntil && now >= autoVendingAfterRef.current
+            && current.onPurchaseAndConsume) {
+            const stats = current.petStats ?? current.content.petStats;
+            const candidates: DesktopVendingProductId[] = [];
+            if (stats.hunger < 35) candidates.push("cookie");
+            if (stats.energy < 30) candidates.push("coffee");
+            if (stats.mood < 30) candidates.push("cola");
+            const product = candidates.find((id) => current.vendingProducts?.some((offer) =>
+              offer.id === id && offer.available && offer.price <= (current.walletBits ?? 0)));
+            if (product) startVending(product);
+            else if (candidates.length) autoVendingAfterRef.current = now + VENDING_COOLDOWN_MS;
+          }
           runtimeRef.current = tickDesktopRuntime(runtimeRef.current,
-            deriveBehaviorFromCodex(current.status), viewportRef.current, elapsed, now);
+            taskBehavior, viewportRef.current, elapsed, now);
+          updateVendingPhase();
+          const purchase = takeDesktopVendingPurchaseRequest(runtimeRef.current);
+          // Mark the request taken before invoking App. The synchronous receipt
+          // is the only boundary after which dispensing may begin.
+          runtimeRef.current = purchase.runtime;
+          if (purchase.request) {
+            let receipt: DesktopVendingPurchaseReceipt | undefined;
+            try { receipt = current.onPurchaseAndConsume?.(purchase.request); } catch { /* Show failure below. */ }
+            const accepted = receipt?.ok === true && receipt.requestId === purchase.request.requestId
+              && receipt.productId === purchase.request.productId;
+            runtimeRef.current = settleDesktopVendingPurchase(runtimeRef.current, purchase.request.requestId, accepted, now);
+            if (!accepted) showNotice(receipt?.reason === "insufficient-funds"
+              ? "desktop.vending.insufficient-funds" : receipt?.reason === "busy"
+                ? "desktop.vending.busy" : "desktop.vending.failed");
+            updateVendingPhase();
+          }
         }
         const avatar = runtimeRef.current.avatar;
         setTyping(!dragRef.current && !areaEditRef.current && (avatar.behavior === "coding" || avatar.behavior === "thinking") && !avatar.actionIntent);
@@ -218,6 +333,9 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
             avatar, computer: runtimeRef.current.computer, content: current.content,
             status: current.status, frame: Math.floor(frame), memory: current.memory,
             appearanceId: current.appearanceId,
+            vendingMachine: runtimeRef.current.vendingMachine,
+            vendingInteraction: runtimeRef.current.vendingInteraction,
+            invalidPlacement: invalidPlacementRef.current, nowMs: now,
           });
         }
       }
@@ -231,6 +349,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
     }, pump, (reason) => {
       if (!aliveRef.current || renderFailedRef.current) return;
       renderFailedRef.current = true;
+      cancelVending();
       setTyping(false);
       const message = `Desktop renderer: ${String(reason)}`;
       if (canvasRef.current) canvasRef.current.dataset.desktopRenderError = message;
@@ -248,6 +367,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
       if (event.key === "Escape") {
         event.preventDefault();
         if (areaEditRef.current) cancelAreaEdit();
+        else if (menuRef.current) setMenu(null);
         else void returnRef.current();
       }
     };
@@ -266,6 +386,13 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
     if (menu) menuRef.current?.querySelector("button")?.focus({ preventScroll: true });
   }, [menu]);
   useLayoutEffect(() => {
+    if (!menu || !menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    const x = Math.max(8, Math.min(menu.x, props.viewport.width - rect.width - 8));
+    const y = Math.max(8, Math.min(menu.y, props.viewport.height - rect.height - 8));
+    if (x !== menu.x || y !== menu.y) setMenu({ ...menu, x, y });
+  }, [menu, props.viewport, props.vendingProducts]);
+  useLayoutEffect(() => {
     if (areaDraft) areaEditorRef.current?.querySelector<HTMLElement>("[data-area-move]")?.focus({ preventScroll: true });
   }, [areaDraft !== null]);
 
@@ -276,8 +403,12 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
     const target = desktopObjectAtPoint(runtimeRef.current, point);
     if (!target) return;
     event.preventDefault();
-    const object = target === "avatar" ? runtimeRef.current.avatar : runtimeRef.current.computer;
-    dragRef.current = { target, pointerId: event.pointerId, offset: { x: point.x - object.x, y: point.y - object.y }, element: event.currentTarget };
+    cancelVending();
+    const object = target === "avatar" ? runtimeRef.current.avatar
+      : target === "vendingMachine" ? runtimeRef.current.vendingMachine : runtimeRef.current.computer;
+    if (!object) return;
+    dragRef.current = { target, pointerId: event.pointerId, offset: { x: point.x - object.x, y: point.y - object.y },
+      origin: point, moved: false, element: event.currentTarget };
     event.currentTarget.setPointerCapture(event.pointerId);
     runtimeRef.current = moveDesktopObject(runtimeRef.current, target, object, viewportRef.current, performance.now());
     setTyping(false);
@@ -331,29 +462,58 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
   const pointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId || returningRef.current || isStoreClosing()) return;
-    runtimeRef.current = moveDesktopObject(runtimeRef.current, drag.target,
-      { x: event.clientX - drag.offset.x, y: event.clientY - drag.offset.y },
+    drag.moved ||= Math.hypot(event.clientX - drag.origin.x, event.clientY - drag.origin.y) > 4;
+    const point = { x: event.clientX - drag.offset.x, y: event.clientY - drag.offset.y };
+    const invalid = drag.target !== "avatar" && !isDesktopFurniturePlacementValid(
+      runtimeRef.current, drag.target, point, viewportRef.current);
+    invalidPlacementRef.current = invalid
+      ? desktopObjectBounds({ ...runtimeRef.current, [drag.target]: point }, drag.target)
+      : undefined;
+    runtimeRef.current = moveDesktopObject(runtimeRef.current, drag.target, point,
       viewportRef.current, performance.now());
-    event.currentTarget.style.cursor = "grabbing";
+    event.currentTarget.style.cursor = invalid ? "not-allowed" : "grabbing";
     updateHitRegions();
   };
   const endDrag = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current;
     if (drag?.pointerId !== event.pointerId) return;
     if (!isStoreClosing()) {
-      const position = drag.target === "avatar" ? runtimeRef.current.avatar : runtimeRef.current.computer;
-      runtimeRef.current = moveDesktopObject(runtimeRef.current, drag.target, position,
-        viewportRef.current, performance.now());
+      const position = drag.target === "avatar" ? runtimeRef.current.avatar
+        : drag.target === "vendingMachine" ? runtimeRef.current.vendingMachine : runtimeRef.current.computer;
+      if (position) runtimeRef.current = moveDesktopObject(runtimeRef.current, drag.target, position,
+          viewportRef.current, performance.now());
     }
+    if (invalidPlacementRef.current) showNotice("desktop.vending.overlap");
+    invalidPlacementRef.current = undefined;
     dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     event.currentTarget.style.cursor = "grab";
+    checkpoint();
+    if (event.type === "pointerup" && !drag.moved && drag.target === "vendingMachine"
+      && !returningRef.current && !isStoreClosing()) {
+      setMenu({ target: "vendingMachine", x: Math.max(8, event.clientX), y: Math.max(8, event.clientY) });
+    }
+    updateHitRegions();
+  };
+  const toggleVending = () => {
+    if (returningRef.current || isStoreClosing() || renderFailedRef.current) return;
+    cancelVending();
+    if (runtimeRef.current.vendingMachine || runtimeRef.current.vendingMachineParked) {
+      runtimeRef.current = removeDesktopVendingMachine(runtimeRef.current, performance.now());
+      showNotice("desktop.vending.packed");
+    } else {
+      const placed = placeDesktopVendingMachine(runtimeRef.current, viewportRef.current, performance.now());
+      runtimeRef.current = placed.runtime;
+      showNotice(placed.ok ? "desktop.vending.placed" : "desktop.vending.noSpace");
+    }
+    setMenu(null);
     checkpoint();
     updateHitRegions();
   };
 
   return (
-    <div className="desktop-companion" aria-label={t(props.locale, "desktop.title")}>
+    <div className="desktop-companion" aria-label={t(props.locale, "desktop.title")}
+      data-vending-phase={vendingPhase}>
       <canvas ref={canvasRef} className="desktop-companion-canvas" tabIndex={0}
         aria-label={t(props.locale, "desktop.hint")}
         onPointerDown={pointerDown} onPointerMove={pointerMove}
@@ -363,6 +523,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
           const target = desktopObjectAtPoint(runtimeRef.current, { x: event.clientX, y: event.clientY });
           if (returningRef.current || areaEditRef.current || isStoreClosing() || !target) return;
           releaseGesture();
+          cancelVending();
           setMenu({
             target,
             x: Math.max(8, Math.min(viewportRef.current.width - 228, event.clientX)),
@@ -371,6 +532,26 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
         }} />
       {menu && <div ref={menuRef} className="desktop-companion-menu" role="menu"
         style={{ left: menu.x, top: menu.y }}>
+        {menu.target === "vendingMachine" && <>
+          <div className="desktop-vending-menu-heading">
+            <strong>{t(props.locale, "desktop.vending.title")}</strong>
+            <span>{t(props.locale, "desktop.vending.balance", { bits: props.walletBits ?? 0 })}</span>
+          </div>
+          {(props.vendingProducts ?? []).map((product) => <button type="button" role="menuitem" key={product.id}
+            className="desktop-vending-product" data-vending-product={product.id}
+            disabled={returning || !product.available || (props.walletBits ?? 0) < product.price || Boolean(deriveBehaviorFromCodex(props.status))}
+            title={!product.available ? t(props.locale, "desktop.vending.unavailable")
+              : (props.walletBits ?? 0) < product.price ? t(props.locale, "desktop.vending.insufficient-funds") : undefined}
+            onClick={() => startVending(product.id)}>
+            <span>{product.name}</span><strong>{product.price} bits</strong>
+          </button>)}
+          <p>{t(props.locale, deriveBehaviorFromCodex(props.status) ? "desktop.vending.busy" : "desktop.vending.hint")}</p>
+        </>}
+        {(menu.target === "computer" || menu.target === "vendingMachine") && <button type="button" role="menuitem"
+          disabled={returning || renderFailedRef.current} onClick={toggleVending}>
+          {t(props.locale, runtimeRef.current.vendingMachine || runtimeRef.current.vendingMachineParked ? "desktop.vending.pack" : "desktop.vending.place")}
+        </button>}
+        {menu.target === "computer" && runtimeRef.current.vendingMachineParked && <p>{t(props.locale, "desktop.vending.parked")}</p>}
         {menu.target === "computer" && <button type="button" role="menuitem" disabled={returning || renderFailedRef.current} onClick={beginAreaEdit}>
           {t(props.locale, "desktop.area.adjust")}
         </button>}
@@ -378,6 +559,9 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
           {t(props.locale, returning ? "desktop.returning" : "desktop.return")}
         </button>
         {error && <p role="alert">{error}</p>}
+      </div>}
+      {(notice || vendingPhase) && !areaDraft && <div className="desktop-vending-notice" role="status" aria-live="polite">
+        {notice || t(props.locale, `desktop.vending.phase.${vendingPhase}`)}
       </div>}
       {areaDraft && <div ref={areaEditorRef} className="desktop-area-editor" aria-label={t(props.locale, "desktop.area.adjust")}>
         <div className="desktop-activity-area" style={{ left: areaDraft.x, top: areaDraft.y, width: areaDraft.width, height: areaDraft.height }}>
@@ -397,6 +581,7 @@ export function DesktopCompanion(props: DesktopCompanionProps) {
             <strong>{Math.round(areaDraft.width)} × {Math.round(areaDraft.height)}</strong>
           </button>
           <p>{t(props.locale, "desktop.area.hint", { width: Math.min(DESKTOP_MIN_ACTIVITY_SIZE.width, props.viewport.width), height: Math.min(DESKTOP_MIN_ACTIVITY_SIZE.height, props.viewport.height) })}</p>
+          {notice && <p role="alert" className="desktop-area-error">{notice}</p>}
           <div className="desktop-area-actions">
             <button type="button" onClick={cancelAreaEdit}>{t(props.locale, "desktop.area.cancel")}</button>
             <button type="button" className="desktop-area-done" onClick={finishAreaEdit}>{t(props.locale, "desktop.area.done")}</button>
