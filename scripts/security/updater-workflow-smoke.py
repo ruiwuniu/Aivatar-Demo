@@ -166,10 +166,12 @@ for platform in ("macos", "windows"):
         "pubkey": PUBLIC_KEY, "requireSignedVersion": True,
         "endpoints": ["https://github.com/ruiwuniu/Aivatar-Demo/releases/latest/download/latest.json"]}}}
     package = {"version": VERSION, "devDependencies": {"@tauri-apps/cli": "2.11.5"}}
+    draft_release = {"draft": True, "prerelease": False, "tag_name": f"v{VERSION}", "target_commitish": SHA}
     fixtures = {
         "git/ref/heads/main": {"object": {"sha": SHA}},
         f"git/ref/tags/v{VERSION}": {"object": {"type": "commit", "sha": SHA}},
-        f"releases/tags/v{VERSION}": {"draft": True, "prerelease": False, "tag_name": f"v{VERSION}", "target_commitish": SHA},
+        # Drafts are visible through the authenticated list, not the tag endpoint.
+        "releases?per_page=100": [draft_release],
         "actions/runs/123": {"event": "workflow_dispatch", "head_branch": "main", "head_sha": SHA, "path": f".github/workflows/release-{platform}.yml", "run_attempt": 1},
     }
     for path, value in (("src-tauri/tauri.conf.json", config), ("package.json", package)):
@@ -179,13 +181,18 @@ for platform in ("macos", "windows"):
     def guard_case(env_changes=None, fixture_changes=None, directory=None):
         payloads = copy.deepcopy(fixtures)
         payloads.update(fixture_changes or {})
+        current_env = {**env, **(env_changes or {})}
+        release_endpoint = f"releases/tags/v{VERSION}" if current_env["REPLACE_RELEASE"] == "true" else "releases?per_page=100"
         def api(args, **_):
             assert args[:2] == ["gh", "api"]
             prefix = "repos/ruiwuniu/Aivatar-Demo/"
             assert args[2].startswith(prefix)
-            return json.dumps(payloads[args[2][len(prefix):]])
+            endpoint = args[2][len(prefix):]
+            if endpoint.startswith("releases"):
+                assert endpoint == release_endpoint, "Drafts require list lookup; replacements retain published tag lookup"
+            return json.dumps(payloads[endpoint])
         directory = directory or fresh("guard")
-        execute(guard, directory, {**env, **(env_changes or {})}, api)
+        execute(guard, directory, current_env, api)
         return directory
 
     check(f"{platform} valid protected source/tag/draft", guard_case)
@@ -194,7 +201,18 @@ for platform in ("macos", "windows"):
     check(f"{platform} workflow/source mismatch rejected", lambda: guard_case({"WORKFLOW_COMMIT": "b" * 40}), "Workflow, source")
     check(f"{platform} moved main rejected", lambda: guard_case(fixture_changes={"git/ref/heads/main": {"object": {"sha": "b" * 40}}}), "Main advanced")
     check(f"{platform} moved tag rejected", lambda: guard_case(fixture_changes={f"git/ref/tags/v{VERSION}": {"object": {"type": "commit", "sha": "b" * 40}}}), "release tag moved")
-    check(f"{platform} published release rejected", lambda: guard_case(fixture_changes={f"releases/tags/v{VERSION}": {**fixtures[f"releases/tags/v{VERSION}"], "draft": False}}), "existing stable draft")
+    check(f"{platform} draft list ignores unrelated release tags", lambda: guard_case(fixture_changes={
+        "releases?per_page=100": [{**draft_release, "tag_name": "v0.5.0", "draft": False}, draft_release]}))
+    check(f"{platform} missing draft rejected", lambda: guard_case(fixture_changes={
+        "releases?per_page=100": [{**draft_release, "tag_name": "v0.5.0"}]}), "exactly one existing stable draft")
+    check(f"{platform} ambiguous draft rejected", lambda: guard_case(fixture_changes={
+        "releases?per_page=100": [draft_release, {**draft_release}]}), "exactly one existing stable draft")
+    check(f"{platform} wrong draft target rejected", lambda: guard_case(fixture_changes={
+        "releases?per_page=100": [{**draft_release, "target_commitish": "b" * 40}]}), "existing stable draft")
+    check(f"{platform} prerelease draft rejected", lambda: guard_case(fixture_changes={
+        "releases?per_page=100": [{**draft_release, "prerelease": True}]}), "existing stable draft")
+    check(f"{platform} published release rejected", lambda: guard_case(fixture_changes={
+        "releases?per_page=100": [{**draft_release, "draft": False}]}), "existing stable draft")
 
     previous = "b" * 40
     replacement_env = {"REPLACE_RELEASE": "true", "PREVIOUS_SOURCE": previous}

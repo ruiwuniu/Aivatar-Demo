@@ -131,11 +131,15 @@ jobs:
               raise SystemExit("Release builds require the pinned Tauri CLI 2.11.5.")
           if tauri.get("plugins", {}).get("updater", {}).get("requireSignedVersion") is not True:
               raise SystemExit("The updater must require a signed app version.")
-          release = json.loads(subprocess.check_output(["gh", "release", "view", tag, "--repo", repo, "--json", "tagName,isDraft,isPrerelease,targetCommitish"], text=True))
-          if release["tagName"] != tag or release["isPrerelease"] or release["isDraft"] != (not replacement):
-              raise SystemExit("Normal releases require a stable draft; replacement requires an existing published stable release.")
-          if release["targetCommitish"] != release_sha:
-              raise SystemExit("Release target must match the exact approved current or previous source SHA.")
+          # Draft releases require push access, which the build job must not have.
+          # The protected signer checks the stable draft before signing and upload.
+          # Published replacement releases remain readable with contents: read.
+          if replacement:
+              release = json.loads(subprocess.check_output(["gh", "release", "view", tag, "--repo", repo, "--json", "tagName,isDraft,isPrerelease,targetCommitish"], text=True))
+              if release["tagName"] != tag or release["isPrerelease"] or release["isDraft"]:
+                  raise SystemExit("Replacement requires an existing published stable release.")
+              if release["targetCommitish"] != release_sha:
+                  raise SystemExit("Release target must match the exact approved previous source SHA.")
           references = api(f"git/matching-refs/tags/{tag}")
           matching = [entry for entry in references if entry["ref"] == f"refs/tags/{tag}"]
           if len(matching) != 1:
@@ -192,6 +196,7 @@ jobs:
               "aivatar-updater-frontend-smoke.mjs",
           ):
               subprocess.run(["node", f"scripts/{script}"], check=True)
+          subprocess.run(["python", "scripts/security/updater-build-guard-smoke.py"], check=True)
           import os
           import pathlib
           test_env = dict(os.environ, CARGO_TARGET_DIR=str(pathlib.Path(os.environ["RUNNER_TEMP"]) / "aivatar-storage-core-target"))
@@ -391,7 +396,15 @@ jobs:
               reference = api(f"git/tags/{reference['sha']}")["object"]
           if reference["type"] != "commit" or reference["sha"] != release_sha:
               raise SystemExit("The release tag moved or differs from the approved current or previous source commit.")
-          release = api(f"releases/tags/{tag}")
+          if replacement:
+              release = api(f"releases/tags/{tag}")
+          else:
+              # The tag endpoint only returns published releases. This protected
+              # contents: write job can list drafts; reject absent/ambiguous tags.
+              candidates = [item for item in api("releases?per_page=100") if item.get("tag_name") == tag]
+              if len(candidates) != 1:
+                  raise SystemExit("Expected exactly one existing stable draft for this tag in the recent releases.")
+              release = candidates[0]
           if release["draft"] != (not replacement) or release["prerelease"] or release["tag_name"] != tag or release["target_commitish"] != release_sha:
               raise SystemExit("Normal mode requires an existing stable draft at this commit; replacement requires a published stable release at previous_source.")
           replacement_evidence = None
