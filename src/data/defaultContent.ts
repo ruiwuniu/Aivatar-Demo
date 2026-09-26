@@ -774,6 +774,15 @@ export const defaultContent: AivatarContent = {
       effect: { mood: 4, energy: 2 },
     },
     {
+      id: "terminal-macintosh-skin",
+      name: "Macintosh Terminal Skin",
+      kind: "decor",
+      tags: ["furniture-skin", "computer"],
+      targetFurnitureId: "builtin-terminal",
+      price: 2600,
+      effect: { mood: 4, energy: 2 },
+    },
+    {
       id: "terminal-neon-dark-skin",
       name: "Neon Dark Terminal Skin",
       kind: "decor",
@@ -1219,6 +1228,15 @@ export const defaultContent: AivatarContent = {
       {
         id: "terminal-white-cyan-skin",
         name: "White Cyan Terminal Skin",
+        kind: "decor",
+        tags: ["furniture-skin", "computer"],
+        targetFurnitureId: "builtin-terminal",
+        price: 2600,
+        effect: { mood: 4, energy: 2 },
+      },
+      {
+        id: "terminal-macintosh-skin",
+        name: "Macintosh Terminal Skin",
         kind: "decor",
         tags: ["furniture-skin", "computer"],
         targetFurnitureId: "builtin-terminal",

@@ -7343,6 +7343,17 @@ input[type="range"]::-moz-range-thumb {
   image-rendering: pixelated;
 }
 
+.item-thumbnail-terminal-macintosh::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("/assets/furniture/terminal-macintosh.png");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  image-rendering: pixelated;
+}
+
 .item-thumb-shape,
 .item-thumb-accent,
 .item-thumb-detail,

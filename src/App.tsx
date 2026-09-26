@@ -362,6 +362,7 @@ const DESK_TRANSPARENT_ACRYLIC_SKIN_ID = "transparent-acrylic-desk-skin";
 const TERMINAL_GREEN_AMBER_SKIN_ID = "terminal-green-amber-skin";
 const TERMINAL_WHITE_CYAN_SKIN_ID = "terminal-white-cyan-skin";
 const TERMINAL_NEON_DARK_SKIN_ID = "terminal-neon-dark-skin";
+const TERMINAL_MACINTOSH_SKIN_ID = "terminal-macintosh-skin";
 const TERMINAL_SKIN_THUMBNAIL_CELL_SIZE = 16;
 const TERMINAL_SKIN_THUMBNAIL_INDICES: Record<string, number> = {
   [TERMINAL_GREEN_AMBER_SKIN_ID]: 0,
@@ -6611,6 +6612,8 @@ export const App = () => {
                   ) ?? content.itemDefinitions[0],
                 ...placementPreview,
                 rotation: movingPlacedItem.rotation,
+                skinId: movingPlacedItem.skinId === TERMINAL_MACINTOSH_SKIN_ID
+                  ? TERMINAL_MACINTOSH_SKIN_ID : undefined,
               }
           : null,
         selectedPlacedItem?.id,
@@ -9167,6 +9170,8 @@ export const App = () => {
                   ) ?? currentContent.itemDefinitions[0],
                 ...placementPreviewRef.current,
                 rotation: movingPlacedItemRef.current?.rotation,
+                skinId: movingPlacedItemRef.current?.skinId === TERMINAL_MACINTOSH_SKIN_ID
+                  ? TERMINAL_MACINTOSH_SKIN_ID : undefined,
               }
             : null,
         selectedPlacedItemRef.current?.id,
@@ -12771,6 +12776,10 @@ export const App = () => {
   const ItemThumbnail = ({ itemId }: { itemId: string }) => {
     const arcadeThumbnailIndex = ITEM_ARCADE_A_THUMBNAIL_INDICES[itemId];
     const terminalSkinThumbnailIndex = TERMINAL_SKIN_THUMBNAIL_INDICES[itemId];
+
+    if (itemId === TERMINAL_MACINTOSH_SKIN_ID) {
+      return <span className="item-button-thumbnail item-thumbnail-terminal-macintosh" aria-hidden="true" />;
+    }
 
     if (arcadeThumbnailIndex !== undefined) {
       return (

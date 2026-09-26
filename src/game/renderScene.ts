@@ -1,4 +1,5 @@
 import { isTerminalBubbleAgent } from "../agentRegistry";
+import { MACINTOSH_TERMINAL_SKIN_ID, drawMacintoshTerminal } from "./macintoshTerminal";
 import type { DesktopHitRegion, DesktopPoint, DesktopVendingInteraction, DesktopVendingProductId } from "../desktop/desktopTypes";
 import { DESKTOP_VENDING_SPRITE, DESKTOP_VENDING_DISPENSE_MS, desktopVendingVisualBounds } from "../desktop/desktopVendingMachine";
 import type {
@@ -130,6 +131,7 @@ interface PlacementPreview {
   y: number;
   valid: boolean;
   rotation?: number;
+  skinId?: string;
 }
 
 interface WindowPlacementPreview {
@@ -151,7 +153,14 @@ type PlacedItemRenderLayer = "all" | "behind-avatar" | "in-front-of-avatar";
 type AvatarRenderLayer =
   | { kind: "primary"; y: number; runtime: AvatarRuntime }
   | { kind: "visitor"; y: number; runtime: AvatarRuntime; visitor: AivatarRoomVisitor };
+interface TerminalRenderState {
+  status: CodexStatusMessage;
+  avatar: AvatarRuntime;
+  position?: { x: number; y: number };
+}
+
 interface PlacedItemRenderCache {
+  terminalState: TerminalRenderState;
   filledCoffeeCupIds: Set<string>;
   depthSortedPlacedItems: PlacedItem[];
   wallPlacedItems: PlacedItem[];
@@ -9662,7 +9671,23 @@ const drawTerminalMonitor = (
   frame = 0,
   avatar?: AvatarRuntime,
   skinId?: string,
+  terminalState?: TerminalRenderState,
 ) => {
+  if (skinId === MACINTOSH_TERMINAL_SKIN_ID) {
+    const operator = terminalState?.avatar ?? avatar;
+    const position = terminalState?.position ?? { x, y };
+    drawMacintoshTerminal(ctx, {
+      x: Math.round(x),
+      y: Math.round(y),
+      frame,
+      phase: terminalState?.status.status ?? "idle",
+      active: Boolean(operator
+        && (operator.behavior === "coding" || operator.behavior === "thinking")
+        && Math.hypot(operator.x - position.x, operator.y - (position.y + 18)) < 92),
+      ghost,
+    });
+    return;
+  }
   ctx.save();
   if (ghost !== "none") ctx.globalAlpha = 0.62;
   const baseX = Math.round(x);
@@ -10161,6 +10186,7 @@ const drawPlaceableItem = (
   skinId?: string,
   paintingArtwork?: AivatarPaintingArtwork,
   paintingProgress = 1,
+  terminalState?: TerminalRenderState,
 ) => {
   switch (itemId) {
     case "cozy-rug":
@@ -10198,7 +10224,7 @@ const drawPlaceableItem = (
       drawOilEasel(ctx, x, y, ghost, frame, avatar, paintingArtwork, paintingProgress);
       return;
     case "terminal-monitor":
-      drawTerminalMonitor(ctx, x, y, ghost, frame, avatar, skinId);
+      drawTerminalMonitor(ctx, x, y, ghost, frame, avatar, skinId, terminalState);
       return;
     case "coffee-machine":
       drawCoffeeMachine(ctx, x, y, ghost, frame, brewing);
@@ -10236,6 +10262,20 @@ const itemDefinitionById = (content: AivatarContent, itemId: string) =>
 const isWallPlacedItem = (content: AivatarContent, item: PlacedItem) => {
   const definition = itemDefinitionById(content, item.itemId);
   return Boolean(definition && getItemPlacementKind(definition) === "wall");
+};
+
+const drawMacintoshPlacementPreview = (
+  ctx: CanvasRenderingContext2D,
+  preview: PlacementPreview,
+  frame: number,
+) => {
+  if (preview.item.id !== "terminal-monitor" || preview.skinId !== MACINTOSH_TERMINAL_SKIN_ID) return false;
+  ctx.save();
+  ctx.translate(Math.round(preview.x), Math.round(preview.y));
+  ctx.rotate(((preview.rotation ?? 0) * Math.PI) / 180);
+  drawMacintoshTerminal(ctx, { x: 0, y: 0, frame, ghost: preview.valid ? "valid" : "invalid" });
+  ctx.restore();
+  return true;
 };
 
 const drawPlacedItemHighlight = (
@@ -10311,9 +10351,13 @@ const drawPlacedItem = (
   taskFileCount = 0,
   failedTaskFileCount = 0,
   paintingGallery?: AivatarPaintingGallery,
+  terminalState?: TerminalRenderState,
 ) => {
   const definition = content.itemDefinitions.find((candidate) => candidate.id === item.itemId);
   if (!definition) return;
+  const placedTerminalState = definition.id === "terminal-monitor" && terminalState
+    ? { ...terminalState, position: { x: item.x, y: item.y } }
+    : terminalState;
   const gallery = normalizePaintingGallery(paintingGallery);
   const activeDraft =
     item.itemId === "oil-easel" &&
@@ -10359,6 +10403,7 @@ const drawPlacedItem = (
         item.skinId,
         paintingArtwork,
         paintingProgress,
+        placedTerminalState,
       );
       ctx.restore();
       return;
@@ -10382,6 +10427,7 @@ const drawPlacedItem = (
       item.skinId,
       paintingArtwork,
       paintingProgress,
+      placedTerminalState,
     );
   }
 };
@@ -10413,6 +10459,8 @@ const placedItemDepthSort = (left: PlacedItem, right: PlacedItem) =>
 const createPlacedItemRenderCache = (
   content: AivatarContent,
   tableCoffeeQuantity: number,
+  avatar: AvatarRuntime,
+  status: CodexStatusMessage,
 ): PlacedItemRenderCache => {
   const placedItems = content.placedItems ?? [];
   const depthSortedPlacedItems: PlacedItem[] = [];
@@ -10444,6 +10492,8 @@ const createPlacedItemRenderCache = (
   surfaceItemsByFurnitureId.forEach((items) => items.sort(placedItemYSort));
 
   return {
+    // Keep task feedback and the operator consistent across room occlusion passes.
+    terminalState: { avatar, status },
     filledCoffeeCupIds: tableCoffeeCupFillSet(placedItems, tableCoffeeQuantity),
     depthSortedPlacedItems,
     wallPlacedItems,
@@ -10501,6 +10551,7 @@ const drawPlacedItems = (
         item.itemId === "file-cabinet" ? taskCabinetFileCount : 0,
         item.itemId === "file-cabinet" ? failedTaskCabinetFileCount : 0,
         paintingGallery,
+        renderCache?.terminalState,
       );
       if (item.id === selectedPlacedItemId) {
         drawPlacedItemHighlight(ctx, item);
@@ -10512,16 +10563,18 @@ const drawPlacedItems = (
     layer !== "in-front-of-avatar" &&
     getItemPlacementKind(preview.item) !== "wall"
   ) {
-    drawPlaceableItem(
-      ctx,
-      preview.item.id,
-      preview.x,
-      preview.y,
-      preview.valid ? "valid" : "invalid",
-      frame,
-      preview.rotation ?? 0,
-      avatar,
-    );
+    if (!drawMacintoshPlacementPreview(ctx, preview, frame)) {
+      drawPlaceableItem(
+        ctx,
+        preview.item.id,
+        preview.x,
+        preview.y,
+        preview.valid ? "valid" : "invalid",
+        frame,
+        preview.rotation ?? 0,
+        avatar,
+      );
+    }
   }
 };
 
@@ -10590,6 +10643,10 @@ const drawPlacedItemsInFrontOfForegroundFurniture = (
         activeInteraction,
         activeRecordPlayerId,
         filledCoffeeCups.has(item.id),
+        0,
+        0,
+        undefined,
+        renderCache?.terminalState,
       );
       if (item.id === selectedPlacedItemId) {
         drawPlacedItemHighlight(ctx, item);
@@ -10624,16 +10681,18 @@ const drawPlacedItemsInFrontOfForegroundFurniture = (
 
   ctx.save();
   clipToRects(ctx, clipRects);
-  drawPlaceableItem(
-    ctx,
-    placementPreview.item.id,
-    placementPreview.x,
-    placementPreview.y,
-    placementPreview.valid ? "valid" : "invalid",
-    frame,
-    placementPreview.rotation ?? 0,
-    avatar,
-  );
+  if (!drawMacintoshPlacementPreview(ctx, placementPreview, frame)) {
+    drawPlaceableItem(
+      ctx,
+      placementPreview.item.id,
+      placementPreview.x,
+      placementPreview.y,
+      placementPreview.valid ? "valid" : "invalid",
+      frame,
+      placementPreview.rotation ?? 0,
+      avatar,
+    );
+  }
   ctx.restore();
 };
 
@@ -10666,6 +10725,7 @@ const drawWallPlacedItems = (
       0,
       0,
       paintingGallery,
+      renderCache?.terminalState,
     );
     if (item.id === selectedPlacedItemId) {
       drawPlacedItemHighlight(ctx, item);
@@ -10673,16 +10733,18 @@ const drawWallPlacedItems = (
   });
 
   if (preview && getItemPlacementKind(preview.item) === "wall") {
-    drawPlaceableItem(
-      ctx,
-      preview.item.id,
-      preview.x,
-      preview.y,
-      preview.valid ? "valid" : "invalid",
-      frame,
-      preview.rotation ?? 0,
-      avatar,
-    );
+    if (!drawMacintoshPlacementPreview(ctx, preview, frame)) {
+      drawPlaceableItem(
+        ctx,
+        preview.item.id,
+        preview.x,
+        preview.y,
+        preview.valid ? "valid" : "invalid",
+        frame,
+        preview.rotation ?? 0,
+        avatar,
+      );
+    }
   }
 };
 
@@ -10721,6 +10783,7 @@ const drawPlacedItemsForSurface = (
       0,
       0,
       paintingGallery,
+      renderCache?.terminalState,
     );
     if (item.id === selectedPlacedItemId) {
       drawPlacedItemHighlight(ctx, item);
@@ -10743,7 +10806,8 @@ const drawFloorUnderlayItems = (
       .sort(placedItemYSort);
 
   floorUnderlayItems.forEach((item) => {
-    drawPlacedItem(ctx, item, content, frame, avatar);
+    drawPlacedItem(ctx, item, content, frame, avatar, undefined, undefined, false, 0, 0,
+      undefined, renderCache?.terminalState);
     if (item.id === selectedPlacedItemId) {
       drawPlacedItemHighlight(ctx, item);
     }
@@ -13541,16 +13605,18 @@ const drawAvatarForegroundOcclusion = (
       renderCache,
     );
     if (placementPreview && isPreviewOnSurface(placementPreview, item)) {
-      drawPlaceableItem(
-        ctx,
-        placementPreview.item.id,
-        placementPreview.x,
-        placementPreview.y,
-        placementPreview.valid ? "valid" : "invalid",
-        frame,
-        placementPreview.rotation ?? 0,
-        runtime,
-      );
+      if (!drawMacintoshPlacementPreview(ctx, placementPreview, frame)) {
+        drawPlaceableItem(
+          ctx,
+          placementPreview.item.id,
+          placementPreview.x,
+          placementPreview.y,
+          placementPreview.valid ? "valid" : "invalid",
+          frame,
+          placementPreview.rotation ?? 0,
+          runtime,
+        );
+      }
     }
   });
 
@@ -13615,7 +13681,7 @@ export const renderScene = (
     content.room.floorSurfaceId,
     fallbackFloorPalette,
   );
-  const placedItemRenderCache = createPlacedItemRenderCache(content, tableCoffeeQuantity);
+  const placedItemRenderCache = createPlacedItemRenderCache(content, tableCoffeeQuantity, avatar, status);
 
   drawRoom(
     ctx,
@@ -13745,16 +13811,18 @@ export const renderScene = (
     );
     const surfacePreview = placementPreview;
     if (surfacePreview && isPreviewOnSurface(surfacePreview, item)) {
-      drawPlaceableItem(
-        ctx,
-        surfacePreview.item.id,
-        surfacePreview.x,
-        surfacePreview.y,
-        surfacePreview.valid ? "valid" : "invalid",
-        frame,
-        surfacePreview.rotation ?? 0,
-        avatar,
-      );
+      if (!drawMacintoshPlacementPreview(ctx, surfacePreview, frame)) {
+        drawPlaceableItem(
+          ctx,
+          surfacePreview.item.id,
+          surfacePreview.x,
+          surfacePreview.y,
+          surfacePreview.valid ? "valid" : "invalid",
+          frame,
+          surfacePreview.rotation ?? 0,
+          avatar,
+        );
+      }
     }
   });
   drawPlacedItemsInFrontOfForegroundFurniture(
@@ -13949,7 +14017,8 @@ export const renderDesktopScene = (canvas: HTMLCanvasElement, options: DesktopSc
   }
   // One canvas guarantees devices < avatar < speech, independently of native
   // focus changes, and preserves the avatar's room appearance and typing pose.
-  drawTerminalMonitor(ctx, terminal.x, terminal.y, "none", options.frame, avatar, terminal.skinId);
+  drawTerminalMonitor(ctx, terminal.x, terminal.y, "none", options.frame, avatar, terminal.skinId,
+    { avatar, status: options.status });
   drawDesktopVendingMachine(ctx, options);
   drawAvatar(ctx, avatar, options.frame, options.content.petStats, options.status,
     options.memory, options.appearanceId);
