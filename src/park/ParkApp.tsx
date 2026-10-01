@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LOCALE_KEY, resolveInitialLocale, type Locale } from "../i18n";
+import { ParkFishingOverlay } from "./ParkFishingOverlay";
+import type { ParkFishingGame, ParkFishingInput } from "./parkFishingGame";
 import type {
   AivatarRoomPresence,
   AivatarRoomsSnapshot,
@@ -20,6 +23,9 @@ import {
 } from "./parkRenderer";
 import {
   advanceParkSimulation,
+  applyParkFishingInput,
+  cancelParkFishingGame,
+  finishParkFishingGameOnExit,
   forceParkBenchPreview,
   forceParkFishingPreview,
   initialParkSimulation,
@@ -293,6 +299,13 @@ export const ParkApp = () => {
   const visitRef = useRef<AivatarVisitSession | null>(null);
   const invitationStartedRef = useRef(false);
   const simulationRef = useRef<ParkSimulationState | null>(null);
+  const [locale, setLocale] = useState<Locale>(resolveInitialLocale);
+  const [fishingOverlay, setFishingOverlay] = useState<{
+    game: ParkFishingGame;
+    avatar: { x: number; y: number };
+    now: number;
+  } | null>(null);
+  const fishingOverlayVisibleRef = useRef(false);
   const fishingAudioBankRef = useRef<ParkFishingAudioBank | null>(null);
   const footstepAudioRef = useRef<ParkFootstepAudioController | null>(null);
   const ambientAudioRef = useRef<ParkAmbientAudioController | null>(null);
@@ -304,20 +317,72 @@ export const ParkApp = () => {
   const lastMoodAtRef = useRef(0);
   const lastWeatherUiAtRef = useRef(Number.NEGATIVE_INFINITY);
 
-  const flushCurrentParkSave = async (): Promise<SaveFlushResult> => {
-    if (!hostSlotId) return { ok: true, written: false };
+  const publishFishingOverlay = (simulation: ParkSimulationState | null, now: number) => {
+    if (simulation?.fishingGame) {
+      fishingOverlayVisibleRef.current = true;
+      setFishingOverlay({
+        game: simulation.fishingGame,
+        avatar: { x: simulation.avatar.x, y: simulation.avatar.y },
+        now,
+      });
+    } else if (fishingOverlayVisibleRef.current) {
+      fishingOverlayVisibleRef.current = false;
+      setFishingOverlay(null);
+    }
+  };
+
+  const cancelFishingInteraction = (publish = true) => {
     const simulation = simulationRef.current;
+    const now = performance.now();
+    if (simulation) simulationRef.current = cancelParkFishingGame(simulation, now);
+    if (publish) publishFishingOverlay(simulationRef.current, now);
+  };
+
+  const handleFishingInput = (input: ParkFishingInput) => {
+    const simulation = simulationRef.current;
+    if (!simulation || isStoreClosing() || document.visibilityState === "hidden"
+      || !document.hasFocus() || (!visitRef.current && !debugPreviewRef.current)) return;
+    const now = performance.now();
+    const next = applyParkFishingInput(simulation, input, now);
+    simulationRef.current = next;
+    if (next.fishingPose !== simulation.fishingPose) {
+      playParkFishingSound(fishingAudioBankRef.current, next.fishingPose);
+    }
+    publishFishingOverlay(next, now);
+  };
+
+  const flushCurrentParkSave = async (finishFishing = false): Promise<SaveFlushResult> => {
+    if (!hostSlotId) return { ok: true, written: false };
+    let simulation = simulationRef.current;
+    if (simulation && (finishFishing || isStoreClosing())) {
+      const finished = finishParkFishingGameOnExit(simulation, performance.now());
+      // Consume the pending catch before any await: close, visit cleanup and
+      // the animation loop may otherwise try to settle the same won fish.
+      simulation = finished.state;
+      simulationRef.current = simulation;
+      if (visitRef.current && !debugPreviewRef.current) {
+        for (const event of finished.events) await recordParkCatch(hostSlotId, event.fishId);
+      }
+    }
     if (simulation && visitRef.current && !debugPreviewRef.current) {
       persistParkRuntime(hostSlotId, simulation.avatar, simulation.navMemory);
     }
-    const { result } = await flushParkSaveSlotResult(hostSlotId);
+    const { save: nextSave, result } = await flushParkSaveSlotResult(hostSlotId);
+    if (nextSave) {
+      saveRef.current = nextSave;
+      setSave(nextSave);
+    }
     setSaveError(result.ok ? "" : "Could not save Park progress. Your changes are retained; please retry.");
     return result;
   };
 
   const replaceParkVisit = async (visit: AivatarVisitSession | null) => {
-    if (visitRef.current?.visitId !== visit?.visitId && !(await flushCurrentParkSave()).ok) {
+    if (visitRef.current?.visitId !== visit?.visitId && !(await flushCurrentParkSave(true)).ok) {
       throw new Error("Cannot change the Park visit until its progress has been saved.");
+    }
+    if (visitRef.current?.visitId !== visit?.visitId
+      || visit?.phase === "ended" || visit?.phase === "cancelled") {
+      cancelFishingInteraction();
     }
     visitRef.current = visit;
   };
@@ -431,6 +496,10 @@ export const ParkApp = () => {
   useEffect(() => {
     const refreshLayout = () => setObjects(readParkLayout());
     const handleStorage = (event: { key: string; source: "local" | "remote" }) => {
+      if (event.key === LOCALE_KEY) {
+        setLocale(resolveInitialLocale());
+        return;
+      }
       if (event.source === "local") return;
       if (event.key === PARK_LAYOUT_STORAGE_KEY) refreshLayout();
       if (hostSlotId && event.key === `aivatar.saveSlot.v1.${hostSlotId}`) {
@@ -594,6 +663,7 @@ export const ParkApp = () => {
           objects: objectsRef.current,
           traits: currentSave.memory?.growth.traits ?? {},
           hasRod: debugRodRef.current || hasFishingRod(currentSave),
+          allowFishingInvites: document.visibilityState !== "hidden" && document.hasFocus(),
         });
         simulationRef.current = result.state;
         const distanceMoved = Math.hypot(
@@ -674,6 +744,7 @@ export const ParkApp = () => {
           canvas.dataset.parkTargetFps = String(PARK_TARGET_FPS);
         }
         const activeSimulation = simulationRef.current;
+        publishFishingOverlay(activeSimulation, now);
         const activeSave = saveRef.current;
         const calendarNowMs = Date.now();
         const weather = resolveParkWeather(
@@ -728,7 +799,8 @@ export const ParkApp = () => {
     return () => {
       stopped = true;
       window.cancelAnimationFrame(animation);
-      flushCurrentParkSave();
+      cancelFishingInteraction(false);
+      flushCurrentParkSave(true);
     };
   }, [hostSlotId]);
 
@@ -736,7 +808,8 @@ export const ParkApp = () => {
     let stopped = false;
     let unlistenSave: (() => void) | undefined;
     const finishVisit = () => {
-      flushCurrentParkSave();
+      cancelFishingInteraction();
+      flushCurrentParkSave(true);
       void restoreMainWindowAfterPark(false);
       const visit = visitRef.current;
       if (!visit) return;
@@ -749,12 +822,17 @@ export const ParkApp = () => {
       if (ended) void postJson(VISIT_END_URL, ended, true).catch(() => undefined);
     };
     const flushWhenHidden = () => {
-      if (document.visibilityState === "hidden") flushCurrentParkSave();
+      if (document.visibilityState === "hidden") {
+        cancelFishingInteraction();
+        flushCurrentParkSave();
+      }
     };
+    const cancelOnBlur = () => cancelFishingInteraction();
+    window.addEventListener("blur", cancelOnBlur);
     window.addEventListener("pagehide", finishVisit);
     window.addEventListener("beforeunload", finishVisit);
     document.addEventListener("visibilitychange", flushWhenHidden);
-    void installCloseSaveHandler(flushCurrentParkSave, {
+    void installCloseSaveHandler(() => flushCurrentParkSave(true), {
         onFailure: (message, error) => {
           console.error("Could not finish saving the Park before close.", error);
           setDebugMessage(message);
@@ -774,6 +852,7 @@ export const ParkApp = () => {
       void restoreMainWindowAfterPark(false);
       window.removeEventListener("pagehide", finishVisit);
       window.removeEventListener("beforeunload", finishVisit);
+      window.removeEventListener("blur", cancelOnBlur);
       document.removeEventListener("visibilitychange", flushWhenHidden);
     };
   }, [hostSlotId]);
@@ -960,6 +1039,13 @@ export const ParkApp = () => {
     <main className="park-app" aria-label="Aivatar Hilltop Park">
       {saveError && <div role="alert">{saveError} <button type="button" onClick={() => void flushCurrentParkSave()}>Retry save</button></div>}
       <canvas ref={canvasRef} className="park-canvas" />
+      <ParkFishingOverlay
+        game={fishingOverlay?.game}
+        avatar={fishingOverlay?.avatar}
+        now={fishingOverlay?.now ?? 0}
+        locale={locale}
+        onInput={handleFishingInput}
+      />
       {SHOW_PARK_DEBUG ? (
         <div className="park-debug">
           {debugOpen && (

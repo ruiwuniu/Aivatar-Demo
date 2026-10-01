@@ -2545,5 +2545,6 @@ for (const [name, image, expectedHash] of [
 }
 
 await import("./aivatar-cooking-smoke.mjs");
+await import("./aivatar-park-fishing-smoke.mjs");
 
 console.log("Park smoke passed: deterministic four-day weekly rain totaling 48 hours, local calendar and DST boundaries, staged weather previews, layered rain ambience and storm thunder, weather-scaled sea haze/pond ripples/grass splashes, static rock/shrub occluders, independent grass ripples, single-draw pond atlas, independent park ambience, foam and cliff-fog motion, looping clouds, handoff, traits, fish, cooking, and window size markers are present.");

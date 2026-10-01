@@ -20,6 +20,17 @@ import {
   type ParkRandomSource,
 } from "./parkProbability";
 import { defaultParkNavMemory, normalizeParkNavMemory } from "./parkStorage";
+import {
+  acceptParkFishingInvite,
+  createParkFishingInvite,
+  finishParkFishingRound,
+  PARK_FISHING_INVITE_CHANCE,
+  PARK_FISHING_INVITE_COOLDOWN_MS,
+  parkFishingCursor,
+  startParkFishingRound,
+  type ParkFishingGame,
+  type ParkFishingInput,
+} from "./parkFishingGame";
 
 export type ParkActivity =
   | "wander"
@@ -53,6 +64,9 @@ export interface ParkSimulationState {
   nextDecisionAt: number;
   fishingSpotId?: string;
   pendingFish?: ParkRawFishId;
+  fishingGame?: ParkFishingGame;
+  nextFishingInviteAt?: number;
+  fishingGameSequence?: number;
 }
 
 export interface ParkSimulationEvent {
@@ -293,6 +307,7 @@ export const forceParkFishingPreview = (
       path: [],
       fishingSpotId: spot.id,
       pendingFish: undefined,
+      fishingGame: undefined,
       activityStartedAt: now,
       activityEndsAt: 0,
       fishingStartedAt: 0,
@@ -329,6 +344,7 @@ export const forceParkBenchPreview = (
       benchIntent: intent,
       fishingSpotId: undefined,
       pendingFish: undefined,
+      fishingGame: undefined,
       path: [],
       activityStartedAt: now,
       activityEndsAt: 0,
@@ -397,6 +413,176 @@ const fishingWaitPose = (now: number): ParkFishingPose => {
   return "focus";
 };
 
+// Only the in-memory fishing state owns inputs. Neither an invitation nor a
+// QTE input writes a reward; successful games join the ordinary display path.
+const applyFishingGameResult = (
+  state: ParkSimulationState,
+  game: ParkFishingGame,
+  now: number,
+): ParkSimulationState => {
+  if (game.phase === "success") {
+    return {
+      ...state,
+      fishingGame: game,
+      activity: "reel",
+      fishingPose: "reel",
+      activityStartedAt: now,
+      activityEndsAt: now + 1450,
+      avatar: { ...state.avatar, behavior: "interact", expression: "focused", activityLabel: "Reeling in" },
+    };
+  }
+  if (game.phase === "escaped") {
+    return {
+      ...state,
+      fishingGame: game,
+      activity: "wait",
+      fishingPose: "focus",
+      pendingFish: undefined,
+      activityStartedAt: now,
+      activityEndsAt: 0,
+      nextBiteAt: game.expiresAt + 6000,
+      avatar: { ...state.avatar, behavior: "admire", expression: "worried", activityLabel: "The fish slipped off the hook" },
+    };
+  }
+  return { ...state, fishingGame: game };
+};
+
+export const cancelParkFishingGame = (
+  state: ParkSimulationState,
+  now: number,
+): ParkSimulationState => {
+  const game = state.fishingGame;
+  if (!game || game.phase === "success") return state;
+  if (game.phase === "invite" || game.phase === "escaped") {
+    return { ...state, fishingGame: undefined };
+  }
+  const keepFishing = now < state.fishingSessionEndsAt;
+  return {
+    ...state,
+    fishingGame: undefined,
+    pendingFish: undefined,
+    activity: keepFishing ? "cast" : "wander",
+    fishingPose: keepFishing ? "cast" : "none",
+    activityStartedAt: now,
+    activityEndsAt: keepFishing ? now + 1200 : 0,
+    fishingStartedAt: keepFishing ? state.fishingStartedAt : 0,
+    fishingSpotId: keepFishing ? state.fishingSpotId : undefined,
+    nextBiteAt: 0,
+    nextDecisionAt: now + 3000,
+    avatar: {
+      ...state.avatar,
+      facing: keepFishing ? "front" : state.avatar.facing,
+      behavior: keepFishing ? "interact" : "idle",
+      expression: "calm",
+      activityLabel: keepFishing ? "Casting again" : "Enjoying the park",
+    },
+  };
+};
+
+const completeParkCatch = (
+  state: ParkSimulationState,
+  now: number,
+  continueFishing = true,
+): { state: ParkSimulationState; events: ParkSimulationEvent[] } => {
+  if (!state.pendingFish) return { state, events: [] };
+  const events: ParkSimulationEvent[] = [{ type: "catch", fishId: state.pendingFish }];
+  state = { ...state, fishingGame: undefined, pendingFish: undefined };
+  if (continueFishing && now < state.fishingSessionEndsAt) {
+    state = {
+      ...state,
+      activity: "cast",
+      fishingPose: "cast",
+      activityStartedAt: now,
+      activityEndsAt: now + 1200,
+      avatar: {
+        ...state.avatar,
+        facing: "front",
+        behavior: "interact",
+        expression: "focused",
+        activityLabel: "Casting again",
+      },
+    };
+  } else {
+    state = {
+      ...state,
+      activity: "wander",
+      fishingPose: "none",
+      fishingStartedAt: 0,
+      fishingSpotId: undefined,
+      nextDecisionAt: now + 3500,
+    };
+  }
+  return { state, events };
+};
+
+// Closing a park can skip presentation after a won QTE, but uses the exact
+// same completion path as the normal display animation. Callers must install
+// the returned state before asynchronously persisting the emitted event.
+export const finishParkFishingGameOnExit = (
+  state: ParkSimulationState,
+  now: number,
+): { state: ParkSimulationState; events: ParkSimulationEvent[] } => {
+  if (state.fishingGame?.phase === "success" && state.pendingFish) {
+    return completeParkCatch(state, now, false);
+  }
+  return { state: cancelParkFishingGame(state, now), events: [] };
+};
+
+export const applyParkFishingInput = (
+  state: ParkSimulationState,
+  input: ParkFishingInput,
+  now: number,
+  random: ParkRandomSource = Math.random,
+): ParkSimulationState => {
+  const game = state.fishingGame;
+  if (!game || game.id !== input.id || !Number.isFinite(now)) return state;
+  if (input.type === "cancel") return cancelParkFishingGame(state, now);
+  if (input.type === "decline") {
+    return game.phase === "invite" ? { ...state, fishingGame: undefined } : state;
+  }
+  if (input.type === "accept") {
+    if (game.phase !== "invite" || state.activity !== "wait" || now >= game.expiresAt
+      || now >= state.fishingSessionEndsAt) return state;
+    return {
+      ...state,
+      fishingGame: acceptParkFishingInvite(game, now, random),
+      fishingPose: "focus",
+      pendingFish: undefined,
+      activityStartedAt: now,
+      avatar: { ...state.avatar, behavior: "admire", expression: "focused", activityLabel: "Waiting for a bite together" },
+    };
+  }
+  if (game.phase !== "qte" || state.activity !== "bite" || !state.pendingFish
+    || input.round !== game.round || now < game.nextInputAt || now >= game.roundEndsAt) return state;
+  const cursor = parkFishingCursor(game, now);
+  // Preserve inclusive target edges despite subtraction/division noise from
+  // long-running fractional clocks. This is at most 3.4 ns of a QTE round.
+  const edgeEpsilon = 1e-9;
+  return applyFishingGameResult(state, finishParkFishingRound(
+    game,
+    cursor >= game.targetStart - edgeEpsilon && cursor <= game.targetEnd + edgeEpsilon,
+    now,
+    random,
+  ), now);
+};
+
+const maybeInviteFishingGame = (
+  state: ParkSimulationState,
+  now: number,
+  random: ParkRandomSource,
+  allowed: boolean,
+): ParkSimulationState => {
+  if (!allowed || now < (state.nextFishingInviteAt ?? 0)
+    || random() >= PARK_FISHING_INVITE_CHANCE) return state;
+  const id = Math.max((state.fishingGameSequence ?? 0) + 1, Math.floor(now * 1000));
+  return {
+    ...state,
+    fishingGame: createParkFishingInvite(id, now),
+    fishingGameSequence: id,
+    nextFishingInviteAt: now + PARK_FISHING_INVITE_COOLDOWN_MS,
+  };
+};
+
 export const advanceParkSimulation = (
   input: ParkSimulationState,
   elapsedSeconds: number,
@@ -405,12 +591,50 @@ export const advanceParkSimulation = (
     objects: ParkObjectPlacement[];
     traits: Partial<AivatarGrowthTraits>;
     hasRod: boolean;
+    allowFishingInvites?: boolean;
     random?: ParkRandomSource;
   },
 ): { state: ParkSimulationState; events: ParkSimulationEvent[] } => {
   const random = options.random ?? Math.random;
   const events: ParkSimulationEvent[] = [];
   let state = moveAlongPath(input, elapsedSeconds);
+
+  if (options.allowFishingInvites === false || !options.hasRod) {
+    state = cancelParkFishingGame(state, now);
+  }
+  let game = state.fishingGame;
+  if (game?.phase === "invite" && (now >= game.expiresAt || state.activity !== "wait")) {
+    state = { ...state, fishingGame: undefined };
+    game = undefined;
+  }
+  if (game?.phase === "waiting") {
+    if (now >= game.biteAt) {
+      const nextGame = startParkFishingRound(game, now, random);
+      state = {
+        ...state,
+        fishingGame: nextGame,
+        activity: "bite",
+        fishingPose: "bite",
+        pendingFish: randomFishingCatch(random),
+        activityStartedAt: now,
+        activityEndsAt: nextGame.roundEndsAt,
+        avatar: { ...state.avatar, behavior: "interact", expression: "focused", activityLabel: "A fish is fighting on the line" },
+      };
+    }
+    return { state, events };
+  }
+  if (game?.phase === "qte") {
+    if (now >= game.roundEndsAt) {
+      state = applyFishingGameResult(state, finishParkFishingRound(game, false, now, random), now);
+    } else if (game.lastOutcome && now >= game.nextInputAt) {
+      state = { ...state, fishingGame: { ...game, lastOutcome: undefined } };
+    }
+    return { state, events };
+  }
+  if (game?.phase === "escaped") {
+    if (now < game.expiresAt) return { state, events };
+    state = { ...state, fishingGame: undefined };
+  }
 
   if (state.path.length > 0) return { state, events };
 
@@ -496,6 +720,7 @@ export const advanceParkSimulation = (
         activityLabel: "Fishing",
       },
     };
+    state = maybeInviteFishingGame(state, now, random, options.hasRod && options.allowFishingInvites !== false);
     return { state, events };
   }
 
@@ -507,6 +732,7 @@ export const advanceParkSimulation = (
         fishingPose: "none",
         fishingStartedAt: 0,
         fishingSpotId: undefined,
+        fishingGame: undefined,
         nextDecisionAt: now + 3000,
       };
     } else if (now >= state.nextBiteAt) {
@@ -517,6 +743,7 @@ export const advanceParkSimulation = (
           activity: "bite",
           fishingPose: "bite",
           pendingFish: randomFishingCatch(random),
+          fishingGame: undefined,
           activityStartedAt: now,
           activityEndsAt: now + fishingHookStruggleDurationSeconds(random) * 1000,
           avatar: {
@@ -605,35 +832,7 @@ export const advanceParkSimulation = (
   }
 
   if (state.activity === "display" && now >= state.activityEndsAt && state.pendingFish) {
-    events.push({ type: "catch", fishId: state.pendingFish });
-    if (now < state.fishingSessionEndsAt) {
-      state = {
-        ...state,
-        activity: "cast",
-        fishingPose: "cast",
-        pendingFish: undefined,
-        activityStartedAt: now,
-        activityEndsAt: now + 1200,
-        avatar: {
-          ...state.avatar,
-          facing: "front",
-          behavior: "interact",
-          expression: "focused",
-          activityLabel: "Casting again",
-        },
-      };
-    } else {
-      state = {
-        ...state,
-        activity: "wander",
-        fishingPose: "none",
-        fishingStartedAt: 0,
-        fishingSpotId: undefined,
-        pendingFish: undefined,
-        nextDecisionAt: now + 3500,
-      };
-    }
-    return { state, events };
+    return completeParkCatch(state, now);
   }
 
   if (state.activity === "wander" && now >= state.nextDecisionAt) {
