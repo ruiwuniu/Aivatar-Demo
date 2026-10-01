@@ -41,7 +41,9 @@ import {
   readParkSaveSlot,
   recordParkCatch,
   recordParkMoodRecovery,
+  readCommittedParkCatchItem,
 } from "./parkStorage";
+import { ownedFishingTrophies } from "./parkLoot";
 import type { SaveFlushResult } from "../persistence/savePersistence";
 import { installCloseSaveHandler } from "../persistence/closeSave";
 import { isStoreClosing, subscribeStore } from "../persistence/saveStore";
@@ -302,6 +304,8 @@ export const ParkApp = () => {
   const [locale, setLocale] = useState<Locale>(resolveInitialLocale);
   const [fishingOverlay, setFishingOverlay] = useState<{
     game: ParkFishingGame;
+    catchItemId?: import("./parkLoot").ParkCatchItemId;
+    saving?: boolean;
     avatar: { x: number; y: number };
     now: number;
   } | null>(null);
@@ -322,6 +326,8 @@ export const ParkApp = () => {
       fishingOverlayVisibleRef.current = true;
       setFishingOverlay({
         game: simulation.fishingGame,
+        catchItemId: simulation.pendingFish,
+        saving: simulation.catchSavePending,
         avatar: { x: simulation.avatar.x, y: simulation.avatar.y },
         now,
       });
@@ -329,6 +335,40 @@ export const ParkApp = () => {
       fishingOverlayVisibleRef.current = false;
       setFishingOverlay(null);
     }
+  };
+
+  // The winning result is durable before its reveal starts. Transaction-time
+  // duplicate conversion is reflected in both the animation and the inventory.
+  const resumeSavedCatch = (_nextSave: AivatarSaveState) => {
+    const current = simulationRef.current;
+    if (!current?.catchSavePending || !current.pendingCatch) return;
+    const itemId = hostSlotId ? readCommittedParkCatchItem(hostSlotId, current.pendingCatch) : undefined;
+    if (!itemId) return;
+    const now = performance.now();
+    simulationRef.current = {
+      ...current,
+      pendingFish: itemId,
+      pendingCatch: { ...current.pendingCatch, itemId },
+      catchSavePending: false,
+      activityStartedAt: now,
+      activityEndsAt: now + 1450,
+    };
+    playParkFishingSound(fishingAudioBankRef.current, "reel");
+    publishFishingOverlay(simulationRef.current, now);
+  };
+
+  const persistLandedCatch = (simulation: ParkSimulationState) => {
+    if (!simulation.pendingCatch || simulation.catchSavePending || !hostSlotId
+      || !visitRef.current || debugPreviewRef.current) return;
+    simulationRef.current = { ...simulation, catchSavePending: true };
+    void recordParkCatch(hostSlotId, simulation.pendingCatch).then((nextSave) => {
+      if (nextSave) {
+        saveRef.current = nextSave;
+        setSave(nextSave);
+        resumeSavedCatch(nextSave);
+        setSaveError("");
+      } else setSaveError("Could not save the catch. It remains queued; please retry saving.");
+    }, () => setSaveError("Could not save the catch. It remains queued; please retry saving."));
   };
 
   const cancelFishingInteraction = (publish = true) => {
@@ -343,12 +383,14 @@ export const ParkApp = () => {
     if (!simulation || isStoreClosing() || document.visibilityState === "hidden"
       || !document.hasFocus() || (!visitRef.current && !debugPreviewRef.current)) return;
     const now = performance.now();
-    const next = applyParkFishingInput(simulation, input, now);
+    const next = applyParkFishingInput(simulation, input, now, Math.random,
+      ownedFishingTrophies(hostSlotId ? readParkSaveSlot(hostSlotId) : saveRef.current));
     simulationRef.current = next;
-    if (next.fishingPose !== simulation.fishingPose) {
+    if (next.pendingCatch && next.pendingCatch !== simulation.pendingCatch) persistLandedCatch(next);
+    if (next.fishingPose !== simulation.fishingPose && !simulationRef.current?.catchSavePending) {
       playParkFishingSound(fishingAudioBankRef.current, next.fishingPose);
     }
-    publishFishingOverlay(next, now);
+    publishFishingOverlay(simulationRef.current, now);
   };
 
   const flushCurrentParkSave = async (finishFishing = false): Promise<SaveFlushResult> => {
@@ -361,7 +403,7 @@ export const ParkApp = () => {
       simulation = finished.state;
       simulationRef.current = simulation;
       if (visitRef.current && !debugPreviewRef.current) {
-        for (const event of finished.events) await recordParkCatch(hostSlotId, event.fishId);
+        for (const event of finished.events) await recordParkCatch(hostSlotId, event.receipt ?? event.fishId as import("./parkProbability").ParkRawFishId);
       }
     }
     if (simulation && visitRef.current && !debugPreviewRef.current) {
@@ -371,6 +413,7 @@ export const ParkApp = () => {
     if (nextSave) {
       saveRef.current = nextSave;
       setSave(nextSave);
+      resumeSavedCatch(nextSave);
     }
     setSaveError(result.ok ? "" : "Could not save Park progress. Your changes are retained; please retry.");
     return result;
@@ -500,11 +543,16 @@ export const ParkApp = () => {
         setLocale(resolveInitialLocale());
         return;
       }
+      if (hostSlotId && event.key === `aivatar.saveSlot.v1.${hostSlotId}`) {
+        const nextSave = readParkSaveSlot(hostSlotId);
+        if (nextSave) {
+          saveRef.current = nextSave;
+          setSave(nextSave);
+          resumeSavedCatch(nextSave);
+        }
+      }
       if (event.source === "local") return;
       if (event.key === PARK_LAYOUT_STORAGE_KEY) refreshLayout();
-      if (hostSlotId && event.key === `aivatar.saveSlot.v1.${hostSlotId}`) {
-        setSave(readParkSaveSlot(hostSlotId));
-      }
     };
     const unsubscribeStorage = subscribeStore(handleStorage);
     window.addEventListener(PARK_LAYOUT_EVENT, refreshLayout);
@@ -664,8 +712,10 @@ export const ParkApp = () => {
           traits: currentSave.memory?.growth.traits ?? {},
           hasRod: debugRodRef.current || hasFishingRod(currentSave),
           allowFishingInvites: document.visibilityState !== "hidden" && document.hasFocus(),
+          ownedTrophyIds: ownedFishingTrophies(currentSave),
         });
         simulationRef.current = result.state;
+        if (result.state.pendingCatch && result.state.pendingCatch !== simulation.pendingCatch) persistLandedCatch(result.state);
         const distanceMoved = Math.hypot(
           result.state.avatar.x - previousAvatarPosition.x,
           result.state.avatar.y - previousAvatarPosition.y,
@@ -678,7 +728,7 @@ export const ParkApp = () => {
             result.state.avatar.y,
           ),
         });
-        if (result.state.fishingPose !== previousFishingPose) {
+        if (result.state.fishingPose !== previousFishingPose && !simulationRef.current?.catchSavePending) {
           playParkFishingSound(
             fishingAudioBankRef.current,
             result.state.fishingPose,
@@ -692,7 +742,7 @@ export const ParkApp = () => {
             persistParkRuntime(hostSlotId, result.state.avatar, result.state.navMemory);
           }
           result.events.forEach((event) => {
-            void recordParkCatch(hostSlotId, event.fishId).then((nextSave) => {
+            void recordParkCatch(hostSlotId, event.receipt ?? event.fishId as import("./parkProbability").ParkRawFishId).then((nextSave) => {
               if (stopped) return;
               if (nextSave) {
                 saveRef.current = nextSave;
@@ -782,7 +832,7 @@ export const ParkApp = () => {
             avatarAppearanceId: parkAvatarAppearance(activeSave?.avatarAppearanceId),
             petStats: activeSave?.petStats,
             memory: activeSave?.memory,
-            fishingPose: activeSimulation?.fishingPose,
+            fishingPose: activeSimulation?.catchSavePending ? "focus" : activeSimulation?.fishingPose,
             fishingPoseStartedAt: activeSimulation?.activityStartedAt,
             benchPose: activeSimulation?.benchPose,
             benchPoseStartedAt: activeSimulation?.activityStartedAt,
@@ -1041,6 +1091,8 @@ export const ParkApp = () => {
       <canvas ref={canvasRef} className="park-canvas" />
       <ParkFishingOverlay
         game={fishingOverlay?.game}
+        catchItemId={fishingOverlay?.catchItemId}
+        saving={fishingOverlay?.saving}
         avatar={fishingOverlay?.avatar}
         now={fishingOverlay?.now ?? 0}
         locale={locale}

@@ -1,5 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from "react";
-import { t, type Locale } from "../i18n";
+import { itemName, t, type Locale } from "../i18n";
+import { fishingLootIconPath } from "../game/fishingLootSprites";
+import { PARK_CATCH_NAMES, type ParkCatchItemId } from "./parkLoot";
 import { PARK_SCENE_HEIGHT, PARK_SCENE_WIDTH } from "./parkContent";
 import {
   PARK_FISHING_HITS_TO_WIN,
@@ -11,6 +13,8 @@ import {
 
 export interface ParkFishingOverlayProps {
   game: ParkFishingGame | undefined;
+  catchItemId?: ParkCatchItemId;
+  saving?: boolean;
   avatar?: { x: number; y: number };
   now: number;
   locale: Locale;
@@ -27,7 +31,7 @@ const readyToReel = (game: ParkFishingGame, now: number) =>
   game.phase === "qte" && now >= game.nextInputAt && now < game.roundEndsAt;
 
 export const ParkFishingOverlay = (props: ParkFishingOverlayProps) => {
-  const { game, avatar, now, locale, onInput } = props;
+  const { game, avatar, now, locale, onInput, catchItemId, saving } = props;
   const latestRef = useRef(props);
   latestRef.current = props;
   const participating = game?.phase === "waiting" || game?.phase === "qte";
@@ -93,7 +97,7 @@ export const ParkFishingOverlay = (props: ParkFishingOverlayProps) => {
   const isQte = game.phase === "qte";
   const feedback = isQte && now < game.nextInputAt ? game.lastOutcome : undefined;
   const headingKey = feedback === "hit" ? "hit" : feedback === "miss" ? "miss" : game.phase;
-  const title = copy(headingKey);
+  const title = copy(saving ? "saving" : headingKey);
   const countdown = Math.max(0, (game.roundEndsAt - now) / 1000).toFixed(1);
   const cursor = Math.max(0, Math.min(1, parkFishingCursor(game, now)));
 
@@ -167,7 +171,13 @@ export const ParkFishingOverlay = (props: ParkFishingOverlayProps) => {
             <button type="button" className="park-fishing-button" onClick={() => input("cancel")}>{copy("cancel")}</button>
           </>
         ) : (
-          <p className="park-fishing-hint">{copy(game.phase === "success" ? "successHint" : "escapedHint")}</p>
+          <>
+            {game.phase === "success" && !saving && catchItemId && <p className="park-fishing-loot-result">
+              {fishingLootIconPath(catchItemId) && <img src={fishingLootIconPath(catchItemId)} alt="" />}
+              {itemName(locale, { id: catchItemId, name: PARK_CATCH_NAMES[catchItemId] })}
+            </p>}
+            <p className="park-fishing-hint">{copy(saving ? "savingHint" : game.phase === "success" ? "successHint" : "escapedHint")}</p>
+          </>
         )}
       </section>
     </div>

@@ -1,3 +1,6 @@
+import { isFishingTrophy } from "./park/parkLoot";
+import { fishingLootIconPath } from "./game/fishingLootSprites";
+import { recoverFishingTrophiesOnLayoutReset } from "./game/fishingTrophyInventory";
 import {
   useEffect,
   useLayoutEffect,
@@ -111,6 +114,15 @@ import {
   GAS_OVEN_RANGE_ITEM_ID,
   gasOvenRangeCookingFacing,
 } from "./game/gasOvenRangeSprites";
+import {
+  POND_WEED_ITEM_ID,
+  POND_WEED_SALAD_ITEM_ID,
+  availableCookingRecipes,
+  canPrepareCookingRecipe,
+  completeCookingRecipe,
+  cookingIngredientQuantity,
+  cookingRecipeForIngredient,
+} from "./game/pondWeedCooking";
 import { useCodexStatus } from "./hooks/useCodexStatus";
 import { appStorage, transactStore, subscribeStore, subscribeStorePause, drainStore, isStoreClosing, pauseStoreUpdates, reportSaveError, type StoreChange } from "./persistence/saveStore";
 import { createRoomSavePersistence, REWARDED_COMPLETION_ID_LIMIT } from "./persistence/roomSavePersistence";
@@ -301,14 +313,6 @@ const RAW_FISH_ITEM_IDS = [
   "raw-weather-loach",
   "raw-rainbow-trout",
 ] as const;
-const COOKED_FISH_BY_RAW_ID: Record<(typeof RAW_FISH_ITEM_IDS)[number], string> = {
-  "raw-crucian-carp": "cooked-crucian-carp",
-  "raw-bluegill": "cooked-bluegill",
-  "raw-black-bass": "cooked-black-bass",
-  "raw-yellow-perch": "cooked-yellow-perch",
-  "raw-weather-loach": "cooked-weather-loach",
-  "raw-rainbow-trout": "cooked-rainbow-trout",
-};
 const REPAIR_KIT_ITEM_ID = "repair-kit";
 const ITEM_ARCADE_A_THUMBNAIL_CELL_SIZE = 16;
 const ITEM_ARCADE_A_THUMBNAIL_INDICES: Record<string, number> = {
@@ -580,6 +584,7 @@ const DEMO_BEHAVIORS: BehaviorName[] = [
   "cola",
   "bento",
   "fish",
+  "salad",
   "cookie",
   "brew",
   "relax",
@@ -1659,7 +1664,9 @@ const traitChangesForConsumable = (
 };
 
 const behaviorForConsumable = (item: Pick<ItemDefinition, "id">): BehaviorName =>
-  item.id === COFFEE_ITEM_ID
+  item.id === POND_WEED_SALAD_ITEM_ID
+    ? "salad"
+    : item.id === COFFEE_ITEM_ID
     ? "coffee"
     : item.id === COLA_ITEM_ID
       ? "cola"
@@ -2461,6 +2468,7 @@ type PendingWorldInteraction =
       placedItem: PlacedItem;
       item: ItemDefinition;
       kind: PlacedItemInteractionKind;
+      preferredIngredientId?: string;
     };
 
 const runtimeActionBehavior = (avatar: AvatarRuntime): BehaviorName =>
@@ -2723,7 +2731,7 @@ const builtinTerminalAsFurniture = (
 const defaultLayoutFromContent = (content: AivatarContent): DefaultLayoutState => ({
   placedItems: withBuiltinTerminalPlacedItem(
     content,
-    content.placedItems ?? [],
+    (content.placedItems ?? []).filter((item) => !isFishingTrophy(item.itemId)),
     content.room.furniture.map((item) => ({
       furnitureId: item.id,
       x: item.x,
@@ -2763,7 +2771,8 @@ const loadDefaultLayout = (content: AivatarContent): DefaultLayoutState => {
     return {
       placedItems: withBuiltinTerminalPlacedItem(
         content,
-        Array.isArray(parsed.placedItems) ? parsed.placedItems : fallback.placedItems,
+        (Array.isArray(parsed.placedItems) ? parsed.placedItems : fallback.placedItems)
+          .filter((item) => !isFishingTrophy(item.itemId)),
         Array.isArray(parsed.furniturePlacements) ? parsed.furniturePlacements : furniturePlacements,
       ),
       activeWindowId: parsed.activeWindowId ?? fallback.activeWindowId,
@@ -2898,7 +2907,9 @@ const normalizeSavePayload = (
       parsed.rewardedCompletionIds,
     ),
     inventory: removeDeprecatedInventoryItems(
-      parsed.inventory ?? fallback.inventory,
+      migratedLayout.placedItems
+        ? recoverFishingTrophiesOnLayoutReset({ inventory: parsed.inventory ?? fallback.inventory, placedItems: parsed.placedItems ?? [] })
+        : parsed.inventory ?? fallback.inventory,
     ),
     placedItems,
     furniturePlacements,
@@ -5819,6 +5830,22 @@ export const App = () => {
     pendingWorldInteractionRef.current = null;
   };
 
+  const cancelInterruptedCooking = (status: CodexStatusMessage, currentContent: AivatarContent) => {
+    const interaction = activeInteractionRef.current;
+    if (interaction?.kind !== "cook") return;
+    const stoveStillPlaced = currentContent.placedItems?.some(
+      (item) => item.id === interaction.furnitureId && item.itemId === GAS_OVEN_RANGE_ITEM_ID,
+    );
+    if (!isHighPriorityStatus(status) && stoveStillPlaced) return;
+    // Ingredients stay in the fridge until completion, so cancellation does not
+    // need a refund and cannot spend food while a task takes over the avatar.
+    updateActiveInteraction(null);
+    if (runtimeActionBehavior(runtimeRef.current) === "cook") {
+      runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
+      setAvatar(runtimeRef.current);
+    }
+  };
+
   const queueFurnitureInteraction = (
     furniture: FurnitureDefinition,
     kind: FurnitureInteractionKind,
@@ -5850,12 +5877,14 @@ export const App = () => {
     placedItem: PlacedItem,
     item: ItemDefinition,
     kind: PlacedItemInteractionKind,
+    preferredIngredientId?: string,
   ) => {
     pendingWorldInteractionRef.current = {
       target: "placed-item",
       placedItem,
       item,
       kind,
+      preferredIngredientId,
     };
     const standpoints = getPlacedItemInteractionStandpoints(placedItem, contentRef.current);
     const target = getPlacedItemInteractionTarget(placedItem, contentRef.current);
@@ -5877,7 +5906,7 @@ export const App = () => {
       kind === "brew"
         ? "Brewing coffee"
         : kind === "cook"
-          ? "Cooking fish"
+          ? preferredIngredientId === POND_WEED_ITEM_ID ? "Making pond weed salad" : "Cooking fish"
         : kind === "paint"
           ? "Painting"
           : kind === "play"
@@ -5980,6 +6009,27 @@ export const App = () => {
       startedAt: performance.now(),
       bubbleText: ui("bubble.busy"),
     });
+  };
+
+  const requestPondWeedSalad = (selectedStove?: PlacedItem) => {
+    setSceneContextMenu(null);
+    const stove = selectedStove ?? chooseNearestOrRandomPlacedItem(
+      runtimeRef.current,
+      (contentRef.current.placedItems ?? []).filter((item) => item.itemId === GAS_OVEN_RANGE_ITEM_ID),
+    );
+    const definition = contentRef.current.itemDefinitions.find((item) => item.id === GAS_OVEN_RANGE_ITEM_ID);
+    if (!stove || !definition) {
+      updateActiveInteraction({
+        kind: "blocked", furnitureId: POND_WEED_ITEM_ID, furnitureName: ui("scene.action.makeSalad"),
+        message: ui("message.saladNeedsStove"), bubbleText: ui("thought.saladNeedsStove"), startedAt: performance.now(),
+      });
+      return;
+    }
+    if (isHighPriorityStatus(statusRef.current.status)) {
+      showPlacedItemBusy(stove, definition);
+      return;
+    }
+    queuePlacedItemInteraction(stove, definition, "cook", POND_WEED_ITEM_ID);
   };
 
   const runSceneContextAction = () => {
@@ -7306,10 +7356,13 @@ export const App = () => {
     const isFoodEating =
       activeBehavior === "bento" ||
       activeBehavior === "fish" ||
+      activeBehavior === "salad" ||
       activeBehavior === "cookie";
     const isSleepingForAudio = avatar.behavior === "sleep" && !avatar.actionIntent;
     const activeCookingInteraction =
-      activeInteraction?.kind === "cook" ? activeInteraction : null;
+      activeInteraction?.kind === "cook" &&
+      cookingRecipeForIngredient(activeInteraction.itemId)?.coldPreparation === false
+        ? activeInteraction : null;
 
     if (isGameConsoleAnimating && !gameConsoleAnimatingRef.current) {
       prepareGameConsoleAudioForNewPlay();
@@ -7589,6 +7642,7 @@ export const App = () => {
       const currentContent = contentRef.current;
       const navLayoutFingerprint = navigationLayoutFingerprint(currentContent);
       const currentStatus = statusRef.current.status;
+      cancelInterruptedCooking(currentStatus, currentContent);
       const currentInteraction = activeInteractionRef.current;
       const pendingWorldInteraction = pendingWorldInteractionRef.current;
       const activeRoomVisit = activeVisitRef.current;
@@ -8304,7 +8358,7 @@ export const App = () => {
             } else if (pendingWorldInteraction.kind === "brew") {
               startCoffeeMachineInteraction(pendingWorldInteraction.placedItem);
             } else if (pendingWorldInteraction.kind === "cook") {
-              startGasRangeCooking(pendingWorldInteraction.placedItem);
+              startGasRangeCooking(pendingWorldInteraction.placedItem, pendingWorldInteraction.preferredIngredientId);
             } else if (pendingWorldInteraction.kind === "paint") {
               const progress = ensurePaintingDraftForEasel(
                 pendingWorldInteraction.placedItem,
@@ -8511,35 +8565,25 @@ export const App = () => {
         currentInteraction.endsAt &&
         now >= currentInteraction.endsAt
       ) {
-        const rawFishId = RAW_FISH_ITEM_IDS.find(
-          (itemId) => itemId === currentInteraction.itemId,
-        );
-        const cookedFishId = currentInteraction.resultItemId;
-        if (rawFishId && cookedFishId) {
+        const recipe = cookingRecipeForIngredient(currentInteraction.itemId);
+        let prepared = false;
+        // Close the transient transaction before updating inventory. A second
+        // frame or reentrant completion cannot repeat the conversion.
+        updateActiveInteraction({ ...currentInteraction, kind: "none" });
+        if (recipe && recipe.resultItemId === currentInteraction.resultItemId) {
           setSave((current) => {
-            const available = firstRawFishInFridge(current.furnitureStorage) === rawFishId ||
-              (current.furnitureStorage ?? []).some(
-                (entry) =>
-                  entry.furnitureId === "fridge" &&
-                  entry.itemId === rawFishId &&
-                  entry.quantity > 0,
-              );
-            if (!available) return current;
+            const converted = completeCookingRecipe(current, recipe);
+            if (converted === current) return current;
+            prepared = true;
             return {
-              ...current,
-              furnitureStorage: consumeFurnitureStorageItem(
-                current.furnitureStorage,
-                "fridge",
-                rawFishId,
-              ),
-              inventory: addInventoryItem(current.inventory, cookedFishId, 1, 999),
+              ...converted,
               memory: recordLifeMemory(
                 current.memory,
                 {
                   type: "item_used",
-                  summary: `Cooked ${rawFishId}`,
+                  summary: recipe.coldPreparation ? "Prepared pond weed salad" : `Cooked ${recipe.ingredientId}`,
                   behavior: "cook",
-                  itemId: cookedFishId,
+                  itemId: recipe.resultItemId,
                 },
                 { warmth: 1 },
               ),
@@ -8551,8 +8595,12 @@ export const App = () => {
         updateActiveInteraction({
           ...currentInteraction,
           kind: "none",
-          message: ui("message.fishCooked"),
-          bubbleText: ui("thought.fishCooked"),
+          message: ui(prepared
+            ? recipe?.coldPreparation ? "message.saladMade" : "message.fishCooked"
+            : "message.cookingNotCompleted"),
+          bubbleText: ui(prepared
+            ? recipe?.coldPreparation ? "thought.saladMade" : "thought.fishCooked"
+            : "thought.cookingNotCompleted"),
           startedAt: now,
           endsAt: now + INTERACTION_FEEDBACK_SECONDS * 1000,
           progress: 1,
@@ -9063,9 +9111,9 @@ export const App = () => {
       const gasRange = currentContent.placedItems?.find(
         (item) => item.itemId === GAS_OVEN_RANGE_ITEM_ID,
       );
-      const rawFishForCooking = firstRawFishInFridge(saveRef.current.furnitureStorage);
+      const recipesForCooking = availableCookingRecipes(saveRef.current.furnitureStorage, saveRef.current.inventory);
       const canConsiderCooking =
-        Boolean(gasRange && rawFishForCooking) &&
+        Boolean(gasRange && recipesForCooking.length > 0) &&
         !isHighPriorityStatus(currentStatus) &&
         !pendingWorldInteractionRef.current &&
         !isBlockingInteraction(activeInteractionRef.current) &&
@@ -9081,7 +9129,15 @@ export const App = () => {
             const definition = currentContent.itemDefinitions.find(
               (item) => item.id === GAS_OVEN_RANGE_ITEM_ID,
             );
-            if (definition) queuePlacedItemInteraction(gasRange, definition, "cook");
+            if (definition) {
+              // Choose food categories evenly, so six fish species do not
+              // crowd out salad whenever both ingredients are available.
+              const cold = recipesForCooking.filter((recipe) => recipe.coldPreparation);
+              const hot = recipesForCooking.filter((recipe) => !recipe.coldPreparation);
+              const choices = cold.length && hot.length ? Math.random() < 0.5 ? cold : hot : recipesForCooking;
+              const recipe = choices[Math.floor(Math.random() * choices.length)];
+              queuePlacedItemInteraction(gasRange, definition, "cook", recipe.ingredientId);
+            }
           }
         }
       } else {
@@ -9358,7 +9414,7 @@ export const App = () => {
       .filter(
         (entry) =>
           entry.furnitureId === "fridge" &&
-          RAW_FISH_ITEM_IDS.includes(entry.itemId as (typeof RAW_FISH_ITEM_IDS)[number]),
+          (entry.itemId === POND_WEED_ITEM_ID || RAW_FISH_ITEM_IDS.includes(entry.itemId as (typeof RAW_FISH_ITEM_IDS)[number])),
       )
       .map((entry) => ({ itemId: entry.itemId, quantity: entry.quantity })),
   ];
@@ -9439,6 +9495,10 @@ export const App = () => {
   };
 
   const applyItem = (item: ItemDefinition) => {
+    if (item.id === POND_WEED_ITEM_ID) {
+      requestPondWeedSalad();
+      return;
+    }
     if (item.tags?.includes("wall-surface")) {
       const wallSurface = contentRef.current.room.wallSurfaces?.find(
         (candidate) => candidate.id === item.id,
@@ -10500,7 +10560,7 @@ export const App = () => {
 
   const saveCurrentLayoutAsDefault = async () => {
     const layout: DefaultLayoutState = {
-      placedItems: save.placedItems,
+      placedItems: save.placedItems.filter((item) => !isFishingTrophy(item.itemId)),
       activeWindowId: save.activeWindowId,
       windowPlacements: save.windowPlacements,
       furniturePlacements: save.furniturePlacements,
@@ -10802,6 +10862,10 @@ export const App = () => {
     };
 
     setSave((current) => {
+      if (isFishingTrophy(item.id) && (
+        !current.inventory.some((entry) => entry.itemId === item.id && entry.quantity > 0)
+        || current.placedItems.some((entry) => entry.itemId === item.id)
+      )) return current;
       const inventory = current.inventory
         .map((entry) =>
           entry.itemId === item.id
@@ -10923,6 +10987,8 @@ export const App = () => {
     const itemName = selectedPlacedItemDefinition?.name ?? "Item";
 
     setSave((current) => {
+      if (isFishingTrophy(selectedPlacedItem.itemId)
+        && !current.placedItems.some((item) => item.id === selectedPlacedItem.id)) return current;
       const existing = current.inventory.find(
         (entry) => entry.itemId === selectedPlacedItem.itemId,
       );
@@ -10961,6 +11027,7 @@ export const App = () => {
 
   const deletePlacedItem = () => {
     if (!selectedPlacedItem) return;
+    if (isFishingTrophy(selectedPlacedItem.itemId)) return;
     if (isBuiltinTerminalPlacedItem(selectedPlacedItem)) return;
     const itemName = selectedPlacedItemDefinition?.name ?? "Item";
 
@@ -10996,6 +11063,8 @@ export const App = () => {
     const bitsEarned = itemSellValue(selectedPlacedItemDefinition);
 
     setSave((current) => {
+      if (isFishingTrophy(selectedPlacedItem.itemId)
+        && !current.placedItems.some((item) => item.id === selectedPlacedItem.id)) return current;
       const placedItems = current.placedItems.filter(
         (item) => item.id !== selectedPlacedItem.id,
       );
@@ -11112,6 +11181,7 @@ export const App = () => {
     setSave((current) => ({
       ...current,
       ...defaultLayout,
+      inventory: recoverFishingTrophiesOnLayoutReset(current),
     }));
 
     cancelRoomEdit();
@@ -11511,7 +11581,7 @@ export const App = () => {
       return;
     }
 
-    const consumable = currentContent.inventory
+    const consumable = saveRef.current.inventory
       .filter((entry) => entry.quantity > 0)
       .map((entry) => ({
         entry,
@@ -11520,6 +11590,7 @@ export const App = () => {
       .filter(
         (candidate): candidate is { entry: InventoryEntry; item: ItemDefinition } => {
           if (!candidate.item) return false;
+          if (preferredItemId && candidate.item.id !== preferredItemId) return false;
           if (
             candidate.item.id === COFFEE_ITEM_ID &&
             furniture.id !== TABLE_FURNITURE_ID
@@ -11571,7 +11642,10 @@ export const App = () => {
       return;
     }
 
+    let consumed = false;
     setSave((current) => {
+      if (getInventoryQuantity(current.inventory, consumable.item.id) <= 0) return current;
+      consumed = true;
       const inventory = current.inventory
         .map((entry) =>
           entry.itemId === consumable.item.id
@@ -11599,6 +11673,7 @@ export const App = () => {
         ),
       };
     });
+    if (!consumed) return;
 
     runtimeRef.current = setFurnitureBehavior(runtimeRef.current, furniture, 4, {
       behavior: behaviorForConsumable(consumable.item),
@@ -11617,7 +11692,9 @@ export const App = () => {
       startedAt: performance.now(),
       endsAt: performance.now() + INTERACTION_FEEDBACK_SECONDS * 1000,
       bubbleText:
-        consumable.item.id === COOKIE_ITEM_ID
+        consumable.item.id === POND_WEED_SALAD_ITEM_ID
+          ? ui("thought.salad")
+          : consumable.item.id === COOKIE_ITEM_ID
           ? ui("thought.cookie")
           : consumable.item.kind === "food"
             ? ui("thought.food")
@@ -11755,25 +11832,35 @@ export const App = () => {
     });
   };
 
-  const startGasRangeCooking = (placedItem: PlacedItem) => {
-    const rawFishId = firstRawFishInFridge(saveRef.current.furnitureStorage);
+  const startGasRangeCooking = (placedItem: PlacedItem, preferredIngredientId?: string) => {
+    const ingredientId = preferredIngredientId ?? firstRawFishInFridge(saveRef.current.furnitureStorage);
+    const recipe = cookingRecipeForIngredient(ingredientId);
+    const isSalad = ingredientId === POND_WEED_ITEM_ID;
     const rangeName =
       contentRef.current.itemDefinitions.find((item) => item.id === GAS_OVEN_RANGE_ITEM_ID)
         ?.name ?? "Gas Range with Oven";
-    if (!rawFishId) {
+    if (!recipe || (cookingIngredientQuantity(saveRef.current.furnitureStorage, recipe.ingredientId) ?? 0) <= 0) {
       runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
       setAvatar(runtimeRef.current);
       updateActiveInteraction({
         kind: "blocked",
         furnitureId: placedItem.id,
         furnitureName: rangeName,
-        message: ui("message.noRawFish"),
+        message: ui(isSalad ? "message.noPondWeed" : "message.noRawFish"),
         startedAt: performance.now(),
-        bubbleText: ui("thought.noRawFish"),
+        bubbleText: ui(isSalad ? "thought.noPondWeed" : "thought.noRawFish"),
       });
       return;
     }
-    const cookedFishId = COOKED_FISH_BY_RAW_ID[rawFishId];
+    if (!canPrepareCookingRecipe(saveRef.current.furnitureStorage, saveRef.current.inventory, recipe)) {
+      runtimeRef.current = resetRuntimeToIdle(runtimeRef.current);
+      setAvatar(runtimeRef.current);
+      updateActiveInteraction({
+        kind: "blocked", furnitureId: placedItem.id, furnitureName: rangeName,
+        message: ui("message.mealStorageFull"), bubbleText: ui("thought.mealStorageFull"), startedAt: performance.now(),
+      });
+      return;
+    }
     // Arrival already resolved the selected stove. Hold that position instead
     // of selecting another appliance (or another stove) through setBehavior.
     runtimeRef.current = {
@@ -11781,9 +11868,9 @@ export const App = () => {
       targetX: runtimeRef.current.x,
       targetY: runtimeRef.current.y,
       behavior: "cook",
-      behaviorTimer: FISH_COOK_SECONDS,
+      behaviorTimer: recipe.seconds,
       expression: "calm",
-      activityLabel: "Cooking fish",
+      activityLabel: isSalad ? "Making pond weed salad" : "Cooking fish",
       facing: gasOvenRangeCookingFacing(placedItem.rotation),
       actionIntent: undefined,
       actionActivityLabel: undefined,
@@ -11796,13 +11883,13 @@ export const App = () => {
       kind: "cook",
       furnitureId: placedItem.id,
       furnitureName: rangeName,
-      message: ui("message.cookingFish"),
+      message: ui(isSalad ? "message.makingSalad" : "message.cookingFish"),
       startedAt: now,
-      endsAt: now + FISH_COOK_SECONDS * 1000,
-      bubbleText: ui("thought.cookingFish"),
+      endsAt: now + recipe.seconds * 1000,
+      bubbleText: ui(isSalad ? "thought.makingSalad" : "thought.cookingFish"),
       progress: 0,
-      itemId: rawFishId,
-      resultItemId: cookedFishId,
+      itemId: recipe.ingredientId,
+      resultItemId: recipe.resultItemId,
     });
   };
 
@@ -12774,6 +12861,10 @@ export const App = () => {
     </svg>
   );
   const ItemThumbnail = ({ itemId }: { itemId: string }) => {
+    const fishingIcon = fishingLootIconPath(itemId);
+    if (fishingIcon) {
+      return <span className="item-button-thumbnail item-thumbnail-fishing-loot" aria-hidden="true"><img src={fishingIcon} alt="" draggable={false} /></span>;
+    }
     const arcadeThumbnailIndex = ITEM_ARCADE_A_THUMBNAIL_INDICES[itemId];
     const terminalSkinThumbnailIndex = TERMINAL_SKIN_THUMBNAIL_INDICES[itemId];
 
@@ -13942,6 +14033,17 @@ export const App = () => {
             >
               {sceneContextActionLabel}
             </button>
+            {sceneContextMenu.target.kind === "placed-item" && sceneContextMenu.target.placedItem.itemId === GAS_OVEN_RANGE_ITEM_ID ? (
+              <button
+                type="button"
+                className="scene-context-button"
+                onClick={() => {
+                  if (sceneContextMenu.target.kind === "placed-item") requestPondWeedSalad(sceneContextMenu.target.placedItem);
+                }}
+              >
+                {ui("scene.action.makeSalad")}
+              </button>
+            ) : null}
             {sceneContextRecordPlayer ? (
               <label className="scene-context-control">
                 <span>
@@ -14304,7 +14406,9 @@ export const App = () => {
 
         <div className="status-card">
           <span>{statusLabel(locale, effectiveStatus.status)}</span>
-          <strong>{behaviorLabel(locale, avatar.behavior)}</strong>
+          <strong>{avatar.behavior === "cook" && activeInteraction?.itemId === POND_WEED_ITEM_ID
+            ? activityLabel(locale, "Making pond weed salad")
+            : behaviorLabel(locale, avatar.behavior)}</strong>
           {debugStatus ? (
             <p className="debug-override-warning">
               {ui("debug.debugOverrideWarning")}
@@ -15528,14 +15632,14 @@ export const App = () => {
               >
                 {ui("action.sell", { value: itemSellValue(selectedPlacedItemDefinition) })}
               </button>
-              <button
+              {!isFishingTrophy(selectedPlacedItem.itemId) && <button
                 type="button"
                 className="pixel-button danger-button"
                 onClick={deletePlacedItem}
                 disabled={selectedPlacedItemLocked}
               >
                 {ui("action.delete")}
-              </button>
+              </button>}
               <button type="button" className="pixel-button" onClick={resetDefaultLayout}>
                 {ui("action.resetLayout")}
               </button>

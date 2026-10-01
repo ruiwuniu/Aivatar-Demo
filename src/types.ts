@@ -99,6 +99,7 @@ export type BehaviorName =
   | "cola"
   | "bento"
   | "fish"
+  | "salad"
   | "cookie"
   | "brew"
   | "cook"
@@ -553,6 +554,7 @@ export interface AivatarSaveState {
   };
   purchasedItemIds: string[];
   rewardedCompletionIds?: string[];
+  parkCatchReceipts?: Array<{ catchId: string; itemId: string }>;
   furnitureStorage?: FurnitureStorageEntry[];
   workBoostUntil?: string;
   activeWindowId?: string;

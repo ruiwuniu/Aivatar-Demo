@@ -385,6 +385,75 @@
   ],
   "itemDefinitions": [
     {
+      "id": "pond-weed",
+      "name": "Pond Weed",
+      "kind": "ingredient",
+      "price": 0,
+      "sellPrice": 1
+    },
+    {
+      "id": "pond-weed-salad",
+      "name": "Pond Weed Salad",
+      "kind": "food",
+      "tags": [
+        "consumable"
+      ],
+      "price": 0,
+      "sellPrice": 3,
+      "effect": {
+        "hunger": 12,
+        "mood": 3
+      }
+    },
+    {
+      "id": "fishing-trophy-bronze",
+      "name": "Bronze Fish Trophy",
+      "kind": "decor",
+      "price": 0,
+      "sellPrice": 100,
+      "placementSurfaces": [
+        "floor",
+        "furnitureTop"
+      ],
+      "rotatable": false
+    },
+    {
+      "id": "fishing-trophy-silver",
+      "name": "Silver Wave Trophy",
+      "kind": "decor",
+      "price": 0,
+      "sellPrice": 250,
+      "placementSurfaces": [
+        "floor",
+        "furnitureTop"
+      ],
+      "rotatable": false
+    },
+    {
+      "id": "fishing-trophy-gold",
+      "name": "Golden Koi Trophy",
+      "kind": "decor",
+      "price": 0,
+      "sellPrice": 600,
+      "placementSurfaces": [
+        "floor",
+        "furnitureTop"
+      ],
+      "rotatable": false
+    },
+    {
+      "id": "fishing-trophy-crystal",
+      "name": "Starlight Crystal Trophy",
+      "kind": "decor",
+      "price": 0,
+      "sellPrice": 1500,
+      "placementSurfaces": [
+        "floor",
+        "furnitureTop"
+      ],
+      "rotatable": false
+    },
+    {
       "id": "coffee",
       "name": "Coffee",
       "kind": "drink",

@@ -7315,6 +7315,25 @@ input[type="range"]::-moz-range-thumb {
   flex: 0 0 auto;
 }
 
+.item-button-thumbnail.item-thumbnail-fishing-loot {
+  width: 36px;
+  height: 36px;
+  overflow: visible;
+  background: none;
+}
+
+.item-thumbnail-fishing-loot img {
+  width: 48px;
+  height: 48px;
+  max-width: none;
+  position: absolute;
+  left: -6px;
+  top: -6px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
 .item-thumbnail-arcade-a::before {
   content: "";
   position: absolute;

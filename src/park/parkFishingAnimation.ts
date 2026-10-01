@@ -1,5 +1,7 @@
 import type { AvatarAppearanceId, AvatarRuntime } from "../types";
 import type { ParkFishingSpot } from "./parkContent";
+import { drawFishingLootSprite, isFishingLootSprite } from "../game/fishingLootSprites";
+import type { ParkCatchItemId } from "./parkLoot";
 import type { ParkRawFishId } from "./parkProbability";
 import type { ParkFishingPose } from "./parkRuntime";
 
@@ -18,7 +20,7 @@ export interface ParkFishingAnimationOptions {
   avatar: AvatarRuntime;
   appearanceId?: AvatarAppearanceId;
   pose: ParkFishingPose;
-  fishId?: ParkRawFishId;
+  fishId?: ParkCatchItemId;
   frame: number;
   nowMs: number;
   poseStartedAt: number;
@@ -449,15 +451,19 @@ const drawProceduralFishFallback = (
 
 const drawFish = (
   ctx: CanvasRenderingContext2D,
-  fishId: ParkRawFishId,
+  fishId: ParkCatchItemId,
   x: number,
   y: number,
   frame: number,
 ) => {
-  const sprite = parkFishSprite(fishId);
+  if (isFishingLootSprite(fishId)) {
+    drawFishingLootSprite(ctx, fishId, x, y + 18 + Math.round(Math.sin(frame / 6)), { height: 38 });
+    return;
+  }
+  const sprite = parkFishSprite(fishId as ParkRawFishId);
   const displayBob = Math.round(Math.sin(frame / 6));
   if (!sprite.complete || sprite.naturalWidth <= 0) {
-    drawProceduralFishFallback(ctx, fishId, x, y + displayBob, 1.6);
+    drawProceduralFishFallback(ctx, fishId as ParkRawFishId, x, y + displayBob, 1.6);
     return;
   }
   ctx.save();

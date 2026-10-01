@@ -16,9 +16,9 @@ import {
   fishingSessionDurationSeconds,
   randomFishingCatch,
   shouldChooseParkReading,
-  type ParkRawFishId,
   type ParkRandomSource,
 } from "./parkProbability";
+import { createParkCatchReceipt, type ParkCatchReceipt, type ParkCatchItemId } from "./parkLoot";
 import { defaultParkNavMemory, normalizeParkNavMemory } from "./parkStorage";
 import {
   acceptParkFishingInvite,
@@ -63,7 +63,9 @@ export interface ParkSimulationState {
   nextBiteAt: number;
   nextDecisionAt: number;
   fishingSpotId?: string;
-  pendingFish?: ParkRawFishId;
+  pendingFish?: ParkCatchItemId;
+  pendingCatch?: ParkCatchReceipt;
+  catchSavePending?: boolean;
   fishingGame?: ParkFishingGame;
   nextFishingInviteAt?: number;
   fishingGameSequence?: number;
@@ -71,7 +73,8 @@ export interface ParkSimulationState {
 
 export interface ParkSimulationEvent {
   type: "catch";
-  fishId: ParkRawFishId;
+  fishId: ParkCatchItemId;
+  receipt?: ParkCatchReceipt;
 }
 
 const GRID = 24;
@@ -307,6 +310,8 @@ export const forceParkFishingPreview = (
       path: [],
       fishingSpotId: spot.id,
       pendingFish: undefined,
+      pendingCatch: undefined,
+      catchSavePending: undefined,
       fishingGame: undefined,
       activityStartedAt: now,
       activityEndsAt: 0,
@@ -344,6 +349,8 @@ export const forceParkBenchPreview = (
       benchIntent: intent,
       fishingSpotId: undefined,
       pendingFish: undefined,
+      pendingCatch: undefined,
+      catchSavePending: undefined,
       fishingGame: undefined,
       path: [],
       activityStartedAt: now,
@@ -413,17 +420,22 @@ const fishingWaitPose = (now: number): ParkFishingPose => {
   return "focus";
 };
 
-// Only the in-memory fishing state owns inputs. Neither an invitation nor a
-// QTE input writes a reward; successful games join the ordinary display path.
+// Only a successful landing rolls loot. The host persists its stable receipt
+// before starting presentation; invitations and failed QTEs grant no reward.
 const applyFishingGameResult = (
   state: ParkSimulationState,
   game: ParkFishingGame,
   now: number,
+  random: ParkRandomSource = Math.random,
+  ownedTrophyIds: readonly string[] = [],
 ): ParkSimulationState => {
   if (game.phase === "success") {
+    const receipt = createParkCatchReceipt(true, ownedTrophyIds, random);
     return {
       ...state,
       fishingGame: game,
+      pendingCatch: receipt,
+      pendingFish: receipt.itemId,
       activity: "reel",
       fishingPose: "reel",
       activityStartedAt: now,
@@ -438,6 +450,8 @@ const applyFishingGameResult = (
       activity: "wait",
       fishingPose: "focus",
       pendingFish: undefined,
+      pendingCatch: undefined,
+      catchSavePending: undefined,
       activityStartedAt: now,
       activityEndsAt: 0,
       nextBiteAt: game.expiresAt + 6000,
@@ -461,6 +475,8 @@ export const cancelParkFishingGame = (
     ...state,
     fishingGame: undefined,
     pendingFish: undefined,
+    pendingCatch: undefined,
+    catchSavePending: undefined,
     activity: keepFishing ? "cast" : "wander",
     fishingPose: keepFishing ? "cast" : "none",
     activityStartedAt: now,
@@ -485,8 +501,8 @@ const completeParkCatch = (
   continueFishing = true,
 ): { state: ParkSimulationState; events: ParkSimulationEvent[] } => {
   if (!state.pendingFish) return { state, events: [] };
-  const events: ParkSimulationEvent[] = [{ type: "catch", fishId: state.pendingFish }];
-  state = { ...state, fishingGame: undefined, pendingFish: undefined };
+  const events: ParkSimulationEvent[] = [{ type: "catch", fishId: state.pendingFish, receipt: state.pendingCatch }];
+  state = { ...state, fishingGame: undefined, pendingFish: undefined, pendingCatch: undefined, catchSavePending: undefined };
   if (continueFishing && now < state.fishingSessionEndsAt) {
     state = {
       ...state,
@@ -515,14 +531,14 @@ const completeParkCatch = (
   return { state, events };
 };
 
-// Closing a park can skip presentation after a won QTE, but uses the exact
+// Closing a park can skip presentation after a landed catch, but uses the exact
 // same completion path as the normal display animation. Callers must install
 // the returned state before asynchronously persisting the emitted event.
 export const finishParkFishingGameOnExit = (
   state: ParkSimulationState,
   now: number,
 ): { state: ParkSimulationState; events: ParkSimulationEvent[] } => {
-  if (state.fishingGame?.phase === "success" && state.pendingFish) {
+  if ((state.fishingGame?.phase === "success" || state.pendingCatch) && state.pendingFish) {
     return completeParkCatch(state, now, false);
   }
   return { state: cancelParkFishingGame(state, now), events: [] };
@@ -533,6 +549,7 @@ export const applyParkFishingInput = (
   input: ParkFishingInput,
   now: number,
   random: ParkRandomSource = Math.random,
+  ownedTrophyIds: readonly string[] = [],
 ): ParkSimulationState => {
   const game = state.fishingGame;
   if (!game || game.id !== input.id || !Number.isFinite(now)) return state;
@@ -548,6 +565,8 @@ export const applyParkFishingInput = (
       fishingGame: acceptParkFishingInvite(game, now, random),
       fishingPose: "focus",
       pendingFish: undefined,
+      pendingCatch: undefined,
+      catchSavePending: undefined,
       activityStartedAt: now,
       avatar: { ...state.avatar, behavior: "admire", expression: "focused", activityLabel: "Waiting for a bite together" },
     };
@@ -563,7 +582,7 @@ export const applyParkFishingInput = (
     cursor >= game.targetStart - edgeEpsilon && cursor <= game.targetEnd + edgeEpsilon,
     now,
     random,
-  ), now);
+  ), now, random, ownedTrophyIds);
 };
 
 const maybeInviteFishingGame = (
@@ -592,11 +611,13 @@ export const advanceParkSimulation = (
     traits: Partial<AivatarGrowthTraits>;
     hasRod: boolean;
     allowFishingInvites?: boolean;
+    ownedTrophyIds?: readonly string[];
     random?: ParkRandomSource;
   },
 ): { state: ParkSimulationState; events: ParkSimulationEvent[] } => {
   const random = options.random ?? Math.random;
   const events: ParkSimulationEvent[] = [];
+  if (input.catchSavePending) return { state: input, events };
   let state = moveAlongPath(input, elapsedSeconds);
 
   if (options.allowFishingInvites === false || !options.hasRod) {
@@ -786,8 +807,11 @@ export const advanceParkSimulation = (
 
   if (state.activity === "bite" && now >= state.activityEndsAt && state.pendingFish) {
     if (canLandFishingCatch(options.traits.focus, random)) {
+      const receipt = createParkCatchReceipt(false, options.ownedTrophyIds, random);
       state = {
         ...state,
+        pendingCatch: receipt,
+        pendingFish: receipt.itemId,
         activity: "reel",
         fishingPose: "reel",
         activityStartedAt: now,
@@ -805,6 +829,8 @@ export const advanceParkSimulation = (
         activity: "wait",
         fishingPose: "focus",
         pendingFish: undefined,
+      pendingCatch: undefined,
+      catchSavePending: undefined,
         activityStartedAt: now,
         activityEndsAt: 0,
         nextBiteAt: now + fishingBiteDelaySeconds(random) * 1000,

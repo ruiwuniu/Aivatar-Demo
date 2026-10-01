@@ -938,7 +938,7 @@ for (const [fishId, weight] of expectedFishWeights) {
   );
   assert.match(appText, new RegExp(`"${fishId}"`));
   assert.match(fishingAnimationText, new RegExp(`"${fishId}": "/park/fish/`));
-  assert.match(storageText, new RegExp(`"${fishId}":`));
+  assert.match(await read("src/park/parkLoot.ts"), new RegExp(`"${fishId}":`));
 }
 assert.match(typesText, /sellPrice\?: number/);
 assert.match(appText, /const sellRawFish = \(item: ItemDefinition\)/);
@@ -2546,5 +2546,7 @@ for (const [name, image, expectedHash] of [
 
 await import("./aivatar-cooking-smoke.mjs");
 await import("./aivatar-park-fishing-smoke.mjs");
+await import("./aivatar-pond-weed-salad-smoke.mjs");
+await import("./aivatar-park-loot-smoke.mjs");
 
 console.log("Park smoke passed: deterministic four-day weekly rain totaling 48 hours, local calendar and DST boundaries, staged weather previews, layered rain ambience and storm thunder, weather-scaled sea haze/pond ripples/grass splashes, static rock/shrub occluders, independent grass ripples, single-draw pond atlas, independent park ambience, foam and cliff-fog motion, looping clouds, handoff, traits, fish, cooking, and window size markers are present.");

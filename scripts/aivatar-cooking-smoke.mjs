@@ -36,6 +36,7 @@ const load = (relative) => {
 };
 const simulation = load("src/game/simulation.ts");
 const gasSprites = load("src/game/gasOvenRangeSprites.ts");
+const cooking = baseline ? {} : load("src/game/pondWeedCooking.ts");
 const i18n = load("src/i18n.ts");
 const appText = source("src/App.tsx");
 const appAst = ts.createSourceFile("src/App.tsx", appText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -79,6 +80,7 @@ const makeHarness = ({ rotation = 0, coffee = true, extraRange = false, rawFish 
   const context = {
     ...simulation,
     ...gasSprites,
+    ...cooking,
     contentRef: { current: content },
     saveRef: { current: {
       furnitureStorage: rawFish
@@ -99,7 +101,7 @@ const makeHarness = ({ rotation = 0, coffee = true, extraRange = false, rawFish 
   context.updateActiveInteraction = (interaction) => { context.activeInteractionRef.current = interaction; };
   context.setSave = (update) => { context.saveRef.current = update(context.saveRef.current); };
   for (const name of [
-    "RAW_FISH_ITEM_IDS", "COOKED_FISH_BY_RAW_ID", "FISH_COOK_SECONDS", "INTERACTION_FEEDBACK_SECONDS",
+    "RAW_FISH_ITEM_IDS", ...(baseline ? ["COOKED_FISH_BY_RAW_ID"] : []), "FISH_COOK_SECONDS", "INTERACTION_FEEDBACK_SECONDS",
     "TABLE_FURNITURE_ID", "COFFEE_ITEM_ID", "EMPTY_TABLE_COFFEE_CAPACITY",
     "getInventoryQuantity", "firstRawFishInFridge", "defaultFurnitureStorage", "normalizeFurnitureStorage",
     "consumeFurnitureStorageItem", "addInventoryItem", "getPlacedItemInteractionTarget", "resetRuntimeToIdle",

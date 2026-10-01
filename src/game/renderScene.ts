@@ -1,4 +1,6 @@
 import { isTerminalBubbleAgent } from "../agentRegistry";
+import { drawFishingLootSprite } from "./fishingLootSprites";
+import { drawPondWeedSaladMeal, drawPondWeedSaladBite, drawPondWeedPreparation } from "./pondWeedSaladAnimation";
 import { MACINTOSH_TERMINAL_SKIN_ID, drawMacintoshTerminal } from "./macintoshTerminal";
 import type { DesktopHitRegion, DesktopPoint, DesktopVendingInteraction, DesktopVendingProductId, DesktopVendingSkinId } from "../desktop/desktopTypes";
 import { getDesktopVendingSprite, DESKTOP_VENDING_DISPENSE_MS, desktopVendingVisualBounds } from "../desktop/desktopVendingMachine";
@@ -4052,7 +4054,9 @@ const drawCookedFishMeal = (
   centerX: number,
   centerY: number,
   facing: AvatarRuntime["facing"],
+  salad = false,
 ) => {
+  if (salad) return drawPondWeedSaladMeal(ctx, centerX, centerY);
   const direction = facing === "left" ? -1 : 1;
   const plate = "#e4d3ad";
   const plateShade = "#b99f76";
@@ -4077,7 +4081,9 @@ const drawCookedFishBite = (
   mouthX: number,
   mouthY: number,
   frame: number,
+  salad = false,
 ) => {
+  if (salad) return drawPondWeedSaladBite(ctx, plateX, plateY, mouthX, mouthY, frame);
   const progress = (Math.sin(frame / 7 - Math.PI / 2) + 1) / 2;
   const biteX = Math.round(plateX + (mouthX - plateX) * progress);
   const biteY = Math.round(
@@ -4096,6 +4102,7 @@ const drawFishEatPose = (
   body: string,
   bodyLight: string,
   ink: string,
+  salad = false,
 ) => {
   if (facing === "back") return;
 
@@ -4116,8 +4123,8 @@ const drawFishEatPose = (
     drawPixelRect(ctx, x + sideDirection * 12, y - 7, 5, 3, bodyLight);
   }
 
-  drawCookedFishMeal(ctx, plateX, plateY, facing);
-  drawCookedFishBite(ctx, plateX, plateY - 2, mouthX, mouthY, frame);
+  drawCookedFishMeal(ctx, plateX, plateY, facing, salad);
+  drawCookedFishBite(ctx, plateX, plateY - 2, mouthX, mouthY, frame, salad);
   drawPixelRect(ctx, mouthX - 3, mouthY + 1, 7, 2, ink);
 };
 
@@ -4499,6 +4506,7 @@ const drawDemoSparkAvatar = (
   ink: string,
   theme: (typeof traitVisualThemes)[DominantTrait],
   dominantTrait: DominantTrait,
+  preparingPondWeed = false,
 ) => {
   const facing = avatar.facing;
   const sideDirection = facing === "left" ? -1 : 1;
@@ -4566,7 +4574,7 @@ const drawDemoSparkAvatar = (
   drawPixelRect(ctx, x - 11, y - 5, 6, 14 + wiggle, body);
   drawPixelRect(ctx, x - 3, y - 3, 6, 15 - wiggle, bodyLight);
   drawPixelRect(ctx, x + 6, y - 5, 6, 13 + wiggle, body);
-  if (facing !== "back") {
+  if (facing !== "back" && !preparingPondWeed) {
     drawPixelRect(ctx, x - 17, y - 1, 6, 11 - wiggle, bodyLight);
     drawPixelRect(ctx, x + 14, y - 1, 6, 11 + wiggle, bodyLight);
   }
@@ -4590,8 +4598,8 @@ const drawDemoSparkAvatar = (
   if (avatar.behavior === "bento") {
     drawBentoEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
-  if (avatar.behavior === "fish") {
-    drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
+  if ((avatar.behavior === "fish" || avatar.behavior === "salad")) {
+    drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink, avatar.behavior === "salad");
   }
   if (avatar.behavior === "cookie") {
     drawCookieEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
@@ -4639,6 +4647,7 @@ export interface AvatarHeldPropGrip {
 export interface AvatarDrawOptions {
   heldPropGrip?: AvatarHeldPropGrip;
   heldPropOverlayOnly?: boolean;
+  pondWeedPreparation?: FurnitureInteractionState | null;
 }
 
 const drawCuteCrayfishAvatar = (
@@ -4651,6 +4660,7 @@ const drawCuteCrayfishAvatar = (
   theme: (typeof traitVisualThemes)[DominantTrait],
   dominantTrait: DominantTrait,
   heldPropGrip?: AvatarHeldPropGrip,
+  preparingPondWeed = false,
 ) => {
   const facing = avatar.facing;
   const sideDirection = facing === "left" ? -1 : 1;
@@ -4936,7 +4946,7 @@ const drawCuteCrayfishAvatar = (
       avatar.behavior === "cookie";
     const isTwoClawHold =
       avatar.behavior === "bento"
-      || avatar.behavior === "fish"
+      || (avatar.behavior === "fish" || avatar.behavior === "salad")
       || avatar.behavior === "read_task_file"
       || avatar.behavior === "read_book";
     const isSinglePropHold =
@@ -5082,7 +5092,7 @@ const drawCuteCrayfishAvatar = (
           },
         ];
       }
-      if (avatar.behavior === "bento" || avatar.behavior === "fish") {
+      if (avatar.behavior === "bento" || (avatar.behavior === "fish" || avatar.behavior === "salad")) {
         const layout = crayfishActionLayout();
         return [
           {
@@ -5308,7 +5318,7 @@ const drawCuteCrayfishAvatar = (
       ];
     }
 
-    if (avatar.behavior === "bento" || avatar.behavior === "fish") {
+    if (avatar.behavior === "bento" || (avatar.behavior === "fish" || avatar.behavior === "salad")) {
       const layout = crayfishActionLayout();
       return [
         {
@@ -5661,10 +5671,10 @@ const drawCuteCrayfishAvatar = (
       return;
     }
 
-    if (avatar.behavior === "fish") {
+    if ((avatar.behavior === "fish" || avatar.behavior === "salad")) {
       const plateCenterX = trayX + 12;
       const plateCenterY = trayY + 1;
-      drawCookedFishMeal(ctx, plateCenterX, plateCenterY, facing);
+      drawCookedFishMeal(ctx, plateCenterX, plateCenterY, facing, avatar.behavior === "salad");
       drawCookedFishBite(
         ctx,
         plateCenterX,
@@ -5672,6 +5682,7 @@ const drawCuteCrayfishAvatar = (
         mouthCenterX,
         biteY,
         frame,
+        avatar.behavior === "salad",
       );
       drawPixelRect(ctx, mouthLeftX, mouthY + 1, 7, 1, ink);
       return;
@@ -5775,7 +5786,7 @@ const drawCuteCrayfishAvatar = (
 
   if (facing === "back") {
     drawCrayfishInteractionPose();
-    drawCrayfishClaws(getCrayfishClawPoses());
+    if (!preparingPondWeed) drawCrayfishClaws(getCrayfishClawPoses());
     drawPixelRect(ctx, x - 12, y - 35, 25, 6, shellDark);
     drawPixelRect(ctx, x - 17, y - 32, 35, 8, shellDark);
     drawPixelRect(ctx, x - 19, y - 26, 39, 9, shellDark);
@@ -5831,7 +5842,7 @@ const drawCuteCrayfishAvatar = (
     drawLittleFeet(y - 1, true);
     drawCrayfishFace();
     drawCrayfishInteractionPose();
-    drawCrayfishClaws(getCrayfishClawPoses());
+    if (!preparingPondWeed) drawCrayfishClaws(getCrayfishClawPoses());
   } else {
     drawPixelRect(ctx, x - 12, y - 35, 26, 6, shellDark);
     drawPixelRect(ctx, x - 17, y - 31, 36, 8, shellDark);
@@ -5874,7 +5885,7 @@ const drawCuteCrayfishAvatar = (
     drawLittleFeet(y + 3);
     drawCrayfishFace();
     drawCrayfishInteractionPose();
-    drawCrayfishClaws(getCrayfishClawPoses());
+    if (!preparingPondWeed) drawCrayfishClaws(getCrayfishClawPoses());
   }
 
   drawTraitStatusMotif(ctx, dominantTrait, avatar, x, y, frame, theme);
@@ -6117,6 +6128,7 @@ const drawMoodSlimeAvatar = (
   stats: PetStats,
   theme: (typeof traitVisualThemes)[DominantTrait],
   dominantTrait: DominantTrait,
+  preparingPondWeed = false,
 ) => {
   const facing = avatar.facing;
   const sideDirection = facing === "left" ? -1 : 1;
@@ -6290,7 +6302,7 @@ const drawMoodSlimeAvatar = (
     }
   }
 
-  if (needsPseudopods) {
+  if (needsPseudopods && !preparingPondWeed) {
     drawMoodSlimePseudopods(ctx, avatar, frame, x, y, body, bodyLight, palette.outline);
   }
 
@@ -6303,8 +6315,8 @@ const drawMoodSlimeAvatar = (
   if (avatar.behavior === "bento") {
     drawBentoEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
-  if (avatar.behavior === "fish") {
-    drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
+  if ((avatar.behavior === "fish" || avatar.behavior === "salad")) {
+    drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink, avatar.behavior === "salad");
   }
   if (avatar.behavior === "cookie") {
     drawCookieEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
@@ -6377,6 +6389,7 @@ const drawWaveLizardAvatar = (
   wiggle: number,
   theme: (typeof traitVisualThemes)[DominantTrait],
   dominantTrait: DominantTrait,
+  preparingPondWeed = false,
 ) => {
   const facing = avatar.facing;
   const sideDirection = facing === "left" ? -1 : 1;
@@ -6403,7 +6416,7 @@ const drawWaveLizardAvatar = (
     avatar.behavior === "coffee" ||
     avatar.behavior === "cola" ||
     avatar.behavior === "bento" ||
-    avatar.behavior === "fish" ||
+    (avatar.behavior === "fish" || avatar.behavior === "salad") ||
     avatar.behavior === "cookie" ||
     avatar.behavior === "phone" ||
     avatar.behavior === "fetch_task_file" ||
@@ -6889,8 +6902,8 @@ const drawWaveLizardAvatar = (
       drawLizardArm(x - side * 6, y - 13, plateX - side * 11, plateY + 7, -side);
     }
 
-    drawCookedFishMeal(ctx, plateX, plateY, facing);
-    drawCookedFishBite(ctx, plateX, plateY - 2, mouthX, mouthY, frame);
+    drawCookedFishMeal(ctx, plateX, plateY, facing, avatar.behavior === "salad");
+    drawCookedFishBite(ctx, plateX, plateY - 2, mouthX, mouthY, frame, avatar.behavior === "salad");
     drawPixelRect(ctx, mouthX - (front ? 3 : side * 2), mouthY + 1, 6, 2, ink);
   };
 
@@ -7021,7 +7034,7 @@ const drawWaveLizardAvatar = (
 
   if (isTyping) {
     drawLizardTypingPose();
-  } else if (!needsSharedPose && !completeYawn) {
+  } else if (!needsSharedPose && !completeYawn && !preparingPondWeed) {
     drawDefaultLizardArms();
   }
 
@@ -7034,7 +7047,7 @@ const drawWaveLizardAvatar = (
   if (avatar.behavior === "bento") {
     drawLizardBentoPose();
   }
-  if (avatar.behavior === "fish") {
+  if ((avatar.behavior === "fish" || avatar.behavior === "salad")) {
     drawLizardFishPose();
   }
   if (avatar.behavior === "cookie") {
@@ -7076,6 +7089,7 @@ const drawCutePenguinAvatar = (
   dominantTrait: DominantTrait,
   heldPropGrip?: AvatarHeldPropGrip,
   heldPropOverlayOnly = false,
+  preparingPondWeed = false,
 ) => {
   const facing = avatar.facing;
   const sideDirection = facing === "left" ? -1 : 1;
@@ -7111,7 +7125,7 @@ const drawCutePenguinAvatar = (
     avatar.behavior === "coffee" ||
     avatar.behavior === "cola" ||
     avatar.behavior === "bento" ||
-    avatar.behavior === "fish" ||
+    (avatar.behavior === "fish" || avatar.behavior === "salad") ||
     avatar.behavior === "cookie" ||
     avatar.behavior === "phone" ||
     avatar.behavior === "fetch_task_file" ||
@@ -7488,7 +7502,7 @@ const drawCutePenguinAvatar = (
 
   if (!heldPropGrip && isTyping) {
     drawPenguinTypingPose();
-  } else if (!heldPropGrip && !needsSharedPose && !completeYawn) {
+  } else if (!heldPropGrip && !needsSharedPose && !completeYawn && !preparingPondWeed) {
     drawDefaultFlippers();
   }
 
@@ -7503,6 +7517,24 @@ const drawCutePenguinAvatar = (
   }
   if (avatar.behavior === "fish") {
     drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
+  }
+  if (avatar.behavior === "salad" && facing !== "back") {
+    const front = facing === "front";
+    const side = facing === "left" ? -1 : 1;
+    const bowlX = front ? x : x + side * 18;
+    const bowlY = y - 4;
+    // The penguin's side beak projects beyond its cheek; shared fish anchors
+    // are retained for fish, while salad reaches the actual beak.
+    const mouthX = front ? x + waddle : x + side * 19 + waddle;
+    const mouthY = y - (front ? 19 : 23);
+    if (front) {
+      drawFlipper(x - 15, y - 16, bowlX - 11, bowlY + 4, -1, true);
+      drawFlipper(x + 15, y - 16, bowlX + 11, bowlY + 4, 1, true);
+    } else {
+      drawFlipper(x + side * 10, y - 16, bowlX - side * 8, bowlY + 4, side, true);
+    }
+    drawPondWeedSaladMeal(ctx, bowlX, bowlY);
+    drawPondWeedSaladBite(ctx, bowlX, bowlY - 2, mouthX, mouthY, frame);
   }
   if (avatar.behavior === "cookie") {
     drawCookieEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
@@ -7541,6 +7573,7 @@ const drawCuteGhostAvatar = (
   y: number,
   theme: (typeof traitVisualThemes)[DominantTrait],
   dominantTrait: DominantTrait,
+  preparingPondWeed = false,
 ) => {
   const facing = avatar.facing;
   const sideDirection = facing === "left" ? -1 : 1;
@@ -7943,14 +7976,14 @@ const drawCuteGhostAvatar = (
       return;
     }
 
-    if (avatar.behavior === "fish") {
+    if ((avatar.behavior === "fish" || avatar.behavior === "salad")) {
       const plateX = front ? x : propX;
       const plateY = y - 8 + bob;
       drawGhostArm(plateX - 12, plateY + 5, -1);
       drawGhostArm(plateX + 12, plateY + 5, 1);
-      drawCookedFishMeal(ctx, plateX, plateY, facing);
-      drawCookedFishBite(ctx, plateX, plateY - 2, mouthX, mouthY, frame);
-      drawGhostChewMouth("#d98a48");
+      drawCookedFishMeal(ctx, plateX, plateY, facing, avatar.behavior === "salad");
+      drawCookedFishBite(ctx, plateX, plateY - 2, mouthX, mouthY, frame, avatar.behavior === "salad");
+      drawGhostChewMouth(avatar.behavior === "salad" ? "#a0bd66" : "#d98a48");
       return;
     }
 
@@ -8074,7 +8107,7 @@ const drawCuteGhostAvatar = (
     avatar.behavior === "coffee" ||
     avatar.behavior === "cola" ||
     avatar.behavior === "bento" ||
-    avatar.behavior === "fish" ||
+    (avatar.behavior === "fish" || avatar.behavior === "salad") ||
     avatar.behavior === "cookie" ||
     avatar.behavior === "phone" ||
     avatar.behavior === "admire" ||
@@ -8087,7 +8120,7 @@ const drawCuteGhostAvatar = (
     if (!backTyping) {
       drawGhostInteractionPose();
     }
-  } else if (!completeYawn) {
+  } else if (!completeYawn && !preparingPondWeed) {
     if (facing === "left" || facing === "right") {
       drawGhostArm(x + sideDirection * 22, y - 16 + wave, sideDirection);
     } else {
@@ -8173,6 +8206,27 @@ export const drawAvatar = (
   const ink = theme.ink;
   const facing = avatar.facing;
   const sideDirection = facing === "left" ? -1 : 1;
+  const preparingPondWeed = avatar.behavior === "cook"
+    && options.pondWeedPreparation?.kind === "cook"
+    && options.pondWeedPreparation.itemId === "pond-weed";
+  const preparationPalette = appearanceId === "mood-slime"
+    ? { ...slimePaletteForMood(stats.mood) }
+    : appearanceId === "cute-crayfish"
+      ? { body: "#ef4444", light: "#fecaca", outline: "#6f1d1b" }
+      : appearanceId === "cute-ghost"
+        ? { body: "#e0f7ff", light: "#ffffff", outline: "#7dd3fc" }
+        : appearanceId === "cute-penguin"
+          ? { body: "#151b24", light: "#3a4351", outline: "#080d14" }
+          : appearanceId === "wave-lizard"
+            ? { body: "#4ade80", light: "#bbf7d0", outline: "#14532d" }
+            : { body, light: bodyLight, outline: ink };
+  const drawPreparation = (pass: "behind-avatar" | "front-avatar") => {
+    if (!preparingPondWeed) return;
+    drawPondWeedPreparation(ctx, {
+      ...avatar, x, y: appearanceId === "cute-penguin" ? Math.round(avatar.y) : y,
+    }, appearanceId, options.pondWeedPreparation, frame, pass, preparationPalette);
+  };
+  drawPreparation("behind-avatar");
 
   if (appearanceId === "demo-spark") {
     drawDemoSparkAvatar(
@@ -8187,12 +8241,15 @@ export const drawAvatar = (
       ink,
       theme,
       dominantTrait,
+      preparingPondWeed,
     );
+    drawPreparation("front-avatar");
     return;
   }
 
   if (appearanceId === "mood-slime") {
-    drawMoodSlimeAvatar(ctx, avatar, frame, x, y, stats, theme, dominantTrait);
+    drawMoodSlimeAvatar(ctx, avatar, frame, x, y, stats, theme, dominantTrait, preparingPondWeed);
+    drawPreparation("front-avatar");
     return;
   }
 
@@ -8207,12 +8264,15 @@ export const drawAvatar = (
       theme,
       dominantTrait,
       options.heldPropGrip,
+      preparingPondWeed,
     );
+    drawPreparation("front-avatar");
     return;
   }
 
   if (appearanceId === "cute-ghost") {
-    drawCuteGhostAvatar(ctx, avatar, frame, x, y, theme, dominantTrait);
+    drawCuteGhostAvatar(ctx, avatar, frame, x, y, theme, dominantTrait, preparingPondWeed);
+    drawPreparation("front-avatar");
     return;
   }
 
@@ -8227,12 +8287,15 @@ export const drawAvatar = (
       dominantTrait,
       options.heldPropGrip,
       options.heldPropOverlayOnly,
+      preparingPondWeed,
     );
+    drawPreparation("front-avatar");
     return;
   }
 
   if (appearanceId === "wave-lizard") {
-    drawWaveLizardAvatar(ctx, avatar, frame, x, y, wiggle, theme, dominantTrait);
+    drawWaveLizardAvatar(ctx, avatar, frame, x, y, wiggle, theme, dominantTrait, preparingPondWeed);
+    drawPreparation("front-avatar");
     return;
   }
 
@@ -8253,7 +8316,7 @@ export const drawAvatar = (
   drawPixelRect(ctx, x - 11, y - 5, 6, 14 + wiggle, body);
   drawPixelRect(ctx, x - 3, y - 3, 6, 15 - wiggle, body);
   drawPixelRect(ctx, x + 6, y - 5, 6, 13 + wiggle, body);
-  if (facing !== "back") {
+  if (facing !== "back" && !preparingPondWeed) {
     drawPixelRect(ctx, x - 17, y - 1, 6, 11 - wiggle, body);
     drawPixelRect(ctx, x + 14, y - 1, 6, 11 + wiggle, body);
   }
@@ -8362,8 +8425,8 @@ export const drawAvatar = (
   if (avatar.behavior === "bento") {
     drawBentoEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
   }
-  if (avatar.behavior === "fish") {
-    drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink);
+  if ((avatar.behavior === "fish" || avatar.behavior === "salad")) {
+    drawFishEatPose(ctx, x, y, frame, facing, body, bodyLight, ink, avatar.behavior === "salad");
   }
 
   if (avatar.behavior === "cookie") {
@@ -8408,6 +8471,7 @@ export const drawAvatar = (
 
   drawTraitStatusMotif(ctx, dominantTrait, avatar, x, y, frame, theme);
   drawTraitMicroExpression(ctx, dominantTrait, avatar, x, y, frame, theme);
+  drawPreparation("front-avatar");
 };
 
 const rawFishCookingPalettes: Record<
@@ -10188,6 +10252,7 @@ const drawPlaceableItem = (
   paintingProgress = 1,
   terminalState?: TerminalRenderState,
 ) => {
+  if (drawFishingLootSprite(ctx, itemId, x, y, { ghost })) return;
   switch (itemId) {
     case "cozy-rug":
       drawCozyRug(ctx, x, y, ghost);
@@ -10370,7 +10435,7 @@ const drawPlacedItem = (
   const paintingProgress = activeDraft ? paintingProgressRatio(activeDraft) : 1;
   const brewing =
     ((definition.id === "coffee-machine" && activeInteraction?.kind === "brew") ||
-      (definition.id === "gas-oven-range" && activeInteraction?.kind === "cook")) &&
+      (definition.id === "gas-oven-range" && isRawFishCookingInteraction(activeInteraction))) &&
     activeInteraction?.furnitureId === item.id;
   const gameConsolePlaying = isAvatarPlayingGameConsole(
     avatar,
@@ -13487,6 +13552,7 @@ const drawAvatarRenderLayer = (
       status,
       memory,
       avatarAppearanceId,
+      { pondWeedPreparation: activeInteraction },
     );
     drawSleepBlanketOverlay(ctx, content, cookingRender.runtime);
     drawFishInteractionOverlay(

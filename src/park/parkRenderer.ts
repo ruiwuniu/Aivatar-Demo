@@ -17,7 +17,7 @@ import {
   resolveParkFishingVisualAvatar,
 } from "./parkFishingAnimation";
 import type { ParkBenchPose, ParkFishingPose } from "./parkRuntime";
-import type { ParkRawFishId } from "./parkProbability";
+import type { ParkCatchItemId } from "./parkLoot";
 import {
   ensureParkCloudAtlas,
   getParkCloudAtlasStyles,
@@ -1496,7 +1496,7 @@ export interface ParkRenderOptions {
   benchPose?: ParkBenchPose;
   benchPoseStartedAt?: number;
   fishingSpot?: ParkFishingSpot;
-  displayedFish?: ParkRawFishId;
+  displayedFish?: ParkCatchItemId;
   selectedObjectId?: string;
   renderProfile?: ParkRenderProfile;
   weather?: ParkWeatherFrame;

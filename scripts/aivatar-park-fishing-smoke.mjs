@@ -470,6 +470,7 @@ const flushHarness = (state, { preview = false, record, flush } = {}) => {
     isStoreClosing: () => true,
     performance: { now: () => clock },
     finishParkFishingGameOnExit: runtime.finishParkFishingGameOnExit,
+    resumeSavedCatch: () => {},
     recordParkCatch: async (slot, fishId) => {
       catches.push({ slot, fishId });
       return record ? record() : {};
@@ -539,6 +540,10 @@ check("App inputs use current state, reject background clicks, and play the winn
     document: { visibilityState: "visible", hasFocus: () => focused },
     performance: { now: () => clock },
     applyParkFishingInput: runtime.applyParkFishingInput,
+    ownedFishingTrophies: () => [],
+    hostSlotId: "synthetic",
+    readParkSaveSlot: () => null,
+    persistLandedCatch: () => {},
     playParkFishingSound: (_bank, pose) => sounds.push(pose),
     fishingAudioBankRef: { current: {} },
     publishFishingOverlay: () => {},

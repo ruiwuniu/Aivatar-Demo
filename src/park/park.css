@@ -915,3 +915,6 @@
 @media (prefers-reduced-motion: reduce) {
   .park-fishing-wait i { animation: none; }
 }
+
+.park-fishing-loot-result { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; color: #fff2cd; }
+.park-fishing-loot-result img { width: 32px; height: 32px; object-fit: contain; image-rendering: pixelated; }

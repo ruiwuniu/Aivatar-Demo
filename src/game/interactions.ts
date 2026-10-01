@@ -1,3 +1,4 @@
+import { isFishingLootSprite, fishingLootVisualBounds } from "./fishingLootSprites";
 import type {
   AivatarContent,
   FurnitureDefinition,
@@ -725,6 +726,7 @@ export const findWindowAt = (
 };
 
 export const placedItemBounds = (item: PlacedItem) => {
+  if (isFishingLootSprite(item.itemId)) return fishingLootVisualBounds(item);
   switch (item.itemId) {
     case "cozy-rug":
       return { x: item.x - 44, y: item.y - 24, width: 88, height: 48 };

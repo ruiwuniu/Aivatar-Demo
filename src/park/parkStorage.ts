@@ -14,19 +14,13 @@ import {
   type JsonReadView,
 } from "../persistence/savePersistence";
 import { appStorage } from "../persistence/saveStore";
+import { createParkCatchReceipt, isFishingTrophy, ownedFishingTrophies, PARK_CATCH_NAMES, type ParkCatchItemId, type ParkCatchReceipt } from "./parkLoot";
 
 export const PARK_LAYOUT_STORAGE_KEY = "aivatar.park.layout.v2";
 export const PARK_LAYOUT_EVENT = "aivatar:park-layout";
 export const SAVE_SLOT_KEY_PREFIX = "aivatar.saveSlot.v1.";
 const FRIDGE_FISH_CAPACITY = 999;
-const PARK_FISH_NAMES: Record<ParkRawFishId, string> = {
-  "raw-crucian-carp": "Crucian Carp",
-  "raw-bluegill": "Bluegill",
-  "raw-black-bass": "Black Bass",
-  "raw-yellow-perch": "Yellow Perch",
-  "raw-weather-loach": "Weather Loach",
-  "raw-rainbow-trout": "Rainbow Trout",
-};
+
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -218,7 +212,7 @@ export const hasFishingRod = (save: AivatarSaveState | null) =>
 
 const addFridgeFish = (
   storage: FurnitureStorageEntry[] | undefined,
-  fishId: ParkRawFishId,
+  fishId: ParkCatchItemId,
 ) => {
   const existing = Array.isArray(storage) ? storage : [];
   const found = existing.find(
@@ -239,7 +233,7 @@ const addFridgeFish = (
 
 const recordCatchMemory = (
   memory: AivatarMemory | undefined,
-  fishId: ParkRawFishId,
+  fishId: ParkCatchItemId,
   eventId: string,
   now: string,
 ): AivatarMemory | undefined => {
@@ -253,7 +247,7 @@ const recordCatchMemory = (
         id: eventId,
         type: "recovery_used" as const,
         timestamp: now,
-        summary: `Caught ${PARK_FISH_NAMES[fishId]} at the park`,
+        summary: `Caught ${PARK_CATCH_NAMES[fishId]} at the park`,
         itemId: fishId,
         behavior: "relax" as const,
       },
@@ -268,21 +262,39 @@ const recordCatchMemory = (
   };
 };
 
-export const recordParkCatch = (slotId: string, fishId: ParkRawFishId) => {
-  const eventId = `park-catch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+// The receipt is sampled once by the runtime. Transaction retries may change
+// a duplicate trophy into its preselected ordinary fish, never reroll rarity.
+export const recordParkCatch = (slotId: string, catchResult: ParkCatchReceipt | ParkRawFishId) => {
+  const receipt: ParkCatchReceipt = typeof catchResult === "string"
+    ? { ...createParkCatchReceipt(false), itemId: catchResult, fallbackFishId: catchResult }
+    : catchResult;
   const now = new Date().toISOString();
   return mutateParkSaveSlot(slotId, (save) => {
+    if (save.parkCatchReceipts?.some((entry) => entry.catchId === receipt.catchId)) return save;
+    const itemId = isFishingTrophy(receipt.itemId) && ownedFishingTrophies(save).includes(receipt.itemId)
+      ? receipt.fallbackFishId : receipt.itemId;
     const rewards = fishingRewards();
+    const trophy = isFishingTrophy(itemId);
     return {
       ...save,
+      parkCatchReceipts: [...(save.parkCatchReceipts ?? []), { catchId: receipt.catchId, itemId }].slice(-1024),
       petStats: {
         ...save.petStats,
         mood: Math.min(100, save.petStats.mood + rewards.mood),
       },
-      furnitureStorage: addFridgeFish(save.furnitureStorage, fishId),
-      memory: recordCatchMemory(save.memory, fishId, eventId, now),
+      inventory: trophy ? [...save.inventory.filter((entry) => entry.itemId !== itemId), { itemId, quantity: 1 }] : save.inventory,
+      furnitureStorage: trophy ? save.furnitureStorage : addFridgeFish(save.furnitureStorage, itemId),
+      memory: recordCatchMemory(save.memory, itemId, receipt.catchId, now),
     };
   });
+};
+
+export const savedParkCatchItem = (save: AivatarSaveState, receipt: ParkCatchReceipt): ParkCatchItemId | undefined =>
+  save.parkCatchReceipts?.find((entry) => entry.catchId === receipt.catchId)?.itemId as ParkCatchItemId | undefined;
+
+export const readCommittedParkCatchItem = (slotId: string, receipt: ParkCatchReceipt): ParkCatchItemId | undefined => {
+  const save = readJson(parkSaveStorageKey(slotId));
+  return isRecord(save) ? savedParkCatchItem(save as unknown as AivatarSaveState, receipt) : undefined;
 };
 
 export const recordParkMoodRecovery = (slotId: string, mood = 1) => {

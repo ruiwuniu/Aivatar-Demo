@@ -67,6 +67,7 @@ const ARRIVAL_GATED_BEHAVIORS: BehaviorName[] = [
   "cola",
   "bento",
   "fish",
+  "salad",
   "cookie",
   "brew",
   "cook",
@@ -837,7 +838,7 @@ const behaviorInteractionAlternates = (
     return table ? getFurnitureInteractionStandpoints(table, content, behavior) : undefined;
   }
 
-  if (behavior === "bento" || behavior === "fish" || behavior === COOKIE_ITEM_ID) {
+  if (behavior === "bento" || behavior === "fish" || behavior === "salad" || behavior === COOKIE_ITEM_ID) {
     const table = content.room.furniture.find((item) => item.id === "table");
     const fridge = content.room.furniture.find((item) => item.id === "fridge");
     const target = table ?? fridge;
@@ -1004,7 +1005,7 @@ export const targetForBehavior = (
     return targetNearFurniture(table, { targetX: 246, targetY: 202 });
   }
 
-  if (behavior === "bento" || behavior === "fish" || behavior === COOKIE_ITEM_ID) {
+  if (behavior === "bento" || behavior === "fish" || behavior === "salad" || behavior === COOKIE_ITEM_ID) {
     const table = content.room.furniture.find((item) => item.id === "table");
     const fridge = content.room.furniture.find((item) => item.id === "fridge");
     return targetNearFurniture(table ?? fridge, { targetX: 246, targetY: 202 });
@@ -1116,6 +1117,7 @@ export const expressionForBehavior = (
     case "cola":
     case "bento":
     case "fish":
+    case "salad":
     case "cookie":
     case "fetch_task_file":
     case "carry_task_file":
@@ -1156,6 +1158,7 @@ const shouldFaceFrontAtTarget = (behavior: BehaviorName) =>
     "cola",
     "bento",
     "fish",
+    "salad",
     "cookie",
     "snack",
     "brew",
@@ -1233,6 +1236,7 @@ const interactionStopDistanceForBehavior = (behavior: BehaviorName) => {
       "cola",
       "bento",
       "fish",
+      "salad",
       "cookie",
       "snack",
       "brew",
@@ -2126,6 +2130,8 @@ const activityLabelForBehavior = (behavior: BehaviorName): string => {
       return "Eating bento";
     case "fish":
       return "Eating fish";
+    case "salad":
+      return "Eating salad";
     case "cookie":
       return "Eating cookie";
     case "admire":
