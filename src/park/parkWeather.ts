@@ -71,16 +71,16 @@ export interface ParkWeatherRuntime {
   scheduleCache: Map<string, ParkWeeklyWeatherSchedule>;
 }
 
-export const PARK_WEATHER_RAINY_DAYS_PER_WEEK = 2;
-export const PARK_WEATHER_MIN_RAIN_DURATION_MS = 10 * 60 * 1000;
-export const PARK_WEATHER_MAX_RAIN_DURATION_MS = 6 * 60 * 60 * 1000;
+export const PARK_WEATHER_RAINY_DAYS_PER_WEEK = 4;
+export const PARK_WEATHER_WEEKLY_RAIN_DURATION_MS = 48 * 60 * 60 * 1000;
+export const PARK_WEATHER_MIN_RAIN_DURATION_MS = 6 * 60 * 60 * 1000;
+export const PARK_WEATHER_MAX_RAIN_DURATION_MS = 18 * 60 * 60 * 1000;
 export const PARK_WEATHER_MIN_MODERATE_DURATION_MS = 10 * 60 * 1000;
 export const PARK_WEATHER_MIN_HEAVY_DURATION_MS = 10 * 60 * 1000;
 export const PARK_WEATHER_MIN_STORM_DURATION_MS = 5 * 60 * 1000;
 export const PARK_WEATHER_MIN_CLEAR_GAP_MS = 10 * 60 * 1000;
 export const PARK_WEATHER_ACCELERATED_CYCLE_MS = 60 * 1000;
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
@@ -147,28 +147,30 @@ const localDayOffset = (weekStartMs: number, dayIndex: number) => {
   return date.getTime();
 };
 
-const weightedRainDuration = (random: () => number) => {
-  const roll = random();
-  let minimumMinutes: number;
-  let maximumMinutes: number;
-  if (roll < 0.4) {
-    minimumMinutes = 10;
-    maximumMinutes = 60;
-  } else if (roll < 0.72) {
-    minimumMinutes = 60;
-    maximumMinutes = 120;
-  } else if (roll < 0.92) {
-    minimumMinutes = 120;
-    maximumMinutes = 240;
-  } else {
-    minimumMinutes = 240;
-    maximumMinutes = 360;
-  }
-  const minutes = minimumMinutes + random() * (maximumMinutes - minimumMinutes);
-  return Math.max(
-    PARK_WEATHER_MIN_RAIN_DURATION_MS,
-    Math.min(PARK_WEATHER_MAX_RAIN_DURATION_MS, Math.round(minutes * MINUTE_MS)),
+const weeklyRainDurations = (seedKey: string, weekKey: string) => {
+  const random = seededRandom(hashString(`${seedKey}/${weekKey}/rain-durations`));
+  const minimumMinutes = PARK_WEATHER_MIN_RAIN_DURATION_MS / MINUTE_MS;
+  const maximumMinutes = PARK_WEATHER_MAX_RAIN_DURATION_MS / MINUTE_MS;
+  let remainingMinutes = PARK_WEATHER_WEEKLY_RAIN_DURATION_MS / MINUTE_MS;
+  const durations = Array.from(
+    { length: PARK_WEATHER_RAINY_DAYS_PER_WEEK },
+    (_, index) => {
+      const remainingEvents = PARK_WEATHER_RAINY_DAYS_PER_WEEK - index - 1;
+      // Reserve enough of the weekly budget for every remaining event's bounds.
+      const lower = Math.max(minimumMinutes, remainingMinutes - remainingEvents * maximumMinutes);
+      const upper = Math.min(maximumMinutes, remainingMinutes - remainingEvents * minimumMinutes);
+      const minutes = lower + Math.floor(random() * (upper - lower + 1));
+      remainingMinutes -= minutes;
+      return minutes * MINUTE_MS;
+    },
   );
+
+  // Shuffle so the remainder allocation is not always assigned to the last rain day.
+  for (let index = durations.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [durations[index], durations[swapIndex]] = [durations[swapIndex]!, durations[index]!];
+  }
+  return durations;
 };
 
 const intensityAmount = (level: number) => [0, 0.09, 0.28, 0.52, 0.76, 1][level] ?? 0;
@@ -266,11 +268,11 @@ const makeRainEvent = (
   weekKey: string,
   weekStartMs: number,
   localDayIndex: number,
+  rainDurationMs: number,
 ) => {
   const random = seededRandom(hashString(`${seedKey}/${weekKey}/day-${localDayIndex}`));
   const dayStartMs = localDayOffset(weekStartMs, localDayIndex);
   const nextDayStartMs = localDayOffset(weekStartMs, localDayIndex + 1);
-  const rainDurationMs = weightedRainDuration(random);
   const gatheringDurationMs = Math.round((5 + random() * 15) * MINUTE_MS);
   const clearingDurationMs = Math.round((5 + random() * 25) * MINUTE_MS);
   const earliestGatheringStartMs = dayStartMs + PARK_WEATHER_MIN_CLEAR_GAP_MS;
@@ -314,11 +316,12 @@ export const createParkWeeklyWeatherSchedule = (
     selectedDays.push(availableDays.splice(selectedIndex, 1)[0]!);
   }
   selectedDays.sort((left, right) => left - right);
+  const durations = weeklyRainDurations(seedKey, weekKey);
   return {
     weekKey,
     weekStartMs,
-    events: selectedDays.map((dayIndex) =>
-      makeRainEvent(seedKey, weekKey, weekStartMs, dayIndex)),
+    events: selectedDays.map((dayIndex, index) =>
+      makeRainEvent(seedKey, weekKey, weekStartMs, dayIndex, durations[index]!)),
   };
 };
 
@@ -402,10 +405,11 @@ const taperingAt = (event: ParkRainEvent, nowMs: number) => {
 };
 
 const automaticWeather = (runtime: ParkWeatherRuntime, nowMs: number) => {
+  const weekStartMs = localWeekStart(nowMs);
   const schedules = [
-    scheduleForTimestamp(runtime, nowMs - 7 * DAY_MS),
+    scheduleForTimestamp(runtime, localDayOffset(weekStartMs, -7)),
     scheduleForTimestamp(runtime, nowMs),
-    scheduleForTimestamp(runtime, nowMs + 7 * DAY_MS),
+    scheduleForTimestamp(runtime, localDayOffset(weekStartMs, 7)),
   ];
   const events = schedules
     .flatMap((schedule) => schedule.events)

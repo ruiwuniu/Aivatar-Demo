@@ -391,6 +391,8 @@ const {
   PARK_WEATHER_MIN_MODERATE_DURATION_MS,
   PARK_WEATHER_MIN_RAIN_DURATION_MS,
   PARK_WEATHER_MIN_STORM_DURATION_MS,
+  PARK_WEATHER_RAINY_DAYS_PER_WEEK,
+  PARK_WEATHER_WEEKLY_RAIN_DURATION_MS,
   createParkWeeklyWeatherSchedule,
   createParkWeatherRuntime,
   resolveParkWeather,
@@ -399,36 +401,85 @@ const {
 const weatherSeed = "park-smoke-slot";
 const firstWeatherWeek = new Date(2026, 0, 5, 12, 0, 0, 0);
 const scheduledEventsForWeatherSmoke = [];
+const WEATHER_HOUR_MS = 60 * 60 * 1000;
+assert.equal(PARK_WEATHER_RAINY_DAYS_PER_WEEK, 4);
+assert.equal(PARK_WEATHER_MIN_RAIN_DURATION_MS, 6 * WEATHER_HOUR_MS);
+assert.equal(PARK_WEATHER_MAX_RAIN_DURATION_MS, 18 * WEATHER_HOUR_MS);
+assert.equal(PARK_WEATHER_WEEKLY_RAIN_DURATION_MS, 48 * WEATHER_HOUR_MS);
+const weatherLocalDateKey = (timestampMs) => {
+  const date = new Date(timestampMs);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+};
+const weatherLocalDayOffset = (timestampMs, days) => {
+  const date = new Date(timestampMs);
+  date.setDate(date.getDate() + days);
+  return date.getTime();
+};
+const assertWeeklyWeatherSchedule = (schedule) => {
+  assert.equal(schedule.events.length, 4, "every local week must choose exactly four rain days");
+  assert.equal(new Set(schedule.events.map((event) => event.localDayIndex)).size, 4);
+  const weekStart = new Date(schedule.weekStartMs);
+  assert.equal(weekStart.getDay(), 1, "weather weeks must start on local Monday");
+  assert.equal(weekStart.getHours(), 0);
+  assert.equal(weekStart.getMinutes(), 0);
+  assert.equal(weekStart.getSeconds(), 0);
+  assert.equal(weekStart.getMilliseconds(), 0);
+  assert.equal(schedule.weekKey, weatherLocalDateKey(schedule.weekStartMs));
+  assert.equal(
+    schedule.events.reduce((total, event) => total + event.rainDurationMs, 0),
+    48 * WEATHER_HOUR_MS,
+    "weekly rain intervals must total exactly 48 elapsed hours, excluding clouds",
+  );
+  for (const event of schedule.events) {
+    assert(Number.isInteger(event.localDayIndex) && event.localDayIndex >= 0 && event.localDayIndex < 7);
+    assert.equal(event.dayStartMs, weatherLocalDayOffset(schedule.weekStartMs, event.localDayIndex));
+    assert(Number.isInteger(event.rainDurationMs));
+    assert(event.rainDurationMs >= PARK_WEATHER_MIN_RAIN_DURATION_MS);
+    assert(event.rainDurationMs <= PARK_WEATHER_MAX_RAIN_DURATION_MS);
+    assert.equal(event.rainEndMs - event.rainStartMs, event.rainDurationMs);
+    const nextDayStartMs = weatherLocalDayOffset(event.dayStartMs, 1);
+    for (const timestampMs of [
+      event.gatheringStartMs,
+      event.rainStartMs,
+      event.rainEndMs - 1,
+      event.clearingEndMs,
+    ]) {
+      assert.equal(weatherLocalDateKey(timestampMs), weatherLocalDateKey(event.dayStartMs));
+      assert(timestampMs >= event.dayStartMs && timestampMs < nextDayStartMs);
+    }
+    assert(event.gatheringStartMs - event.dayStartMs >= PARK_WEATHER_MIN_CLEAR_GAP_MS);
+    assert(event.gatheringStartMs < event.rainStartMs);
+    assert(event.rainStartMs < event.rainEndMs);
+    assert(event.rainEndMs < event.clearingEndMs);
+    assert.deepEqual(event.intensityKeyframes[0], { offsetMs: 0, amount: 0 });
+    assert.deepEqual(event.intensityKeyframes.at(-1), { offsetMs: event.rainDurationMs, amount: 0 });
+    for (let index = 0; index < event.intensityKeyframes.length; index += 1) {
+      const keyframe = event.intensityKeyframes[index];
+      assert(Number.isInteger(keyframe.offsetMs));
+      assert(Number.isFinite(keyframe.amount) && keyframe.amount >= 0 && keyframe.amount <= 1);
+      if (index > 0) assert(keyframe.offsetMs > event.intensityKeyframes[index - 1].offsetMs);
+      if (index > 0 && index < event.intensityKeyframes.length - 1) {
+        assert(keyframe.amount > 0, "a rain interval must not contain a dry interior stage");
+      }
+    }
+  }
+  for (let index = 1; index < schedule.events.length; index += 1) {
+    assert(schedule.events[index].gatheringStartMs - schedule.events[index - 1].clearingEndMs
+      >= PARK_WEATHER_MIN_CLEAR_GAP_MS);
+  }
+};
 for (let weekIndex = 0; weekIndex < 16; weekIndex += 1) {
   const timestamp = new Date(firstWeatherWeek);
   timestamp.setDate(timestamp.getDate() + weekIndex * 7);
   const schedule = createParkWeeklyWeatherSchedule(weatherSeed, timestamp.getTime());
   const repeatedSchedule = createParkWeeklyWeatherSchedule(weatherSeed, timestamp.getTime());
   assert.deepEqual(schedule, repeatedSchedule, "weekly rain schedule must survive reloads");
-  assert.equal(schedule.events.length, 2, "every local week must choose exactly two rain days");
-  assert.equal(
-    new Set(schedule.events.map((event) => event.localDayIndex)).size,
-    2,
-    "weekly rainy days must be unique",
-  );
+  assertWeeklyWeatherSchedule(schedule);
   scheduledEventsForWeatherSmoke.push(...schedule.events);
-  for (const event of schedule.events) {
-    assert(event.rainDurationMs >= PARK_WEATHER_MIN_RAIN_DURATION_MS);
-    assert(event.rainDurationMs <= PARK_WEATHER_MAX_RAIN_DURATION_MS);
-    assert.equal(event.rainEndMs - event.rainStartMs, event.rainDurationMs);
-    const localDay = new Date(event.dayStartMs).toDateString();
-    assert.equal(new Date(event.gatheringStartMs).toDateString(), localDay);
-    assert.equal(new Date(event.rainStartMs).toDateString(), localDay);
-    assert.equal(new Date(event.rainEndMs - 1).toDateString(), localDay);
-    assert.equal(new Date(event.clearingEndMs).toDateString(), localDay);
-    assert(
-      event.gatheringStartMs - event.dayStartMs >= PARK_WEATHER_MIN_CLEAR_GAP_MS,
-      "each rainy day must reserve the cross-day clear-weather gap before clouds gather",
-    );
-    assert(event.gatheringStartMs < event.rainStartMs);
-    assert(event.rainStartMs < event.rainEndMs);
-    assert(event.rainEndMs < event.clearingEndMs);
-  }
 }
 scheduledEventsForWeatherSmoke.sort(
   (left, right) => left.gatheringStartMs - right.gatheringStartMs,
@@ -440,6 +491,80 @@ for (let index = 1; index < scheduledEventsForWeatherSmoke.length; index += 1) {
     current.gatheringStartMs - previous.clearingEndMs >= PARK_WEATHER_MIN_CLEAR_GAP_MS,
     "consecutive weather events must retain at least ten clear minutes",
   );
+}
+// Broader calendar coverage samples boundaries and keyframes only; keep the
+// one-second intensity scan below limited to the original sixteen-week cohort.
+const originalWeatherTimezone = process.env.TZ;
+try {
+  for (const timezone of ["Asia/Hong_Kong", "America/New_York", "Europe/London"]) {
+    process.env.TZ = timezone;
+    for (const [year, month, day] of [
+      [2025, 11, 29],
+      [2026, 2, 2],
+      [2026, 2, 23],
+      [2026, 9, 19],
+      [2026, 9, 26],
+      [2026, 11, 28],
+    ]) {
+      const weekStartMs = new Date(year, month, day).getTime();
+      const nextWeekStartMs = weatherLocalDayOffset(weekStartMs, 7);
+      const weekKey = weatherLocalDateKey(weekStartMs);
+      const expectedWeekHours = {
+        "America/New_York/2026-03-02": 167,
+        "America/New_York/2026-10-26": 169,
+        "Europe/London/2026-03-23": 167,
+        "Europe/London/2026-10-19": 169,
+      }[`${timezone}/${weekKey}`] ?? 168;
+      assert.equal((nextWeekStartMs - weekStartMs) / WEATHER_HOUR_MS, expectedWeekHours);
+      const dayLengths = Array.from({ length: 7 }, (_, index) =>
+        (weatherLocalDayOffset(weekStartMs, index + 1)
+          - weatherLocalDayOffset(weekStartMs, index)) / WEATHER_HOUR_MS);
+      assert.equal(dayLengths.filter((hours) => hours !== 24).length, expectedWeekHours === 168 ? 0 : 1);
+      assert(dayLengths.includes(expectedWeekHours === 168 ? 24 : expectedWeekHours - 144));
+      const distinctSeedSchedules = new Set();
+      for (let seedIndex = 0; seedIndex < 8; seedIndex += 1) {
+        const seed = `calendar-weather-slot-${seedIndex}`;
+        const schedule = createParkWeeklyWeatherSchedule(seed, weekStartMs);
+        assertWeeklyWeatherSchedule(schedule);
+        assert.equal(schedule.weekStartMs, weekStartMs);
+        distinctSeedSchedules.add(JSON.stringify(schedule));
+        for (const timestampMs of [
+          weekStartMs,
+          weatherLocalDayOffset(weekStartMs, 3) + 12 * WEATHER_HOUR_MS,
+          nextWeekStartMs - 1,
+        ]) {
+          assert.deepEqual(createParkWeeklyWeatherSchedule(seed, timestampMs), schedule,
+            `${timezone}/${weekKey}: opening at another time in the same week must retain the schedule`);
+        }
+        for (const event of schedule.events) {
+          const midpointMs = Math.floor((event.rainStartMs + event.rainEndMs) / 2);
+          const original = resolveParkWeather(createParkWeatherRuntime(seed, weekStartMs), midpointMs);
+          const reopened = resolveParkWeather(createParkWeatherRuntime(seed, midpointMs), midpointMs);
+          assert.deepEqual(reopened, original, "reopening during rain must recover its current phase and intensity");
+          assert.equal(original.phase, "raining");
+          assert.equal(original.eventId, event.id);
+          assert(original.rainAmount > 0);
+        }
+        const nextSchedule = createParkWeeklyWeatherSchedule(seed, nextWeekStartMs);
+        const expectedCacheKeys = [-7, 0, 7].map((days) =>
+          weatherLocalDateKey(weatherLocalDayOffset(weekStartMs, days))).sort();
+        for (const timestampMs of [weekStartMs, nextWeekStartMs - 1]) {
+          const runtime = createParkWeatherRuntime(seed, timestampMs);
+          const frame = resolveParkWeather(runtime, timestampMs);
+          assert.deepEqual([...runtime.scheduleCache.keys()].sort(), expectedCacheKeys,
+            `${timezone}/${weekKey}: adjacent schedules must follow local weeks across DST`);
+          const nextEvent = timestampMs === weekStartMs ? schedule.events[0] : nextSchedule.events[0];
+          assert.equal(frame.phase, "clear");
+          assert.equal(frame.eventId, nextEvent.id);
+          assert.equal(frame.remainingMs, nextEvent.gatheringStartMs - timestampMs);
+        }
+      }
+      assert(distinctSeedSchedules.size > 1, "different save-slot seeds must not all share one weather schedule");
+    }
+  }
+} finally {
+  if (originalWeatherTimezone === undefined) delete process.env.TZ;
+  else process.env.TZ = originalWeatherTimezone;
 }
 const rainLevelForWeatherSmoke = (amount) => {
   if (amount < 0.035) return "clear";
@@ -2421,4 +2546,4 @@ for (const [name, image, expectedHash] of [
 
 await import("./aivatar-cooking-smoke.mjs");
 
-console.log("Park smoke passed: deterministic two-day weekly rain scheduling, staged weather previews, layered rain ambience and storm thunder, weather-scaled sea haze/pond ripples/grass splashes, static rock/shrub occluders, independent grass ripples, single-draw pond atlas, independent park ambience, foam and cliff-fog motion, looping clouds, handoff, traits, fish, cooking, and window size markers are present.");
+console.log("Park smoke passed: deterministic four-day weekly rain totaling 48 hours, local calendar and DST boundaries, staged weather previews, layered rain ambience and storm thunder, weather-scaled sea haze/pond ripples/grass splashes, static rock/shrub occluders, independent grass ripples, single-draw pond atlas, independent park ambience, foam and cliff-fog motion, looping clouds, handoff, traits, fish, cooking, and window size markers are present.");
