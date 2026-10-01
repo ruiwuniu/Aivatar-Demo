@@ -49,7 +49,10 @@ const bind = (name, context) => {
   )(...Object.values(context));
   return context[name];
 };
-const memoryContext = { ...roomVisits };
+const memoryContext = {
+  ...roomVisits,
+  POND_WEED_SALAD_ITEM_ID: load("src/game/pondWeedCooking.ts").POND_WEED_SALAD_ITEM_ID,
+};
 for (const name of ["MAX_TRAIT_POINTS", "MEMORY_RECENT_EVENT_LIMIT", "IDLE_BUBBLE_LANGUAGE_OPTIONS",
   "IDLE_BUBBLE_PHRASE_MAX_LENGTH", "COFFEE_ITEM_ID", "COLA_ITEM_ID", "BENTO_ITEM_ID", "COOKIE_ITEM_ID",
   "defaultGrowthTraits", "defaultDarkTraits", "defaultMemory", "clampTrait", "normalizeDarkTraits",

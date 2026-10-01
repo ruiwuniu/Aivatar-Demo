@@ -7,36 +7,36 @@
 **中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。像素小伙伴可以带着电脑来到桌面自由活动，也可以生活在可装修的主房间、纸牌屋和山顶公园中，并对 Codex、Claude Code、opencode、腾讯 WorkBuddy 或自定义本地 agent 桥接的实时状态作出反应。
 
 <p align="center">
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.1/Aivatar_0.5.1_universal.dmg"><strong>Download macOS DMG 0.5.1</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.2/Aivatar_0.5.2_universal.dmg"><strong>Download macOS DMG 0.5.2</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.1/Aivatar_0.5.1_x64-setup.exe"><strong>Download Windows EXE 0.5.1</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.2/Aivatar_0.5.2_x64-setup.exe"><strong>Download Windows EXE 0.5.2</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.1/Aivatar_0.5.1_x64_en-US.msi"><strong>Download Windows MSI 0.5.1</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.2/Aivatar_0.5.2_x64_en-US.msi"><strong>Download Windows MSI 0.5.2</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.5.1">Release 0.5.1</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.5.2">Release 0.5.2</a>
 </p>
 
-## 0.5.1 Highlights / 0.5.1 更新亮点
+## 0.5.2 Highlights / 0.5.2 更新亮点
 
 **EN**
 
-- **Adjustable desktop activity area.** Right-click the desktop terminal to highlight the companion's roaming area. Drag the area or resize its edges, then confirm to save the layout.
-- **A vending machine for desktop breaks.** Place or pack it away from the terminal's right-click menu and drag it independently. The companion can buy and immediately enjoy cookies, cola, and coffee, with purchase, pickup, and consumption animations and sound effects.
-- **Three vending colors, remembered.** Right-click the machine to buy items or choose Original, Red, or Dark green; left-click remains for dragging. The selected color survives returning to the room or packing and placing the machine again.
-- **Macintosh terminal skin.** The shop adds a terminal skin shared by the room and desktop, with screen, indicator, and typing animations that follow task states.
-- **Stove interaction fix.** Frying fish uses the selected stove's interaction point and cooking status instead of the coffee machine's brewing behavior.
+- **Fish together.** Accept your companion's invitation, wait for a bite, and play a fishing-rod QTE with randomized timing in a soft pixel textile style.
+- **Four rare, unique trophies.** Successful catches can yield bronze fish, silver wave, golden koi, or starlight crystal trophies. Place, store, or sell them; each is unique per save while owned, and resetting the room keeps them.
+- **Pond weed salad.** Caught weed goes into the fridge. Turn one weed into one salad with six seconds of cold preparation at the stove, manually or autonomously. Eating adds 12 hunger and 3 mood, with preparation and eating animations for all seven appearances.
+- **48 hours of rain each week.** Four seeded rainy days bring 6–18 hours of rain each. Weather follows real time and stays consistent after reopening.
+- **New pixel loot and icons.** The trophies, pond weed, and salad have matching art for the park, room, and inventory. Full catch probabilities are in the [release notes](docs/releases/v0.5.2.md).
 
 **中文**
 
-- **调整桌面活动区域。** 右键桌面终端可高亮角色的活动范围，支持拖动区域及边缘缩放，确认后保存布局。
-- **桌面售货机与休息时光。** 通过终端右键菜单放置或收起售货机，并可独立拖动。角色可购买并立即使用曲奇、可乐和咖啡，配有购买、取货、食用动画与音效。
-- **售货机三色皮肤，自动保留。** 右键售货机可购买商品或选择原色、红色、墨绿色；左键保留拖动。回房间、收起再放置后仍记住配色。
-- **麦金塔终端皮肤。** 商店新增房间与桌面共用的终端皮肤，屏幕、指示灯及敲字动画随任务状态变化。
-- **炉灶互动修复。** 煎鱼现在使用所选炉灶的互动点和烹饪状态，不再映射到咖啡机或显示煮咖啡。
+- **一起钓鱼。** 接受角色的气泡邀请，等待咬钩，参与时机随机变化的钓竿式 QTE，界面采用柔和的像素织物风格。
+- **四级稀有、唯一奖杯。** 成功收竿有机会获得铜鱼、银浪、金色锦鲤或星光水晶奖杯，可摆放、收纳、出售；每个存档每款持有期间唯一，重置房间时保留。
+- **水草沙拉。** 水草进入冰箱，一份水草在炉灶台面冷拌六秒即可制作一份沙拉，支持手动和自主制作。食用后饱食 +12、心情 +3，七种角色均配有制作和食用动画。
+- **每周 48 小时降雨。** 每周按存档种子选择四个雨日，每场 6～18 小时，天气随现实时间推进，重开保持一致。
+- **新像素物品与图标。** 奖杯、水草和沙拉均配有匹配公园、房间与物品栏的美术；完整掉落概率见[发布说明](docs/releases/v0.5.2.md)。
 
-**EN — Updating from 0.5.0:** The official 0.5.0 release with in-app updates can discover 0.5.1 after startup or through **Settings → Check for updates**. Download the update, then choose **Install and restart** when ready. All open persistent rooms must save successfully before installation proceeds. Earlier preview packages without the updater need a manual installation. See the [0.5.1 release notes](docs/releases/v0.5.1.md) and [automatic update guide](docs/automatic-updates.md).
+**EN — Updating from 0.5.1:** The official 0.5.1 app checks for updates about eight seconds after startup, once per application process. An already-running app can use **Settings → Check for updates**. Download 0.5.2, then choose **Install and restart**. All open persistent rooms must save successfully before installation proceeds. See the [0.5.2 release notes](docs/releases/v0.5.2.md) and [automatic update guide](docs/automatic-updates.md).
 
-**中文 — 从 0.5.0 更新：** 带自动更新功能的 0.5.0 正式版可在启动后发现 0.5.1，也可在**设置 → 检查更新**中手动检查。下载后自行选择**安装并重启**；所有已打开的持久化窗口成功保存后才会安装。没有更新模块的早期测试包仍需手动安装。详见 [0.5.1 发布说明](docs/releases/v0.5.1.md)和[自动更新指南](docs/automatic-updates.md)。
+**中文 — 从 0.5.1 更新：** 0.5.1 正式版在启动约八秒后自动检查一次；一直保持运行的应用可通过**设置 → 检查更新**发现新版本。下载 0.5.2 后选择**安装并重启**，所有已打开的持久化窗口成功保存后才会安装。详见 [0.5.2 发布说明](docs/releases/v0.5.2.md)和[自动更新指南](docs/automatic-updates.md)。
 
 ## UI Showcase / UI 展示
 
@@ -126,7 +126,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.5.1 is available through GitHub Releases as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer. Update artifacts carry a dedicated updater signature. OS code signing and Apple notarization are not yet configured; these installers remain intended for GitHub tester distribution.
+> Current status / 当前状态: 0.5.2 is available through GitHub Releases as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer. Update artifacts carry a dedicated updater signature. OS code signing and Apple notarization are not yet configured; these installers remain intended for GitHub tester distribution.
 
 ## Contents / 目录
 
@@ -608,7 +608,7 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 Current release-prep notes:
 
-- The 0.5.1 release is available through GitHub Releases as a universal macOS `.dmg`, Windows NSIS `.exe`, and Windows MSI installer. Updater artifacts are signature-verified; OS code signing and Apple notarization remain future work.
+- The 0.5.2 release is available through GitHub Releases as a universal macOS `.dmg`, Windows NSIS `.exe`, and Windows MSI installer. Updater artifacts are signature-verified; OS code signing and Apple notarization remain future work.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
 - Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, Card Room, Hilltop Park, fishing, directional gas-range cooking, dynamic rain/weather, desktop companion mode, automatic updates, and interaction/rendering and reward-settlement fixes are now part of the preview surface.
 - Native bridge support exists for local status, Codex Desktop session discovery, Tencent WorkBuddy China mainland/international `working`/`coding` session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
@@ -619,7 +619,7 @@ Current release-prep notes:
 
 当前发布准备阶段说明：
 
-- 0.5.1 已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包；更新包带有更新专用签名；系统级代码签名及 Apple 公证仍待完成。
+- 0.5.2 已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包；更新包带有更新专用签名；系统级代码签名及 Apple 公证仍待完成。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
 - 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、纸牌屋 Card Room、山顶公园、钓鱼、四向燃气灶烹饪、动态雨天系统，桌面伙伴模式、自动更新，以及交互/渲染和奖励结算修复，已经纳入预览体验。
 - 本地状态、Codex Desktop 会话发现、腾讯 WorkBuddy 大陆版/国际版 `working`/`coding` 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。

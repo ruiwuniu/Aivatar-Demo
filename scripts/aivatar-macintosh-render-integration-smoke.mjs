@@ -11,6 +11,11 @@ const macintoshCode = ts.transpileModule(macintoshSource, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2020 },
 }).outputText;
 const macintosh = await import(`data:text/javascript;base64,${Buffer.from(macintoshCode).toString("base64")}`);
+const fishingLootSource = readFileSync(new URL("../src/game/fishingLootSprites.ts", import.meta.url), "utf8");
+const fishingLootCode = ts.transpileModule(fishingLootSource, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2020 },
+}).outputText;
+const fishingLoot = await import(`data:text/javascript;base64,${Buffer.from(fishingLootCode).toString("base64")}`);
 const initializer = (name) => {
   const declarations = [];
   const visit = (node) => {
@@ -34,6 +39,7 @@ const legacyCalls = [];
 const occlusion = { inFront: true, previewPlacement: "floor" };
 let drawActualMacintosh = false;
 const context = {
+  drawFishingLootSprite: fishingLoot.drawFishingLootSprite,
   MACINTOSH_TERMINAL_SKIN_ID: "terminal-macintosh-skin",
   drawMacintoshTerminal: (ctx, options) => {
     drawCalls.push(structuredClone(options));
