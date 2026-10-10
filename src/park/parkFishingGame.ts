@@ -7,8 +7,8 @@ export const PARK_FISHING_HITS_TO_WIN = 3;
 export const PARK_FISHING_MISSES_TO_LOSE = 2;
 export const PARK_FISHING_MIN_ROUND_DURATION_MS = 2200;
 export const PARK_FISHING_MAX_ROUND_DURATION_MS = 3400;
-export const PARK_FISHING_MIN_TARGET_WIDTH = 0.2;
-export const PARK_FISHING_MAX_TARGET_WIDTH = 0.32;
+export const PARK_FISHING_MIN_TARGET_WIDTH = 0.08;
+export const PARK_FISHING_MAX_TARGET_WIDTH = 0.12;
 const TARGET_EDGE_MARGIN = 0.2;
 export const PARK_FISHING_ROUND_FEEDBACK_MS = 350;
 export const PARK_FISHING_ESCAPE_FEEDBACK_MS = 1200;
@@ -82,7 +82,7 @@ export const startParkFishingRound = (
   const targetWidth = PARK_FISHING_MIN_TARGET_WIDTH
     + unitRandom(random) * (PARK_FISHING_MAX_TARGET_WIDTH - PARK_FISHING_MIN_TARGET_WIDTH);
   // Symmetric margins leave at least 440 ms to react from either direction,
-  // and the narrowest target remains hittable for at least 440 ms.
+  // and the narrowest target remains hittable for at least 176 ms.
   const targetStart = TARGET_EDGE_MARGIN
     + unitRandom(random) * (1 - targetWidth - TARGET_EDGE_MARGIN * 2);
   const direction = unitRandom(random) < 0.5 ? "forward" : "reverse";

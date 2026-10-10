@@ -596,6 +596,45 @@ fn broadcast(state: &Arc<Mutex<BridgeState>>) {
     guard.clients.retain(|client| client.send(encoded.clone()).is_ok());
 }
 
+fn normalize_learning_diagnostic(value: &Value) -> Option<Value> {
+    let provider = value.get("provider")?.as_str()?;
+    if !matches!(provider, "codex" | "claude-code" | "opencode") {
+        return None;
+    }
+    let status = value.get("status")?.as_str()?;
+    if !matches!(status, "success" | "fallback") {
+        return None;
+    }
+    let timestamp = value.get("timestamp")?.as_str()?;
+    let timestamp = chrono::DateTime::parse_from_rfc3339(timestamp).ok()?;
+    let mut diagnostic = json!({
+        "provider": provider,
+        "status": status,
+        "timestamp": timestamp.to_rfc3339(),
+    });
+    if status == "fallback" {
+        let reason = value.get("reason")?.as_str()?;
+        if !matches!(
+            reason,
+            "unavailable" | "authentication" | "timeout" | "invalid-output"
+                | "empty-candidates" | "provider-error"
+        ) {
+            return None;
+        }
+        diagnostic["reason"] = json!(reason);
+    }
+    Some(diagnostic)
+}
+
+pub(crate) fn learning_unavailable_diagnostic(provider: &str) -> Value {
+    json!({
+        "provider": provider,
+        "status": "fallback",
+        "reason": "unavailable",
+        "timestamp": iso_now(),
+    })
+}
+
 fn normalize_status(payload: Value) -> Result<Value, String> {
     let Value::Object(source) = payload else {
         return Err("Status payload must be a JSON object".to_string());
@@ -686,7 +725,6 @@ fn normalize_status(payload: Value) -> Result<Value, String> {
     for field in [
         "usage",
         "idleBubbleCandidates",
-        "learning",
         "expiresAt",
         "source",
         "surface",
@@ -696,6 +734,15 @@ fn normalize_status(payload: Value) -> Result<Value, String> {
             object.insert(field.to_string(), value.clone());
         }
     }
+    if let Some(mut learning) = source.get("learning").and_then(Value::as_object).cloned() {
+        // Never forward raw provider stderr, command paths or unknown failure text.
+        let diagnostic = learning.get("diagnostic").and_then(normalize_learning_diagnostic);
+        learning.remove("diagnostic");
+        if let Some(diagnostic) = diagnostic {
+            learning.insert("diagnostic".to_string(), diagnostic);
+        }
+        object.insert("learning".to_string(), Value::Object(learning));
+    }
 
     Ok(Value::Object(object))
 }
@@ -703,6 +750,49 @@ fn normalize_status(payload: Value) -> Result<Value, String> {
 #[cfg(test)]
 mod status_normalization_tests {
     use super::*;
+
+    #[test]
+    fn learning_diagnostic_is_bounded_and_preserves_reward_identity() {
+        let normalized = normalize_status(json!({
+            "agent": "claude-code",
+            "sessionId": "synthetic-session",
+            "rewardId": "synthetic-turn",
+            "status": "complete",
+            "phase": "session-learning",
+            "learning": {
+                "id": "synthetic-learning",
+                "summary": "A small lesson",
+                "diagnostic": {
+                    "provider": "claude-code",
+                    "status": "fallback",
+                    "reason": "unavailable",
+                    "timestamp": "2026-10-10T00:00:00Z",
+                    "stderr": "must not reach the UI",
+                    "command": "/synthetic/private/path"
+                }
+            }
+        })).unwrap();
+        let diagnostic = &normalized["learning"]["diagnostic"];
+        assert_eq!(diagnostic["reason"], "unavailable");
+        assert_eq!(diagnostic.as_object().unwrap().len(), 4);
+        assert_eq!(normalized["rewardId"], "synthetic-turn");
+    }
+
+    #[test]
+    fn invalid_learning_diagnostics_are_not_forwarded() {
+        let valid = json!({ "provider": "codex", "status": "fallback", "reason": "timeout", "timestamp": "2026-10-10T00:00:00Z" });
+        for (key, invalid) in [("provider", "external"), ("status", "raw-error"), ("reason", "private failure message"), ("timestamp", "not-a-date")] {
+            let mut value = valid.clone();
+            value[key] = json!(invalid);
+            assert!(normalize_learning_diagnostic(&value).is_none());
+        }
+        let normalized = normalize_status(json!({ "status": "complete", "learning": { "id": "old-learning", "summary": "Still valid", "diagnostic": "untrusted" } })).unwrap();
+        assert_eq!(normalized["learning"]["id"], "old-learning");
+        assert!(normalized["learning"].get("diagnostic").is_none());
+        let mut success = valid;
+        success["status"] = json!("success");
+        assert!(normalize_learning_diagnostic(&success).unwrap().get("reason").is_none());
+    }
 
     #[test]
     fn reward_id_survives_status_normalization() {
@@ -1038,7 +1128,7 @@ fn current_learning_script() -> Option<PathBuf> {
     guard.learning_script.clone()
 }
 
-fn learning_enabled() -> bool {
+pub(crate) fn learning_enabled() -> bool {
     std::env::var("AIVATAR_LEARNING_ENABLED")
         .map(|value| !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
         .unwrap_or(true)
@@ -1068,12 +1158,24 @@ fn learning_context_file(session_id: &str, digest: &[String], summary: &str) -> 
 }
 
 fn node_command() -> PathBuf {
-    std::env::var_os("AIVATAR_NODE_COMMAND")
-        .map(PathBuf::from)
+    crate::codex_discovery::resolve_learning_command("node")
+        .or_else(|| std::env::var_os("AIVATAR_NODE_COMMAND").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("node"))
 }
 
 fn spawn_claude_learning_worker(status: &Value, digest: &[String]) -> bool {
+    if std::env::var("AIVATAR_LEARNING_PROVIDER")
+        .is_ok_and(|provider| provider.trim().eq_ignore_ascii_case("none"))
+    {
+        return false;
+    }
+    let Some(node_command) = crate::codex_discovery::resolve_learning_command("node") else {
+        return false;
+    };
+    let Some(provider_command) = crate::codex_discovery::resolve_learning_command("claude-code")
+    else {
+        return false;
+    };
     let Some(script) = current_learning_script().filter(|path| path.is_file()) else {
         return false;
     };
@@ -1086,7 +1188,7 @@ fn spawn_claude_learning_worker(status: &Value, digest: &[String]) -> bool {
         Ok(path) => path,
         Err(_) => return false,
     };
-    let mut command = std::process::Command::new(node_command());
+    let mut command = std::process::Command::new(node_command);
     command
         .arg(script)
         .args([
@@ -1111,6 +1213,7 @@ fn spawn_claude_learning_worker(status: &Value, digest: &[String]) -> bool {
         .env("AIVATAR_AGENT", "claude-code")
         .env("AIVATAR_SESSION_ID", &session_id)
         .env("AIVATAR_LEARNING_PROVIDER", "claude-code")
+        .env("AIVATAR_CLAUDE_COMMAND", provider_command)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -3016,7 +3119,12 @@ fn handle_http(mut stream: TcpStream, state: Arc<Mutex<BridgeState>>) {
                                     && mark_claude_learning_key(&session_id, &learning_key)
                                     && !spawn_claude_learning_worker(&status, &digest)
                                 {
-                                    if let Some(learning) = fallback_learning {
+                                    if let Some(mut learning) = fallback_learning {
+                                        if !std::env::var("AIVATAR_LEARNING_PROVIDER")
+                                            .is_ok_and(|provider| provider.trim().eq_ignore_ascii_case("none"))
+                                        {
+                                            learning["diagnostic"] = learning_unavailable_diagnostic("claude-code");
+                                        }
                                         let _ = submit_status(session_learning_status(&status, learning));
                                     }
                                 }

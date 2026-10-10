@@ -3,12 +3,14 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 
-const compile = (relative) => ts.transpileModule(
-  readFileSync(new URL(relative, import.meta.url), "utf8"),
-  { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } },
-).outputText;
-const sharedCode = compile("../src/persistence/savePersistence.ts");
-const roomCode = compile("../src/persistence/roomSavePersistence.ts");
+const compiled = new Map();
+const compile = (url) => {
+  if (!compiled.has(url.href)) compiled.set(url.href, ts.transpileModule(
+    readFileSync(url, "utf8"),
+    { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } },
+  ).outputText);
+  return compiled.get(url.href);
+};
 const PASSIVE_CHECKPOINT_MS = 5 * 60_000;
 const RETRY_WAIT_MS = 20_000;
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -56,13 +58,23 @@ const fixture = () => {
     },
     clearTimeout(id) { timers.delete(id); },
   };
-  const load = (code, dependencies = {}) => {
+  // Execute real source dependencies, including recommendation union/normalization.
+  const modules = new Map();
+  const load = (url) => {
+    assert(url.pathname.startsWith(new URL("../src/", import.meta.url).pathname));
+    if (modules.has(url.href)) return modules.get(url.href).exports;
     const module = { exports: {} };
-    vm.runInNewContext(code, { ...context, module, exports: module.exports, require: (id) => dependencies[id] });
+    modules.set(url.href, module);
+    vm.runInNewContext(compile(url), {
+      ...context, module, exports: module.exports,
+      require: (id) => {
+        assert(id.startsWith("."), `Unexpected external dependency ${id}`);
+        return load(new URL(`${id}.ts`, url));
+      },
+    });
     return module.exports;
   };
-  const shared = load(sharedCode);
-  const { createRoomSavePersistence } = load(roomCode, { "./savePersistence": shared });
+  const { createRoomSavePersistence } = load(new URL("../src/persistence/roomSavePersistence.ts", import.meta.url));
   const makeController = (getRuntime = (slot) => slot === live.slot ? live.runtime : undefined, extra = {}) =>
     createRoomSavePersistence({
       storage,

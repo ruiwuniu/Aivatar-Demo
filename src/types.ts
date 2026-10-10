@@ -24,6 +24,29 @@ export interface TokenUsage {
   scope?: string;
 }
 
+export interface AivatarLearningDiagnostic {
+  provider: "codex" | "claude-code" | "opencode";
+  status: "success" | "fallback";
+  reason?: "unavailable" | "authentication" | "timeout" | "invalid-output" | "empty-candidates" | "provider-error";
+  timestamp: string;
+}
+
+export interface AivatarLearningCandidateMetadata {
+  source: "llm" | "session";
+  agent?: string;
+  sessionId?: string;
+  learningId?: string;
+  timestamp: string;
+  privacyRisk: "low" | "medium";
+}
+
+export interface AivatarLearningRecommendations {
+  idleCandidates: Array<AivatarLearningCandidateMetadata & { phrase: string }>;
+  socialCandidates: Array<AivatarLearningCandidateMetadata & AivatarSocialBubbleCandidate>;
+  diagnostics: AivatarLearningDiagnostic[];
+  appliedLearningIds: string[];
+}
+
 export interface AivatarLearningResult {
   id: string;
   source: "llm" | "heuristic";
@@ -34,6 +57,7 @@ export interface AivatarLearningResult {
   xp?: number;
   confidence?: number;
   privacyRisk: "low" | "medium" | "high";
+  diagnostic?: AivatarLearningDiagnostic;
 }
 
 export interface AivatarPaintingPlan {
@@ -541,6 +565,7 @@ export interface AivatarSaveState {
   avatarName?: string;
   avatarRuntime?: AvatarRuntime;
   memory?: AivatarMemory;
+  learningRecommendations?: AivatarLearningRecommendations;
   navMemory?: AivatarNavMemory;
   parkNavMemory?: AivatarNavMemory;
   parkRuntime?: AvatarRuntime;

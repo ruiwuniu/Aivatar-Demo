@@ -335,10 +335,10 @@ check("random round parameters cover both directions with fair reaction and hit 
           const entryAt = cursorTime(game, entryPosition);
           const exitAt = cursorTime(game, exitPosition);
           assert(duration >= 2200 && duration <= 3400);
-          assert(width >= 0.2 - 1e-12 && width <= 0.32 + 1e-12);
+          assert(width >= 0.08 - 1e-12 && width <= 0.12 + 1e-12);
           assert(game.targetStart >= 0.2 - 1e-12 && game.targetEnd <= 0.8 + 1e-12);
           assert(entryAt - game.roundStartedAt >= 440 - 1e-9);
-          assert(exitAt - entryAt >= 440 - 1e-9 && exitAt - entryAt <= 1088 + 1e-9);
+          assert(exitAt - entryAt >= 176 - 1e-9 && exitAt - entryAt <= 408 + 1e-9);
           assert.equal(gameApi.parkFishingCursor(game, game.roundStartedAt - 100), directionRoll === 0 ? 0 : 1);
           assert.equal(gameApi.parkFishingCursor(game, game.roundEndsAt + 100), directionRoll === 0 ? 1 : 0);
           durations.add(duration.toFixed(5));

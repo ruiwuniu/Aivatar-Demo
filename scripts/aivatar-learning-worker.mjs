@@ -1,9 +1,20 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
+import {
+  LearningProviderError,
+  classifyProviderFailure,
+  claudeLearningArgs,
+  extractJsonObject,
+  learningDiagnostic,
+  opencodeLearningConfig,
+  parseClaudeOutput,
+  parseOpencodeOutput,
+  unwrapProviderJson,
+} from "./aivatar-learning-provider.mjs";
 
 const endpoint =
   process.env.AIVATAR_HTTP_ENDPOINT ?? "http://127.0.0.1:38988/agent-status";
@@ -53,7 +64,8 @@ const learningSchema = {
     summary: { type: "string" },
     idleBubbleCandidates: {
       type: "array",
-      items: { type: "string" },
+      items: { type: "string", minLength: 2, maxLength: 28 },
+      minItems: 1,
       maxItems: 6,
     },
     socialBubbleCandidates: {
@@ -359,7 +371,9 @@ const detectSessionLanguage = (options, digest) => {
 
 const normalizeLearning = (raw, options, digest) => {
   const summary = compactText(raw?.summary, 180);
-  if (!summary) throw new Error("Learning result is missing summary");
+  if (typeof raw?.summary !== "string" || !summary || !Array.isArray(raw?.idleBubbleCandidates)) {
+    throw new LearningProviderError("invalid-output");
+  }
 
   const traitChanges = {};
   for (const trait of traitNames) {
@@ -370,8 +384,11 @@ const normalizeLearning = (raw, options, digest) => {
   }
 
   const candidates = Array.isArray(raw?.idleBubbleCandidates)
-    ? raw.idleBubbleCandidates.map(safePhrase).filter(Boolean).slice(0, 6)
+    ? raw.idleBubbleCandidates.filter((value) => typeof value === "string").map(safePhrase).filter(Boolean).slice(0, 6)
     : [];
+  if (options.provider !== "none" && candidates.length === 0) {
+    throw new LearningProviderError("empty-candidates");
+  }
   const language = detectSessionLanguage(options, digest);
   const socialBubbleCandidates = Array.isArray(raw?.socialBubbleCandidates)
     ? raw.socialBubbleCandidates
@@ -498,7 +515,7 @@ Rules:
 - Do not preserve source code, secrets, full filesystem paths, email addresses, URLs, stack traces, or private data.
 - Do not invent technical facts beyond the digest.
 - For idleBubbleCandidates, write each bubble as one complete short sentence, not keywords, labels, slogans, or clipped fragments.
-- Keep idleBubbleCandidates very short and easy to read at a glance.
+- Produce 1 to 6 idleBubbleCandidates, each 2 to 28 characters long including spaces, short enough to read at a glance.
 - Emoji and tiny decorative symbols are allowed when they feel natural and pet-like.
 - Avoid comma-heavy or period-heavy prose, markdown, file paths, commands, logs, and technical wording in idleBubbleCandidates.
 - Make idleBubbleCandidates sound like something a real gentle human companion might say in one breath.
@@ -512,6 +529,9 @@ Rules:
 - Mark privacyRisk as "medium" or "high" if the digest still seems sensitive.
 - Return only valid JSON matching the requested schema.
 
+Required JSON Schema (include every required field, even empty socialBubbleCandidates):
+${JSON.stringify(learningSchema)}
+
 Aivatar voice snapshot:
 ${traitToneGuidance(avatarState)}
 
@@ -523,7 +543,7 @@ Session:
 - digest: ${digest}
 `;
 
-const runCommand = (command, args, stdin, timeoutMs = defaultTimeoutMs) =>
+const runCommand = (command, args, stdin, timeoutMs = defaultTimeoutMs, environment = {}) =>
   new Promise((resolve, reject) => {
     const useCmdShim =
       process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
@@ -534,33 +554,67 @@ const runCommand = (command, args, stdin, timeoutMs = defaultTimeoutMs) =>
       shell: false,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        // A provider subprocess must not become a second observed Aivatar
+        // session or recursively invoke the learning worker through a plugin.
+        AIVATAR_LEARNING_ENABLED: "0",
+        AIVATAR_OPENCODE_LEARNING_ENABLED: "0",
+        AIVATAR_OPENCODE_SET_ACTIVE: "0",
+        AIVATAR_HTTP_ENDPOINT: "aivatar-learning-disabled:",
+        AIVATAR_STATUS_ENDPOINT: "aivatar-learning-disabled:",
+        AIVATAR_PRESENCE_ENDPOINT: "aivatar-learning-disabled:",
+        AIVATAR_ACTIVE_ENDPOINT: "aivatar-learning-disabled:",
+        AIVATAR_DISCONNECT_ENDPOINT: "aivatar-learning-disabled:",
+        AIVATAR_DISCONNECT_SESSION_ENDPOINT: "aivatar-learning-disabled:",
+        OPENCODE_PURE: "true",
+        OPENCODE_AUTO_SHARE: "false",
+        ...environment,
+      },
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const fail = (reason) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new LearningProviderError(reason));
+    };
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error(`${command} timed out after ${timeoutMs}ms`));
+      fail("timeout");
     }, timeoutMs);
 
     child.stdout.on("data", (chunk) => {
+      if (settled) return;
       stdout += chunk.toString("utf8");
+      if (stdout.length > 1024 * 1024) {
+        child.kill();
+        fail("invalid-output");
+      }
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
+      if (!settled && stderr.length < 16384) stderr += chunk.toString("utf8").slice(0, 16384 - stderr.length);
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
+      fail(classifyProviderFailure(error));
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      if (settled) return;
       if (code === 0) {
+        settled = true;
+        clearTimeout(timer);
         resolve({ stdout, stderr });
       } else {
-        reject(new Error(`${command} exited ${code}: ${stderr || stdout}`));
+        fail(classifyProviderFailure(new Error(`${stderr}\n${stdout}`)));
       }
     });
 
+    child.stdin.on("error", (error) => {
+      // A CLI can close stdin before reporting its authentication/argument error.
+      if (error.code !== "EPIPE") fail(classifyProviderFailure(error));
+    });
     child.stdin.end(stdin);
   });
 
@@ -631,7 +685,9 @@ const opencodeCandidates = () => {
   return [
     "/opt/homebrew/bin/opencode",
     "/usr/local/bin/opencode",
+    join(process.env.HOME ?? "", ".opencode", "bin", "opencode"),
     join(process.env.HOME ?? "", ".local", "bin", "opencode"),
+    join(process.env.HOME ?? "", "bin", "opencode"),
     "opencode",
   ].filter(Boolean);
 };
@@ -647,51 +703,13 @@ const opencodeCommand = async () => {
   return "opencode";
 };
 
-const extractJsonObject = (text) => {
-  const trimmed = text.trim();
-  if (!trimmed) throw new Error("Provider returned empty output");
-
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start < 0 || end <= start) throw new Error("Provider output is not JSON");
-    return JSON.parse(trimmed.slice(start, end + 1));
-  }
-};
-
-const unwrapProviderJson = (value) => {
-  if (typeof value?.result === "string") return extractJsonObject(value.result);
-  if (typeof value?.response === "string") return extractJsonObject(value.response);
-  if (typeof value?.content === "string") return extractJsonObject(value.content);
-  if (Array.isArray(value?.content)) {
-    const text = value.content
-      .map((item) => item?.text ?? item?.content ?? "")
-      .join("\n");
-    if (text.trim()) return extractJsonObject(text);
-  }
-  return value;
-};
-
 const callClaudeCode = async (prompt) => {
   const { stdout } = await runCommand(
     claudeCommand,
-    [
-      "--bare",
-      "--print",
-      "--output-format",
-      "json",
-      "--json-schema",
-      JSON.stringify(learningSchema),
-      "--tools",
-      "",
-      "--no-session-persistence",
-      prompt,
-    ],
-    "",
+    claudeLearningArgs(learningSchema),
+    prompt,
   );
-  return unwrapProviderJson(extractJsonObject(stdout));
+  return parseClaudeOutput(stdout);
 };
 
 const callCodex = async (prompt) => {
@@ -727,52 +745,22 @@ const callCodex = async (prompt) => {
   return unwrapProviderJson(extractJsonObject(await readFile(outputPath, "utf8")));
 };
 
-const textFromOpencodeJsonEvents = (stdout) => {
-  const snippets = [];
-  for (const line of stdout.split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("{")) continue;
-    try {
-      const event = JSON.parse(trimmed);
-      const candidates = [
-        event?.result,
-        event?.response,
-        event?.content,
-        event?.text,
-        event?.message,
-        event?.data?.text,
-        event?.data?.message,
-        event?.properties?.message,
-      ];
-      for (const candidate of candidates) {
-        if (typeof candidate === "string" && candidate.trim()) {
-          snippets.push(candidate);
-        }
-      }
-      const parts = event?.parts ?? event?.data?.parts ?? [];
-      if (Array.isArray(parts)) {
-        for (const part of parts) {
-          const text = part?.text ?? part?.content;
-          if (typeof text === "string" && text.trim()) snippets.push(text);
-        }
-      }
-    } catch {
-      // Ignore non-event lines from opencode --format json.
-    }
-  }
-  return snippets.join("\n");
-};
-
 const callOpencode = async (prompt) => {
   const command = await opencodeCommand();
+  const agentName = `aivatar-learning-${randomUUID()}`;
   const { stdout } = await runCommand(
     command,
-    ["run", "--format", "json", prompt],
-    "",
+    ["run", "--format", "json", "--agent", agentName],
+    prompt,
     Math.max(defaultTimeoutMs, 45000),
+    {
+      OPENCODE_CONFIG_CONTENT: opencodeLearningConfig(process.env.OPENCODE_CONFIG_CONTENT, agentName),
+      OPENCODE_DISABLE_PROJECT_CONFIG: "true",
+      OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
+      OPENCODE_DISABLE_CLAUDE_CODE: "true",
+    },
   );
-  const text = textFromOpencodeJsonEvents(stdout) || stdout;
-  return unwrapProviderJson(extractJsonObject(text));
+  return parseOpencodeOutput(stdout);
 };
 
 const conversationEntriesFromDigest = (digest) => {
@@ -1056,21 +1044,33 @@ const main = async () => {
   const avatarState = await avatarStateFromOptions(options);
   options.avatarState = avatarState;
   const prompt = learningPrompt(options, digest, avatarState);
-  let raw;
-
-  if (options.provider === "claude-code") {
-    raw = await callClaudeCode(prompt);
-  } else if (options.provider === "codex") {
-    raw = await callCodex(prompt);
-  } else if (options.provider === "opencode") {
-    raw = await callOpencode(prompt);
-  } else if (options.provider === "none") {
-    raw = heuristicLearning(options, digest);
+  let learning;
+  if (options.provider === "none") {
+    learning = normalizeLearning(heuristicLearning(options, digest), options, digest);
+  } else if (["claude-code", "codex", "opencode"].includes(options.provider)) {
+    try {
+      const raw = options.provider === "claude-code"
+        ? await callClaudeCode(prompt)
+        : options.provider === "codex"
+          ? await callCodex(prompt)
+          : await callOpencode(prompt);
+      learning = normalizeLearning(raw, options, digest);
+      learning.diagnostic = learningDiagnostic(options.provider, "success");
+    } catch (error) {
+      const reason = classifyProviderFailure(error);
+      // Only the fixed reason enum reaches logs, the bridge or the saved state.
+      console.warn(`[aivatar-learning-worker] ${options.provider}: ${reason}`);
+      learning = normalizeLearning(
+        heuristicLearning(options, digest),
+        { ...options, provider: "none" },
+        digest,
+      );
+      learning.diagnostic = learningDiagnostic(options.provider, "fallback", reason);
+    }
   } else {
-    throw new Error(`Unsupported provider: ${options.provider}`);
+    throw new Error("Unsupported learning provider");
   }
 
-  const learning = normalizeLearning(raw, options, digest);
   if (options.dryRun) {
     console.log(JSON.stringify(learning, null, 2));
     return;
@@ -1080,26 +1080,8 @@ const main = async () => {
   console.log(JSON.stringify({ ok: true, learning }, null, 2));
 };
 
-main().catch(async (error) => {
-  const options = parseArgs(process.argv.slice(2));
-  const message = error instanceof Error ? error.message : String(error);
-  console.warn(`[aivatar-learning-worker] ${message}`);
-
-  if (options.sessionId && options.provider !== "none") {
-    try {
-      const digest = await contextDigestFromOptions(options);
-      const learning = normalizeLearning(
-        heuristicLearning(options, digest),
-        { ...options, provider: "none" },
-        digest,
-      );
-      if (options.dryRun) {
-        console.log(JSON.stringify(learning, null, 2));
-      } else {
-        await postLearning(options, learning);
-      }
-    } catch {
-      // Learning must never interrupt the main status integration.
-    }
-  }
+main().catch(() => {
+  // Bridge/file failures must neither expose raw diagnostics nor fabricate a
+  // second provider failure after successful generation.
+  console.warn("[aivatar-learning-worker] Learning could not be delivered");
 });

@@ -1,4 +1,5 @@
 import type { AivatarSaveState, AvatarRuntime } from "../types";
+import { mergeLearningRecommendations } from "../game/learningCandidates";
 import {
   createSavePersistence,
   DEFAULT_SAVE_WAIT_MS,
@@ -76,6 +77,9 @@ const mergeRoomChanges = (
     wallet,
     rewardedCompletionIds: [...new Set([...(remote.rewardedCompletionIds ?? []), ...localRewardIds])]
       .slice(-REWARDED_COMPLETION_ID_LIMIT),
+    learningRecommendations: local.learningRecommendations || remote.learningRecommendations
+      ? mergeLearningRecommendations(local.learningRecommendations, remote.learningRecommendations, merged.memory)
+      : undefined,
     petStats: { energy: stat("energy"), mood: stat("mood"), hunger: stat("hunger") },
     inventory: mergeStock(base.inventory, local.inventory, remote.inventory, (entry) => entry.itemId),
     furnitureStorage: mergeStock(

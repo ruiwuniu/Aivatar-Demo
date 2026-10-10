@@ -536,6 +536,23 @@ const normalizeTraitChanges = (value) => {
   return Object.keys(changes).length > 0 ? changes : undefined;
 };
 
+const normalizeLearningDiagnostic = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (!["codex", "claude-code", "opencode"].includes(value.provider)) return undefined;
+  if (!["success", "fallback"].includes(value.status)) return undefined;
+  if (typeof value.timestamp !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value.timestamp) ||
+      !Number.isFinite(Date.parse(value.timestamp))) return undefined;
+  const reasons = ["unavailable", "authentication", "timeout", "invalid-output", "empty-candidates", "provider-error"];
+  if (value.status === "fallback" && !reasons.includes(value.reason)) return undefined;
+  return {
+    provider: value.provider,
+    status: value.status,
+    ...(value.status === "fallback" ? { reason: value.reason } : {}),
+    timestamp: new Date(value.timestamp).toISOString(),
+  };
+};
+
 const normalizeLearning = (value) => {
   if (!value || typeof value !== "object") return undefined;
 
@@ -570,6 +587,7 @@ const normalizeLearning = (value) => {
         ? Math.min(1, confidence)
         : undefined,
     privacyRisk,
+    diagnostic: normalizeLearningDiagnostic(value.diagnostic),
   };
 };
 
@@ -1383,6 +1401,7 @@ const learningContextPath = async (sessionId, digest, summary) => {
 };
 
 const spawnClaudeLearningWorker = async (status, digest) => {
+  if (process.env.AIVATAR_LEARNING_PROVIDER?.trim().toLowerCase() === "none") return false;
   if (!existsSync(learningScript)) return false;
   try {
     const sessionId = status.sessionId ?? "claude-code-desktop";
@@ -1420,8 +1439,15 @@ const spawnClaudeLearningWorker = async (status, digest) => {
         },
       },
     );
-    child.unref();
-    return true;
+    // A missing node executable emits `error` asynchronously; returning before
+    // `spawn` would hide the failure (and can crash the bridge).
+    return await new Promise((resolve) => {
+      child.once("error", () => resolve(false));
+      child.once("spawn", () => {
+        child.unref();
+        resolve(true);
+      });
+    });
   } catch {
     return false;
   }
@@ -2477,7 +2503,12 @@ const httpServer = http.createServer(async (request, response) => {
         fallbackLearning
       ) {
         const learningStatus = normalizeStatus(
-          sessionLearningStatus(effectiveStatus, fallbackLearning),
+          sessionLearningStatus(effectiveStatus, {
+            ...fallbackLearning,
+            ...(process.env.AIVATAR_LEARNING_PROVIDER?.trim().toLowerCase() !== "none"
+              ? { diagnostic: { provider: "claude-code", status: "fallback", reason: "unavailable", timestamp: new Date().toISOString() } }
+              : {}),
+          }),
         );
         currentStatus = withSessionExpiry({
           ...currentStatus,

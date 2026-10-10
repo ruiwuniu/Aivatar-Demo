@@ -1564,10 +1564,17 @@ fn finish_turn(
     if state == "complete" {
         remember_digest(session, "assistant", &summary);
         usage = completion_usage(session);
-        let worker_started =
-            allow_learning_worker && spawn_learning_worker(session_id, state, &summary, session);
-        if !worker_started {
+        let learning_enabled = local_bridge::learning_enabled();
+        let worker_started = learning_enabled
+            && allow_learning_worker
+            && spawn_learning_worker(session_id, state, &summary, session);
+        if learning_enabled && !worker_started {
             learning = heuristic_learning(session_id, phase, &summary, session);
+            if allow_learning_worker {
+                if let (Some(learning), Some(provider)) = (&mut learning, learning_provider()) {
+                    learning["diagnostic"] = local_bridge::learning_unavailable_diagnostic(&provider);
+                }
+            }
         }
     }
     session.usage_baseline = None;
@@ -1930,10 +1937,18 @@ fn command_variants(command: &str) -> Vec<String> {
     }
 }
 
-fn resolve_command(command: &str) -> Option<PathBuf> {
+fn user_command_dirs(command: &str, home: &Path) -> Vec<PathBuf> {
+    let mut directories = vec![home.join(".local").join("bin"), home.join(".cargo").join("bin")];
+    if command == "opencode" {
+        directories.push(home.join(".opencode").join("bin"));
+    }
+    directories
+}
+
+pub(crate) fn resolve_command(command: &str) -> Option<PathBuf> {
     let command_path = PathBuf::from(command);
-    if command_path.components().count() > 1 && command_path.is_file() {
-        return Some(command_path);
+    if command_path.components().count() > 1 {
+        return command_path.is_file().then_some(command_path);
     }
 
     let lookup = if cfg!(target_os = "windows") {
@@ -1983,8 +1998,7 @@ fn resolve_command(command: &str) -> Option<PathBuf> {
             PathBuf::from("/sbin"),
         ]);
         if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-            search_dirs.push(home.join(".local").join("bin"));
-            search_dirs.push(home.join(".cargo").join("bin"));
+            search_dirs.extend(user_command_dirs(command, &home));
         }
     }
 
@@ -1995,24 +2009,100 @@ fn resolve_command(command: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+fn learning_provider() -> Option<String> {
+    let provider = std::env::var("AIVATAR_LEARNING_PROVIDER")
+        .unwrap_or_else(|_| "codex".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    matches!(provider.as_str(), "codex" | "claude-code" | "opencode").then_some(provider)
+}
+
+fn learning_command_name(
+    provider: &str,
+    configured: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let (keys, default): (&[&str], &str) = match provider {
+        "codex" => (&["AIVATAR_CODEX_COMMAND", "CODEX_COMMAND"], "codex"),
+        "claude-code" => (&["AIVATAR_CLAUDE_COMMAND"], "claude"),
+        "opencode" => (&["AIVATAR_OPENCODE_COMMAND", "OPENCODE_COMMAND"], "opencode"),
+        "node" => (&["AIVATAR_NODE_COMMAND"], "node"),
+        _ => return None,
+    };
+    // Overrides are a single executable path/name, never shell command text.
+    // A configured but missing executable must not silently run a different CLI.
+    Some(
+        keys.iter()
+            .find_map(|key| configured(key))
+            .unwrap_or_else(|| default.to_string()),
+    )
+}
+
+pub(crate) fn resolve_learning_command(provider: &str) -> Option<PathBuf> {
+    let command = learning_command_name(provider, |key| std::env::var(key).ok())?;
+    resolve_command(&command)
+}
+
+#[cfg(test)]
+mod learning_command_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_commands_take_precedence_without_shell_parsing() {
+        let command = learning_command_name("codex", |key| match key {
+            "AIVATAR_CODEX_COMMAND" => Some("/synthetic/app bundle/codex".to_string()),
+            "CODEX_COMMAND" => Some("legacy-codex".to_string()),
+            _ => None,
+        });
+        assert_eq!(command.as_deref(), Some("/synthetic/app bundle/codex"));
+        assert_eq!(
+            learning_command_name("codex", |key|
+                (key == "CODEX_COMMAND").then(|| "legacy-codex".to_string())).as_deref(),
+            Some("legacy-codex"),
+        );
+        assert_eq!(
+            learning_command_name("node", |key|
+                (key == "AIVATAR_NODE_COMMAND").then(|| "/synthetic/node".to_string())).as_deref(),
+            Some("/synthetic/node"),
+        );
+        assert_eq!(
+            learning_command_name("claude-code", |_| None).as_deref(),
+            Some("claude"),
+        );
+        assert_eq!(
+            learning_command_name("opencode", |_| None).as_deref(),
+            Some("opencode"),
+        );
+        assert!(learning_command_name("none", |_| None).is_none());
+    }
+
+    #[test]
+    fn missing_explicit_path_does_not_fall_back_to_installed_cli() {
+        assert!(resolve_command("/aivatar-synthetic-missing/bin/node").is_none());
+    }
+
+    #[test]
+    fn opencode_installer_directory_is_only_searched_for_opencode() {
+        let home = Path::new("/synthetic/home");
+        let install = home.join(".opencode").join("bin");
+        assert!(user_command_dirs("opencode", home).contains(&install));
+        assert!(!user_command_dirs("node", home).contains(&install));
+        assert!(!user_command_dirs("claude", home).contains(&install));
+    }
+}
+
 fn spawn_learning_worker(
     session_id: &str,
     status: &str,
     summary: &str,
     session: &WatchedSession,
 ) -> bool {
-    let Some(node_command) = resolve_command("node") else {
+    let Some(node_command) = resolve_learning_command("node") else {
         return false;
     };
-    let provider =
-        std::env::var("AIVATAR_LEARNING_PROVIDER").unwrap_or_else(|_| "codex".to_string());
-    let provider_command = match provider.as_str() {
-        "codex" => resolve_command("codex").or_else(|| resolve_command("codex.cmd")),
-        "claude-code" => resolve_command("claude"),
-        "none" => return false,
-        _ => return false,
+    let Some(provider) = learning_provider() else {
+        return false;
     };
-    let Some(provider_command) = provider_command else {
+    let Some(provider_command) = resolve_learning_command(&provider) else {
         return false;
     };
     let Some(script) = LEARNING_SCRIPT.get().filter(|path| path.is_file()) else {
@@ -2042,6 +2132,7 @@ fn spawn_learning_worker(
         .env(
             match provider.as_str() {
                 "claude-code" => "AIVATAR_CLAUDE_COMMAND",
+                "opencode" => "AIVATAR_OPENCODE_COMMAND",
                 _ => "AIVATAR_CODEX_COMMAND",
             },
             provider_command,

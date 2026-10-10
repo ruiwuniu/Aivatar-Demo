@@ -38,6 +38,15 @@ import {
   normalizePlacedItemPoint,
 } from "./game/interactions";
 import { renderScene } from "./game/renderScene";
+import {
+  APPLIED_LEARNING_ID_LIMIT,
+  learningReceiptId,
+  normalizeLearningRecommendations,
+  receiveLearningRecommendations,
+  saveHasLearningReceipt,
+  selectIdleLearningCandidates,
+  type IdleLearningCandidateOption,
+} from "./game/learningCandidates";
 import { DesktopCompanion } from "./desktop/DesktopCompanion";
 import type { DesktopLayout, DesktopViewport } from "./desktop/desktopTypes";
 import {
@@ -80,7 +89,6 @@ import {
   isPointInRoomDoor,
   normalizeRoomPresence,
   normalizeSocialBubble,
-  normalizeSocialBubbleCandidate,
   normalizeSocialBubbleSet,
   normalizeSocialRelationship,
   normalizeSocialRoomMemory,
@@ -405,8 +413,6 @@ const LEGACY_TERMINAL_FURNITURE_ID = "computer";
 const SESSION_STALE_MS = 5 * 60 * 60 * 1000;
 const IDLE_BUBBLE_PHRASE_MAX_LENGTH = 28;
 const IDLE_BUBBLE_CANDIDATE_LIMIT = 6;
-const IDLE_BUBBLE_MEMORY_CANDIDATE_TARGET = 3;
-const IDLE_BUBBLE_SESSION_CANDIDATE_TARGET = 3;
 const SOCIAL_BUBBLE_CANDIDATE_LIMIT = 6;
 const SOCIAL_BUBBLE_SLOT_BASE = 4;
 const IDLE_BUBBLE_LANGUAGE_OPTIONS: IdleBubbleLanguagePreference[] = [
@@ -865,7 +871,7 @@ const statusSessionKey = (
 // completion/learning event for this session.
 const statusArrivalSignature = (status: CodexStatusMessage) => JSON.stringify([
   status.status, status.timestamp, status.phase ?? null,
-  status.rewardId ?? null, status.learning?.id ?? null,
+  status.rewardId ?? null, status.learning ?? null, status.idleBubbleCandidates ?? null,
 ]);
 
 const explicitStatusSessionKey = (
@@ -1037,22 +1043,6 @@ const normalizeIdleBubbleLanguage = (
   value?: AivatarMemory["preferences"]["idleBubbleLanguage"],
 ): IdleBubbleLanguagePreference =>
   value && IDLE_BUBBLE_LANGUAGE_OPTIONS.includes(value) ? value : "auto";
-
-const hasHanText = (value: string) => /[\u3400-\u9fff]/u.test(value);
-
-const shouldShowIdleBubbleCandidate = (
-  phrase: string,
-  preference: IdleBubbleLanguagePreference,
-  locale: Locale,
-) => {
-  const resolvedPreference =
-    preference === "auto" ? (locale.startsWith("zh") ? "zh" : "en") : preference;
-  if (resolvedPreference === "mixed") return true;
-  return resolvedPreference === "zh" ? hasHanText(phrase) : !hasHanText(phrase);
-};
-
-const uniqueIdleBubbleCandidates = (phrases: string[]) =>
-  Array.from(new Set(phrases.map(normalizeIdleBubblePhrase).filter(Boolean)));
 
 const memoryIdleBubbleCandidates = (memory: AivatarMemory): string[] => {
   const candidates: string[] = [];
@@ -2856,6 +2846,7 @@ const saveFromContent = (
   avatarAppearanceId: options.avatarAppearanceId ?? DEFAULT_AVATAR_APPEARANCE_ID,
   avatarName: options.avatarName?.trim() || content.avatar.name,
   memory: defaultMemory(),
+  learningRecommendations: normalizeLearningRecommendations(),
   navMemory: defaultNavMemory(),
   paintingGallery: normalizePaintingGallery(),
   petStats: content.petStats,
@@ -2899,6 +2890,7 @@ const normalizeSavePayload = (
     avatarAppearanceId: normalizeAvatarAppearanceId(parsed.avatarAppearanceId),
     furnitureStorage: normalizeFurnitureStorage(parsed.furnitureStorage),
     memory: normalizeMemory(parsed.memory),
+    learningRecommendations: normalizeLearningRecommendations(parsed.learningRecommendations, normalizeMemory(parsed.memory)),
     navMemory: normalizeNavMemory(parsed.navMemory),
     paintingGallery: normalizePaintingGallery(parsed.paintingGallery),
     wallet: normalizeSaveWallet(parsed.wallet, fallback.wallet),
@@ -4052,6 +4044,39 @@ export const App = () => {
   );
   const taskCabinetVisualFlowRef = useRef<TaskCabinetVisualFlow | null>(null);
   const appliedLearningIdsRef = useRef(new Map<string | null, Set<string>>());
+  const learningReceiptOwnersRef = useRef(new Map<string, string | null>());
+  const learningReceiptOwner = (receiptId: string, slotId: string | null, current: AivatarSaveState) => {
+    const owners = learningReceiptOwnersRef.current;
+    if (owners.has(receiptId)) return owners.get(receiptId);
+    let owner = slotId;
+    if (!saveHasLearningReceipt(current, receiptId)) {
+      const pendingOwner = [...appliedLearningIdsRef.current].find(([, ids]) => ids.has(receiptId));
+      if (pendingOwner) {
+        owner = pendingOwner[0];
+      } else {
+        // Read the current storage view only once per newly observed receipt.
+        // A bridge replay after restart must retain its original character.
+        for (const slot of readSaveSlots()) {
+          if (slot.id === slotId) continue;
+          const raw = appStorage.getItem(saveSlotStorageKey(slot.id));
+          if (!raw) continue;
+          try {
+            if (saveHasLearningReceipt(JSON.parse(raw), receiptId)) {
+              owner = slot.id;
+              break;
+            }
+          } catch {
+            // An unrelated malformed save is not rewritten during ingestion.
+          }
+        }
+      }
+    }
+    owners.set(receiptId, owner);
+    if (owners.size > APPLIED_LEARNING_ID_LIMIT * MAX_SAVE_SLOTS) {
+      owners.delete(owners.keys().next().value as string);
+    }
+    return owner;
+  };
   const paintingPlanRequestsRef = useRef(new Set<string>());
   const behaviorDemoTimerRef = useRef<number | null>(null);
   const previousSessionStatusRef = useRef(
@@ -9343,15 +9368,22 @@ export const App = () => {
         // Apply each new candidate's learning even if another session is
         // followed; later snapshots may make this already-observed one current.
         statusCandidatesBySession.forEach((candidate) => {
+          const recommendations = normalizeLearningRecommendations(next.learningRecommendations, next.memory);
           const learning = candidate.learning;
-          if (learning) {
-            const learningKey = [
-              candidate.agent ?? "agent", candidate.sessionId ?? "default", learning.id,
-            ].join(":");
+          const receiptId = learningReceiptId(candidate);
+          if (learning?.privacyRisk === "high") return;
+          if (receiptId && learningReceiptOwner(receiptId, slotId, next) !== slotId) return;
+          // Persist candidates and sanitized diagnostics atomically with XP.
+          // Replayed snapshots can refresh diagnostics without granting XP again.
+          next = {
+            ...next,
+            learningRecommendations: receiveLearningRecommendations(recommendations, candidate, next.memory),
+          };
+          if (learning && receiptId) {
             const learningIds = appliedLearningIdsRef.current.get(slotId) ?? new Set<string>();
             appliedLearningIdsRef.current.set(slotId, learningIds);
-            if (!learningIds.has(learningKey)) {
-              learningIds.add(learningKey);
+            if (!learningIds.has(receiptId) && !recommendations.appliedLearningIds.includes(receiptId)) {
+              learningIds.add(receiptId);
               next = { ...next, memory: recordSessionLearningMemory(next.memory, candidate) };
             }
           }
@@ -10323,6 +10355,11 @@ export const App = () => {
 
       return {
         ...current,
+        learningRecommendations: {
+          ...normalizeLearningRecommendations(current.learningRecommendations, currentMemory),
+          idleCandidates: normalizeLearningRecommendations(current.learningRecommendations, currentMemory).idleCandidates
+            .filter((candidate) => candidate.phrase !== normalizedPhrase),
+        },
         memory: {
           ...currentMemory,
           preferences: {
@@ -10398,6 +10435,11 @@ export const App = () => {
 
       return {
         ...current,
+        learningRecommendations: {
+          ...normalizeLearningRecommendations(current.learningRecommendations, currentMemory),
+          socialCandidates: normalizeLearningRecommendations(current.learningRecommendations, currentMemory).socialCandidates
+            .filter((candidate) => socialBubbleSignature(candidate) !== signature),
+        },
         memory: {
           ...currentMemory,
           preferences: {
@@ -12546,189 +12588,30 @@ export const App = () => {
       : ui("roomVisit.away");
   const idleBubbleSlotCount = Math.max(1, growth.level);
   const idleBubbleSlotsAvailable = idleBubblePhrases.length < idleBubbleSlotCount;
-  const filterIdleBubbleCandidates = (phrases: string[]) =>
-    uniqueIdleBubbleCandidates(phrases)
-      .filter((phrase) =>
-        shouldShowIdleBubbleCandidate(phrase, idleBubbleLanguage, locale),
-      )
-      .filter((phrase) => !idleBubblePhrases.includes(phrase));
-  const memoryCandidates = filterIdleBubbleCandidates(
-    memoryIdleBubbleCandidates(memory),
-  );
-  type IdleBubbleCandidateSource = "memory" | "session" | "llm";
-  type IdleBubbleCandidateOption = {
-    phrase: string;
-    source: IdleBubbleCandidateSource;
-    agent?: string;
-  };
-  const idleBubbleCandidateOptions = (
-    options: IdleBubbleCandidateOption[],
-  ): IdleBubbleCandidateOption[] => {
-    const priority: Record<IdleBubbleCandidateSource, number> = {
-      memory: 0,
-      session: 1,
-      llm: 2,
-    };
-    const byPhrase = new Map<string, IdleBubbleCandidateOption>();
-    options
-      .map((option) => ({
-        ...option,
-        phrase: normalizeIdleBubblePhrase(option.phrase),
-      }))
-      .filter((option) => {
-        if (!option.phrase) return false;
-        if (!shouldShowIdleBubbleCandidate(
-          option.phrase,
-          idleBubbleLanguage,
-          locale,
-        )) {
-          return false;
-        }
-        return !idleBubblePhrases.includes(option.phrase);
-      })
-      .forEach((option) => {
-        const existing = byPhrase.get(option.phrase);
-        if (!existing || priority[option.source] > priority[existing.source]) {
-          byPhrase.set(option.phrase, option);
-        }
-      });
-
-    return [...byPhrase.values()];
-  };
-  const memoryCandidateOptions = idleBubbleCandidateOptions(
-    memoryCandidates.map((phrase) => ({ phrase, source: "memory" })),
-  );
-  const idleBubbleCandidateBadge = (candidate: IdleBubbleCandidateOption) => {
-    if (candidate.source === "llm") return "LLM";
-    return agentSourceBadge(candidate.agent);
-  };
-  const idleBubbleCandidateBadgeClass = (candidate: IdleBubbleCandidateOption) => {
-    if (candidate.source === "llm") return "llm";
-    return agentSourceClassName(candidate.agent);
-  };
-  const sessionCandidateOptions = idleBubbleCandidateOptions([
-    ...(effectiveStatus.learning?.idleBubbleCandidates ?? []).map((phrase) => ({
-      phrase,
-      source:
-        effectiveStatus.learning?.source === "llm"
-          ? ("llm" as const)
-          : ("session" as const),
-      agent: effectiveStatus.agent,
-    })),
-    ...(effectiveStatus.idleBubbleCandidates ?? []).map((phrase) => ({
-      phrase,
-      source: "session" as const,
-      agent: effectiveStatus.agent,
-    })),
-    ...sessions.flatMap((session) =>
-      (session.learning?.idleBubbleCandidates ?? []).map((phrase) => ({
-        phrase,
-        source:
-          session.learning?.source === "llm"
-            ? ("llm" as const)
-            : ("session" as const),
-        agent: session.agent,
-      })),
-    ),
-    ...sessions.flatMap((session) =>
-      (session.idleBubbleCandidates ?? []).map((phrase) => ({
-        phrase,
-        source: "session" as const,
-        agent: session.agent,
-      })),
-    ),
-  ]);
-  const primaryMemoryCandidateOptions = memoryCandidateOptions.slice(
-    0,
-    IDLE_BUBBLE_MEMORY_CANDIDATE_TARGET,
-  );
-  const primarySessionCandidateOptions = sessionCandidateOptions
-    .filter(
-      (candidate) =>
-        !primaryMemoryCandidateOptions.some(
-          (memoryCandidate) => memoryCandidate.phrase === candidate.phrase,
-        ),
-    )
-    .slice(0, IDLE_BUBBLE_SESSION_CANDIDATE_TARGET);
-  const idleBubbleCandidates = idleBubbleCandidateOptions([
-    ...primaryMemoryCandidateOptions,
-    ...primarySessionCandidateOptions,
-    ...memoryCandidateOptions,
-    ...sessionCandidateOptions,
-  ]).slice(0, IDLE_BUBBLE_CANDIDATE_LIMIT);
-  type SocialBubbleCandidateSource = "session" | "llm";
-  type SocialBubbleCandidateOption = AivatarSocialBubbleCandidate & {
-    source: SocialBubbleCandidateSource;
-    agent?: string;
-    sessionId?: string;
-  };
+  const learningRecommendations = normalizeLearningRecommendations(save.learningRecommendations, memory);
+  const { candidates: idleBubbleCandidates, hiddenByLanguage: hiddenIdleCandidateCount } = selectIdleLearningCandidates([
+    ...learningRecommendations.idleCandidates,
+    ...memoryIdleBubbleCandidates(memory).map((phrase) => ({ phrase, source: "memory" as const })),
+  ], idleBubblePhrases, idleBubbleLanguage, locale, IDLE_BUBBLE_CANDIDATE_LIMIT);
+  const idleBubbleCandidateBadge = (candidate: IdleLearningCandidateOption) =>
+    candidate.source === "llm" ? "LLM" : agentSourceBadge(candidate.agent);
+  const idleBubbleCandidateBadgeClass = (candidate: IdleLearningCandidateOption) =>
+    candidate.source === "llm" ? "llm" : agentSourceClassName(candidate.agent);
+  const learningFailures = learningRecommendations.diagnostics.filter((diagnostic) => diagnostic.status === "fallback");
+  type SocialBubbleCandidateOption = typeof learningRecommendations.socialCandidates[number];
   const socialBubbleSlotCount = SOCIAL_BUBBLE_SLOT_BASE + Math.max(0, growth.level - 1) * 2;
   const socialBubbleSlotsAvailable = savedSocialBubbles.length < socialBubbleSlotCount;
-  const socialBubbleCandidateOptions = (
-    options: SocialBubbleCandidateOption[],
-  ): SocialBubbleCandidateOption[] => {
-    const priority: Record<SocialBubbleCandidateSource, number> = {
-      session: 1,
-      llm: 2,
-    };
-    const bySignature = new Map<string, SocialBubbleCandidateOption>();
-    const normalizedOptions: SocialBubbleCandidateOption[] = [];
-    options.forEach((option) => {
-      const normalized = normalizeSocialBubbleCandidate(option);
-      if (!normalized) return;
-      normalizedOptions.push({
-        ...normalized,
-        source: option.source,
-        agent: option.agent,
-        sessionId: option.sessionId,
-      });
-    });
-    normalizedOptions
-      .filter((option) =>
-        preferredSocialBubbleLocale === "mixed" ||
-        option.locale === "mixed" ||
-        option.locale === preferredSocialBubbleLocale
-      )
-      .filter((option) => !savedSocialBubbleSignatures.has(socialBubbleSignature(option)))
-      .forEach((option) => {
-        const signature = socialBubbleSignature(option);
-        const existing = bySignature.get(signature);
-        if (!existing || priority[option.source] > priority[existing.source]) {
-          bySignature.set(signature, option);
-        }
-      });
-    return [...bySignature.values()].slice(0, SOCIAL_BUBBLE_CANDIDATE_LIMIT);
-  };
-  const socialBubbleCandidateBadge = (candidate: SocialBubbleCandidateOption) => {
-    if (candidate.source === "llm") return "LLM";
-    return agentSourceBadge(candidate.agent);
-  };
-  const socialBubbleCandidateBadgeClass = (candidate: SocialBubbleCandidateOption) => {
-    if (candidate.source === "llm") return "llm";
-    return agentSourceClassName(candidate.agent);
-  };
-  const socialBubbleCandidates = socialBubbleCandidateOptions([
-    ...(effectiveStatus.learning?.socialBubbleCandidates ?? []).map((candidate) => ({
-      ...candidate,
-      source:
-        effectiveStatus.learning?.source === "llm"
-          ? ("llm" as const)
-          : ("session" as const),
-      agent: effectiveStatus.agent,
-      sessionId: effectiveStatus.sessionId,
-    })),
-    ...sessions.flatMap((session) =>
-      (session.learning?.socialBubbleCandidates ?? []).map((candidate) => ({
-        ...candidate,
-        source:
-          session.learning?.source === "llm"
-            ? ("llm" as const)
-            : ("session" as const),
-        agent: session.agent,
-        sessionId: session.sessionId,
-      })),
-    ),
-  ]);
+  const pendingSocialCandidates = learningRecommendations.socialCandidates
+    .filter((candidate) => !savedSocialBubbleSignatures.has(socialBubbleSignature(candidate)));
+  const visibleSocialCandidates = pendingSocialCandidates.filter((candidate) =>
+    preferredSocialBubbleLocale === "mixed" || candidate.locale === "mixed" || candidate.locale === preferredSocialBubbleLocale,
+  );
+  const hiddenSocialCandidateCount = pendingSocialCandidates.length - visibleSocialCandidates.length;
+  const socialBubbleCandidates = visibleSocialCandidates.slice(0, SOCIAL_BUBBLE_CANDIDATE_LIMIT);
+  const socialBubbleCandidateBadge = (candidate: SocialBubbleCandidateOption) =>
+    candidate.source === "llm" ? "LLM" : agentSourceBadge(candidate.agent);
+  const socialBubbleCandidateBadgeClass = (candidate: SocialBubbleCandidateOption) =>
+    candidate.source === "llm" ? "llm" : agentSourceClassName(candidate.agent);
   const dominantTrait = traitRows.reduce(
     (best, trait) => (growth.traits[trait] > growth.traits[best] ? trait : best),
     traitRows[0],
@@ -14558,6 +14441,25 @@ export const App = () => {
                   <span>{ui("idleBubble.suggested")}</span>
                   <b>{ui("idleBubble.limit", { value: idleBubbleSlotCount })}</b>
                 </div>
+                {learningFailures.length > 0 ? (
+                  <div className="learning-status-notices" role="status">
+                    {learningFailures.map((diagnostic) => (
+                      <p key={diagnostic.provider} className="learning-status-notice">
+                        {ui(`learning.failure.${diagnostic.reason ?? "provider-error"}`, {
+                          provider: agentDisplayName({ agent: diagnostic.provider }),
+                        })}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+                {hiddenIdleCandidateCount > 0 ? (
+                  <p className="learning-language-notice">
+                    {ui("learning.languageFiltered", { value: hiddenIdleCandidateCount })}
+                    <button type="button" className="learning-language-action" onClick={() => updateIdleBubbleLanguagePreference("mixed")}>
+                      {ui("learning.showAllLanguages")}
+                    </button>
+                  </p>
+                ) : null}
                 {idleBubbleCandidates.length > 0 ? (
                   <div className="idle-bubble-candidates">
                     {idleBubbleCandidates.map((candidate) => {
@@ -14625,6 +14527,14 @@ export const App = () => {
                   <span>{ui("socialBubble.suggested")}</span>
                   <b>{ui("idleBubble.limit", { value: socialBubbleSlotCount })}</b>
                 </div>
+                {hiddenSocialCandidateCount > 0 ? (
+                  <p className="learning-language-notice">
+                    {ui("learning.languageFiltered", { value: hiddenSocialCandidateCount })}
+                    <button type="button" className="learning-language-action" onClick={() => updateIdleBubbleLanguagePreference("mixed")}>
+                      {ui("learning.showAllLanguages")}
+                    </button>
+                  </p>
+                ) : null}
                 {socialBubbleCandidates.length > 0 ? (
                   <div className="idle-bubble-candidates social-bubble-candidates">
                     {socialBubbleCandidates.map((candidate) => {

@@ -6332,6 +6332,38 @@ h2 {
   background: #ffe66d;
 }
 
+.learning-status-notices {
+  display: grid;
+  gap: 4px;
+}
+
+.learning-status-notice,
+.learning-language-notice {
+  margin: 0;
+  padding: 5px 6px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.learning-status-notice {
+  border-style: dashed;
+}
+
+.learning-language-action {
+  margin-left: 5px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-decoration: underline;
+  font: inherit;
+  cursor: pointer;
+}
+
 .idle-bubble-list,
 .idle-bubble-candidates {
   display: grid;
