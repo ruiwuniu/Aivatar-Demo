@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, writeFile, chmod, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { codebuddyRequiredFlags } from "./aivatar-learning-provider.mjs";
 
@@ -16,6 +16,12 @@ const avatar = join(directory, "avatar.json");
 const executable = join(directory, process.platform === "win32" ? "provider.cmd" : "provider.mjs");
 const script = join(directory, "provider.mjs");
 const capture = join(directory, "captured.json");
+// Keep installed providers off PATH while retaining the Windows command
+// processor needed to execute our synthetic .cmd shim.
+const fixturePath = [dirname(process.execPath),
+  ...(process.platform === "win32" && process.env.SystemRoot
+    ? [join(process.env.SystemRoot, "System32")] : []),
+].join(delimiter);
 await writeFile(avatar, JSON.stringify({ avatarName: "Fixture", traits: { warmth: 3 }, idleBubbleLanguagePreference: "en" }));
 await writeFile(script, `#!${process.execPath}
 import { writeFileSync } from "node:fs";
@@ -53,7 +59,7 @@ let checks = 0;
 for (const [provider, version] of [["claude-code", "2.1.200"], ["opencode", "1.2.0"], ["opencode", "2.0.26"], ["codebuddy", "2.164.0"]]) {
   const key = { "claude-code": "AIVATAR_CLAUDE_COMMAND", opencode: "AIVATAR_OPENCODE_COMMAND", codebuddy: "AIVATAR_CODEBUDDY_COMMAND" }[provider];
   const env = {
-    PATH: dirname(process.execPath), HOME: directory, USERPROFILE: directory,
+    PATH: fixturePath, HOME: directory, USERPROFILE: directory,
     ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
     [key]: executable,
     AIVATAR_SYNTHETIC_PROVIDER: provider, AIVATAR_SYNTHETIC_VERSION: version,
@@ -69,7 +75,7 @@ for (const [provider, version] of [["claude-code", "2.1.200"], ["opencode", "1.2
   const result = run();
   assert.equal(result.status, 0, result.stderr);
   const learning = JSON.parse(result.stdout);
-  assert.equal(learning.source, "llm");
+  assert.equal(learning.source, "llm", `${provider} ${version}: ${JSON.stringify(learning.diagnostic)}`);
   assert.equal(learning.diagnostic.provider, provider);
   assert.equal(learning.id, learningId);
   assert.deepEqual(learning.idleBubbleCandidates, ["A little garden victory"]);
