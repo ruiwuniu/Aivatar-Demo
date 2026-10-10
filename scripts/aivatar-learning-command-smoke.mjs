@@ -24,23 +24,29 @@ if (process.platform === "win32") {
   await writeFile(fixture, 'console.log(JSON.stringify(process.argv.slice(2)));\n');
   const expected = ["", "space value", "中文参数", 'a"b', "trailing\\", "two\\\\", '{"mcpServers":{},"message":"a & b | c"}', "()[]{}^%!;,*?`", "%AIVATAR_SENTINEL%", "!AIVATAR_SENTINEL!", "x & echo should-not-run > injected.txt", "x | echo should-not-run", "<stdin>"];
   const env = { SystemRoot: process.env.SystemRoot, PATH: "", HOME: directory, USERPROFILE: directory, AIVATAR_SENTINEL: "EXPANDED_UNEXPECTEDLY" };
-  for (const [name, compound] of [["plain", false], ["space 中文 (test) & caret^", false], ["npm-global", true], ["node_modules/.bin", true]]) {
+  const failures = [];
+  for (const [name, compound] of [["plain", false], ["space 中文 (test) & caret^", false], ["npm-global", true], ["node_modules/.bin", true], ["batch", false]]) {
     const folder = join(directory, name);
     await mkdir(folder, { recursive: true });
-    const command = join(folder, "provider.cmd");
+    const command = join(folder, name === "batch" ? "provider.bat" : "provider.cmd");
     const line = `@"${process.execPath}" "${fixture}" %*\r\n`;
     await writeFile(command, compound
       ? `@ECHO off\r\nSETLOCAL\r\nSET "_prog=${process.execPath}"\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%" "${fixture}" %*\r\n`
       : line);
     for (const values of [...expected.map((value) => [value]), expected]) {
+      try {
       const invocation = learningCommandInvocation(command, values, "win32", env);
       const result = spawnSync(invocation.command, invocation.args, { cwd: directory, env, shell: false, windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments, encoding: "utf8", timeout: 10000 });
       assert.equal(result.status, 0, `${name} ${JSON.stringify(values)}: ${result.stderr} ${result.error?.code ?? ""}`);
       assert.deepEqual(JSON.parse(result.stdout.trim()), values, `${name}: arguments must round-trip exactly`);
       await assert.rejects(access(join(directory, "injected.txt")), { code: "ENOENT" });
+      } catch (error) {
+        failures.push(`${name} ${JSON.stringify(values)}: ${error.message}`);
+      }
     }
-    console.log(`PASS Windows argv fidelity: ${name}`);
+    console.log(`Checked Windows argv fidelity: ${name}`);
   }
+  assert.deepEqual(failures, [], "Windows argument fidelity failures");
   console.log(`Retained synthetic fixtures: ${directory}`);
 } else {
   console.log("Windows subprocess round-trips run on the Windows CI runner.");

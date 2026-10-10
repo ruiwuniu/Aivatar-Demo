@@ -22,10 +22,15 @@ import { win32 } from "node:path";
 const metaCharacters = /([()\][%!^"`<>&|;, *?])/g;
 const escapeMeta = (value) => value.replace(metaCharacters, "^$1");
 const escapeArgument = (value, doubleEscape) => {
-  let result = String(value)
-    .replace(/(?=(\\+?)?)\1"/g, '$1$1\\"')
-    .replace(/(?=(\\+?)?)\1$/, "$1$1");
-  result = escapeMeta(`"${result}"`);
+  // Encode CRT quotes in one pass, including every trailing backslash.
+  let result = '"';
+  let backslashes = 0;
+  for (const character of String(value)) {
+    if (character === "\\") { backslashes += 1; continue; }
+    result += "\\".repeat(character === '"' ? backslashes * 2 + 1 : backslashes) + character;
+    backslashes = 0;
+  }
+  result = escapeMeta(result + "\\".repeat(backslashes * 2) + '"');
   return doubleEscape ? escapeMeta(result) : result;
 };
 
