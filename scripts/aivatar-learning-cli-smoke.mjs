@@ -10,7 +10,7 @@ import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { codebuddyRequiredFlags } from "./aivatar-learning-provider.mjs";
 
-const directory = await mkdtemp(join(tmpdir(), "aivatar-learning-cli-smoke-"));
+const directory = await mkdtemp(join(tmpdir(), "aivatar learning cli smoke-"));
 const worker = fileURLToPath(new URL("./aivatar-learning-worker.mjs", import.meta.url));
 const avatar = join(directory, "avatar.json");
 const executable = join(directory, process.platform === "win32" ? "provider.cmd" : "provider.mjs");
@@ -81,7 +81,35 @@ for (const [provider, version] of [["claude-code", "2.1.200"], ["opencode", "1.2
   assert.deepEqual(learning.idleBubbleCandidates, ["A little garden victory"]);
   const invocation = JSON.parse(await readFile(capture, "utf8"));
   assert.equal(invocation.suppliedPrompt, true);
-  if (provider === "claude-code" || provider === "codebuddy") assert.equal(invocation.args[invocation.args.indexOf("--tools") + 1], provider === "codebuddy" ? "StructuredOutput" : "");
+  if (provider === "claude-code" || provider === "codebuddy") {
+    const argumentValue = (flag) => {
+      assert.equal(invocation.args.filter((value) => value === flag).length, 1, `${provider}: exactly one ${flag}`);
+      const index = invocation.args.indexOf(flag);
+      assert.ok(index + 1 < invocation.args.length, `${provider}: ${flag} must retain its argument`);
+      return invocation.args[index + 1];
+    };
+    assert.equal(argumentValue("--tools"), provider === "codebuddy" ? "StructuredOutput" : "", `${provider}: tool argument survives the process boundary`);
+    const schemaText = argumentValue("--json-schema");
+    const schema = JSON.parse(schemaText);
+    assert.equal(schemaText, JSON.stringify(schema), `${provider}: schema JSON must arrive without added escapes`);
+    assert.equal(schema.type, "object");
+    assert.equal(schema.additionalProperties, false);
+    assert.deepEqual(schema.required, ["summary", "idleBubbleCandidates", "socialBubbleCandidates", "traitChanges", "xp", "confidence", "privacyRisk"]);
+    assert.deepEqual(Object.keys(schema.properties), schema.required);
+    assert.deepEqual(schema.properties.idleBubbleCandidates, {
+      type: "array", items: { type: "string", minLength: 2, maxLength: 28 }, minItems: 1, maxItems: 6,
+    });
+    assert.deepEqual(schema.properties.traitChanges.required, ["focus", "resilience", "curiosity", "efficiency", "creativity", "warmth"]);
+    const mcpText = argumentValue("--mcp-config");
+    assert.equal(mcpText, '{"mcpServers":{}}');
+    assert.deepEqual(JSON.parse(mcpText), { mcpServers: {} });
+    const settingsText = argumentValue("--settings");
+    const settings = provider === "codebuddy"
+      ? { disableAllHooks: true, autoMemoryEnabled: false, enabledPlugins: {} }
+      : { disableAllHooks: true };
+    assert.equal(settingsText, JSON.stringify(settings));
+    assert.deepEqual(JSON.parse(settingsText), settings);
+  }
   if (provider === "opencode") assert.equal(invocation.args.includes("--standalone"), version.startsWith("2."));
   const failure = run({ AIVATAR_SYNTHETIC_FAILURE: "1" });
   assert.equal(failure.status, 0);
