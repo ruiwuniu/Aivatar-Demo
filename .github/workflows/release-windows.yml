@@ -6,7 +6,7 @@ on:
       tag:
         description: Existing stable release tag (draft unless explicitly replacing).
         required: true
-        default: v0.5.2
+        default: v0.5.3
       ref:
         description: Full 40-character commit SHA to build.
         required: true
@@ -193,6 +193,10 @@ jobs:
               "aivatar-desktop-mode-smoke.mjs", "aivatar-desktop-vending-smoke.mjs",
               "aivatar-desktop-vending-menu-smoke.mjs", "aivatar-macintosh-terminal-smoke.mjs",
               "aivatar-terminal-macintosh-shop-smoke.mjs", "aivatar-macintosh-render-integration-smoke.mjs",
+              "aivatar-park-fishing-smoke.mjs", "aivatar-learning-candidates-smoke.mjs",
+              "aivatar-learning-cli-smoke.mjs", "aivatar-learning-job-smoke.mjs",
+              "aivatar-learning-bridge-smoke.mjs", "aivatar-desktop-agent-adapters-smoke.mjs",
+              "workbuddy-session-discovery-smoke.mjs",
               "aivatar-updater-release-smoke.mjs",
               "aivatar-updater-frontend-smoke.mjs",
           ):
@@ -217,6 +221,17 @@ jobs:
         run: |
           npm run tauri -- build --target x86_64-pc-windows-msvc --bundles "nsis,msi" --ci --config (Join-Path $env:RUNNER_TEMP "aivatar-unsigned-build.json") -- --locked
           if ($LASTEXITCODE -ne 0) { throw "Unsigned Windows bundle build failed." }
+
+      - name: Check native agent learning with synthetic fixtures
+        shell: python
+        run: |
+          import subprocess
+          # These offline harnesses reuse dependencies fetched by the Tauri build.
+          # They exercise production modules without opening the app or user data.
+          for script in (
+              "aivatar-codex-native-smoke.py", "aivatar-external-bridge-smoke.py",
+          ):
+              subprocess.run(["python", f"scripts/{script}"], check=True)
 
       - name: Verify installer metadata and write checksums
         run: |

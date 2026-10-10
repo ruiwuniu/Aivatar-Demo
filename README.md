@@ -7,36 +7,34 @@
 **中文** | Aivatar 是一个本地优先的 AI 编程智能体桌面伙伴。像素小伙伴可以带着电脑来到桌面自由活动，也可以生活在可装修的主房间、纸牌屋和山顶公园中，并对 Codex、Claude Code、opencode、腾讯 WorkBuddy 或自定义本地 agent 桥接的实时状态作出反应。
 
 <p align="center">
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.2/Aivatar_0.5.2_universal.dmg"><strong>Download macOS DMG 0.5.2</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.3/Aivatar_0.5.3_universal.dmg"><strong>Download macOS DMG 0.5.3</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.2/Aivatar_0.5.2_x64-setup.exe"><strong>Download Windows EXE 0.5.2</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.3/Aivatar_0.5.3_x64-setup.exe"><strong>Download Windows EXE 0.5.3</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.2/Aivatar_0.5.2_x64_en-US.msi"><strong>Download Windows MSI 0.5.2</strong></a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/download/v0.5.3/Aivatar_0.5.3_x64_en-US.msi"><strong>Download Windows MSI 0.5.3</strong></a>
   ·
-  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.5.2">Release 0.5.2</a>
+  <a href="https://github.com/ruiwuniu/Aivatar-Demo/releases/tag/v0.5.3">Release 0.5.3</a>
 </p>
 
-## 0.5.2 Highlights / 0.5.2 更新亮点
+## 0.5.3 Highlights / 0.5.3 更新亮点
 
 **EN**
 
-- **Fish together.** Accept your companion's invitation, wait for a bite, and play a fishing-rod QTE with randomized timing in a soft pixel textile style.
-- **Four rare, unique trophies.** Successful catches can yield bronze fish, silver wave, golden koi, or starlight crystal trophies. Place, store, or sell them; each is unique per save while owned, and resetting the room keeps them.
-- **Pond weed salad.** Caught weed goes into the fridge. Turn one weed into one salad with six seconds of cold preparation at the stove, manually or autonomously. Eating adds 12 hunger and 3 mood, with preparation and eating animations for all seven appearances.
-- **48 hours of rain each week.** Four seeded rainy days bring 6–18 hours of rain each. Weather follows real time and stays consistent after reopening.
-- **New pixel loot and icons.** The trophies, pond weed, and salad have matching art for the park, room, and inventory. Full catch probabilities are in the [release notes](docs/releases/v0.5.2.md).
+- **Reliable learned bubbles.** Improve Codex Desktop learning, compatibility with newer Claude Code/OpenCode clients, candidate ordering and persistence, and visible failure diagnostics. WorkBuddy now supports learning through the official CodeBuddy CLI.
+- **A sharper fishing challenge.** QTE hit zones shrink to **8%–12%** of the track, while keeping randomized speed/direction and the three-hit/two-miss rules.
+- **Two Macintosh colors.** Forest green with an orange CRT, or orange with a deeper green CRT. Both preserve existing room/desktop animations and cost 2600 Bits each.
+- **Consistent inventory cards.** Default-size cards and twelve simplified 16×16 pixel icons for fish, pond weed, salad and trophies. See the [release notes](docs/releases/v0.5.3.md).
 
 **中文**
 
-- **一起钓鱼。** 接受角色的气泡邀请，等待咬钩，参与时机随机变化的钓竿式 QTE，界面采用柔和的像素织物风格。
-- **四级稀有、唯一奖杯。** 成功收竿有机会获得铜鱼、银浪、金色锦鲤或星光水晶奖杯，可摆放、收纳、出售；每个存档每款持有期间唯一，重置房间时保留。
-- **水草沙拉。** 水草进入冰箱，一份水草在炉灶台面冷拌六秒即可制作一份沙拉，支持手动和自主制作。食用后饱食 +12、心情 +3，七种角色均配有制作和食用动画。
-- **每周 48 小时降雨。** 每周按存档种子选择四个雨日，每场 6～18 小时，天气随现实时间推进，重开保持一致。
-- **新像素物品与图标。** 奖杯、水草和沙拉均配有匹配公园、房间与物品栏的美术；完整掉落概率见[发布说明](docs/releases/v0.5.2.md)。
+- **气泡学习修复。** 改善 Codex 桌面端学习、新版 Claude Code/OpenCode 兼容性、候选排序与持久保存，并补齐失败提示；WorkBuddy 新增通过官方 CodeBuddy CLI 生成气泡的能力。
+- **钓鱼判定更有挑战。** QTE 判定区域收紧至轨道的 **8%～12%**，保留随机速度、方向以及三次命中成功、两次失误脱钩的规则。
+- **两款麦金塔配色。** 墨绿外壳搭配橙色荧光屏，橙色外壳搭配加深绿色荧光屏；沿用房间与桌面的现有动画，每款 2600 Bits。
+- **背包卡片统一。** 恢复默认卡片大小，为生鱼、水草、沙拉及奖杯接入十二款 16×16 简化像素图标。详见[发布说明](docs/releases/v0.5.3.md)。
 
-**EN — Updating from 0.5.1:** The official 0.5.1 app checks for updates about eight seconds after startup, once per application process. An already-running app can use **Settings → Check for updates**. Download 0.5.2, then choose **Install and restart**. All open persistent rooms must save successfully before installation proceeds. See the [0.5.2 release notes](docs/releases/v0.5.2.md) and [automatic update guide](docs/automatic-updates.md).
+**EN — Updating from 0.5.2:** The official 0.5.2 app checks about eight seconds after startup, once per application process. An already-running app can use **Settings → Check for updates**. Download 0.5.3, then choose **Install and restart**. All open persistent rooms must save successfully before installation proceeds. Provider-backed learning requires Node.js and a compatible, signed-in CLI; a supported desktop app bundled CLI can be used where available. WorkBuddy uses CodeBuddy CLI. See the [0.5.3 release notes](docs/releases/v0.5.3.md) and [automatic update guide](docs/automatic-updates.md).
 
-**中文 — 从 0.5.1 更新：** 0.5.1 正式版在启动约八秒后自动检查一次；一直保持运行的应用可通过**设置 → 检查更新**发现新版本。下载 0.5.2 后选择**安装并重启**，所有已打开的持久化窗口成功保存后才会安装。详见 [0.5.2 发布说明](docs/releases/v0.5.2.md)和[自动更新指南](docs/automatic-updates.md)。
+**中文 — 从 0.5.2 更新：** 官方 0.5.2 安装版启动约八秒后自动检查一次；已在运行的应用可通过**设置 → 检查更新**发现新版本。下载 0.5.3 后选择**安装并重启**，所有已打开的持久化窗口成功保存后才会安装。LLM 学习需要 Node.js 和已登录、版本兼容的 CLI；支持时可使用桌面应用自带 CLI，WorkBuddy 使用 CodeBuddy CLI。详见 [0.5.3 发布说明](docs/releases/v0.5.3.md)和[自动更新指南](docs/automatic-updates.md)。
 
 ## UI Showcase / UI 展示
 
@@ -126,7 +124,7 @@
   <a href="docs/assets/aivatar-30s-vertical-promo.mp4"><strong>Watch the 30-second vertical demo video / 观看 30 秒竖屏演示</strong></a>
 </p>
 
-> Current status / 当前状态: 0.5.2 is available through GitHub Releases as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer. Update artifacts carry a dedicated updater signature. OS code signing and Apple notarization are not yet configured; these installers remain intended for GitHub tester distribution.
+> Current status / 当前状态: 0.5.3 is available through GitHub Releases as a universal macOS DMG, Windows NSIS EXE, and Windows MSI installer. Update artifacts carry a dedicated updater signature. OS code signing and Apple notarization are not yet configured; these installers remain intended for GitHub tester distribution.
 
 ## Contents / 目录
 
@@ -608,22 +606,22 @@ $env:AIVATAR_LEARNING_ENABLED = "0"
 
 Current release-prep notes:
 
-- The 0.5.2 release is available through GitHub Releases as a universal macOS `.dmg`, Windows NSIS `.exe`, and Windows MSI installer. Updater artifacts are signature-verified; OS code signing and Apple notarization remain future work.
+- The 0.5.3 release is available through GitHub Releases as a universal macOS `.dmg`, Windows NSIS `.exe`, and Windows MSI installer. Updater artifacts are signature-verified; OS code signing and Apple notarization remain future work.
 - Codex Desktop connector and connected CLI runner scripts are bundled as resources, but connected CLI launch still requires Node.js and the requested agent CLI on `PATH`.
 - Character choices, upgraded room materials, furniture skins, the Starship UI skin, expanded desktop/CLI agent workflows, Room Visit social dialogue, autonomous visits, polished Task Cabinet/File Cabinet interactions, Card Room, Hilltop Park, fishing, directional gas-range cooking, dynamic rain/weather, desktop companion mode, automatic updates, and interaction/rendering and reward-settlement fixes are now part of the preview surface.
 - Native bridge support exists for local status, Codex Desktop session discovery, Tencent WorkBuddy China mainland/international `working`/`coding` session discovery, rollout watching, token-usage rewards, Codex token-limit HUD fields, avatar-state snapshots, painting plans, social dialogue, and local heuristic/provider-backed session learning fallbacks.
-- A fully Rust-native connected runner and provider-backed release-mode learning remain future hardening work.
+- A fully Rust-native connected runner remains future work. Provider-backed learning is bundled for Codex, Claude Code, OpenCode and WorkBuddy, and still depends on Node.js and a compatible, signed-in CLI.
 - Linux packaging remains planned after the desktop integration path is stable.
 
 **中文**
 
 当前发布准备阶段说明：
 
-- 0.5.2 已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包；更新包带有更新专用签名；系统级代码签名及 Apple 公证仍待完成。
+- 0.5.3 已通过 GitHub Releases 提供 macOS universal `.dmg`、Windows NSIS `.exe` 和 Windows MSI 安装包；更新包带有更新专用签名；系统级代码签名及 Apple 公证仍待完成。
 - Codex Desktop connector 和 connected CLI runner 脚本已作为资源打包，但 connected CLI 启动仍需要 Node.js 和目标 agent CLI 位于 `PATH` 中。
 - 多角色选择、升级后的房间材质、家具皮肤、Starship UI 主题、扩展后的桌面/CLI agent 工作流、Room Visit 社交对话/自动串门、打磨后的 Task Cabinet/File Cabinet 交互、纸牌屋 Card Room、山顶公园、钓鱼、四向燃气灶烹饪、动态雨天系统，桌面伙伴模式、自动更新，以及交互/渲染和奖励结算修复，已经纳入预览体验。
 - 本地状态、Codex Desktop 会话发现、腾讯 WorkBuddy 大陆版/国际版 `working`/`coding` 会话发现、rollout watching、token 用量奖励、Codex token 限额 HUD 字段、avatar-state 快照、绘画计划、社交对话、本地启发式/provider-backed session learning 回退，已有原生桥接预览实现。
-- 完全 Rust-native 的 connected runner 和面向发布模式的 provider-backed learning 仍是后续加固工作。
+- 完全 Rust-native 的 connected runner 仍待完善。Codex、Claude Code、OpenCode 与 WorkBuddy 的 LLM 学习已接入发布包，仍需要 Node.js 和已登录、版本兼容的 CLI。
 - Linux 打包计划会在桌面集成路径继续稳定后推进。
 
 ## License / 许可证

@@ -8,7 +8,7 @@ import ts from "typescript";
 // All state is synthetic; neither native storage nor a real save is imported.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const slotKey = "aivatar.saveSlot.v1.synthetic-loot";
-const baseSave = () => ({ inventory: [], placedItems: [], furnitureStorage: [], petStats: { mood: 0 }, memory: { recentEvents: [], growth: { traits: { curiosity: 0 } } }, wallet: { bits: 10 } });
+const baseSave = () => ({ inventory: [], placedItems: [], furnitureStorage: [], petStats: { mood: 0 }, memory: { preferences: { idleBubblePhrases: [] }, recentEvents: [], growth: { traits: { curiosity: 0 } } }, wallet: { bits: 10 } });
 const harness = () => {
   const values = new Map([[slotKey, JSON.stringify(baseSave())]]);
   const timers = new Map();
@@ -235,9 +235,10 @@ const roomHarness = (initial = baseSave()) => {
     DEFAULT_LAYOUT_KEY: "synthetic-default-layout", SAVE_LAYOUT_VERSION: 5,
     DEFAULT_AVATAR_APPEARANCE_ID: "octopus", createAvatarId: () => "avatar", createRoomId: () => "room",
     normalizeAvatarId: (id) => id ?? "avatar", normalizeRoomId: (id) => id ?? "room", normalizeAvatarAppearanceId: (id) => id ?? "octopus",
-    defaultMemory: () => ({}), defaultNavMemory: () => ({}), defaultFurnitureStorage: () => [],
+    defaultMemory: () => baseSave().memory, defaultNavMemory: () => ({}), defaultFurnitureStorage: () => [],
     normalizePaintingGallery: (value) => value ?? {}, normalizeSaveWallet: (value) => value ?? {},
-    normalizeFurnitureStorage: (value) => value ?? [], normalizeMemory: (value) => value ?? {}, normalizeNavMemory: (value) => value ?? {},
+    normalizeLearningRecommendations: h.load("src/game/learningCandidates.ts").normalizeLearningRecommendations,
+    normalizeFurnitureStorage: (value) => value ?? [], normalizeMemory: (value) => value ?? baseSave().memory, normalizeNavMemory: (value) => value ?? {},
     normalizeFurnitureSkinIds: (value) => value ?? {}, normalizeRewardedCompletionIds: (value) => value ?? [],
     removeDeprecatedInventoryItems: (value) => value,
     appStorage: { getItem: (key) => values.get(key) ?? null, setItem: async (key, value) => values.set(key, value) },
