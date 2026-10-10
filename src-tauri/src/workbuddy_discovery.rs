@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{atomic::{AtomicBool, Ordering}, OnceLock},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -11,7 +11,7 @@ use chrono::TimeZone;
 use rusqlite::{params, Connection, OpenFlags};
 use serde_json::{json, Value};
 
-use crate::local_bridge;
+use crate::{learning_job, local_bridge};
 
 const AGENT: &str = "workbuddy";
 const USAGE_SOURCE: &str = "workbuddy-sqlite";
@@ -21,6 +21,7 @@ const DEFAULT_LIVE_ACTIVITY_MS: u128 = 30_000;
 const MAX_SESSIONS_PER_SCAN: i64 = 40;
 
 static STARTED: AtomicBool = AtomicBool::new(false);
+static LEARNING_SCRIPT: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Clone, Debug)]
 struct WorkbuddySession {
@@ -53,6 +54,8 @@ struct SessionState {
     terminal_timestamp: Option<String>,
     terminal_usage: Option<Value>,
     terminal_reward_id: Option<String>,
+    learning_armed: bool,
+    last_learning_key: Option<String>,
 }
 
 struct Classification {
@@ -64,7 +67,10 @@ struct Classification {
     reward_terminal: bool,
 }
 
-pub fn start() -> Result<(), String> {
+pub fn start(learning_script: Option<PathBuf>) -> Result<(), String> {
+    if let Some(path) = learning_script {
+        let _ = LEARNING_SCRIPT.set(path);
+    }
     if STARTED
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -90,12 +96,23 @@ fn discovery_loop() {
                     let now = now_ms();
                     for row in rows {
                         let sidecar = sidecars.get(&row.id);
-                        let state = states
-                            .entry(session_state_key(&root, &row.id))
-                            .or_default();
+                        let state_key = session_state_key(&root, &row.id);
+                        let state = states.entry(state_key.clone()).or_default();
                         if let Some(payload) = build_payload(&row, sidecar, state, now) {
                             let _ = submit_presence(&row, sidecar);
-                            let _ = local_bridge::submit_status(payload);
+                            match local_bridge::submit_status(payload.clone()) {
+                                Ok(result) if result.get("ignored").and_then(Value::as_bool) != Some(true) => {
+                                    if let Some(job) = take_learning_job(
+                                        &row, &payload, state, &state_key,
+                                        &workbuddy_learning_provider_with(|key| std::env::var(key).ok()),
+                                        LEARNING_SCRIPT.get().cloned(), local_bridge::learning_enabled(),
+                                    ) {
+                                        let _ = learning_job::start(job);
+                                    }
+                                }
+                                Err(_) => state.last_payload_key = None,
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -153,6 +170,69 @@ fn workbuddy_homes() -> Vec<PathBuf> {
 
 fn session_state_key(root: &Path, session_id: &str) -> String {
     format!("{}:{session_id}", root.to_string_lossy())
+}
+
+fn workbuddy_learning_provider_with(configured: impl Fn(&str) -> Option<String>) -> String {
+    configured("AIVATAR_WORKBUDDY_LEARNING_PROVIDER")
+        .unwrap_or_else(|| "codebuddy".to_string())
+        .trim().to_ascii_lowercase()
+}
+
+fn learning_key(state_key: &str, terminal_time: u128, status: &str) -> String {
+    // Keep this stable hash in sync with the JS discovery path. The home path
+    // remains local and never reaches the provider prompt or saved memory.
+    let input = json!([state_key, terminal_time.to_string(), status]).to_string();
+    let hash = input.as_bytes().iter().fold(0xcbf29ce484222325u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    });
+    format!("workbuddy-{hash:016x}")
+}
+
+fn take_learning_job(
+    row: &WorkbuddySession,
+    payload: &Value,
+    state: &mut SessionState,
+    state_key: &str,
+    provider: &str,
+    learning_script: Option<PathBuf>,
+    enabled: bool,
+) -> Option<learning_job::LearningJob> {
+    let status = payload.get("status").and_then(Value::as_str).unwrap_or("idle");
+    if matches!(status, "thinking" | "executing" | "waiting_for_user") {
+        state.learning_armed = true;
+        return None;
+    }
+    if !matches!(status, "complete" | "error") {
+        state.learning_armed = false;
+        return None;
+    }
+    if !state.learning_armed { return None; }
+    state.learning_armed = false;
+    if !enabled || provider == "none" { return None; }
+    let terminal_time = row.updated_at.unwrap_or_default()
+        .max(row.last_activity_at.unwrap_or_default())
+        .max(row.created_at.unwrap_or_default());
+    let id = learning_key(state_key, terminal_time, status);
+    if state.last_learning_key.as_deref() == Some(id.as_str()) { return None; }
+    state.last_learning_key = Some(id.clone());
+    let surface = match row.source_mode.as_deref() {
+        Some("working") => "working", Some("coding") => "coding",
+        Some("design") => "design", _ => "session",
+    };
+    // Only fixed metadata categories are shared, never a session title, cwd,
+    // model setting, token use, credential or transcript.
+    let outcome = if status == "complete" { "completed" } else { "ended with an error" };
+    let summary = format!("WorkBuddy {surface} task {outcome}.");
+    Some(learning_job::LearningJob {
+        learning_script,
+        provider: provider.to_string(),
+        agent: AGENT.to_string(),
+        session_id: row.id.clone(),
+        status: status.to_string(),
+        digest: format!("{summary}\nOnly task-state metadata is available. Do not invent task details or quote a conversation."),
+        summary,
+        learning_id: id,
+    })
 }
 
 fn read_sessions(root: &std::path::Path) -> Result<Vec<WorkbuddySession>, String> {
@@ -722,6 +802,92 @@ fn submit_presence(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn learning_row() -> WorkbuddySession {
+        WorkbuddySession {
+            id: "learning-session".to_string(),
+            cwd: Some("/private/SECRET-PATH".to_string()),
+            title: Some("SECRET-TITLE".to_string()), custom_title: None,
+            status: Some("completed".to_string()),
+            created_at: Some(1_699_999_997_000), updated_at: Some(1_700_000_000_000),
+            last_activity_at: Some(1_700_000_000_000), source_mode: Some("coding".to_string()),
+            model: Some("SECRET-MODEL".to_string()), used: None, size: None, usage_updated_at: None,
+        }
+    }
+
+    fn next_learning(row: &WorkbuddySession, state: &mut SessionState, status: &str)
+        -> Option<learning_job::LearningJob> {
+        take_learning_job(row, &json!({"status": status}), state,
+            "/synthetic/home:learning-session", "codebuddy", None, true)
+    }
+
+    #[test]
+    fn learning_requires_a_live_edge_and_skips_historical_terminals() {
+        let mut row = learning_row();
+        let mut state = SessionState::default();
+        assert!(next_learning(&row, &mut state, "complete").is_none());
+        assert!(next_learning(&row, &mut state, "error").is_none());
+        assert!(next_learning(&row, &mut state, "executing").is_none());
+        let job = next_learning(&row, &mut state, "complete").expect("live completion");
+        assert_eq!(job.learning_id, "workbuddy-aee40ca796d199a7");
+        assert_eq!(job.provider, "codebuddy");
+        assert_eq!(job.agent, "workbuddy");
+        assert!(next_learning(&row, &mut state, "complete").is_none());
+        row.usage_updated_at = Some(1_700_000_001_000);
+        assert!(next_learning(&row, &mut state, "complete").is_none());
+        next_learning(&row, &mut state, "thinking");
+        assert!(next_learning(&row, &mut state, "complete").is_none(), "same terminal remains deduplicated");
+        next_learning(&row, &mut state, "waiting_for_user");
+        row.updated_at = Some(1_700_000_002_000);
+        let next = next_learning(&row, &mut state, "complete").expect("new turn");
+        assert_ne!(next.learning_id, job.learning_id);
+    }
+
+    #[test]
+    fn learning_metadata_excludes_titles_paths_models_and_untrusted_surfaces() {
+        let mut row = learning_row();
+        let mut state = SessionState { learning_armed: true, ..SessionState::default() };
+        let job = next_learning(&row, &mut state, "error").expect("failed live turn");
+        assert_eq!(job.summary, "WorkBuddy coding task ended with an error.");
+        assert!(job.digest.contains("Only task-state metadata"));
+        for text in [&job.summary, &job.digest, &job.learning_id] {
+            assert!(!text.contains("SECRET"));
+            assert!(!text.contains("/synthetic"));
+        }
+        row.source_mode = Some("SECRET-SURFACE".to_string());
+        row.updated_at = Some(1_700_000_002_000);
+        next_learning(&row, &mut state, "executing");
+        let job = next_learning(&row, &mut state, "complete").expect("unknown surface");
+        assert_eq!(job.summary, "WorkBuddy session task completed.");
+    }
+
+    #[test]
+    fn learning_honors_disable_and_idle_cancels_armed_turns() {
+        let row = learning_row();
+        for (provider, enabled) in [("none", true), ("codebuddy", false)] {
+            let mut state = SessionState { learning_armed: true, ..SessionState::default() };
+            assert!(take_learning_job(&row, &json!({"status": "complete"}), &mut state,
+                "home:session", provider, None, enabled).is_none());
+            assert!(!state.learning_armed);
+        }
+        let mut state = SessionState::default();
+        next_learning(&row, &mut state, "executing");
+        next_learning(&row, &mut state, "idle");
+        assert!(next_learning(&row, &mut state, "complete").is_none());
+    }
+
+    #[test]
+    fn learning_separates_homes_and_only_accepts_dedicated_provider_override() {
+        assert_ne!(learning_key("mainland:session", 123, "complete"),
+            learning_key("international:session", 123, "complete"));
+        assert_eq!(workbuddy_learning_provider_with(|_| None), "codebuddy");
+        assert_eq!(workbuddy_learning_provider_with(|key|
+            (key == "AIVATAR_LEARNING_PROVIDER").then(|| "codex".to_string())), "codebuddy");
+        assert_eq!(workbuddy_learning_provider_with(|key|
+            (key == "AIVATAR_WORKBUDDY_LEARNING_PROVIDER").then(|| " codex ".to_string())), "codex");
+        assert_eq!(workbuddy_learning_provider_with(|key|
+            (key == "AIVATAR_WORKBUDDY_LEARNING_PROVIDER").then(String::new)), "");
+    }
 
     #[test]
     fn terminal_payload_is_latched_across_usage_updates() {

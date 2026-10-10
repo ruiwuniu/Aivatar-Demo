@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptName = basename(scriptPath);
@@ -373,18 +373,6 @@ const addDigestEntry = (digests, sessionId, entry) => {
   digests.set(sessionId, current);
 };
 
-const learningContextPath = async (sessionId, digest) => {
-  const safeSession = String(sessionId).replace(/[^a-zA-Z0-9_.-]/g, "_");
-  const path = join(
-    tmpdir(),
-    "aivatar-learning-context",
-    `opencode-${safeSession}-${Date.now()}.txt`,
-  );
-  await mkdir(dirname(path), { recursive: true });
-  const { writeFile } = await import("node:fs/promises");
-  await writeFile(path, safeText(digest, 2200), "utf8");
-  return path;
-};
 
 const heuristicLearning = (payload, digest) => {
   const text = `${payload.summary ?? ""} ${digest}`.toLowerCase();
@@ -397,7 +385,7 @@ const heuristicLearning = (payload, digest) => {
   if (/done|complete|success|finish/u.test(text)) traitChanges.efficiency = 1;
   if (/why|explore|idea|maybe|learn/u.test(text)) traitChanges.curiosity = 1;
   return {
-    id: `opencode-${payload.sessionId}-${Date.now()}`,
+    id: `opencode-learning:${payload.rewardId ?? payload.sessionId}`,
     source: "heuristic",
     summary: safeText(payload.summary || "Aivatar noticed an opencode turn.", 160),
     idleBubbleCandidates:
@@ -424,46 +412,36 @@ const postHeuristicLearning = async (payload, digest, config) => {
     message: payload.summary,
     severity: payload.status === "error" ? "error" : "info",
     timestamp: new Date().toISOString(),
-    learning: heuristicLearning(payload, digest),
+    learning: {
+      ...heuristicLearning(payload, digest),
+      diagnostic: { provider: config.learningProvider, status: "fallback", reason: "unavailable", timestamp: new Date().toISOString() },
+    },
   });
 };
 
 const spawnLearningWorker = async (payload, digest, config) => {
-  if (!config.learningEnabled || !config.learningScript || !config.nodeCommand) {
-    return false;
-  }
+  if (!config.learningEnabled || !config.learningScript || !config.nodeCommand) return false;
   try {
-    const contextPath = await learningContextPath(payload.sessionId, digest);
-    const child = spawn(
-      config.nodeCommand,
-      [
-        config.learningScript,
-        "--provider",
-        config.learningProvider,
-        "--agent",
-        payload.agent,
-        "--session",
-        payload.sessionId,
-        "--status",
-        payload.status === "error" ? "error" : "complete",
-        "--summary",
-        payload.summary ?? payload.message ?? "opencode turn complete",
-        "--context-file",
-        contextPath,
-      ],
-      {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-        env: {
-          ...process.env,
-          AIVATAR_AGENT: payload.agent,
-          AIVATAR_SESSION_ID: payload.sessionId,
-          AIVATAR_LEARNING_PROVIDER: config.learningProvider,
-        },
-      },
-    );
-    child.unref();
+    // The installed plugin stays a standalone file. The supervised job lives
+    // beside the bundled worker, so moving/replacing Aivatar is repairable.
+    const job = await import(pathToFileURL(join(dirname(config.learningScript), "aivatar-learning-job.mjs")).href);
+    const options = {
+      learningScript: config.learningScript,
+      nodeCommand: config.nodeCommand,
+      provider: config.learningProvider,
+      agent: payload.agent,
+      sessionId: payload.sessionId,
+      status: payload.status === "error" ? "error" : "complete",
+      summary: payload.summary ?? "opencode turn complete",
+      digest,
+      learningId: `opencode-learning:${payload.rewardId ?? payload.sessionId}`,
+    };
+    // Do not hold up OpenCode's hook/event loop while a model is responding.
+    // runLearningJob turns spawn/exit/timeout failures into visible diagnostics.
+    void job.runLearningJob(options)
+      .then((learning) => postJson(config.status, job.learningStatus(options, learning)),
+        () => postHeuristicLearning(payload, digest, config))
+      .catch(() => {}); // A stopped bridge must not break the user's OpenCode turn.
     return true;
   } catch {
     return false;
@@ -560,7 +538,7 @@ export const AivatarOpencodePlugin = async (context) => {
         input?.messageId,
         `${sessionId}:${Date.now()}`,
       );
-      sessionTurns.set(sessionId, newOpencodeTurn(turnId));
+      if (!input?.aivatarAppend) sessionTurns.set(sessionId, newOpencodeTurn(turnId));
       addDigestEntry(digests, sessionId, digestEntryFromChatMessage(input, output));
     },
     "experimental.text.complete": async (input, output) => {
@@ -625,6 +603,116 @@ export const AivatarOpencodePlugin = async (context) => {
   };
 };
 
+// V2 public events use `data`; only consume observed lifecycle/user/text
+// events, never reasoning, tool input/output, or a transcript query. Keep the
+// V1 function export unchanged: pre-1.18.29 loaders do not accept objects.
+const AivatarOpencodeV2Plugin = {
+  id: "aivatar",
+  async setup(context) {
+    const hooks = await AivatarOpencodePlugin({ directory: context?.location?.directory });
+    const controller = new AbortController();
+    const pendingPrompts = new Map();
+    const turns = new Map();
+    const seen = new Set();
+    const boundedSet = (map, key, value, limit = 256) => {
+      map.set(key, value);
+      while (map.size > limit) map.delete(map.keys().next().value);
+    };
+    await context.session.hook("prompt", (event) => {
+      if (!event?.sessionID || !event?.messageID) return;
+      boundedSet(pendingPrompts, `${event.sessionID}:${event.messageID}`, safeText(event.prompt?.text, 420));
+    });
+    const forward = (sessionID, type, properties = {}) => hooks.event({ event: { type, sessionID, ...properties } });
+    const begin = async (sessionID, id, text) => {
+      const current = turns.get(sessionID);
+      if (current && !current.terminal) {
+        if (text !== undefined) {
+          await hooks["chat.message"]({ sessionID, messageID: id, aivatarAppend: current.hasPrompt }, { message: text });
+          current.hasPrompt = true;
+        }
+        return;
+      }
+      boundedSet(turns, sessionID, { terminal: false, hasPrompt: text !== undefined });
+      await hooks["chat.message"]({ sessionID, messageID: id }, { message: text ?? "" });
+    };
+    const consume = async (event) => {
+      const data = event?.data;
+      const sessionID = data?.sessionID;
+      if (typeof sessionID !== "string" || !sessionID) return;
+      // A subscription sees the entire server. Every location gets a plugin
+      // instance, so let only the owning location forward that session.
+      if (event.location?.directory && event.location.directory !== context.location?.directory) return;
+      if (event.location?.workspaceID && event.location.workspaceID !== context.location?.workspaceID) return;
+      if (!event.location && !turns.has(sessionID) && ![...pendingPrompts.keys()].some((key) => key.startsWith(`${sessionID}:`))) return;
+      if (event.id) {
+        if (seen.has(event.id)) return;
+        seen.add(event.id);
+        while (seen.size > 2048) seen.delete(seen.values().next().value);
+      }
+      const type = event.type;
+      if (type === "session.inbox.enqueued" && data.item?.type === "user") {
+        boundedSet(pendingPrompts, `${sessionID}:${data.inboxID}`, safeText(data.item.payload?.text, 420));
+        return;
+      }
+      if (type === "session.inbox.cancelled") {
+        pendingPrompts.delete(`${sessionID}:${data.inboxID}`);
+        return;
+      }
+      if (type === "session.inbox.delivered") {
+        const key = `${sessionID}:${data.inboxID}`;
+        const text = pendingPrompts.get(key);
+        if (text !== undefined) await begin(sessionID, data.inboxID, text);
+        pendingPrompts.delete(key);
+        return;
+      }
+      if (type === "session.execution.started") {
+        await begin(sessionID, event.id ?? `${sessionID}:${event.created}`);
+        await forward(sessionID, "session.status", { status: "busy", title: "OpenCode is working" });
+        return;
+      }
+      if (type === "session.deleted") {
+        await forward(sessionID, "session.deleted");
+        turns.delete(sessionID);
+        for (const key of pendingPrompts.keys()) if (key.startsWith(`${sessionID}:`)) pendingPrompts.delete(key);
+        return;
+      }
+      if (!turns.has(sessionID) || turns.get(sessionID).terminal) return;
+      if (type === "session.text.ended") {
+        await hooks["experimental.text.complete"]({ sessionID }, { text: safeText(data.text, 520) });
+      } else if (type === "session.step.ended" || type === "session.step.failed") {
+        // Stable assistant IDs replace repeats instead of double-counting usage.
+        await forward(sessionID, "message.updated", { properties: { info: { id: data.assistantMessageID, sessionID, role: "assistant", tokens: data.tokens } } });
+      } else if (type === "session.tool.called") {
+        await forward(sessionID, "tool.execute.before", { title: "OpenCode is using a tool" });
+      } else if (type === "permission.asked") {
+        await forward(sessionID, "permission.asked", { title: "OpenCode is waiting for permission" });
+      } else if (type === "permission.replied" || (type === "session.status" && data.status?.type !== "idle")) {
+        await forward(sessionID, "session.status", { status: "busy", title: "OpenCode is working" });
+      } else if (["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(type)) {
+        turns.get(sessionID).terminal = true;
+        const success = type === "session.execution.succeeded";
+        await forward(sessionID, success ? "session.status" : "session.error", {
+          status: success ? "idle" : "error",
+          title: success ? "OpenCode turn complete" : type.endsWith("interrupted") ? "OpenCode turn interrupted" : "OpenCode turn failed",
+        });
+      }
+      // session.idle/status.idle carry no outcome in V2. Wait for execution.*
+      // so a failure or cancellation can never become a successful reward.
+    };
+    void (async () => {
+      try {
+        for await (const event of context.event.subscribe({ signal: controller.signal })) {
+          if (controller.signal.aborted) break;
+          await consume(event);
+        }
+      } catch {
+        // Stream shutdown/reload is normal; no private event/error is logged.
+      }
+    })();
+    return () => { controller.abort(); pendingPrompts.clear(); turns.clear(); seen.clear(); };
+  },
+};
+
 export const AivatarPlugin = AivatarOpencodePlugin;
 export default AivatarOpencodePlugin;
 
@@ -640,13 +728,36 @@ const installDefaults = () => ({
   nodeCommand: process.env.AIVATAR_NODE_COMMAND ?? process.execPath,
 });
 
-const buildInstalledPluginSource = async () => {
+const opencodeApiMajor = (output) => {
+  const match = String(output ?? "").trim().match(/^(?:opencode(?:2)?(?:[ \t]+version)?[ \t]+)?v?(\d+)\.\d+\.\d+(?:[-+][\w.-]+)?(?:[ \t]*\r?\n|$)/i);
+  const major = match ? Number(match[1]) : 0;
+  return major === 1 || major === 2 ? major : null;
+};
+
+const detectOpencodeMajor = () => {
+  const explicit = process.env.AIVATAR_OPENCODE_COMMAND ?? process.env.OPENCODE_COMMAND;
+  const commands = explicit !== undefined ? [explicit] : ["opencode", "opencode2"];
+  for (const command of commands) {
+    if (!command) continue;
+    const shim = process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+    const result = spawnSync(shim ? "cmd.exe" : command, shim ? ["/d", "/c", command, "--version"] : ["--version"], { encoding: "utf8", timeout: 3000, maxBuffer: 8192, windowsHide: true });
+    if (result.status !== 0 || result.error) continue;
+    const major = opencodeApiMajor(result.stdout);
+    if (major) return major;
+  }
+  return null;
+};
+
+const buildInstalledPluginSource = async (major) => {
   const { learningScript, nodeCommand } = installDefaults();
   const source = await readFile(scriptPath, "utf8");
   return {
     learningScript,
     nodeCommand,
     source: source
+      .replace("export default AivatarOpencodePlugin;", major === 2
+        ? "// AIVATAR_OPENCODE_API: 2\nexport default AivatarOpencodeV2Plugin;"
+        : "// AIVATAR_OPENCODE_API: 1\nexport default AivatarOpencodePlugin;")
       .replace(
         '"__AIVATAR_LEARNING_SCRIPT__"',
         `"${escapeForJsString(learningScript)}"`,
@@ -679,7 +790,9 @@ const runCli = async () => {
     return;
   }
 
-  const installed = await buildInstalledPluginSource();
+  const major = detectOpencodeMajor();
+  if (!major) throw new Error("Could not determine the OpenCode API version. Install/update OpenCode or set AIVATAR_OPENCODE_COMMAND, then retry Enable/Repair.");
+  const installed = await buildInstalledPluginSource(major);
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, installed.source, "utf8");
   console.log(`Installed ${scriptName} to ${target}`);

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,6 +81,15 @@ async function withBridge(name, overrides, verify) {
 }
 
 const sessionFrom = (snapshot, sessionId) => snapshot.sessions.find((session) => session.sessionId === sessionId);
+const waitForLearning = async (url, sessionId) => {
+  for (let n = 0; n < 100; n += 1) {
+    const snapshot = await (await fetch(`${url}/agent-status`)).json();
+    const session = sessionFrom(snapshot, sessionId);
+    if (session?.learning) return session;
+    await delay(25);
+  }
+  throw new Error(`No learning result for synthetic session ${sessionId}`);
+};
 const validDiagnostic = { provider: "opencode", status: "fallback", reason: "invalid-output", timestamp: "2026-10-10T00:00:00Z" };
 const learningStatus = (sessionId, diagnostic) => ({
   agent: "opencode", sessionId, status: "complete", phase: "session-learning", rewardId: "synthetic-reward",
@@ -92,6 +101,12 @@ await withBridge("diagnostic allowlist, compatibility, and reward identity", {},
   let session = sessionFrom(snapshot, "valid");
   assert.deepEqual(session.learning.diagnostic, { ...validDiagnostic, timestamp: "2026-10-10T00:00:00.000Z" });
   assert.equal(session.rewardId, "synthetic-reward");
+  for (const reason of ["incompatible-client", "invalid-schema"]) {
+    snapshot = await post("/agent-status", learningStatus(reason, { ...validDiagnostic, reason, stderr: "private raw failure", command: "/private/path", url: "https://private.invalid" }));
+    const diagnostic = sessionFrom(snapshot, reason).learning.diagnostic;
+    assert.deepEqual(diagnostic, { ...validDiagnostic, reason, timestamp: "2026-10-10T00:00:00.000Z" });
+    assert(!JSON.stringify(diagnostic).includes("private"));
+  }
   for (const [key, value] of [["provider", "unknown"], ["status", "arbitrary"], ["reason", "secret error"], ["timestamp", "invalid"]]) {
     snapshot = await post("/agent-status", learningStatus(`invalid-${key}`, { ...validDiagnostic, [key]: value }));
     session = sessionFrom(snapshot, `invalid-${key}`);
@@ -121,8 +136,8 @@ await withBridge("missing worker reports fallback once", {}, async ({ post }) =>
 await withBridge("missing node emits safe fallback and bridge stays alive", {
   AIVATAR_LEARNING_SCRIPT: join(root, "scripts/aivatar-learning-worker.mjs"),
 }, async ({ post, url }) => {
-  const snapshot = await stopHook(post, "missing-node");
-  assert.equal(sessionFrom(snapshot, "missing-node").learning.diagnostic.reason, "unavailable");
+  await stopHook(post, "missing-node");
+  assert.equal((await waitForLearning(url, "missing-node")).learning.diagnostic.reason, "unavailable");
   assert((await fetch(`${url}/health`)).ok);
 });
 
@@ -140,6 +155,28 @@ await withBridge("disabled learning has no candidate or false failure", {
 }, async ({ post }) => {
   const snapshot = await stopHook(post, "disabled");
   assert.equal(sessionFrom(snapshot, "disabled").learning, undefined);
+});
+
+await withBridge("Workbuddy CodeBuddy diagnostics survive status normalization", {}, async ({ post }) => {
+  const snapshot = await post("/agent-status", {
+    ...learningStatus("workbuddy", { ...validDiagnostic, provider: "codebuddy", reason: "unavailable" }),
+    agent: "workbuddy",
+  });
+  assert.equal(sessionFrom(snapshot, "workbuddy").learning.diagnostic.provider, "codebuddy");
+  assert.equal(sessionFrom(snapshot, "workbuddy").learning.diagnostic.reason, "unavailable");
+});
+const failedWorker = join(fixture, "crashed-worker.mjs");
+await writeFile(failedWorker, "process.exitCode = 1;\n");
+await withBridge("post-spawn worker crash becomes a visible single fallback", {
+  AIVATAR_LEARNING_SCRIPT: failedWorker, AIVATAR_NODE_COMMAND: process.execPath,
+}, async ({ post, url }) => {
+  await stopHook(post, "crashed-worker");
+  const result = (await waitForLearning(url, "crashed-worker")).learning;
+  assert.equal(result.diagnostic.reason, "provider-error");
+  assert.equal(result.source, "heuristic");
+  await post("/agent-hooks/claude-code", { hook_event_name: "Stop", session_id: "crashed-worker", turn_id: "synthetic-turn" });
+  await delay(100);
+  assert.equal((await waitForLearning(url, "crashed-worker")).learning.id, result.id);
 });
 
 console.log(`Learning bridge regression checks passed. Synthetic fixtures retained: ${fixture}`);

@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         OnceLock,
     },
     thread,
@@ -36,7 +36,6 @@ const DIGEST_ENTRY_LIMIT: usize = 8;
 const DIGEST_ENTRY_CHARS: usize = 360;
 
 static STARTED: AtomicBool = AtomicBool::new(false);
-static LEARNING_CONTEXT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static LEARNING_SCRIPT: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Clone)]
@@ -1854,76 +1853,6 @@ fn remember_digest(session: &mut WatchedSession, role: &'static str, text: &str)
     }
 }
 
-fn learning_context_dir() -> PathBuf {
-    std::env::temp_dir().join("aivatar-learning-context")
-}
-
-fn avatar_state_file() -> PathBuf {
-    std::env::var_os("AIVATAR_AVATAR_STATE_FILE")
-        .or_else(|| std::env::var_os("AIVATAR_AVATAR_STATE_PATH"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("aivatar-avatar-state.json"))
-}
-
-fn safe_file_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-fn learning_digest(session: &WatchedSession) -> Option<String> {
-    if session.digest_entries.is_empty() {
-        return None;
-    }
-
-    let digest = session
-        .digest_entries
-        .iter()
-        .map(|entry| format!("{}: {}", entry.role, entry.text))
-        .collect::<Vec<_>>()
-        .join("\n");
-    (!digest.trim().is_empty()).then_some(digest)
-}
-
-fn write_learning_context(session_id: &str, session: &WatchedSession) -> Option<PathBuf> {
-    let digest = learning_digest(session)?;
-    let dir = learning_context_dir();
-    std::fs::create_dir_all(&dir).ok()?;
-    let millis = chrono::Utc::now().timestamp_millis();
-    let safe_session = safe_file_component(session_id);
-
-    for _ in 0..64 {
-        let sequence = LEARNING_CONTEXT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = dir.join(format!(
-            "codex-{safe_session}-{}-{millis}-{sequence}.txt",
-            std::process::id(),
-        ));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                if std::io::Write::write_all(&mut file, digest.as_bytes()).is_ok() {
-                    return Some(path);
-                }
-                let _ = std::fs::remove_file(&path);
-                return None;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(_) => return None,
-        }
-    }
-    None
-}
-
 fn command_variants(command: &str) -> Vec<String> {
     if cfg!(target_os = "windows") && Path::new(command).extension().is_none() {
         vec![
@@ -2014,7 +1943,7 @@ fn learning_provider() -> Option<String> {
         .unwrap_or_else(|_| "codex".to_string())
         .trim()
         .to_ascii_lowercase();
-    matches!(provider.as_str(), "codex" | "claude-code" | "opencode").then_some(provider)
+    matches!(provider.as_str(), "codex" | "claude-code" | "opencode" | "codebuddy").then_some(provider)
 }
 
 fn learning_command_name(
@@ -2025,6 +1954,7 @@ fn learning_command_name(
         "codex" => (&["AIVATAR_CODEX_COMMAND", "CODEX_COMMAND"], "codex"),
         "claude-code" => (&["AIVATAR_CLAUDE_COMMAND"], "claude"),
         "opencode" => (&["AIVATAR_OPENCODE_COMMAND", "OPENCODE_COMMAND"], "opencode"),
+        "codebuddy" => (&["AIVATAR_CODEBUDDY_COMMAND", "CODEBUDDY_COMMAND"], "codebuddy"),
         "node" => (&["AIVATAR_NODE_COMMAND"], "node"),
         _ => return None,
     };
@@ -2037,9 +1967,82 @@ fn learning_command_name(
     )
 }
 
+fn desktop_codex_learning_candidates(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut application_dirs = vec![PathBuf::from("/Applications")];
+    if let Some(home) = home {
+        application_dirs.push(home.join("Applications"));
+    }
+    application_dirs
+        .into_iter()
+        .flat_map(|directory| {
+            [
+                "Codex.app/Contents/Resources/codex-cli/bin/codex",
+                "ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+                "Codex.app/Contents/Resources/codex",
+            ]
+            .map(|relative| directory.join(relative))
+        })
+        .collect()
+}
+
+fn resolve_learning_command_with(
+    provider: &str,
+    configured: impl Fn(&str) -> Option<String>,
+    is_macos: bool,
+    home: Option<&Path>,
+    is_file: impl Fn(&Path) -> bool,
+    resolve: impl Fn(&str) -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    let command = learning_command_name(provider, &configured)?;
+    let codex_override = provider == "codex"
+        && ["AIVATAR_CODEX_COMMAND", "CODEX_COMMAND"]
+            .iter()
+            .any(|key| configured(key).is_some());
+    // The desktop app can support newer models than an older CLI on PATH.
+    // Restrict this preference to automatic Codex learning; explicit commands
+    // and all other callers of resolve_command retain their existing behavior.
+    if provider == "codex" && is_macos && !codex_override {
+        if let Some(path) = desktop_codex_learning_candidates(home)
+            .into_iter()
+            .find(|path| is_file(path))
+        {
+            return Some(path);
+        }
+    }
+    if provider == "opencode" && is_macos
+        && !["AIVATAR_OPENCODE_COMMAND", "OPENCODE_COMMAND"].iter().any(|key| configured(key).is_some()) {
+        // The macOS desktop sidecar is an observed V1 layout. The installer
+        // probes its actual version; its location alone never implies V2.
+        let mut roots = vec![PathBuf::from("/Applications")];
+        if let Some(home) = home { roots.push(home.join("Applications")); }
+        for root in roots {
+            for bundle in ["OpenCode.app", "opencode.app"] {
+                let path = root.join(bundle).join("Contents/MacOS/opencode-cli");
+                if is_file(&path) { return Some(path); }
+            }
+        }
+    }
+    resolve(&command)
+}
+
 pub(crate) fn resolve_learning_command(provider: &str) -> Option<PathBuf> {
-    let command = learning_command_name(provider, |key| std::env::var(key).ok())?;
-    resolve_command(&command)
+    if cfg!(target_os = "windows") && provider == "opencode"
+        && std::env::var_os("AIVATAR_OPENCODE_COMMAND").is_none()
+        && std::env::var_os("OPENCODE_COMMAND").is_none() {
+        if let Some(root) = std::env::var_os("LOCALAPPDATA") {
+            let candidate = PathBuf::from(root).join("opencode/opencode-cli.exe");
+            if candidate.is_file() { return Some(candidate); }
+        }
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    resolve_learning_command_with(
+        provider,
+        |key| std::env::var(key).ok(),
+        cfg!(target_os = "macos"),
+        home.as_deref(),
+        Path::is_file,
+        resolve_command,
+    )
 }
 
 #[cfg(test)]
@@ -2088,6 +2091,127 @@ mod learning_command_tests {
         assert!(!user_command_dirs("node", home).contains(&install));
         assert!(!user_command_dirs("claude", home).contains(&install));
     }
+
+    #[test]
+    fn desktop_codex_precedes_path_for_automatic_macos_learning() {
+        let desktop = PathBuf::from(
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+        );
+        let resolved = resolve_learning_command_with(
+            "codex",
+            |_| None,
+            true,
+            Some(Path::new("/synthetic/home")),
+            |path| path == desktop,
+            |_| panic!("PATH lookup must not precede an available desktop CLI"),
+        );
+        assert_eq!(resolved, Some(desktop));
+    }
+
+    #[test]
+    fn desktop_codex_supports_both_bundle_layouts_and_user_applications() {
+        let home = Path::new("/synthetic/home");
+        let candidates = desktop_codex_learning_candidates(Some(home));
+        assert_eq!(candidates.len(), 6);
+        for expected in &candidates {
+            let resolved = resolve_learning_command_with(
+                "codex",
+                |_| None,
+                true,
+                Some(home),
+                |path| path == expected,
+                |_| None,
+            );
+            assert_eq!(resolved.as_ref(), Some(expected));
+        }
+        assert_eq!(
+            candidates[0],
+            PathBuf::from("/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex"),
+        );
+        assert_eq!(
+            candidates[5],
+            home.join("Applications/Codex.app/Contents/Resources/codex"),
+        );
+        assert_eq!(desktop_codex_learning_candidates(None).len(), 3);
+    }
+
+    #[test]
+    fn explicit_codex_override_never_uses_a_desktop_fallback() {
+        for key in ["AIVATAR_CODEX_COMMAND", "CODEX_COMMAND"] {
+            for command in ["codex", "/synthetic/missing cli/codex"] {
+                let resolved = resolve_learning_command_with(
+                    "codex",
+                    |candidate| (candidate == key).then(|| command.to_string()),
+                    true,
+                    None,
+                    |_| panic!("An explicit override must skip desktop discovery"),
+                    |candidate| {
+                        assert_eq!(candidate, command);
+                        None
+                    },
+                );
+                assert!(resolved.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn desktop_lookup_does_not_change_other_providers_or_platforms() {
+        for (provider, command) in [
+            ("node", "node"),
+            ("claude-code", "claude"),
+        ] {
+            let resolved = resolve_learning_command_with(
+                provider,
+                |_| None,
+                true,
+                None,
+                |_| panic!("Only Codex learning should inspect desktop bundles"),
+                |candidate| {
+                    assert_eq!(candidate, command);
+                    Some(PathBuf::from(format!("/synthetic/bin/{candidate}")))
+                },
+            );
+            assert_eq!(resolved, Some(PathBuf::from(format!("/synthetic/bin/{command}"))));
+        }
+        let resolved = resolve_learning_command_with(
+            "codex",
+            |_| None,
+            false,
+            None,
+            |_| panic!("Other platforms must retain their existing command lookup"),
+            |_| Some(PathBuf::from("/synthetic/bin/codex")),
+        );
+        assert_eq!(resolved, Some(PathBuf::from("/synthetic/bin/codex")));
+    }
+
+    #[test]
+    fn automatic_codex_falls_back_to_path_when_no_bundle_exists() {
+        let resolved = resolve_learning_command_with(
+            "codex",
+            |_| None,
+            true,
+            None,
+            |_| false,
+            |command| {
+                assert_eq!(command, "codex");
+                Some(PathBuf::from("/synthetic/bin/codex"))
+            },
+        );
+        assert_eq!(resolved, Some(PathBuf::from("/synthetic/bin/codex")));
+    }
+
+    #[test]
+    fn opencode_desktop_candidate_is_automatic_only() {
+        let expected = PathBuf::from("/Applications/OpenCode.app/Contents/MacOS/opencode-cli");
+        let found = resolve_learning_command_with("opencode", |_| None, true, None,
+            |path| path == expected, |_| None);
+        assert_eq!(found, Some(expected));
+        let explicit = resolve_learning_command_with("opencode", |key|
+            (key == "AIVATAR_OPENCODE_COMMAND").then(|| "/missing/opencode".into()),
+            true, None, |_| panic!("explicit overrides must skip desktop"), |_| None);
+        assert!(explicit.is_none());
+    }
 }
 
 fn spawn_learning_worker(
@@ -2096,70 +2220,21 @@ fn spawn_learning_worker(
     summary: &str,
     session: &WatchedSession,
 ) -> bool {
-    let Some(node_command) = resolve_learning_command("node") else {
-        return false;
+    let Some(provider) = learning_provider() else { return false; };
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    session_id.hash(&mut hash);
+    session.turn_id.hash(&mut hash);
+    summary.hash(&mut hash);
+    let job = crate::learning_job::LearningJob {
+        learning_script: LEARNING_SCRIPT.get().cloned(), provider,
+        agent: AGENT.into(), session_id: session_id.into(), status: status.into(),
+        summary: summarize(summary),
+        digest: session.digest_entries.iter().map(|entry| format!("{}: {}", entry.role, entry.text)).collect::<Vec<_>>().join("\n"),
+        learning_id: format!("codex-native-{:016x}", hash.finish()),
     };
-    let Some(provider) = learning_provider() else {
-        return false;
-    };
-    let Some(provider_command) = resolve_learning_command(&provider) else {
-        return false;
-    };
-    let Some(script) = LEARNING_SCRIPT.get().filter(|path| path.is_file()) else {
-        return false;
-    };
-    let Some(context_path) = write_learning_context(session_id, session) else {
-        return false;
-    };
-
-    let mut command = Command::new(node_command);
-    command
-        .arg(script)
-        .arg("--provider")
-        .arg(&provider)
-        .arg("--agent")
-        .arg(AGENT)
-        .arg("--session")
-        .arg(session_id)
-        .arg("--status")
-        .arg(status)
-        .arg("--summary")
-        .arg(summarize(summary))
-        .arg("--context-file")
-        .arg(&context_path)
-        .arg("--avatar-state-file")
-        .arg(avatar_state_file())
-        .env(
-            match provider.as_str() {
-                "claude-code" => "AIVATAR_CLAUDE_COMMAND",
-                "opencode" => "AIVATAR_OPENCODE_COMMAND",
-                _ => "AIVATAR_CODEX_COMMAND",
-            },
-            provider_command,
-        )
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-
-    match command.spawn() {
-        Ok(mut child) => {
-            thread::spawn(move || {
-                let _ = child.wait();
-                let _ = fs::remove_file(context_path);
-            });
-            true
-        }
-        Err(_) => {
-            let _ = fs::remove_file(context_path);
-            false
-        }
-    }
+    let _ = crate::learning_job::start(job);
+    true
 }
 
 fn heuristic_learning(

@@ -4,11 +4,11 @@ use std::{
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex, OnceLock,
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{json, Map, Value};
@@ -66,7 +66,127 @@ const PAINTING_TRAITS: [&str; 6] = [
 ];
 
 static BRIDGE_STATE: OnceLock<Arc<Mutex<BridgeState>>> = OnceLock::new();
+static EXTERNAL_BRIDGE_READY: AtomicBool = AtomicBool::new(false);
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+// Native discovery may share an already-running JS bridge. Use only the
+// existing loopback endpoints; never follow URLs advertised in a response.
+fn external_bridge_request(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: &[u8],
+    timeout: Duration,
+) -> Result<(u16, Vec<u8>), String> {
+    let health = method == "GET" && path == HEALTH_PATH;
+    if !health && !(method == "POST" && matches!(path, AGENT_STATUS_PATH | PRESENCE_PATH)) {
+        return Err("Unsupported external bridge request.".into());
+    }
+    if body.len() > 128 * 1024 {
+        return Err("External bridge request is too large.".into());
+    }
+    let deadline = Instant::now() + timeout;
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&address, timeout.min(Duration::from_millis(350)))
+        .map_err(|_| "Could not connect to the existing Aivatar bridge.".to_string())?;
+    stream.set_write_timeout(Some(timeout)).map_err(|_| "Could not configure bridge connection.".to_string())?;
+    // HTTP/1.0 and Connection: close avoid chunked responses from the existing
+    // Node server. Read only bounded JSON; never retain or log its snapshots.
+    let headers = format!("{method} {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+    stream.write_all(headers.as_bytes()).and_then(|_| stream.write_all(body))
+        .map_err(|_| "Could not send to the existing Aivatar bridge.".to_string())?;
+    let mut buffer = Vec::new();
+    let mut chunk = [0u8; 2048];
+    let read = |stream: &mut TcpStream, chunk: &mut [u8]| -> Result<usize, String> {
+        let remaining = deadline.checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero()).ok_or_else(|| "Existing Aivatar bridge timed out.".to_string())?;
+        stream.set_read_timeout(Some(remaining)).map_err(|_| "Could not configure bridge connection.".to_string())?;
+        stream.read(chunk).map_err(|_| "Could not read the existing Aivatar bridge response.".to_string())
+    };
+    let header_end = loop {
+        let count = read(&mut stream, &mut chunk)?;
+        if count == 0 { return Err("Incomplete external bridge response.".into()); }
+        buffer.extend_from_slice(&chunk[..count]);
+        if let Some(index) = buffer.windows(4).position(|part| part == b"\r\n\r\n") {
+            if index > 16 * 1024 { return Err("External bridge headers are too large.".into()); }
+            break index + 4;
+        }
+        if buffer.len() > 16 * 1024 { return Err("External bridge headers are too large.".into()); }
+    };
+    let headers = std::str::from_utf8(&buffer[..header_end]).map_err(|_| "Invalid external bridge headers.".to_string())?;
+    let mut lines = headers.split("\r\n");
+    let mut status_line = lines.next().unwrap_or_default().split_whitespace();
+    if !matches!(status_line.next(), Some("HTTP/1.0" | "HTTP/1.1")) {
+        return Err("Invalid external bridge response.".into());
+    }
+    let status = status_line.next().and_then(|value| value.parse::<u16>().ok())
+        .ok_or_else(|| "Invalid external bridge status.".to_string())?;
+    let fields: Vec<_> = lines.filter_map(|line| line.split_once(':')).collect();
+    let field = |key: &str| fields.iter().find(|(name, _)| name.eq_ignore_ascii_case(key)).map(|(_, value)| value.trim());
+    if !field("content-type").is_some_and(|value| value.split(';').next().unwrap_or_default().trim().eq_ignore_ascii_case("application/json")) {
+        return Err("The existing service is not an Aivatar JSON bridge.".into());
+    }
+    if health && status != 200 { return Err("The existing Aivatar bridge health check failed.".into()); }
+    if !health && !matches!(status, 200 | 202) { return Ok((status, Vec::new())); }
+    if field("transfer-encoding").is_some() {
+        return Err("Unsupported external bridge response.".into());
+    }
+    let length = field("content-length").map(|value| value.parse::<usize>())
+        .transpose().map_err(|_| "Invalid external bridge response length.".to_string())?;
+    const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+    if length.is_some_and(|value| value > MAX_RESPONSE_BYTES) {
+        return Err("External bridge response is too large.".into());
+    }
+    let mut body = buffer[header_end..].to_vec();
+    while length.map_or(true, |value| body.len() < value) {
+        let count = read(&mut stream, &mut chunk)?;
+        if count == 0 { break; }
+        body.extend_from_slice(&chunk[..count]);
+        if body.len() > MAX_RESPONSE_BYTES { return Err("External bridge response is too large.".into()); }
+    }
+    if let Some(length) = length {
+        if body.len() < length { return Err("Incomplete external bridge response.".into()); }
+        body.truncate(length);
+    }
+    Ok((status, body))
+}
+
+pub fn verify_existing_bridge() -> Result<(), String> {
+    if BRIDGE_STATE.get().is_some() { return Ok(()); }
+    let result = (|| {
+        let (_, body) = external_bridge_request(HTTP_PORT, "GET", HEALTH_PATH, &[], Duration::from_secs(2))?;
+        let health: Value = serde_json::from_slice(&body).map_err(|_| "Invalid Aivatar bridge health response.".to_string())?;
+        if health["ok"] != true
+            || health["http"] != format!("http://127.0.0.1:{HTTP_PORT}{AGENT_STATUS_PATH}")
+            || health["websocket"] != format!("ws://127.0.0.1:{WS_PORT}{AGENT_WS_PATH}") {
+            return Err("Port 38988 is occupied by an unrecognized service.".into());
+        }
+        Ok(())
+    })();
+    EXTERNAL_BRIDGE_READY.store(result.is_ok(), Ordering::Release);
+    result
+}
+
+fn submit_external_bridge(path: &str, payload: &Value) -> Result<Value, String> {
+    if !EXTERNAL_BRIDGE_READY.load(Ordering::Acquire) {
+        return Err("Native bridge is not running and no existing Aivatar bridge was verified.".into());
+    }
+    let body = serde_json::to_vec(payload).map_err(|_| "Invalid external bridge payload.".to_string())?;
+    let (status, response) = external_bridge_request(HTTP_PORT, "POST", path, &body, Duration::from_secs(2))?;
+    match status {
+        200 | 202 => {
+            // The JS bridge uses 202 for both accepted and tombstoned events.
+            // Only the explicit body flag decides whether discovery may learn.
+            let result: Value = serde_json::from_slice(&response)
+                .map_err(|_| "Invalid existing Aivatar bridge acknowledgement.".to_string())?;
+            if !result.is_object() || result.get("ignored").is_some_and(|value| !value.is_boolean()) {
+                return Err("Invalid existing Aivatar bridge acknowledgement.".into());
+            }
+            Ok(if result["ignored"] == true { json!({ "ignored": true }) } else { json!({}) })
+        }
+        _ => Err("The existing Aivatar bridge rejected the update.".into()),
+    }
+}
 
 fn write_unique_temp_file(
     directory: &Path,
@@ -598,7 +718,7 @@ fn broadcast(state: &Arc<Mutex<BridgeState>>) {
 
 fn normalize_learning_diagnostic(value: &Value) -> Option<Value> {
     let provider = value.get("provider")?.as_str()?;
-    if !matches!(provider, "codex" | "claude-code" | "opencode") {
+    if !matches!(provider, "codex" | "claude-code" | "opencode" | "codebuddy") {
         return None;
     }
     let status = value.get("status")?.as_str()?;
@@ -617,7 +737,7 @@ fn normalize_learning_diagnostic(value: &Value) -> Option<Value> {
         if !matches!(
             reason,
             "unavailable" | "authentication" | "timeout" | "invalid-output"
-                | "empty-candidates" | "provider-error"
+                | "empty-candidates" | "incompatible-client" | "invalid-schema" | "provider-error"
         ) {
             return None;
         }
@@ -792,6 +912,24 @@ mod status_normalization_tests {
         let mut success = valid;
         success["status"] = json!("success");
         assert!(normalize_learning_diagnostic(&success).unwrap().get("reason").is_none());
+    }
+
+    #[test]
+    fn compatibility_diagnostics_keep_only_safe_reason_codes() {
+        for reason in ["incompatible-client", "invalid-schema"] {
+            let diagnostic = normalize_learning_diagnostic(&json!({
+                "provider": "codex",
+                "status": "fallback",
+                "reason": reason,
+                "timestamp": "2026-10-10T00:00:00Z",
+                "stderr": "private raw failure",
+                "command": "/synthetic/private/path",
+                "url": "https://private.invalid"
+            })).unwrap();
+            assert_eq!(diagnostic["reason"], reason);
+            assert_eq!(diagnostic.as_object().unwrap().len(), 4);
+            assert!(!diagnostic.to_string().contains("private"));
+        }
     }
 
     #[test]
@@ -1134,29 +1272,6 @@ pub(crate) fn learning_enabled() -> bool {
         .unwrap_or(true)
 }
 
-fn learning_context_file(session_id: &str, digest: &[String], summary: &str) -> Result<PathBuf, String> {
-    let directory = std::env::temp_dir().join("aivatar-learning-context");
-    let mut content = String::new();
-    if !summary.trim().is_empty() {
-        content.push_str("summary: ");
-        content.push_str(&sanitized_digest_text(summary, 220));
-        content.push('\n');
-    }
-    for entry in digest {
-        content.push_str(entry);
-        content.push('\n');
-    }
-    if content.trim().is_empty() {
-        content.push_str("Claude Code turn completed.\n");
-    }
-    write_unique_temp_file(
-        &directory,
-        &format!("claude-native-{}", safe_session_name(session_id)),
-        "txt",
-        content.as_bytes(),
-    )
-}
-
 fn node_command() -> PathBuf {
     crate::codex_discovery::resolve_learning_command("node")
         .or_else(|| std::env::var_os("AIVATAR_NODE_COMMAND").map(PathBuf::from))
@@ -1165,78 +1280,24 @@ fn node_command() -> PathBuf {
 
 fn spawn_claude_learning_worker(status: &Value, digest: &[String]) -> bool {
     if std::env::var("AIVATAR_LEARNING_PROVIDER")
-        .is_ok_and(|provider| provider.trim().eq_ignore_ascii_case("none"))
-    {
+        .is_ok_and(|provider| provider.trim().eq_ignore_ascii_case("none")) {
         return false;
     }
-    let Some(node_command) = crate::codex_discovery::resolve_learning_command("node") else {
-        return false;
+    use std::hash::{Hash, Hasher};
+    let session_id = string_field(status, "sessionId").unwrap_or_else(|| "claude-code-desktop".into());
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    session_id.hash(&mut hash);
+    string_field(status, "rewardId").or_else(|| string_field(status, "timestamp")).hash(&mut hash);
+    let job = crate::learning_job::LearningJob {
+        learning_script: current_learning_script(), provider: "claude-code".into(),
+        agent: "claude-code".into(), session_id,
+        status: string_field(status, "status").unwrap_or_else(|| "complete".into()),
+        summary: sanitized_digest_text(&string_field(status, "summary").unwrap_or_else(|| "Claude Code turn complete".into()), 220),
+        digest: digest.join("\n"), learning_id: format!("claude-native-{:016x}", hash.finish()),
     };
-    let Some(provider_command) = crate::codex_discovery::resolve_learning_command("claude-code")
-    else {
-        return false;
-    };
-    let Some(script) = current_learning_script().filter(|path| path.is_file()) else {
-        return false;
-    };
-    let session_id =
-        string_field(status, "sessionId").unwrap_or_else(|| "claude-code-desktop".to_string());
-    let summary = string_field(status, "summary")
-        .or_else(|| string_field(status, "message"))
-        .unwrap_or_else(|| "Claude Code turn complete".to_string());
-    let context_file = match learning_context_file(&session_id, digest, &summary) {
-        Ok(path) => path,
-        Err(_) => return false,
-    };
-    let mut command = std::process::Command::new(node_command);
-    command
-        .arg(script)
-        .args([
-            "--provider",
-            "claude-code",
-            "--agent",
-            "claude-code",
-            "--session",
-            &session_id,
-            "--status",
-            status
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("complete"),
-            "--summary",
-            &summary,
-            "--context-file",
-        ])
-        .arg(&context_file)
-        .arg("--avatar-state-file")
-        .arg(avatar_state_file())
-        .env("AIVATAR_AGENT", "claude-code")
-        .env("AIVATAR_SESSION_ID", &session_id)
-        .env("AIVATAR_LEARNING_PROVIDER", "claude-code")
-        .env("AIVATAR_CLAUDE_COMMAND", provider_command)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-
-    match command.spawn() {
-        Ok(mut child) => {
-            thread::spawn(move || {
-                let _ = child.wait();
-                let _ = std::fs::remove_file(context_file);
-            });
-            true
-        }
-        Err(_) => {
-            let _ = std::fs::remove_file(context_file);
-            false
-        }
-    }
+    // start() reports thread-start failure itself; true suppresses a second fallback.
+    let _ = crate::learning_job::start(job);
+    true
 }
 
 fn session_learning_status(status: &Value, learning: Value) -> Value {
@@ -1814,9 +1875,9 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
     let mut status = normalize_status(payload)?;
     let incoming_status = status.clone();
     let key = session_key(&status);
-    let state = BRIDGE_STATE
-        .get()
-        .ok_or_else(|| "Native bridge is not running.".to_string())?;
+    let Some(state) = BRIDGE_STATE.get() else {
+        return submit_external_bridge(AGENT_STATUS_PATH, &status);
+    };
 
     let mut guard = state.lock().expect("bridge state poisoned");
     if guard.tombstones.get(&key).is_some_and(|expires| now_ms() <= *expires) {
@@ -1920,9 +1981,9 @@ pub fn submit_status(payload: Value) -> Result<Value, String> {
 pub fn submit_presence(payload: Value) -> Result<Value, String> {
     let presence = normalize_presence(payload)?;
     let key = session_key(&presence);
-    let state = BRIDGE_STATE
-        .get()
-        .ok_or_else(|| "Native bridge is not running.".to_string())?;
+    let Some(state) = BRIDGE_STATE.get() else {
+        return submit_external_bridge(PRESENCE_PATH, &presence);
+    };
 
     let mut guard = state.lock().expect("bridge state poisoned");
     if guard.tombstones.get(&key).is_some_and(|expires| now_ms() <= *expires) {

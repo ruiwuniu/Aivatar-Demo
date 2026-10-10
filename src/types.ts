@@ -25,9 +25,9 @@ export interface TokenUsage {
 }
 
 export interface AivatarLearningDiagnostic {
-  provider: "codex" | "claude-code" | "opencode";
+  provider: "codex" | "claude-code" | "opencode" | "codebuddy";
   status: "success" | "fallback";
-  reason?: "unavailable" | "authentication" | "timeout" | "invalid-output" | "empty-candidates" | "provider-error";
+  reason?: "unavailable" | "authentication" | "timeout" | "invalid-output" | "empty-candidates" | "incompatible-client" | "invalid-schema" | "provider-error";
   timestamp: string;
 }
 

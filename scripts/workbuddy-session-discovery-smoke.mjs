@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
@@ -9,6 +9,8 @@ import {
   buildWorkbuddyStatusPayload,
   discoverWorkbuddyOnce,
   normalizeWorkbuddyTaskStatus,
+  takeWorkbuddyLearningRequest,
+  workbuddyLearningProvider,
 } from "./workbuddy-session-discovery.mjs";
 
 const tempDir = await mkdtemp(join(tmpdir(), "aivatar-workbuddy-smoke-"));
@@ -246,7 +248,88 @@ try {
     "international WorkBuddy home should be scanned",
   );
 
+  const learningRow = {
+    id: "learning-session", status: "completed", sourceMode: "coding",
+    createdAt: now - 3000, updatedAt: now, lastActivityAt: now,
+    title: "SECRET-TITLE", cwd: "/private/SECRET-PATH", model: "SECRET-MODEL",
+  };
+  const metadataState = {};
+  const request = (status, options = {}) => takeWorkbuddyLearningRequest(
+    learningRow, { status }, metadataState, "/synthetic/home:learning-session", options,
+  );
+  assert.equal(request("complete"), undefined, "startup must not replay an old completion");
+  assert.equal(request("error"), undefined, "startup must not replay an old failure");
+  assert.equal(request("executing"), undefined);
+  const firstLearning = request("complete");
+  assert.equal(firstLearning.provider, "codebuddy");
+  assert.equal(firstLearning.agent, "workbuddy");
+  assert.match(firstLearning.learningId, /^workbuddy-[a-f0-9]{16}$/u);
+  assert.equal(firstLearning.summary, "WorkBuddy coding task completed.");
+  assert.doesNotMatch(JSON.stringify(firstLearning), /SECRET-|\/synthetic\//u);
+  assert.equal(request("complete"), undefined, "one completion produces one job");
+  learningRow.usageUpdatedAt = now + 1000;
+  assert.equal(request("complete"), undefined, "usage-only updates never re-arm learning");
+  request("thinking");
+  assert.equal(request("complete"), undefined, "the same terminal identity remains deduplicated");
+  request("waiting_for_user");
+  learningRow.updatedAt = now + 2000;
+  const nextLearning = request("complete");
+  assert.notEqual(nextLearning.learningId, firstLearning.learningId, "a new turn with identical text gets a new learning id");
+  request("executing");
+  request("idle");
+  learningRow.updatedAt = now + 3000;
+  assert.equal(request("complete"), undefined, "idle cancels a pending learning edge");
+  request("executing");
+  assert.equal(request("error", { AIVATAR_LEARNING_ENABLED: "off" }), undefined);
+  request("executing");
+  assert.equal(request("error", { AIVATAR_WORKBUDDY_LEARNING_PROVIDER: "none" }), undefined);
+  request("executing");
+  learningRow.updatedAt = now + 4000;
+  const failedLearning = request("error", { AIVATAR_WORKBUDDY_LEARNING_PROVIDER: "codex" });
+  assert.equal(failedLearning.provider, "codex");
+  assert.equal(failedLearning.summary, "WorkBuddy coding task ended with an error.");
+  assert.equal(workbuddyLearningProvider({}), "codebuddy");
+  assert.equal(workbuddyLearningProvider({ AIVATAR_LEARNING_PROVIDER: "opencode" }), "codebuddy", "other source overrides must not silently reroute WorkBuddy");
+  assert.equal(workbuddyLearningProvider({ AIVATAR_WORKBUDDY_LEARNING_PROVIDER: "", AIVATAR_LEARNING_PROVIDER: "codex" }), "");
+  assert.equal(workbuddyLearningProvider({ AIVATAR_WORKBUDDY_LEARNING_PROVIDER: "claude-code", AIVATAR_LEARNING_PROVIDER: "codex" }), "claude-code");
+  const otherHomeLearning = takeWorkbuddyLearningRequest(learningRow, { status: "error" },
+    { learningArmed: true }, "/synthetic/international:learning-session", {});
+  assert.notEqual(otherHomeLearning.learningId, failedLearning.learningId, "same ids in two homes must not collide");
+  const nativeParity = takeWorkbuddyLearningRequest({
+    ...learningRow, createdAt: 1_699_999_997_000, updatedAt: 1_700_000_000_000,
+    lastActivityAt: 1_700_000_000_000,
+  }, { status: "complete" }, { learningArmed: true }, "/synthetic/home:learning-session", {});
+  assert.equal(nativeParity.learningId, "workbuddy-aee40ca796d199a7", "JS and native discovery share a stable completion identity");
+
+  const observedJobs = [];
+  const learningStates = new Map();
+  const scanLearning = () => discoverWorkbuddyOnce({
+    DatabaseSync, configDirs: [tempDir, internationalHome], states: learningStates,
+    now: now + 10_000, post: false, onLearning: (job) => observedJobs.push(job),
+    learningEnvironment: {},
+  });
+  await scanLearning();
+  assert.equal(observedJobs.length, 0, "existing completed SQLite inventory must not trigger learning");
+  for (const [home, sessionId] of [[tempDir, "working-session"], [internationalHome, "international-session"]]) {
+    const updateDb = new DatabaseSync(join(home, "workbuddy.db"));
+    updateDb.prepare("UPDATE sessions SET status = 'completed', updated_at = ?, last_activity_at = ? WHERE id = ?")
+      .run(now + 1000, now + 1000, sessionId);
+    updateDb.close();
+  }
+  await scanLearning();
+  assert.equal(observedJobs.length, 2, "each live home triggers one learning job when its task completes");
+  await scanLearning();
+  assert.equal(observedJobs.length, 2, "repeated SQLite scans must not duplicate learning");
+  const nextDb = new DatabaseSync(join(tempDir, "workbuddy.db"));
+  nextDb.prepare("UPDATE sessions SET status = 'running', updated_at = ? WHERE id = 'working-session'").run(now + 2000);
+  await scanLearning();
+  nextDb.prepare("UPDATE sessions SET status = 'failed', updated_at = ? WHERE id = 'working-session'").run(now + 3000);
+  nextDb.close();
+  await scanLearning();
+  assert.equal(observedJobs.length, 3, "the next observed failed turn also learns");
+  assert.equal(observedJobs.at(-1).status, "error");
+
   console.log("[workbuddy-session-discovery-smoke] ok");
 } finally {
-  await rm(tempDir, { recursive: true, force: true });
+  console.log(`[workbuddy-session-discovery-smoke] synthetic fixture retained: ${tempDir}`);
 }

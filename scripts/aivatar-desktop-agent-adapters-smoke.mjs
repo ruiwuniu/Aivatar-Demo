@@ -116,6 +116,10 @@ assert.equal(
 );
 assert.equal(statusPosts[5].body.phase, "session-learning");
 assert.equal(statusPosts[5].body.learning.source, "heuristic");
+assert.equal(statusPosts[5].body.learning.diagnostic.provider, "opencode");
+assert.equal(statusPosts[5].body.learning.diagnostic.status, "fallback");
+assert.equal(statusPosts[5].body.learning.diagnostic.reason, "unavailable");
+assert.ok(Number.isFinite(Date.parse(statusPosts[5].body.learning.diagnostic.timestamp)));
 assert.ok(statusPosts[5].body.learning.idleBubbleCandidates.length > 0);
 assert.ok(posted.some((entry) => entry.url.endsWith("/agent-presence")));
 assert.ok(posted.some((entry) => entry.url.endsWith("/agent-active")));

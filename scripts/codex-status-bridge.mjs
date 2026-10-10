@@ -1,4 +1,6 @@
 import http from "node:http";
+import { createHash } from "node:crypto";
+import { runLearningJob, learningStatus } from "./aivatar-learning-job.mjs";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -538,12 +540,12 @@ const normalizeTraitChanges = (value) => {
 
 const normalizeLearningDiagnostic = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  if (!["codex", "claude-code", "opencode"].includes(value.provider)) return undefined;
+  if (!["codex", "claude-code", "opencode", "codebuddy"].includes(value.provider)) return undefined;
   if (!["success", "fallback"].includes(value.status)) return undefined;
   if (typeof value.timestamp !== "string" ||
       !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value.timestamp) ||
       !Number.isFinite(Date.parse(value.timestamp))) return undefined;
-  const reasons = ["unavailable", "authentication", "timeout", "invalid-output", "empty-candidates", "provider-error"];
+  const reasons = ["unavailable", "authentication", "timeout", "invalid-output", "empty-candidates", "incompatible-client", "invalid-schema", "provider-error"];
   if (value.status === "fallback" && !reasons.includes(value.reason)) return undefined;
   return {
     provider: value.provider,
@@ -1403,54 +1405,25 @@ const learningContextPath = async (sessionId, digest, summary) => {
 const spawnClaudeLearningWorker = async (status, digest) => {
   if (process.env.AIVATAR_LEARNING_PROVIDER?.trim().toLowerCase() === "none") return false;
   if (!existsSync(learningScript)) return false;
-  try {
-    const sessionId = status.sessionId ?? "claude-code-desktop";
-    const summary =
-      status.summary ?? status.message ?? "Claude Code turn complete";
-    const contextPath = await learningContextPath(sessionId, digest, summary);
-    const child = spawn(
-      nodeCommand,
-      [
-        learningScript,
-        "--provider",
-        "claude-code",
-        "--agent",
-        "claude-code",
-        "--session",
-        sessionId,
-        "--status",
-        status.status === "error" ? "error" : "complete",
-        "--summary",
-        summary,
-        "--context-file",
-        contextPath,
-        "--avatar-state-file",
-        avatarStateFile,
-      ],
-      {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-        env: {
-          ...process.env,
-          AIVATAR_AGENT: "claude-code",
-          AIVATAR_SESSION_ID: sessionId,
-          AIVATAR_LEARNING_PROVIDER: "claude-code",
-        },
-      },
-    );
-    // A missing node executable emits `error` asynchronously; returning before
-    // `spawn` would hide the failure (and can crash the bridge).
-    return await new Promise((resolve) => {
-      child.once("error", () => resolve(false));
-      child.once("spawn", () => {
-        child.unref();
-        resolve(true);
-      });
+  const options = {
+    learningScript, nodeCommand, provider: "claude-code", agent: "claude-code",
+    sessionId: status.sessionId ?? "claude-code-desktop",
+    status: status.status === "error" ? "error" : "complete",
+    summary: sanitizedDigestText(status.summary ?? status.message ?? "Claude Code turn complete", 220),
+    digest: digest.join("\n"), avatarStateFile,
+    learningId: createHash("sha256").update(JSON.stringify([
+      "claude-code", status.sessionId, status.rewardId ?? status.timestamp,
+    ])).digest("hex").slice(0, 32),
+  };
+  // Generation is non-blocking and only this owner posts the final learning.
+  void runLearningJob(options).then(async (learning) => {
+    const response = await fetch(`http://127.0.0.1:${httpPort}${agentStatusPath}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(learningStatus(options, learning)), signal: AbortSignal.timeout(5000),
     });
-  } catch {
-    return false;
-  }
+    if (!response.ok) throw new Error("delivery failed");
+  }).catch(() => console.warn("[aivatar] Learning result could not be delivered"));
+  return true;
 };
 
 const sessionLearningStatus = (status, learning) => ({

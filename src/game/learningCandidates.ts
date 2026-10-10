@@ -11,8 +11,8 @@ import { normalizeSocialBubbleCandidate, socialBubbleSignature } from "./roomVis
 export const LEARNING_CANDIDATE_LIMIT = 48;
 export const APPLIED_LEARNING_ID_LIMIT = 256;
 const EPOCH = "1970-01-01T00:00:00.000Z";
-const providers = ["codex", "claude-code", "opencode"] as const;
-const reasons = ["unavailable", "authentication", "timeout", "invalid-output", "empty-candidates", "provider-error"] as const;
+const providers = ["codex", "claude-code", "opencode", "codebuddy"] as const;
+const reasons = ["unavailable", "authentication", "timeout", "invalid-output", "empty-candidates", "incompatible-client", "invalid-schema", "provider-error"] as const;
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const list = (value: unknown): unknown[] => Array.isArray(value) ? value : [];

@@ -14446,7 +14446,7 @@ export const App = () => {
                     {learningFailures.map((diagnostic) => (
                       <p key={diagnostic.provider} className="learning-status-notice">
                         {ui(`learning.failure.${diagnostic.reason ?? "provider-error"}`, {
-                          provider: agentDisplayName({ agent: diagnostic.provider }),
+                          provider: diagnostic.provider === "codebuddy" ? "Workbuddy / CodeBuddy" : agentDisplayName({ agent: diagnostic.provider }),
                         })}
                       </p>
                     ))}

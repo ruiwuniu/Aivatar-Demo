@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { learningStatus, runLearningJob } from "./aivatar-learning-job.mjs";
 
 export const WORKBUDDY_AGENT = "workbuddy";
 export const WORKBUDDY_USAGE_SOURCE = "workbuddy-sqlite";
@@ -29,6 +30,8 @@ const maxSessions = Math.max(
 );
 const pidDir = join(tmpdir(), "aivatar-workbuddy-discovery");
 const pidFile = join(pidDir, "discovery.json");
+const learningScript = process.env.AIVATAR_LEARNING_SCRIPT
+  ?? join(dirname(fileURLToPath(import.meta.url)), "aivatar-learning-worker.mjs");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -78,6 +81,66 @@ export const workbuddyHomes = () => {
 };
 
 const workbuddyHome = () => workbuddyHomes()[0] ?? join(homedir(), ".workbuddy");
+
+export const workbuddyLearningProvider = (environment = process.env) =>
+  String(environment.AIVATAR_WORKBUDDY_LEARNING_PROVIDER
+    ?? "codebuddy").trim().toLowerCase();
+
+const learningEnabled = (environment) =>
+  !["0", "false", "no", "off"].includes(
+    String(environment.AIVATAR_LEARNING_ENABLED ?? "1").trim().toLowerCase(),
+  );
+
+// A fixed-width local hash keeps the two WorkBuddy homes distinct without
+// putting their paths into a provider prompt, bridge payload or saved memory.
+const learningKey = (parts) => {
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of Buffer.from(JSON.stringify(parts), "utf8")) {
+    hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
+  }
+  return `workbuddy-${hash.toString(16).padStart(16, "0")}`;
+};
+
+export const takeWorkbuddyLearningRequest = (
+  row, payload, state, stateKey, environment = process.env,
+) => {
+  if (["thinking", "executing", "waiting_for_user"].includes(payload.status)) {
+    state.learningArmed = true;
+    return undefined;
+  }
+  if (!["complete", "error"].includes(payload.status)) {
+    state.learningArmed = false;
+    return undefined;
+  }
+  // Do not replay completed inventory on startup, or re-run learning when a
+  // terminal row receives usage-only/heartbeat updates.
+  if (!state.learningArmed) return undefined;
+  state.learningArmed = false;
+  const provider = workbuddyLearningProvider(environment);
+  if (!learningEnabled(environment) || provider === "none") return undefined;
+  const terminalTime = Math.max(
+    timestampMsFromValue(row.updatedAt) ?? 0,
+    timestampMsFromValue(row.lastActivityAt) ?? 0,
+    timestampMsFromValue(row.createdAt) ?? 0,
+  );
+  const id = learningKey([stateKey, String(terminalTime), payload.status]);
+  if (state.lastLearningKey === id) return undefined;
+  state.lastLearningKey = id;
+  const surface = ["working", "coding", "design"].includes(row.sourceMode)
+    ? row.sourceMode : "session";
+  // Titles can contain secrets or client names. The model receives only these
+  // fixed metadata categories, never a title, cwd, model setting or transcript.
+  const summary = `WorkBuddy ${surface} task ${payload.status === "complete" ? "completed" : "ended with an error"}.`;
+  return {
+    agent: WORKBUDDY_AGENT,
+    sessionId: row.id,
+    status: payload.status,
+    provider,
+    learningId: id,
+    summary,
+    digest: `${summary}\nOnly task-state metadata is available. Do not invent task details or quote a conversation.`,
+  };
+};
 
 const timestampMsFromValue = (value) => {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -546,6 +609,16 @@ const postPresence = async (row, sidecar) => {
   });
 };
 
+const dispatchLearningRequest = (request) => {
+  // The job owns failure classification; its safe result is delivered through
+  // the normal learning path without delaying WorkBuddy discovery.
+  void runLearningJob({ ...request, learningScript })
+    .then((learning) => postJson(statusEndpoint, learningStatus(request, learning)))
+    .catch(() => {
+      console.warn("[workbuddy-session-discovery] Could not deliver learning result to Aivatar.");
+    });
+};
+
 export const discoverWorkbuddyOnce = async ({
   DatabaseSync,
   configDir,
@@ -553,6 +626,8 @@ export const discoverWorkbuddyOnce = async ({
   states = new Map(),
   now = Date.now(),
   post = false,
+  onLearning = post ? dispatchLearningRequest : undefined,
+  learningEnvironment = process.env,
 } = {}) => {
   const roots = uniquePaths(configDirs ?? (configDir ? [configDir] : workbuddyHomes()));
   const payloads = [];
@@ -572,15 +647,20 @@ export const discoverWorkbuddyOnce = async ({
 
       const key = payloadKey(payload);
       if (state.lastPayloadKey === key) continue;
-      state.lastPayloadKey = key;
 
+      let accepted = true;
       if (post) {
         const presence = await postPresence(row, sidecar).catch((error) => ({
           error,
         }));
         if (!presence?.ignored) {
           await postJson(statusEndpoint, payload);
-        }
+        } else accepted = false;
+      }
+      state.lastPayloadKey = key;
+      if (accepted) {
+        const request = takeWorkbuddyLearningRequest(row, payload, state, stateKey, learningEnvironment);
+        if (request && onLearning) onLearning(request);
       }
       payloads.push(payload);
     }

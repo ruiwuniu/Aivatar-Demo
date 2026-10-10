@@ -167,6 +167,53 @@ npm.cmd run aivatar:learn:opencode -- --agent opencode --session test --status c
 
 `--provider none` uses the local heuristic fallback and is useful for bridge/UI smoke tests. `aivatar:learn:claude` uses Claude Code `--print`/JSON output when Claude Code is logged in; if Claude Code is not logged in or returns invalid JSON, the worker falls back without breaking status flow. `aivatar:learn:codex` uses Codex `exec` with read-only/no-approval structured output and has been smoke-tested for English and Chinese learning payloads. `aivatar:learn:opencode` uses `opencode run --format json` and falls back heuristically if the provider is unavailable or returns invalid JSON. The provider command can be overridden with `AIVATAR_CODEX_COMMAND`, `CODEX_COMMAND`, `AIVATAR_CLAUDE_COMMAND`, `AIVATAR_OPENCODE_COMMAND`, or `OPENCODE_COMMAND`; on Windows the worker prefers the npm-installed `@openai/codex/bin/codex.js` path when available so it can avoid the `codex.cmd` shim.
 
+Learning compatibility is checked before a model request. Claude Code requires
+2.1.169 or newer for safe mode; OpenCode supports the V1 and V2 CLI contracts,
+with V2 using an isolated `--standalone` run. Automatically found commands are
+version-probed; an explicit command override is exclusive and never silently
+replaced. The OpenCode integration installer selects the V1 function or V2
+`id/setup` plugin entry point from the detected CLI version. After upgrading
+OpenCode, use Enable/Repair and restart its sessions to load the matching plugin.
+An unknown or unsupported version produces an actionable compatibility notice.
+
+WorkBuddy learning defaults to the official CodeBuddy CLI (`codebuddy` or `cbc`,
+2.164.0 or newer), which must be installed and logged in separately. Override
+its executable with `AIVATAR_CODEBUDDY_COMMAND` or `CODEBUDDY_COMMAND`.
+The one-shot request uses `--setting-sources none`, disables hooks and MCP, and
+allows only the built-in, in-memory `StructuredOutput` encoder required by its
+JSON schema contract. Claude one-shot learning clears the inherited
+`CLAUDECODE` nesting marker while retaining normal login environment variables.
+`AIVATAR_WORKBUDDY_LEARNING_PROVIDER` explicitly selects `codebuddy`, `codex`,
+`claude-code`, `opencode`, or `none`; it does not inherit another agent's global
+provider and never switches vendors automatically. Only an observed active-to-
+terminal task transition triggers learning. Startup history, heartbeats and
+usage updates cannot replay it. The prompt contains fixed task-surface/status
+categories, without task titles, paths, model settings, credentials or chat text.
+
+Claude hooks, OpenCode plugins, WorkBuddy discovery and native discovery use
+supervised learning jobs. Workers run with `--dry-run` and a stable round ID;
+the supervisor alone publishes the result. Missing commands, incompatible
+versions, authentication errors, malformed output, crashes and timeouts produce
+bounded fallback diagnostics rather than disappearing. Jobs have output and
+time limits and terminate their own process trees on timeout. Diagnostics carry
+only an engine, fixed reason and timestamp; Growth persists them with candidates
+per character and clears an old failure when a newer success arrives.
+When a JS bridge already owns the standard local ports, native startup verifies
+its existing health contract before forwarding normalized status/presence to
+the fixed loopback endpoints. Native-only startup keeps the in-memory path.
+
+Compatibility regressions use synthetic inputs and child processes:
+`node scripts/aivatar-learning-provider-smoke.mjs`,
+`node scripts/aivatar-learning-cli-smoke.mjs`,
+`node scripts/aivatar-learning-job-smoke.mjs`,
+`node scripts/aivatar-opencode-v2-smoke.mjs`,
+`node scripts/workbuddy-session-discovery-smoke.mjs`, and
+`python3 scripts/aivatar-codex-native-smoke.py`.
+`aivatar-learning-ui-smoke.mjs` verifies the mounted Growth panel, persistence,
+failure clearing and receipt deduplication in a fresh browser profile; its
+optional `--learning-result-file` accepts a previously generated synthetic-task
+response. Synthetic CLI fixtures do not establish real provider login success.
+
 Run Aivatar painting-plan worker manually:
 
 ```powershell
@@ -1039,10 +1086,10 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 
 - `src-tauri/src/codex_discovery.rs`
   - Native packaged-app Codex Desktop discovery path used when Tauri starts the bridge/discovery flow.
-  - Watches local Codex rollout JSONL events read-only, emits ordinary turn status, writes sanitized learning context files, and starts `scripts/aivatar-learning-worker.mjs` after `final` / `final_answer` events when a provider command is available.
+  - Watches local Codex rollout JSONL events read-only, emits ordinary turn status, and starts a supervised learning job after a completed turn. Missing provider commands produce a visible fallback diagnostic.
   - Mirrors the JS discovery path for Claude Desktop local inventory, so packaged Windows builds can show recent Chat/Cowork/Code sidebar sessions even when those sessions only emitted lifecycle-only hook events.
   - Mirrors the JS Claude Desktop activity tracking path by tailing `logs\main.log` for Cowork/Code lifecycle events and posting short Chat cache update summaries when available. It uses the same Chat settle window and `desktopSessionId` alias behavior as the JS bridge/discovery path, so packaged builds do not split Cowork `local_*` running rows from CLI UUID completion rows.
-  - Resolves `node`, `codex`, and `claude` through PATH, Windows command variants, and macOS Homebrew/user-bin fallback paths. It passes the resolved provider path to the worker via `AIVATAR_CODEX_COMMAND` or `AIVATAR_CLAUDE_COMMAND`.
+  - Resolves Node through PATH, Windows command variants, and macOS Homebrew/user-bin fallback paths. The worker selects a compatible provider command so an older PATH entry cannot pin native learning to an obsolete CLI; explicit user command overrides remain authoritative.
   - On Windows, wraps `where.exe` command lookup and worker spawning with `CREATE_NO_WINDOW`, fixing the two quick terminal flashes that could appear after each Codex Desktop turn.
 
 - `src-tauri/src/workbuddy_discovery.rs`
@@ -1127,12 +1174,13 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 
 - `scripts/aivatar-learning-worker.mjs`
   - Session-learning worker that can be run manually or spawned by Claude Code hooks and Codex rollout watchers. It accepts provider, agent, session, status, summary, optional `--context-file`, and optional `--avatar-state-file`, creates a sanitized digest prompt, calls a provider, normalizes the result, and posts a `phase: "session-learning"` status containing `learning`.
+  - Automatic Codex learning on macOS prefers a CLI bundled with Codex.app or ChatGPT.app under `/Applications` or `~/Applications`, then falls back to PATH. Explicit `AIVATAR_CODEX_COMMAND` / `CODEX_COMMAND` overrides still take precedence, even when invalid. Native and Node resolution use the same ordering. This avoids selecting an outdated standalone CLI after the desktop application gains support for newer models. One-shot Codex learning uses `--ignore-user-config` while retaining the normal sign-in store, and disables plugins, hooks, apps, memories, shell execution, delegation, web search and project instruction loading. It uses the selected engine's default model/configuration rather than inheriting a working session's model/provider configuration. No user config or global CLI is rewritten. All five enum nodes in the output schema declare their string type explicitly.
   - Supports `--provider claude-code`, `--provider codex`, `--provider opencode`, and `--provider none`. Claude Code uses subscription-compatible `--safe-mode` (Claude Code 2.1.169+), print/JSON-schema output, no tools, empty strict MCP configuration, disabled hooks/slash commands and no session persistence. It reads `structured_output` before legacy `result` envelopes. Unsupported safe-mode flags produce a visible failure instead of retrying with weaker isolation; enterprise managed policy still applies. Codex uses `codex exec` in read-only/no-approval/ephemeral mode with a JSON schema and stdin prompt. OpenCode uses `opencode run --format json --agent <unique-learning-agent>` with a stdin prompt, reads text from `part.text`, ignores reasoning/tool events, and receives the complete required schema in the prompt. Its per-invocation config disables sharing and gives the unique agent deny-all tool permissions while preserving provider/model authentication configuration. Project configuration, external skills and Claude auto-prompts are disabled; the CLI may still load global MCP/instructions or managed policy, so this is not complete global-configuration isolation. Provider subprocesses disable nested Aivatar learning/status reporting. `none` uses local heuristic fallback for smoke tests.
   - Honors `AIVATAR_CLAUDE_COMMAND`, `AIVATAR_CODEX_COMMAND`, `CODEX_COMMAND`, `AIVATAR_OPENCODE_COMMAND`, and `OPENCODE_COMMAND` provider command overrides. On Windows, if no explicit Codex JS path is provided, it searches PATH for `codex.cmd` and the adjacent npm global `node_modules/@openai/codex/bin/codex.js`; when found, it launches that JS entry through `process.execPath` instead of the `.cmd` shim to avoid visible console flashes. opencode provider resolution also checks `%LOCALAPPDATA%\opencode\opencode-cli.exe`, `opencode.cmd`, `opencode.exe`, and macOS/Homebrew user-bin paths before falling back to `opencode`.
-  - Learning output is strict, bounded, and low sensitivity: short summary, 2-28 character idle bubble candidates, small trait changes, XP/confidence bounds, and privacy risk. Idle bubble candidates should be one complete short sentence rather than keywords, labels, slogans, or clipped fragments; they should sound like something a gentle human companion might say in one breath. The worker prompt allows natural emoji or tiny decorative symbols, while still avoiding markdown, file paths, commands, logs, and technical wording. Provider errors, invalid JSON, timeouts, missing authentication, unavailable commands and empty candidate results fall back to heuristic learning without breaking bridge status flow. `learning.diagnostic` records `success` or `fallback` with a fixed reason (`unavailable`, `authentication`, `timeout`, `invalid-output`, `empty-candidates`, or `provider-error`) and completion time. Growth displays the latest failure per provider; a newer success clears that provider's failure. Explicit provider `none` is not reported as an LLM failure.
+  - Learning output is strict, bounded, and low sensitivity: short summary, 2-28 character idle bubble candidates, small trait changes, XP/confidence bounds, and privacy risk. Idle bubble candidates should be one complete short sentence rather than keywords, labels, slogans, or clipped fragments; they should sound like something a gentle human companion might say in one breath. The worker prompt allows natural emoji or tiny decorative symbols, while still avoiding markdown, file paths, commands, logs, and technical wording. Provider errors, invalid JSON, timeouts, missing authentication, unavailable commands and empty candidate results fall back to heuristic learning without breaking bridge status flow. `learning.diagnostic` records `success` or `fallback` with a fixed reason (`unavailable`, `authentication`, `timeout`, `invalid-output`, `empty-candidates`, `incompatible-client`, `invalid-schema`, or `provider-error`) and completion time. Growth displays the latest failure per provider; a newer success clears that provider's failure. Explicit provider `none` is not reported as an LLM failure.
   - Reads `%TEMP%\aivatar-avatar-state.json` by default, or the path passed with `--avatar-state-file`, to tune bubble voice from the current avatar personality. The prompt includes trait totals, dominant trait, and secondary trait, but instructs providers not to mention trait names, levels, or point totals inside bubbles. The heuristic fallback also prepends a dominant-trait-specific phrase so tone changes remain visible when LLM providers are unavailable.
   - Sanitizes code blocks, inline code, URLs, Windows/Unix paths, email addresses, and common secret/token patterns before prompting providers. It does not modify source session/transcript files.
-  - Regression coverage: `node scripts/aivatar-learning-provider-smoke.mjs` uses mocked provider processes and synthetic envelopes; `node scripts/aivatar-learning-bridge-smoke.mjs` uses an isolated bridge; `node scripts/aivatar-learning-candidates-smoke.mjs` checks bounded persistence, ordering and merge behavior; `node scripts/aivatar-learning-ui-smoke.mjs` uses a fresh browser profile with intercepted bridge traffic to verify visible candidates, restart, failure recovery, language filtering and character isolation. These tests never call a real LLM or read personal saves. Persisted receipt ownership prevents a bridge replay after switching/restarting from assigning another character's already-received learning to the active character.
+  - Regression coverage: `node scripts/aivatar-learning-provider-smoke.mjs` uses mocked provider processes and synthetic envelopes; `node scripts/aivatar-learning-bridge-smoke.mjs` uses an isolated bridge; `node scripts/aivatar-learning-candidates-smoke.mjs` checks bounded persistence, ordering and merge behavior; `node scripts/aivatar-learning-ui-smoke.mjs` uses a fresh browser profile with intercepted bridge traffic to verify visible candidates, restart, failure recovery, language filtering and character isolation. These tests never call a real LLM or read personal saves. The UI test also accepts `--learning-result-file /derived/result.json` to display an already-generated real response from a synthetic task and verify its LLM badge, failure recovery, reload persistence and acceptance without contacting the provider itself. Persisted receipt ownership prevents a bridge replay after switching/restarting from assigning another character's already-received learning to the active character.
   - Detects Chinese text in the digest/summary. Chinese sessions instruct providers to generate natural Simplified Chinese idle bubble candidates. The heuristic fallback now repairs likely mojibake, parses sanitized `user:` / `assistant:` transcript snippets when available, and generates topic-aware pet phrases from the conversation instead of only returning generic fallback bubbles. For example, a Chinese discussion about a historically weighty date can produce candidates such as `今天有点重量`, `把这天记住`, `希望还在闪`, and `陪你想一会`.
 
 - `scripts/aivatar-painting-worker.mjs`

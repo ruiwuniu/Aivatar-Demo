@@ -129,6 +129,24 @@ await check("diagnostics keep only whitelisted metadata, never raw errors", () =
   assert(!JSON.stringify(diagnostic).includes("private"));
   assert.equal(api.normalizeLearningDiagnostic({ provider: "other", status: "fallback", timestamp: iso(2) }), undefined);
 });
+await check("client and schema incompatibility reasons persist without raw failure details", () => {
+  for (const reason of ["incompatible-client", "invalid-schema"]) {
+    const original = status(2, {
+      diagnostic: { provider: "codex", status: "fallback", reason, timestamp: iso(2), error: "private raw failure", command: "/private/path", url: "https://private.invalid" },
+    });
+    const reopened = api.normalizeLearningRecommendations(plain(api.receiveLearningRecommendations(undefined, original)));
+    assert.deepEqual(plain(reopened.diagnostics), [{ provider: "codex", status: "fallback", reason, timestamp: iso(2) }]);
+    assert(!JSON.stringify(reopened).includes("private"));
+  }
+});
+await check("Workbuddy LLM candidates and CodeBuddy diagnostics persist with source identity", () => {
+  const input = { ...status(4, { diagnostic: { provider: "codebuddy", status: "success", timestamp: iso(4) } }), agent: "workbuddy" };
+  const reopened = api.normalizeLearningRecommendations(plain(api.receiveLearningRecommendations(undefined, input)));
+  assert.equal(reopened.idleCandidates[0].agent, "workbuddy");
+  assert.equal(reopened.idleCandidates[0].source, "llm");
+  assert.equal(reopened.diagnostics[0].provider, "codebuddy");
+  assert.equal(reopened.diagnostics[0].status, "success");
+});
 await check("candidate and receipt collections remain bounded and prioritize recent LLM results", () => {
   let stored;
   for (let n = 1; n <= 280; n += 1) stored = api.receiveLearningRecommendations(stored, status(n));

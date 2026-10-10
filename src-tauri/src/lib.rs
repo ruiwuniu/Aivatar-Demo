@@ -12,6 +12,7 @@ mod app_updater;
 mod codex_discovery;
 mod desktop_mode;
 mod local_bridge;
+mod learning_job;
 mod save_store;
 mod workbuddy_discovery;
 
@@ -1018,6 +1019,85 @@ fn opencode_plugin_path() -> Option<std::path::PathBuf> {
     )
 }
 
+// Keep the accepted version formats and entrypoint markers in sync with the
+// standalone JS installer. Unknown/future APIs are never reported as enabled.
+fn opencode_api_major(output: &str) -> Option<u8> {
+    let line = output.lines().next()?.trim();
+    let mut words = line.split_whitespace();
+    let first = words.next()?;
+    let version = if first.eq_ignore_ascii_case("opencode") || first.eq_ignore_ascii_case("opencode2") {
+        let next = words.next()?;
+        if next.eq_ignore_ascii_case("version") { words.next()? } else { next }
+    } else { first };
+    if words.next().is_some() { return None; }
+    let numbers = version.trim_start_matches('v').split(['-', '+']).next()?;
+    let parts: Vec<&str> = numbers.split('.').collect();
+    if parts.len() != 3 || parts.iter().any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit())) { return None; }
+    match parts[0].parse::<u8>().ok()? { 1 => Some(1), 2 => Some(2), _ => None }
+}
+
+fn opencode_learning_command() -> Option<std::path::PathBuf> {
+    let resolved = codex_discovery::resolve_learning_command("opencode");
+    if std::env::var_os("AIVATAR_OPENCODE_COMMAND").is_some() || std::env::var_os("OPENCODE_COMMAND").is_some() {
+        return resolved;
+    }
+    resolved.or_else(|| resolve_command("opencode2"))
+}
+
+fn detect_opencode_api_major(command: &std::path::Path) -> Option<u8> {
+    let mut process = std::process::Command::new(command);
+    process.arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        process.creation_flags(0x08000000);
+    }
+    let mut child = process.spawn().ok()?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                use std::io::Read;
+                let mut output = String::new();
+                child.stdout.take()?.take(8192).read_to_string(&mut output).ok()?;
+                return opencode_api_major(&output);
+            }
+            Ok(Some(_)) => return None,
+            Ok(None) if started.elapsed() < std::time::Duration::from_secs(3) => std::thread::sleep(std::time::Duration::from_millis(20)),
+            _ => { let _ = child.kill(); let _ = child.wait(); return None; }
+        }
+    }
+}
+
+fn opencode_plugin_entrypoint(content: &str, major: u8) -> String {
+    let entry = if major == 2 {
+        "// AIVATAR_OPENCODE_API: 2\nexport default AivatarOpencodeV2Plugin;"
+    } else {
+        "// AIVATAR_OPENCODE_API: 1\nexport default AivatarOpencodePlugin;"
+    };
+    content.replacen("export default AivatarOpencodePlugin;", entry, 1)
+}
+
+#[cfg(test)]
+mod opencode_plugin_tests {
+    use super::*;
+    #[test]
+    fn accepts_only_recognized_opencode_api_versions() {
+        for value in ["1.18.33", "opencode 1.18.33", "opencode version v1.0.0"] { assert_eq!(opencode_api_major(value), Some(1)); }
+        for value in ["2.0.26", "opencode2 v2.0.26-beta.1"] { assert_eq!(opencode_api_major(value), Some(2)); }
+        for value in ["", "v0.0.0-next-1", "3.0.0", "an unexpected error", "2.0", "2.0.0 trailing"] { assert_eq!(opencode_api_major(value), None); }
+    }
+    #[test]
+    fn keeps_v1_function_and_installs_v2_object_entrypoint() {
+        let source = "export default AivatarOpencodePlugin;";
+        assert!(opencode_plugin_entrypoint(source, 1).contains("API: 1\nexport default AivatarOpencodePlugin;"));
+        assert!(opencode_plugin_entrypoint(source, 2).contains("API: 2\nexport default AivatarOpencodeV2Plugin;"));
+    }
+}
+
 fn claude_settings_path() -> Option<std::path::PathBuf> {
     Some(user_home_dir()?.join(".claude").join("settings.json"))
 }
@@ -1369,6 +1449,8 @@ fn enable_claude_code_integration() -> Result<(), String> {
 }
 
 fn enable_opencode_integration(app: Option<&tauri::AppHandle>) -> Result<(), String> {
+    let command = opencode_learning_command().ok_or_else(|| "OpenCode was not found. Install/update OpenCode or set AIVATAR_OPENCODE_COMMAND, then retry.".to_string())?;
+    let major = detect_opencode_api_major(&command).ok_or_else(|| "Could not determine the OpenCode API version. Update OpenCode and retry Enable/Repair.".to_string())?;
     let target = opencode_plugin_path()
         .ok_or_else(|| "Could not resolve opencode plugin path.".to_string())?;
     let scripts = scripts_root(app)
@@ -1393,7 +1475,7 @@ fn enable_opencode_integration(app: Option<&tauri::AppHandle>) -> Result<(), Str
         "\"__AIVATAR_NODE_COMMAND__\"",
         &serde_json::to_string(&node_value).map_err(|error| error.to_string())?,
     );
-    atomic_write_text(&target, &content)
+    atomic_write_text(&target, &opencode_plugin_entrypoint(&content, major))
 }
 
 fn claude_code_integration_status() -> AgentIntegrationStatus {
@@ -1435,7 +1517,8 @@ fn claude_code_integration_status() -> AgentIntegrationStatus {
 
 fn opencode_integration_status() -> AgentIntegrationStatus {
     let plugin_path = opencode_plugin_path();
-    let cli_path = resolve_command("opencode");
+    let cli_path = opencode_learning_command();
+    let api_major = cli_path.as_deref().and_then(detect_opencode_api_major);
     #[cfg(target_os = "windows")]
     let desktop_detected = std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
@@ -1455,8 +1538,11 @@ fn opencode_integration_status() -> AgentIntegrationStatus {
     .any(|path| path.exists());
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let desktop_detected = false;
-    let enabled = plugin_path.as_ref().is_some_and(|path| path.is_file());
-    let detected = desktop_detected || cli_path.is_some() || enabled;
+    let installed = plugin_path.as_ref().is_some_and(|path| path.is_file());
+    let enabled = api_major.is_some_and(|major| plugin_path.as_ref()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .is_some_and(|source| source.contains(&format!("// AIVATAR_OPENCODE_API: {major}\n"))));
+    let detected = desktop_detected || cli_path.is_some() || installed;
     AgentIntegrationStatus {
         agent: "opencode".to_string(),
         label: "opencode".to_string(),
@@ -1464,8 +1550,12 @@ fn opencode_integration_status() -> AgentIntegrationStatus {
         enabled,
         cli_available: cli_path.is_some(),
         needs_restart: false,
-        detail: if enabled {
-            "Plugin installed for opencode Desktop/TUI.".to_string()
+        detail: if api_major.is_none() && detected {
+            "OpenCode API version could not be verified; update OpenCode, then use Enable/Repair.".to_string()
+        } else if enabled {
+            format!("Aivatar plugin installed for OpenCode V{}; restart OpenCode after repair.", api_major.unwrap_or(0))
+        } else if installed {
+            "OpenCode changed API version or the plugin needs updating; use Enable/Repair and restart OpenCode.".to_string()
         } else if detected {
             "opencode detected; enable the Aivatar plugin from this app.".to_string()
         } else {
@@ -1525,8 +1615,9 @@ fn start_status_bridge_inner(app: Option<&tauri::AppHandle>) -> Result<BridgeSta
     let connector = connector_root(app);
     let learning_script = scripts_root(app).map(|path| path.join("aivatar-learning-worker.mjs"));
     if is_status_bridge_running() {
-        let _ = codex_discovery::start(learning_script);
-        let _ = workbuddy_discovery::start();
+        local_bridge::verify_existing_bridge()?;
+        let _ = codex_discovery::start(learning_script.clone());
+        let _ = workbuddy_discovery::start(learning_script.clone());
         return Ok(BridgeStartResult {
             status: "already-running".to_string(),
             message: "Bridge already running.".to_string(),
@@ -1534,8 +1625,8 @@ fn start_status_bridge_inner(app: Option<&tauri::AppHandle>) -> Result<BridgeSta
     }
 
     local_bridge::start(learning_script.clone())?;
-    let _ = codex_discovery::start(learning_script);
-    let _ = workbuddy_discovery::start();
+    let _ = codex_discovery::start(learning_script.clone());
+    let _ = workbuddy_discovery::start(learning_script.clone());
 
     Ok(BridgeStartResult {
         status: "started".to_string(),

@@ -11,9 +11,37 @@ import WebSocket from "ws";
 // Exercises learning in the mounted App with a fresh browser profile and
 // synthetic bridge events. No production bridge, user data or LLM is accessed.
 // The retained profile also proves persistence across real page reloads.
+// Optionally verify an already-generated model response from a synthetic task:
+// node scripts/aivatar-learning-ui-smoke.mjs --learning-result-file /tmp/result.json
+// This never invokes a provider itself or connects to the production bridge.
 const repo = process.cwd();
+const args = process.argv.slice(2);
+assert.ok(args.length === 0 || (args.length === 2 && args[0] === "--learning-result-file"),
+  "Usage: node scripts/aivatar-learning-ui-smoke.mjs [--learning-result-file /absolute/path.json]");
+const learningResultFile = args.length ? path.resolve(args[1]) : undefined;
+let providedLearning;
+let providedAgent;
+if (learningResultFile) {
+  assert.ok(fs.statSync(learningResultFile).size <= 1024 * 1024, "Learning result must be at most 1 MiB");
+  const input = JSON.parse(fs.readFileSync(learningResultFile, "utf8"));
+  providedLearning = input.learning ?? input;
+  providedAgent = input.agent ?? providedLearning.diagnostic?.provider;
+  assert.ok(["codex", "claude-code", "opencode", "codebuddy", "workbuddy"].includes(providedAgent));
+  assert.equal(providedLearning.source, "llm", "Provided result must come from the LLM, not heuristic fallback");
+  assert.ok(typeof providedLearning.id === "string" && providedLearning.id, "Provided learning requires its original receipt id");
+  assert.equal(providedLearning.diagnostic?.status, "success", "Provided result must include a successful provider diagnostic");
+  assert.ok(["codex", "claude-code", "opencode", "codebuddy"].includes(providedLearning.diagnostic.provider));
+  assert.ok(Number.isFinite(Date.parse(providedLearning.diagnostic.timestamp)));
+  assert.ok(["low", "medium"].includes(providedLearning.privacyRisk), "High-risk provider output must not enter the UI test");
+  assert.ok(Array.isArray(providedLearning.idleBubbleCandidates)
+    && providedLearning.idleBubbleCandidates.length >= 1 && providedLearning.idleBubbleCandidates.length <= 6);
+  assert.ok(providedLearning.idleBubbleCandidates.every((phrase) => typeof phrase === "string"
+    && Array.from(phrase).length >= 2 && Array.from(phrase).length <= 28 && phrase === phrase.trim()));
+}
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "aivatar-learning-ui-smoke-"));
-const epoch = Date.now();
+// Leave synthetic history before the supplied provider timestamp so diagnostic
+// ordering can be checked without rewriting any part of the real response.
+const epoch = providedLearning ? Date.parse(providedLearning.diagnostic.timestamp) - 60_000 : Date.now();
 const slotA = `persistence-smoke-a-${epoch}`;
 const slotB = `persistence-smoke-b-${epoch}`;
 const keyA = `aivatar.saveSlot.v1.${slotA}`;
@@ -381,9 +409,109 @@ try {
   assert.deepEqual(await displayed(client), ["慢慢来就很好"]);
   assert.equal(await client.evaluate("__persistenceSmoke.state().memory.growth.totalXp"), secondXp + 1);
   reports.push({ case: "fresh-learning-in-same-session-belongs-to-new-slot-and-language-hint-restores-visibility", passed: true });
+
+  const wbFailure = status("workbuddy-new", makeLearning("wb-failure", "heuristic", [], "codebuddy", "unavailable"), "workbuddy");
+  wbFailure.learning.diagnostic.timestamp = new Date(epoch + 2000).toISOString();
+  await emit(client, wbFailure);
+  await waitFor(() => client.evaluate("document.querySelector('.learning-status-notices')?.textContent.includes('Workbuddy / CodeBuddy')"), "Workbuddy provider failure label");
+  reports.push({ case: "workbuddy-codebuddy-failure-visible", passed: true });
+  const wbSuccess = status("workbuddy-new", makeLearning("wb-success", "llm", ["A small task well done"], "codebuddy"), "workbuddy");
+  wbSuccess.learning.diagnostic.timestamp = new Date(epoch + 3000).toISOString();
+  await emit(client, wbSuccess);
+  await waitFor(async () => (await displayed(client)).includes("A small task well done"), "Workbuddy generated candidate");
+  assert(!await client.evaluate("Boolean(document.querySelector('.learning-status-notices')?.textContent.includes('Workbuddy / CodeBuddy'))"));
+  await waitFor(() => client.evaluate(`__persistenceSmoke.read(${JSON.stringify(slotB)}).learningRecommendations?.diagnostics?.some(d=>d.provider==='codebuddy' && d.status==='success')`), "Workbuddy result persisted");
+  reports.push({ case: "workbuddy-llm-candidate-visible-persisted-and-failure-cleared", passed: true });
+
+  if (providedLearning) {
+    const provider = providedLearning.diagnostic.provider;
+    const phrases = [...new Set(providedLearning.idleBubbleCandidates)];
+    const session = `provided-model-response-${epoch}`;
+    const failed = status(session, makeLearning(`provided-pre-failure-${epoch}`, "heuristic", [], provider, "provider-error"), providedAgent);
+    failed.learning.diagnostic.timestamp = new Date(Date.parse(providedLearning.diagnostic.timestamp) - 1).toISOString();
+    await emit(client, failed);
+    await waitFor(() => client.evaluate("document.querySelectorAll('.learning-status-notice').length === 1"), "failure hint before supplied response");
+    reports.push({ case: "provided-response-prior-failure-visible", provider, passed: true });
+
+    await client.evaluate("__persistenceSmoke.advance(60000)");
+    const received = status(session, providedLearning, providedAgent);
+    const providedXpBefore = await client.evaluate("__persistenceSmoke.state().memory.growth.totalXp");
+    await emit(client, received);
+    await waitFor(async () => {
+      const shown = await displayed(client);
+      return phrases.every((phrase) => shown.includes(phrase));
+    }, "provided LLM candidates visible");
+    const badges = await client.evaluate(`Array.from(document.querySelectorAll('.idle-bubble-editor:not(.social-bubble-editor) .idle-bubble-candidate.llm'))
+      .filter(element => ${JSON.stringify(phrases)}.includes(element.querySelector('span').textContent))
+      .map(element => ({ phrase: element.querySelector('span').textContent, badge: element.querySelector('b').textContent }))`);
+    assert.equal(badges.length, phrases.length);
+    assert.ok(badges.every((entry) => entry.badge === "LLM"), "Every supplied phrase must carry the actual LLM badge");
+    assert.equal(await client.evaluate("document.querySelectorAll('.learning-status-notice').length"), 0);
+    const providedXp = await client.evaluate("__persistenceSmoke.state().memory.growth.totalXp");
+    assert.equal(providedXp, providedXpBefore + providedLearning.xp);
+    await waitFor(() => client.evaluate(`(() => {
+      const saved = __persistenceSmoke.read(${JSON.stringify(slotB)}).learningRecommendations;
+      return ${JSON.stringify(phrases)}.every(phrase => saved?.idleCandidates?.some(candidate => candidate.phrase === phrase
+        && candidate.source === 'llm' && candidate.learningId === ${JSON.stringify(providedLearning.id)}))
+        && saved?.diagnostics?.some(diagnostic => diagnostic.provider === ${JSON.stringify(provider)} && diagnostic.status === 'success');
+    })()`), "provided candidates and success persisted");
+    reports.push({ case: "provided-response-llm-badges-visible-and-failure-cleared", provider, candidates: badges, passed: true });
+
+    await client.evaluate("__persistenceSmoke.paint()");
+    const suppliedClip = await client.evaluate(`(() => {
+      const panel = document.querySelector('.side-panel');
+      const editor = document.querySelector('.idle-bubble-editor:not(.social-bubble-editor)');
+      panel.scrollTop += editor.getBoundingClientRect().top - panel.getBoundingClientRect().top - 16;
+      const box = panel.getBoundingClientRect();
+      return { x: Math.max(0, box.x), y: Math.max(0, box.y), width: box.width, height: Math.min(box.height, innerHeight - Math.max(0, box.y)), scale: 1 };
+    })()`);
+    await delay(250);
+    const suppliedScreenshot = await client.send("Page.captureScreenshot", { format: "png", clip: suppliedClip });
+    fs.writeFileSync(path.join(temporary, "provided-learning-panel.png"), Buffer.from(suppliedScreenshot.data, "base64"));
+
+    await client.evaluate("window.__learningBeforeReload = true");
+    await client.send("Page.reload");
+    await waitFor(() => client.evaluate("!window.__learningBeforeReload && Boolean(window.__persistenceSmoke && document.querySelector('.growth-toggle'))"), "reload with provided model response");
+    await mounted(client);
+    const reloadedPhrases = await displayed(client);
+    assert.ok(phrases.every((phrase) => reloadedPhrases.includes(phrase)));
+    assert.equal(await client.evaluate("document.querySelectorAll('.learning-status-notice').length"), 0);
+    await emit(client, received);
+    assert.equal(await client.evaluate("__persistenceSmoke.state().memory.growth.totalXp"), providedXp);
+    reports.push({ case: "provided-response-reload-persists-and-replay-does-not-duplicate-xp", passed: true });
+
+    const acceptedPhrase = phrases[0];
+    await client.evaluate(`(async () => {
+      const button = Array.from(document.querySelectorAll('.idle-bubble-editor:not(.social-bubble-editor) .idle-bubble-candidate.llm'))
+        .find(element => element.querySelector('span').textContent === ${JSON.stringify(acceptedPhrase)});
+      if (!button || button.disabled) throw new Error('Provided LLM candidate cannot be accepted');
+      button.click(); await __persistenceSmoke.drain();
+    })()`);
+    assert.ok(await client.evaluate(`__persistenceSmoke.state().memory.preferences.idleBubblePhrases.includes(${JSON.stringify(acceptedPhrase)})`));
+    assert.ok(!(await displayed(client)).includes(acceptedPhrase));
+    await waitFor(() => client.evaluate(`(() => {
+      const saved = __persistenceSmoke.read(${JSON.stringify(slotB)});
+      return saved.memory.preferences.idleBubblePhrases.includes(${JSON.stringify(acceptedPhrase)})
+        && !saved.learningRecommendations.idleCandidates.some(candidate => candidate.phrase === ${JSON.stringify(acceptedPhrase)});
+    })()`), "accepted model phrase written to preference and removed from saved candidates");
+    reports.push({ case: "provided-response-acceptance-removes-candidate-and-saves-phrase", phrase: acceptedPhrase, passed: true });
+
+    await client.evaluate("window.__learningBeforeReload = true");
+    await client.send("Page.reload");
+    await waitFor(() => client.evaluate("!window.__learningBeforeReload && Boolean(window.__persistenceSmoke && document.querySelector('.growth-toggle'))"), "reload after accepting model phrase");
+    await mounted(client);
+    await emit(client, received);
+    assert.ok(await client.evaluate(`__persistenceSmoke.state().memory.preferences.idleBubblePhrases.includes(${JSON.stringify(acceptedPhrase)})`));
+    assert.ok(!(await displayed(client)).includes(acceptedPhrase));
+    assert.equal(await client.evaluate("__persistenceSmoke.state().memory.growth.totalXp"), providedXp);
+    reports.push({ case: "provided-response-accepted-phrase-remains-accepted-after-reload-and-replay", passed: true });
+  }
   assert.equal(client.networkBridgeRequests.length, 0);
   assert.equal(client.exceptions.length, 0);
-  const output = { ok: true, temporary, scope: "Mounted App, fresh browser profile, mocked bridge, no real user data or LLM", reports };
+  const output = { ok: true, temporary,
+    scope: "Mounted App, fresh browser profile, mocked bridge, no real user data or live provider invocation by this harness",
+    ...(providedLearning ? { learningResultFile, provider: providedLearning.diagnostic.provider,
+      learningId: providedLearning.id, screenshot: path.join(temporary, "provided-learning-panel.png") } : {}), reports };
   fs.writeFileSync(path.join(temporary, "report.json"), JSON.stringify(output, null, 2));
   console.log(JSON.stringify(output, null, 2));
 } catch (error) {

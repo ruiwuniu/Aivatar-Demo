@@ -303,6 +303,7 @@ const startWorkbuddyDiscovery = async () => {
       ...process.env,
       AIVATAR_HTTP_ENDPOINT: statusEndpoint,
       AIVATAR_PRESENCE_ENDPOINT: presenceEndpoint,
+      AIVATAR_LEARNING_SCRIPT: learningScript,
     },
     stdio: ["ignore", "inherit", "inherit"],
     windowsHide: true,

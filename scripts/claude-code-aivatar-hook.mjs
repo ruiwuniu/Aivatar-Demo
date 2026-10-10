@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { failedLearning, learningStatus } from "./aivatar-learning-job.mjs";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -751,57 +753,44 @@ const writeLearningContext = async (sessionId, digest) => {
   return path;
 };
 
-const spawnLearningWorker = async (sessionId, input, payload) => {
-  if (!learningEnabled) return null;
-  if (payload.status !== "complete" && payload.status !== "error") return null;
+const learningOptions = (sessionId, payload) => ({
+  learningScript: join(scriptDir, "aivatar-learning-worker.mjs"),
+  nodeCommand: process.execPath, provider: learningProvider,
+  agent: payload.agent, sessionId, status: payload.status,
+  summary: payload.summary ?? payload.message ?? "Claude Code turn complete",
+  learningId: createHash("sha256").update(JSON.stringify([
+    payload.agent, sessionId, payload.rewardId ?? payload.timestamp,
+  ])).digest("hex").slice(0, 32),
+  endpoint,
+});
 
+const reportLearningFailure = async (sessionId, payload, reason) => {
+  const options = learningOptions(sessionId, payload);
+  try {
+    await fetch(endpoint, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(learningStatus(options, failedLearning(options, reason))),
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch { /* The bridge may have closed; do not leak raw diagnostics. */ }
+};
+
+const spawnLearningWorker = async (sessionId, input, payload) => {
+  if (!learningEnabled || !["complete", "error"].includes(payload.status)) return;
+  const supervisor = join(scriptDir, "aivatar-learning-job.mjs");
+  await access(supervisor);
   const digest = await learningDigestFromInput(input, payload);
   const contextPath = await writeLearningContext(sessionId, digest || payload.summary);
-  const workerPath = join(scriptDir, "aivatar-learning-worker.mjs");
-  const child = spawn(
-    process.execPath,
-    [
-      workerPath,
-      "--provider",
-      learningProvider,
-      "--agent",
-      payload.agent,
-      "--session",
-      sessionId,
-      "--status",
-      payload.status,
-      "--summary",
-      payload.summary ?? payload.message ?? "Claude Code turn complete",
-      "--context-file",
-      contextPath,
-    ],
-    {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-      env: {
-        ...process.env,
-        AIVATAR_AGENT: payload.agent,
-        AIVATAR_SESSION_ID: sessionId,
-        AIVATAR_LEARNING_PROVIDER: learningProvider,
-      },
-    },
-  );
-  child.unref();
-
-  return {
-    key: [
-      payload.status,
-      payload.phase,
-      payload.timestamp,
-      payload.usage?.totalTokens ?? 0,
-      payload.summary,
-    ].join(":"),
-    provider: learningProvider,
-    contextPath,
-    pid: child.pid,
-    startedAt: new Date().toISOString(),
-  };
+  const options = { ...learningOptions(sessionId, payload), contextFile: contextPath };
+  const jobPath = `${contextPath}.${process.pid}.job.json`;
+  await writeFile(jobPath, JSON.stringify(options), { encoding: "utf8", mode: 0o600 });
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [supervisor, "--job-file", jobPath], {
+      detached: true, stdio: "ignore", windowsHide: true,
+    });
+    child.once("error", reject);
+    child.once("spawn", () => { child.unref(); resolve(); });
+  });
 };
 
 try {
@@ -964,9 +953,7 @@ try {
       turnStartedAt,
       lastLearningKey: learningTriggerKey,
     });
-    void spawnLearningWorker(sessionId, input, payload).catch(() => {
-      // Learning is best-effort and must not break Claude Code hooks.
-    });
+    void spawnLearningWorker(sessionId, input, payload).catch(() => reportLearningFailure(sessionId, payload, "unavailable"));
   }
 } catch (error) {
   if (process.argv.includes("--status-line")) {

@@ -8,6 +8,10 @@ import {
   LearningProviderError,
   classifyProviderFailure,
   claudeLearningArgs,
+  codebuddyLearningArgs,
+  compatibleProviderCommand,
+  codexDesktopCandidates,
+  codexLearningArgs,
   extractJsonObject,
   learningDiagnostic,
   opencodeLearningConfig,
@@ -30,7 +34,8 @@ const configuredCodexCommand =
   process.env.CODEX_COMMAND ??
   null;
 const defaultCodexCommand = process.platform === "win32" ? "codex.cmd" : "codex";
-const claudeCommand = process.env.AIVATAR_CLAUDE_COMMAND ?? "claude";
+const configuredClaudeCommand = process.env.AIVATAR_CLAUDE_COMMAND ?? null;
+const configuredCodebuddyCommand = process.env.AIVATAR_CODEBUDDY_COMMAND ?? null;
 const configuredOpencodeCommand =
   process.env.AIVATAR_OPENCODE_COMMAND ??
   process.env.OPENCODE_COMMAND ??
@@ -75,9 +80,9 @@ const learningSchema = {
         type: "object",
         additionalProperties: false,
         properties: {
-          kind: { enum: socialBubbleKinds },
+          kind: { type: "string", enum: socialBubbleKinds },
           text: { type: "string", minLength: 1, maxLength: 56 },
-          locale: { enum: socialBubbleLocales },
+          locale: { type: "string", enum: socialBubbleLocales },
           intentId: { type: "string", minLength: 1, maxLength: 40 },
           replyToIntentIds: {
             type: "array",
@@ -86,11 +91,11 @@ const learningSchema = {
           },
           allowedVisitRoles: {
             type: "array",
-            items: { enum: socialBubbleRoles },
+            items: { type: "string", enum: socialBubbleRoles },
             minItems: 1,
             maxItems: 2,
           },
-          activity: { enum: socialBubbleActivities },
+          activity: { type: "string", enum: socialBubbleActivities },
           tags: {
             type: "array",
             items: { type: "string", minLength: 1, maxLength: 18 },
@@ -122,7 +127,7 @@ const learningSchema = {
     },
     xp: { type: "integer", minimum: 1, maximum: 8 },
     confidence: { type: "number", minimum: 0, maximum: 1 },
-    privacyRisk: { enum: ["low", "medium", "high"] },
+    privacyRisk: { type: "string", enum: ["low", "medium", "high"] },
   },
   required: [
     "summary",
@@ -140,13 +145,14 @@ const usage = `Usage:
   node scripts/aivatar-learning-worker.mjs --provider codex --agent claude-code --session SESSION --context-file digest.txt
 
 Options:
-  --provider <claude-code|codex|opencode|none>
+  --provider <claude-code|codex|opencode|codebuddy|none>
   --agent <name>
   --session <id>
   --status <idle|thinking|executing|waiting_for_user|error|complete>
   --summary <text>
   --context-file <path>
   --avatar-state-file <path>
+  --learning-id <stable-id>
   --dry-run
 `;
 
@@ -163,6 +169,7 @@ const parseArgs = (argv) => {
     contextFile: undefined,
     avatarStateFile: process.env.AIVATAR_AVATAR_STATE_FILE ?? defaultAvatarStateFile,
     dryRun: false,
+    learningId: undefined,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -208,6 +215,11 @@ const parseArgs = (argv) => {
     }
     if (value === "--dry-run") {
       options.dryRun = true;
+    }
+    if (value === "--learning-id") {
+      const id = argv[++index];
+      if (typeof id !== "string" || !/^[a-zA-Z0-9:_-]{1,128}$/u.test(id)) throw new Error("Invalid learning id");
+      options.learningId = id;
     }
   }
 
@@ -412,7 +424,7 @@ const normalizeLearning = (raw, options, digest) => {
   });
 
   return {
-    id: createHash("sha256").update(idSeed).digest("hex").slice(0, 16),
+    id: options.learningId ?? createHash("sha256").update(idSeed).digest("hex").slice(0, 16),
     source: options.provider === "none" ? "heuristic" : "llm",
     summary,
     idleBubbleCandidates: candidates,
@@ -543,7 +555,7 @@ Session:
 - digest: ${digest}
 `;
 
-const runCommand = (command, args, stdin, timeoutMs = defaultTimeoutMs, environment = {}) =>
+const runCommand = (command, args, stdin, timeoutMs = defaultTimeoutMs, environment = {}, outputLimit = 1024 * 1024) =>
   new Promise((resolve, reject) => {
     const useCmdShim =
       process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
@@ -572,6 +584,10 @@ const runCommand = (command, args, stdin, timeoutMs = defaultTimeoutMs, environm
         ...environment,
       },
     });
+    // Decode the pipe as a stream so a Chinese character split across OS
+    // chunks cannot turn into replacement characters before JSON parsing.
+    child.stdout?.setEncoding?.("utf8");
+    child.stderr?.setEncoding?.("utf8");
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -589,7 +605,7 @@ const runCommand = (command, args, stdin, timeoutMs = defaultTimeoutMs, environm
     child.stdout.on("data", (chunk) => {
       if (settled) return;
       stdout += chunk.toString("utf8");
-      if (stdout.length > 1024 * 1024) {
+      if (stdout.length > outputLimit) {
         child.kill();
         fail("invalid-output");
       }
@@ -661,6 +677,11 @@ const resolveWindowsCodexJs = async (command = null) => {
 
 const codexCommand = async () => {
   if (process.platform !== "win32") {
+    if (configuredCodexCommand === null && process.platform === "darwin") {
+      for (const command of codexDesktopCandidates(process.env.HOME)) {
+        if (await fileExists(command)) return { command, prefixArgs: [] };
+      }
+    }
     return { command: configuredCodexCommand ?? defaultCodexCommand, prefixArgs: [] };
   }
 
@@ -670,44 +691,54 @@ const codexCommand = async () => {
     : { command: configuredCodexCommand ?? defaultCodexCommand, prefixArgs: [] };
 };
 
-const opencodeCandidates = () => {
-  if (configuredOpencodeCommand) return [configuredOpencodeCommand];
-  if (process.platform === "win32") {
-    return [
-      process.env.LOCALAPPDATA
-        ? join(process.env.LOCALAPPDATA, "opencode", "opencode-cli.exe")
-        : "",
-      "opencode.cmd",
-      "opencode.exe",
-      "opencode",
-    ].filter(Boolean);
-  }
-  return [
-    "/opt/homebrew/bin/opencode",
-    "/usr/local/bin/opencode",
-    join(process.env.HOME ?? "", ".opencode", "bin", "opencode"),
-    join(process.env.HOME ?? "", ".local", "bin", "opencode"),
-    join(process.env.HOME ?? "", "bin", "opencode"),
-    "opencode",
-  ].filter(Boolean);
-};
-
-const opencodeCommand = async () => {
-  for (const command of opencodeCandidates()) {
-    if (command.includes("/") || command.includes("\\") || /^[a-zA-Z]:/.test(command)) {
-      if (await fileExists(command)) return command;
-      continue;
+const providerCommand = async (provider, configured, names) => {
+  let candidates = configured !== null ? [configured] : [];
+  if (configured === null) {
+    // Windows GUI launches may not have picked up a native install's PATH.
+    // USERPROFILE also avoids a Git Bash HOME pointing at a different tree.
+    const home = process.platform === "win32"
+      ? process.env.USERPROFILE ?? process.env.HOME
+      : process.env.HOME ?? process.env.USERPROFILE;
+    if (provider === "opencode" && process.platform === "darwin") {
+      for (const root of ["/Applications", ...(home ? [join(home, "Applications")] : [])]) {
+        for (const app of ["OpenCode.app", "opencode.app"]) {
+          const command = join(root, app, "Contents", "MacOS", "opencode-cli");
+          if (await fileExists(command)) candidates.push(command);
+        }
+      }
     }
-    return command;
+    const dirs = [...envPathValue().split(delimiter).filter(Boolean)];
+    if (process.platform !== "win32") dirs.push("/opt/homebrew/bin", "/usr/local/bin");
+    if (home) dirs.push(join(home, ".local", "bin"), join(home, "bin"), ...(provider === "opencode" ? [join(home, ".opencode", "bin")] : []));
+    if (process.platform === "win32" && process.env.APPDATA) dirs.push(join(process.env.APPDATA, "npm"));
+    const variants = names.flatMap((name) => process.platform === "win32" ? [`${name}.exe`, `${name}.cmd`, name] : [name]);
+    for (const dir of [...new Set(dirs)]) for (const name of variants) {
+      const command = join(dir, name);
+      if (await fileExists(command)) candidates.push(command);
+    }
+    if (provider === "opencode" && process.platform === "win32" && process.env.LOCALAPPDATA) {
+      const command = join(process.env.LOCALAPPDATA, "opencode", "opencode-cli.exe");
+      if (await fileExists(command)) candidates.push(command);
+    }
+    if (!candidates.length) candidates = variants;
   }
-  return "opencode";
+  return compatibleProviderCommand(provider, [...new Set(candidates)].slice(0, 24), async (command, args) => {
+    const { stdout } = await runCommand(command, args, "", 5000, {}, 32768);
+    return stdout;
+  });
 };
 
 const callClaudeCode = async (prompt) => {
+  const { command } = await providerCommand("claude-code", configuredClaudeCommand, ["claude"]);
   const { stdout } = await runCommand(
-    claudeCommand,
+    command,
     claudeLearningArgs(learningSchema),
     prompt,
+    defaultTimeoutMs,
+    // This is an isolated print-only request, not a continuation of the hook's
+    // active Claude session. Keep authentication variables and remove only its
+    // nesting marker; the parent process environment is never modified.
+    { CLAUDECODE: undefined },
   );
   return parseClaudeOutput(stdout);
 };
@@ -723,22 +754,7 @@ const callCodex = async (prompt) => {
 
   await runCommand(
     codex.command,
-    [
-      ...codex.prefixArgs,
-      "--ask-for-approval",
-      "never",
-      "exec",
-      "--sandbox",
-      "read-only",
-      "--ephemeral",
-      "--ignore-rules",
-      "--skip-git-repo-check",
-      "--output-schema",
-      schemaPath,
-      "--output-last-message",
-      outputPath,
-      "-",
-    ],
+    [...codex.prefixArgs, ...codexLearningArgs(schemaPath, outputPath)],
     prompt,
     Math.max(defaultTimeoutMs, 45000),
   );
@@ -746,21 +762,38 @@ const callCodex = async (prompt) => {
 };
 
 const callOpencode = async (prompt) => {
-  const command = await opencodeCommand();
+  // Validate inline JSON before starting any provider process.
+  opencodeLearningConfig(process.env.OPENCODE_CONFIG_CONTENT, "validation");
+  const { command, version } = await providerCommand("opencode", configuredOpencodeCommand, ["opencode", "opencode2"]);
   const agentName = `aivatar-learning-${randomUUID()}`;
+  const configDirectory = join(tmpdir(), "aivatar-learning-worker", agentName);
+  if (version[0] === 2) await mkdir(configDirectory, { recursive: true });
   const { stdout } = await runCommand(
     command,
-    ["run", "--format", "json", "--agent", agentName],
+    ["run", ...(version[0] === 2 ? ["--standalone"] : []), "--format", "json", "--agent", agentName],
     prompt,
     Math.max(defaultTimeoutMs, 45000),
     {
-      OPENCODE_CONFIG_CONTENT: opencodeLearningConfig(process.env.OPENCODE_CONFIG_CONTENT, agentName),
+      OPENCODE_CONFIG_CONTENT: opencodeLearningConfig(process.env.OPENCODE_CONFIG_CONTENT, agentName, version[0]),
+      ...(version[0] === 2 ? { OPENCODE_CONFIG_DIR: configDirectory, OPENCODE_CONFIG: "", OPENCODE_CONFIG_PROJECT_DISABLE: "true" } : {}),
       OPENCODE_DISABLE_PROJECT_CONFIG: "true",
       OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
       OPENCODE_DISABLE_CLAUDE_CODE: "true",
     },
   );
   return parseOpencodeOutput(stdout);
+};
+
+const callCodebuddy = async (prompt) => {
+  const { command } = await providerCommand("codebuddy", configuredCodebuddyCommand, ["codebuddy", "cbc"]);
+  const { stdout } = await runCommand(command, codebuddyLearningArgs(learningSchema), prompt, Math.max(defaultTimeoutMs, 45000), {
+    CODEBUDDY_DISABLE_AUTO_MEMORY: "1",
+    CODEBUDDY_CODE_DISABLE_AUTO_MEMORY: "1",
+    CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS: "1",
+    CODEBUDDY_DISABLE_CRON: "1",
+    CODEBUDDY_SKIP_BUILTIN_MARKETPLACE: "1",
+  });
+  return parseClaudeOutput(stdout);
 };
 
 const conversationEntriesFromDigest = (digest) => {
@@ -1047,13 +1080,15 @@ const main = async () => {
   let learning;
   if (options.provider === "none") {
     learning = normalizeLearning(heuristicLearning(options, digest), options, digest);
-  } else if (["claude-code", "codex", "opencode"].includes(options.provider)) {
+  } else if (["claude-code", "codex", "opencode", "codebuddy"].includes(options.provider)) {
     try {
       const raw = options.provider === "claude-code"
         ? await callClaudeCode(prompt)
         : options.provider === "codex"
           ? await callCodex(prompt)
-          : await callOpencode(prompt);
+          : options.provider === "opencode"
+            ? await callOpencode(prompt)
+            : await callCodebuddy(prompt);
       learning = normalizeLearning(raw, options, digest);
       learning.diagnostic = learningDiagnostic(options.provider, "success");
     } catch (error) {
@@ -1084,4 +1119,5 @@ main().catch(() => {
   // Bridge/file failures must neither expose raw diagnostics nor fabricate a
   // second provider failure after successful generation.
   console.warn("[aivatar-learning-worker] Learning could not be delivered");
+  process.exitCode = 1;
 });

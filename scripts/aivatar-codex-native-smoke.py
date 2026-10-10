@@ -27,6 +27,8 @@ def main() -> int:
     modules = {
         "codex_discovery": repo / "src-tauri" / "src" / "codex_discovery.rs",
         "local_bridge": repo / "src-tauri" / "src" / "local_bridge.rs",
+        "learning_job": repo / "src-tauri" / "src" / "learning_job.rs",
+        "workbuddy_discovery": repo / "src-tauri" / "src" / "workbuddy_discovery.rs",
     }
     for path in modules.values():
         if not path.is_file():
@@ -44,7 +46,8 @@ def main() -> int:
         '\n[dependencies]\n'
         'serde_json = "1"\n'
         'chrono = { version = "0.4", default-features = false, features = ["clock"] }\n'
-        'tungstenite = "0.24"\n',
+        'tungstenite = "0.24"\n'
+        'rusqlite = { version = "0.32", features = ["bundled"] }\n',
         encoding="utf-8",
     )
     source = "#![allow(dead_code)]\n"
