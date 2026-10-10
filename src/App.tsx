@@ -1,5 +1,6 @@
 import { isFishingTrophy } from "./park/parkLoot";
-import { fishingLootIconPath } from "./game/fishingLootSprites";
+import { InventoryItemIcon } from "./components/InventoryItemIcon";
+import { hasInventoryPixelIcon } from "./components/inventoryPixelIcons";
 import { recoverFishingTrophiesOnLayoutReset } from "./game/fishingTrophyInventory";
 import {
   useEffect,
@@ -12745,9 +12746,8 @@ export const App = () => {
     </svg>
   );
   const ItemThumbnail = ({ itemId }: { itemId: string }) => {
-    const fishingIcon = fishingLootIconPath(itemId);
-    if (fishingIcon) {
-      return <span className="item-button-thumbnail item-thumbnail-fishing-loot" aria-hidden="true"><img src={fishingIcon} alt="" draggable={false} /></span>;
+    if (hasInventoryPixelIcon(itemId)) {
+      return <InventoryItemIcon itemId={itemId} />;
     }
     const arcadeThumbnailIndex = ITEM_ARCADE_A_THUMBNAIL_INDICES[itemId];
     const terminalSkinThumbnailIndex = TERMINAL_SKIN_THUMBNAIL_INDICES[itemId];
@@ -15864,7 +15864,7 @@ export const App = () => {
                 <button
                   key={item.id}
                   type="button"
-                  className={`pixel-button${
+                  className={`pixel-button inventory-item-button${
                     selectedRawFish ? " inventory-item-selected" : ""
                   }`}
                   aria-label={inventoryLabel}
