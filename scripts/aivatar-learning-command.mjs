@@ -38,7 +38,10 @@ export const learningCommandInvocation = (command, args, platform = process.plat
   if ([command, ...args].some((value) => /[\0\r\n]/u.test(String(value)))) {
     throw new Error("Invalid Windows CLI argument");
   }
-  const doubleEscape = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(command);
+  // CLI batch shims forward through %*, which parses the arguments again.
+  // Global npm installs and explicit wrappers need the same protection as
+  // node_modules/.bin; their directory name does not change cmd semantics.
+  const doubleEscape = true;
   const shellCommand = [escapeMeta(win32.normalize(command)), ...args.map((value) => escapeArgument(value, doubleEscape))].join(" ");
   if (shellCommand.length > 8000) throw new Error("Windows CLI arguments exceed the command limit");
   const systemRoot = env.SystemRoot ?? env.SYSTEMROOT;

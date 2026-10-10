@@ -32,11 +32,13 @@ if (process.platform === "win32") {
     await writeFile(command, compound
       ? `@ECHO off\r\nSETLOCAL\r\nSET "_prog=${process.execPath}"\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%" "${fixture}" %*\r\n`
       : line);
-    const invocation = learningCommandInvocation(command, expected, "win32", env);
-    const result = spawnSync(invocation.command, invocation.args, { cwd: directory, env, shell: false, windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments, encoding: "utf8", timeout: 10000 });
-    assert.equal(result.status, 0, `${name}: ${result.stderr} ${result.error?.code ?? ""}`);
-    assert.deepEqual(JSON.parse(result.stdout.trim()), expected, `${name}: arguments must round-trip exactly`);
-    await assert.rejects(access(join(directory, "injected.txt")), { code: "ENOENT" });
+    for (const values of [...expected.map((value) => [value]), expected]) {
+      const invocation = learningCommandInvocation(command, values, "win32", env);
+      const result = spawnSync(invocation.command, invocation.args, { cwd: directory, env, shell: false, windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments, encoding: "utf8", timeout: 10000 });
+      assert.equal(result.status, 0, `${name} ${JSON.stringify(values)}: ${result.stderr} ${result.error?.code ?? ""}`);
+      assert.deepEqual(JSON.parse(result.stdout.trim()), values, `${name}: arguments must round-trip exactly`);
+      await assert.rejects(access(join(directory, "injected.txt")), { code: "ENOENT" });
+    }
     console.log(`PASS Windows argv fidelity: ${name}`);
   }
   console.log(`Retained synthetic fixtures: ${directory}`);
