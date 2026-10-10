@@ -38,6 +38,7 @@ import {
   normalizePlacedItemPoint,
 } from "./game/interactions";
 import { renderScene } from "./game/renderScene";
+import { isMacintoshTerminalSkin, MACINTOSH_FOREST_ORANGE_SKIN_ID, MACINTOSH_ORANGE_GREEN_SKIN_ID } from "./game/macintoshTerminal";
 import {
   APPLIED_LEARNING_ID_LIMIT,
   learningReceiptId,
@@ -6687,8 +6688,8 @@ export const App = () => {
                   ) ?? content.itemDefinitions[0],
                 ...placementPreview,
                 rotation: movingPlacedItem.rotation,
-                skinId: movingPlacedItem.skinId === TERMINAL_MACINTOSH_SKIN_ID
-                  ? TERMINAL_MACINTOSH_SKIN_ID : undefined,
+                skinId: isMacintoshTerminalSkin(movingPlacedItem.skinId)
+                  ? movingPlacedItem.skinId : undefined,
               }
           : null,
         selectedPlacedItem?.id,
@@ -9251,8 +9252,8 @@ export const App = () => {
                   ) ?? currentContent.itemDefinitions[0],
                 ...placementPreviewRef.current,
                 rotation: movingPlacedItemRef.current?.rotation,
-                skinId: movingPlacedItemRef.current?.skinId === TERMINAL_MACINTOSH_SKIN_ID
-                  ? TERMINAL_MACINTOSH_SKIN_ID : undefined,
+                skinId: isMacintoshTerminalSkin(movingPlacedItemRef.current?.skinId)
+                  ? movingPlacedItemRef.current?.skinId : undefined,
               }
             : null,
         selectedPlacedItemRef.current?.id,
@@ -12753,6 +12754,12 @@ export const App = () => {
 
     if (itemId === TERMINAL_MACINTOSH_SKIN_ID) {
       return <span className="item-button-thumbnail item-thumbnail-terminal-macintosh" aria-hidden="true" />;
+    }
+    if (itemId === MACINTOSH_FOREST_ORANGE_SKIN_ID) {
+      return <span className="item-button-thumbnail item-thumbnail-terminal-macintosh item-thumbnail-terminal-macintosh-forest-orange" aria-hidden="true" />;
+    }
+    if (itemId === MACINTOSH_ORANGE_GREEN_SKIN_ID) {
+      return <span className="item-button-thumbnail item-thumbnail-terminal-macintosh item-thumbnail-terminal-macintosh-orange-green" aria-hidden="true" />;
     }
 
     if (arcadeThumbnailIndex !== undefined) {

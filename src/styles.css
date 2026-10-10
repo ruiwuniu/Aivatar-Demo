@@ -7405,6 +7405,14 @@ input[type="range"]::-moz-range-thumb {
   image-rendering: pixelated;
 }
 
+.item-thumbnail-terminal-macintosh-forest-orange::before {
+  background-image: url("/assets/furniture/terminal-macintosh-forest-orange.png");
+}
+
+.item-thumbnail-terminal-macintosh-orange-green::before {
+  background-image: url("/assets/furniture/terminal-macintosh-orange-green.png");
+}
+
 .item-thumb-shape,
 .item-thumb-accent,
 .item-thumb-detail,

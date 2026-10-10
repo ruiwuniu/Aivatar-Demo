@@ -47,7 +47,7 @@ for (const badFrame of [-1, NaN, Infinity]) {
     skin.macintoshTerminalAnimationState(0, "executing", true), "invalid clocks normalize to a deterministic first frame");
 }
 
-const capture = (phase, active, frame = 0, ghost = "none", image = {}) => {
+const capture = (phase, active, frame = 0, ghost = "none", image = {}, skinId = skin.MACINTOSH_TERMINAL_SKIN_ID) => {
   const calls = [];
   let clipped = false;
   let fillStyle;
@@ -63,7 +63,10 @@ const capture = (phase, active, frame = 0, ghost = "none", image = {}) => {
     lineTo: (...args) => calls.push(["path", ...args]),
     closePath: () => calls.push(["closePath"]),
     clip: () => { clipped = true; calls.push(["clip"]); },
-    createLinearGradient: () => ({ addColorStop: () => {} }),
+    createLinearGradient: (...args) => {
+      calls.push(["gradient", ...args]);
+      return { addColorStop: (...stop) => calls.push(["color-stop", ...stop]) };
+    },
     fillRect: (...args) => calls.push(["fill", clipped, typeof fillStyle === "string" ? fillStyle : "gradient", ...args]),
     strokeRect: (...args) => calls.push(["outline", ...args]),
     set fillStyle(value) { fillStyle = value; },
@@ -71,7 +74,7 @@ const capture = (phase, active, frame = 0, ghost = "none", image = {}) => {
     set globalAlpha(value) { alpha = value; },
     get globalAlpha() { return alpha; },
   };
-  skin.drawMacintoshTerminal(context, { x: 100.3, y: 200.2, frame, phase, active, ghost, image });
+  skin.drawMacintoshTerminal(context, { x: 100.3, y: 200.2, frame, phase, active, ghost, image, skinId });
   assert.equal(saved.length, 0, "renderer balances canvas save/restore");
   assert.equal(alpha, 1, "ghost opacity cannot leak to other sprites");
   const imageCall = calls.find((call) => call[0] === "image");
@@ -81,7 +84,7 @@ const capture = (phase, active, frame = 0, ghost = "none", image = {}) => {
   for (const call of calls.filter((call) => call[0] === "path")) {
     inside({ x: call[1], y: call[2], width: 0, height: 0 }, geometry.screen);
   }
-  for (const call of calls.filter((call) => call[0] === "fill" && call[2] === "#273126")) {
+  for (const call of calls.filter((call) => call[0] === "fill" && ["#273126", "#172018", "#16331b"].includes(call[2]))) {
     assert.equal(call[1], true, "all status glyphs and cursors render under the CRT clip");
     inside({ x: call[3], y: call[4], width: call[5], height: call[6] }, geometry.screen);
   }
@@ -94,4 +97,47 @@ for (const phase of phases) {
   assert.deepEqual(capture(phase, true, 0, "valid"), capture(phase, true, 400, "valid"), "ghost drawing has no time-dependent operations");
 }
 capture("executing", true, 0, "none", null);
-console.log("Macintosh terminal smoke passed: preserved geometry/aspect/keyboard baseline, calibrated key caps, all status phases, arrival gates, CRT clipping, static ghosts and canvas isolation.");
+const geometryCalls = (calls) => calls.filter((call) => call[0] !== "color-stop")
+  .map((call) => call[0] === "fill" ? [call[0], call[1], "palette", ...call.slice(3)] : call);
+const variants = [
+  { id: skin.MACINTOSH_FOREST_ORANGE_SKIN_ID, phosphor: "#ff991f", shell: "#205b49" },
+  { id: skin.MACINTOSH_ORANGE_GREEN_SKIN_ID, phosphor: "#46c844", shell: "#e87521" },
+];
+for (const variant of variants) {
+for (const phase of phases) for (const active of [true, false]) for (const ghost of ["none", "valid", "invalid"]) {
+  for (const frame of [0, 4, 16, 24, 48, 777]) {
+    const original = capture(phase, active, frame, ghost);
+    const colored = capture(phase, active, frame, ghost, {}, variant.id);
+    assert.deepEqual(geometryCalls(colored), geometryCalls(original), "All skins keep identical animation timing and pixel geometry");
+    assert(colored.some((call) => call[0] === "color-stop" && call[2] === variant.phosphor), "The animated screen retains its selected phosphor");
+    assert(!colored.some((call) => call[0] === "fill" && ["#d6c5a5", "#eee0c3", "#948973"].includes(call[2])),
+      "Key presses and the activity light cannot flash back to the original palette");
+  }
+}
+const loading = capture("executing", true, 0, "none", null, variant.id);
+assert(loading.some((call) => call[0] === "fill" && call[2] === variant.shell), "Loading silhouette uses the selected shell color");
+assert(skin.isMacintoshTerminalSkin(variant.id));
+}
+assert(skin.isMacintoshTerminalSkin(skin.MACINTOSH_TERMINAL_SKIN_ID));
+assert(!skin.isMacintoshTerminalSkin("terminal-green-amber-skin"));
+const requestedAssets = [];
+globalThis.Image = class {
+  complete = true;
+  naturalWidth = 1161;
+  set src(value) { requestedAssets.push(value); }
+};
+capture("idle", false, 0, "none", null);
+capture("idle", false, 0, "none", null, skin.MACINTOSH_FOREST_ORANGE_SKIN_ID);
+capture("idle", false, 0, "none", null, skin.MACINTOSH_ORANGE_GREEN_SKIN_ID);
+capture("idle", false, 0, "none", null);
+capture("idle", false, 0, "none", null, skin.MACINTOSH_FOREST_ORANGE_SKIN_ID);
+assert.deepEqual(requestedAssets, [skin.MACINTOSH_TERMINAL_ASSET, skin.MACINTOSH_FOREST_ORANGE_ASSET, skin.MACINTOSH_ORANGE_GREEN_ASSET],
+  "Switching skins selects separate cached images without reloading");
+delete globalThis.Image;
+for (const file of ["terminal-macintosh.png", "terminal-macintosh-forest-orange.png", "terminal-macintosh-orange-green.png"]) {
+  const png = readFileSync(new URL(`../public/assets/furniture/${file}`, import.meta.url));
+  assert(png.readUInt32BE(16) >= geometry.source.x + geometry.source.width, "All assets cover the unchanged crop width");
+  assert(png.readUInt32BE(20) >= geometry.source.y + geometry.source.height, "All assets cover the unchanged crop height");
+  assert.equal(png[25], 6, "Sprites retain RGBA transparency");
+}
+console.log("Macintosh terminal smoke passed: all three palettes share geometry/timing, CRT and key/loading colors persist, independent image caches, all status phases, static ghosts and canvas isolation.");

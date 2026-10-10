@@ -654,6 +654,22 @@ cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
 
 ## Key Files
 
+- `src/game/macintoshTerminal.ts`
+  - The Macintosh terminal has three independently purchasable 2600-Bits skins:
+    `terminal-macintosh-skin`, `terminal-macintosh-forest-orange-skin` (forest-green
+    shell, fluorescent-orange CRT), and `terminal-macintosh-orange-green-skin`
+    (orange shell, fluorescent-green CRT). All share
+    `macintoshTerminalAnimationState` and `MACINTOSH_TERMINAL_GEOMETRY`; only the PNG
+    and rendering palette differ. Keep room/desktop rendering, both moving-preview
+    paths and all five placement-preview passes keyed through
+    `isMacintoshTerminalSkin`. Screen redraws, loading silhouettes, drive lights and
+    pressed keys must use the selected palette. Test with
+    `aivatar-macintosh-terminal-smoke.mjs`, `aivatar-terminal-macintosh-shop-smoke.mjs`,
+    `aivatar-macintosh-render-integration-smoke.mjs` and the independent
+    `aivatar-macintosh-visual-smoke.mjs`; art provenance and the imagegen prompts are
+    in `docs/art/terminal-macintosh-forest-orange.md` and
+    `docs/art/terminal-macintosh-orange-green.md`.
+
 - `src/main.tsx`
   - Wraps `App` in a small React error boundary. If a render-time React error escapes the app, the fallback keeps the desktop/web window usable with a reload button instead of leaving a blank crashed surface.
 

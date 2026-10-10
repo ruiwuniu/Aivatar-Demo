@@ -1,6 +1,12 @@
 /** Macintosh skin: the original PNG is fitted inside the existing terminal footprint. */
 export const MACINTOSH_TERMINAL_SKIN_ID = "terminal-macintosh-skin";
 export const MACINTOSH_TERMINAL_ASSET = "/assets/furniture/terminal-macintosh.png";
+export const MACINTOSH_FOREST_ORANGE_SKIN_ID = "terminal-macintosh-forest-orange-skin";
+export const MACINTOSH_FOREST_ORANGE_ASSET = "/assets/furniture/terminal-macintosh-forest-orange.png";
+export const MACINTOSH_ORANGE_GREEN_SKIN_ID = "terminal-macintosh-orange-green-skin";
+export const MACINTOSH_ORANGE_GREEN_ASSET = "/assets/furniture/terminal-macintosh-orange-green.png";
+export const isMacintoshTerminalSkin = (skinId?: string): boolean =>
+  skinId === MACINTOSH_TERMINAL_SKIN_ID || skinId === MACINTOSH_FOREST_ORANGE_SKIN_ID || skinId === MACINTOSH_ORANGE_GREEN_SKIN_ID;
 export type MacintoshTerminalPhase = "idle" | "thinking" | "executing" | "waiting_for_user" | "complete" | "error";
 export type MacintoshTerminalGhost = "none" | "valid" | "invalid";
 type Rect = { x: number; y: number; width: number; height: number };
@@ -80,21 +86,44 @@ export interface MacintoshTerminalDrawOptions {
   phase?: MacintoshTerminalPhase;
   active?: boolean;
   ghost?: MacintoshTerminalGhost;
+  skinId?: string;
   /** Optional loaded image for isolated renderer previews/tests. */
   image?: CanvasImageSource;
 }
 
-let cachedImage: HTMLImageElement | undefined;
-const terminalImage = (): HTMLImageElement | undefined => {
+const cachedImages = new Map<string, HTMLImageElement>();
+const terminalImage = (skinId?: string): HTMLImageElement | undefined => {
   if (typeof Image === "undefined") return undefined;
+  const asset = skinId === MACINTOSH_ORANGE_GREEN_SKIN_ID ? MACINTOSH_ORANGE_GREEN_ASSET
+    : skinId === MACINTOSH_FOREST_ORANGE_SKIN_ID ? MACINTOSH_FOREST_ORANGE_ASSET : MACINTOSH_TERMINAL_ASSET;
+  let cachedImage = cachedImages.get(asset);
   if (!cachedImage) {
     cachedImage = new Image();
-    cachedImage.src = MACINTOSH_TERMINAL_ASSET;
+    cachedImage.src = asset;
+    cachedImages.set(asset, cachedImage);
   }
   return cachedImage.complete && cachedImage.naturalWidth > 0 ? cachedImage : undefined;
 };
 
-const INK = "#273126";
+const classicPalette = {
+  ink: "#273126", screenTop: "#b8c0ae", screenBottom: "#a9b49e", reflection: "#e4ead7",
+  scanline: "rgba(225, 235, 213, 0.12)", shellShadow: "#81735d", shellFace: "#e7d8b9",
+  indicatorOn: "#5b6b4d", indicatorOff: "#948973",
+  keyShadow: "#84745b", keyFace: "#d6c5a5", keyHighlight: "#eee0c3",
+};
+type MacintoshTerminalPalette = typeof classicPalette;
+const forestOrangePalette: MacintoshTerminalPalette = {
+  ink: "#172018", screenTop: "#ff991f", screenBottom: "#ff7d16", reflection: "#ffe5a2",
+  scanline: "rgba(255, 224, 149, 0.16)", shellShadow: "#082e24", shellFace: "#205b49",
+  indicatorOn: "#ff951f", indicatorOff: "#1e5947",
+  keyShadow: "#173c31", keyFace: "#669681", keyHighlight: "#a8cdb5",
+};
+const orangeGreenPalette: MacintoshTerminalPalette = {
+  ink: "#16331b", screenTop: "#46c844", screenBottom: "#2eac3b", reflection: "#c0f3b0",
+  scanline: "rgba(192, 243, 176, 0.16)", shellShadow: "#914013", shellFace: "#e87521",
+  indicatorOn: "#46c844", indicatorOff: "#a94d17",
+  keyShadow: "#994515", keyFace: "#edaa6b", keyHighlight: "#ffce99",
+};
 const glyph = (ctx: CanvasRenderingContext2D, rows: readonly string[], x: number, y: number, size = 1) => {
   for (let row = 0; row < rows.length; row += 1) {
     for (let column = 0; column < rows[row].length; column += 1) {
@@ -103,7 +132,7 @@ const glyph = (ctx: CanvasRenderingContext2D, rows: readonly string[], x: number
   }
 };
 
-const drawScreen = (ctx: CanvasRenderingContext2D, state: MacintoshTerminalAnimationState) => {
+const drawScreen = (ctx: CanvasRenderingContext2D, state: MacintoshTerminalAnimationState, palette: MacintoshTerminalPalette) => {
   const { x, y, width, height } = screen;
   const cut = 1.45;
   ctx.save();
@@ -120,14 +149,14 @@ const drawScreen = (ctx: CanvasRenderingContext2D, state: MacintoshTerminalAnima
   ctx.closePath();
   ctx.clip();
   const phosphor = ctx.createLinearGradient(x, y, x + width, y + height);
-  phosphor.addColorStop(0, "#b8c0ae");
-  phosphor.addColorStop(1, "#a9b49e");
+  phosphor.addColorStop(0, palette.screenTop);
+  phosphor.addColorStop(1, palette.screenBottom);
   ctx.fillStyle = phosphor;
   ctx.fillRect(x, y, width, height);
-  ctx.fillStyle = "#e4ead7";
+  ctx.fillStyle = palette.reflection;
   ctx.fillRect(x + 1.1, y + 1, 1.8, 0.6);
   ctx.fillRect(x + 1.1, y + 1.6, 0.6, 0.7);
-  ctx.fillStyle = INK;
+  ctx.fillStyle = palette.ink;
 
   switch (state.phase) {
     case "thinking":
@@ -140,7 +169,7 @@ const drawScreen = (ctx: CanvasRenderingContext2D, state: MacintoshTerminalAnima
       ctx.fillRect(x + 3, y + 7, 9 + (state.lineStep % 2) * 3, 0.8);
       ctx.fillRect(x + 3, y + 10, 5 + state.lineStep, 0.8);
       if (state.cursorVisible) ctx.fillRect(x + 10 + state.lineStep, y + 10, 1.6, 0.8);
-      ctx.fillStyle = "rgba(225, 235, 213, 0.12)";
+      ctx.fillStyle = palette.scanline;
       ctx.fillRect(x, y + 1 + state.scanRow, width, 0.5);
       break;
     case "waiting_for_user":
@@ -162,13 +191,13 @@ const drawScreen = (ctx: CanvasRenderingContext2D, state: MacintoshTerminalAnima
   ctx.restore();
 };
 
-const drawLoadingSilhouette = (ctx: CanvasRenderingContext2D) => {
+const drawLoadingSilhouette = (ctx: CanvasRenderingContext2D, palette: MacintoshTerminalPalette) => {
   // A first-frame placeholder prevents an empty native transparent window
   // while the accepted PNG is decoded; subsequent animation frames use it.
-  ctx.fillStyle = "#81735d";
+  ctx.fillStyle = palette.shellShadow;
   ctx.fillRect(-15, -34, 30, 37);
   ctx.fillRect(-19, 4, 38, 10);
-  ctx.fillStyle = "#e7d8b9";
+  ctx.fillStyle = palette.shellFace;
   ctx.fillRect(-14, -33, 28, 35);
   ctx.fillRect(-18, 5, 36, 8);
 };
@@ -178,7 +207,9 @@ export const drawMacintoshTerminal = (
 ): void => {
   const ghost = options.ghost ?? "none";
   const state = macintoshTerminalAnimationState(options.frame, options.phase, options.active, ghost);
-  const image = options.image ?? terminalImage();
+  const palette = options.skinId === MACINTOSH_ORANGE_GREEN_SKIN_ID ? orangeGreenPalette
+    : options.skinId === MACINTOSH_FOREST_ORANGE_SKIN_ID ? forestOrangePalette : classicPalette;
+  const image = options.image ?? terminalImage(options.skinId);
   ctx.save();
   ctx.translate(Math.round(options.x), Math.round(options.y));
   ctx.imageSmoothingEnabled = false;
@@ -187,23 +218,23 @@ export const drawMacintoshTerminal = (
     ctx.drawImage(image, source.x, source.y, source.width, source.height,
       imageRect.x, imageRect.y, imageRect.width, imageRect.height);
   } else {
-    drawLoadingSilhouette(ctx);
+    drawLoadingSilhouette(ctx, palette);
   }
-  drawScreen(ctx, state);
+  drawScreen(ctx, state, palette);
   if (!state.static) {
     const light = MACINTOSH_TERMINAL_GEOMETRY.indicator;
-    ctx.fillStyle = state.indicatorOn ? "#5b6b4d" : "#948973";
+    ctx.fillStyle = state.indicatorOn ? palette.indicatorOn : palette.indicatorOff;
     ctx.fillRect(light.x, light.y, light.width, light.height);
   }
   if (state.pressedKeyIndex !== null) {
     const key = keys[state.pressedKeyIndex];
-    // Darken the vacated top strip, then lower the cream key face. All these
+    // Darken the vacated top strip, then lower the key face. All these
     // points are calibrated against this PNG's individual key caps.
-    ctx.fillStyle = "#84745b";
+    ctx.fillStyle = palette.keyShadow;
     ctx.fillRect(key.x - 0.15, key.y, key.width + 0.3, key.height + 0.45);
-    ctx.fillStyle = "#d6c5a5";
+    ctx.fillStyle = palette.keyFace;
     ctx.fillRect(key.x, key.y + 0.55, key.width, Math.max(0.35, key.height - 0.1));
-    ctx.fillStyle = "#eee0c3";
+    ctx.fillStyle = palette.keyHighlight;
     ctx.fillRect(key.x + 0.15, key.y + 0.55, Math.max(0.2, key.width - 0.3), 0.25);
   }
   if (ghost !== "none") {

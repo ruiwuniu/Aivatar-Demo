@@ -41,6 +41,7 @@ let drawActualMacintosh = false;
 const context = {
   drawFishingLootSprite: fishingLoot.drawFishingLootSprite,
   MACINTOSH_TERMINAL_SKIN_ID: "terminal-macintosh-skin",
+  isMacintoshTerminalSkin: macintosh.isMacintoshTerminalSkin,
   drawMacintoshTerminal: (ctx, options) => {
     drawCalls.push(structuredClone(options));
     if (drawActualMacintosh) macintosh.drawMacintoshTerminal(ctx, { ...options, image: {} });
@@ -119,9 +120,13 @@ const renderRoom = (avatar, status, rotation = 0) => {
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     0, undefined, 0, 0, 0, "classic", false, undefined, undefined, "octopus", [visitor]);
   assert(drawCalls.length >= 6, "The fixture exercises foreground, furniture-surface, and both visitor/host occlusion passes");
+  assert(drawCalls.every((call) => call.skinId === terminal.skinId), "All room passes preserve the selected color variant");
   return [...drawCalls];
 };
 
+for (const currentSkinId of [macintosh.MACINTOSH_TERMINAL_SKIN_ID, macintosh.MACINTOSH_FOREST_ORANGE_SKIN_ID, macintosh.MACINTOSH_ORANGE_GREEN_SKIN_ID]) {
+terminal.skinId = currentSkinId;
+drawActualMacintosh = false;
 for (const inFront of [false, true]) {
   occlusion.inFront = inFront;
   for (const phase of ["idle", "thinking", "executing", "waiting_for_user", "complete", "error"]) {
@@ -162,6 +167,7 @@ context.renderDesktopScene(canvas, {
 });
 assert.equal(drawCalls.length, 1);
 assert.equal(drawCalls[0].phase, "thinking");
+assert.equal(drawCalls[0].skinId, currentSkinId, "Desktop uses the same selected palette as the room");
 assert.equal(drawCalls[0].active, true);
 assert.equal(drawCalls[0].x, terminal.x);
 assert.equal(drawCalls[0].y, terminal.y);
@@ -179,7 +185,7 @@ for (const skin of [undefined, "terminal-green-amber-skin", "terminal-white-cyan
 }
 for (const ghost of ["valid", "invalid"]) {
   drawCalls.length = 0;
-  context.drawTerminalMonitor(canvasContext, 300, 220, ghost, 24, operator, "terminal-macintosh-skin",
+  context.drawTerminalMonitor(canvasContext, 300, 220, ghost, 24, operator, currentSkinId,
     { avatar: operator, status: { status: "executing" } });
   assert.equal(drawCalls[0].ghost, ghost, "Placement validity reaches the Macintosh renderer");
 }
@@ -237,7 +243,7 @@ for (const pass of previewPasses) {
   occlusion.previewPlacement = pass.wall ? "wall" : "floor";
   for (const valid of [false, true]) {
     for (const rotation of [0, 90, 180, 270]) {
-      const preview = { item: content.itemDefinitions[0], skinId: "terminal-macintosh-skin",
+      const preview = { item: content.itemDefinitions[0], skinId: currentSkinId,
         x: pass.surface ? 300 : 500, y: pass.surface ? 200 : 350, valid, rotation };
       let firstFrame;
       for (const frame of [0, 777]) {
@@ -247,6 +253,7 @@ for (const pass of previewPasses) {
         assert.equal(drawCalls.length, pass.name === "room-surface" ? 2 : 1,
           `${pass.name} dispatches every selected Macintosh preview pass`);
         assert(drawCalls.every((call) => call.ghost === (valid ? "valid" : "invalid")), pass.name);
+        assert(drawCalls.every((call) => call.skinId === currentSkinId), `${pass.name} keeps the selected color variant`);
         assert(recording.operations.some(([name, angle]) => name === "rotate" && angle === rotation * Math.PI / 180),
           `${pass.name} rotates the actual ghost with its placed item`);
         assert(recording.operations.some(([name, x, y]) => name === "translate" && x === preview.x && y === preview.y),
@@ -275,5 +282,6 @@ for (const pass of previewPasses) {
     assert.deepEqual(legacyCalls, legacyWithSkin, `${pass.name} leaves existing preview behavior unchanged`);
   }
 }
+}
 
-console.log("Macintosh renderer integration passed: room layers, visitor occlusion, rotations, world/desktop coordinates, task phases, five static ghost preview paths, and unchanged legacy skins/previews.");
+console.log("Macintosh renderer integration passed for all three palettes: room layers, visitor occlusion, rotations, world/desktop coordinates, task phases, five static ghost preview paths, and unchanged legacy skins/previews.");

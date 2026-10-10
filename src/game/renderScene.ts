@@ -1,7 +1,7 @@
 import { isTerminalBubbleAgent } from "../agentRegistry";
 import { drawFishingLootSprite } from "./fishingLootSprites";
 import { drawPondWeedSaladMeal, drawPondWeedSaladBite, drawPondWeedPreparation } from "./pondWeedSaladAnimation";
-import { MACINTOSH_TERMINAL_SKIN_ID, drawMacintoshTerminal } from "./macintoshTerminal";
+import { isMacintoshTerminalSkin, drawMacintoshTerminal } from "./macintoshTerminal";
 import type { DesktopHitRegion, DesktopPoint, DesktopVendingInteraction, DesktopVendingProductId, DesktopVendingSkinId } from "../desktop/desktopTypes";
 import { getDesktopVendingSprite, DESKTOP_VENDING_DISPENSE_MS, desktopVendingVisualBounds } from "../desktop/desktopVendingMachine";
 import type {
@@ -9737,7 +9737,7 @@ const drawTerminalMonitor = (
   skinId?: string,
   terminalState?: TerminalRenderState,
 ) => {
-  if (skinId === MACINTOSH_TERMINAL_SKIN_ID) {
+  if (isMacintoshTerminalSkin(skinId)) {
     const operator = terminalState?.avatar ?? avatar;
     const position = terminalState?.position ?? { x, y };
     drawMacintoshTerminal(ctx, {
@@ -9749,6 +9749,7 @@ const drawTerminalMonitor = (
         && (operator.behavior === "coding" || operator.behavior === "thinking")
         && Math.hypot(operator.x - position.x, operator.y - (position.y + 18)) < 92),
       ghost,
+      skinId,
     });
     return;
   }
@@ -10334,11 +10335,11 @@ const drawMacintoshPlacementPreview = (
   preview: PlacementPreview,
   frame: number,
 ) => {
-  if (preview.item.id !== "terminal-monitor" || preview.skinId !== MACINTOSH_TERMINAL_SKIN_ID) return false;
+  if (preview.item.id !== "terminal-monitor" || !isMacintoshTerminalSkin(preview.skinId)) return false;
   ctx.save();
   ctx.translate(Math.round(preview.x), Math.round(preview.y));
   ctx.rotate(((preview.rotation ?? 0) * Math.PI) / 180);
-  drawMacintoshTerminal(ctx, { x: 0, y: 0, frame, ghost: preview.valid ? "valid" : "invalid" });
+  drawMacintoshTerminal(ctx, { x: 0, y: 0, frame, skinId: preview.skinId, ghost: preview.valid ? "valid" : "invalid" });
   ctx.restore();
   return true;
 };

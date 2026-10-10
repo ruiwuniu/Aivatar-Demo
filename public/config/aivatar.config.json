@@ -850,6 +850,24 @@
       "effect": { "mood": 4, "energy": 2 }
     },
     {
+      "id": "terminal-macintosh-forest-orange-skin",
+      "name": "Forest Green Macintosh Terminal Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "computer"],
+      "targetFurnitureId": "builtin-terminal",
+      "price": 2600,
+      "effect": { "mood": 4, "energy": 2 }
+    },
+    {
+      "id": "terminal-macintosh-orange-green-skin",
+      "name": "Orange Macintosh Terminal Skin",
+      "kind": "decor",
+      "tags": ["furniture-skin", "computer"],
+      "targetFurnitureId": "builtin-terminal",
+      "price": 2600,
+      "effect": { "mood": 4, "energy": 2 }
+    },
+    {
       "id": "terminal-neon-dark-skin",
       "name": "Neon Dark Terminal Skin",
       "kind": "decor",
@@ -1304,6 +1322,24 @@
       {
         "id": "terminal-macintosh-skin",
         "name": "Macintosh Terminal Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "computer"],
+        "targetFurnitureId": "builtin-terminal",
+        "price": 2600,
+        "effect": { "mood": 4, "energy": 2 }
+      },
+      {
+        "id": "terminal-macintosh-forest-orange-skin",
+        "name": "Forest Green Macintosh Terminal Skin",
+        "kind": "decor",
+        "tags": ["furniture-skin", "computer"],
+        "targetFurnitureId": "builtin-terminal",
+        "price": 2600,
+        "effect": { "mood": 4, "energy": 2 }
+      },
+      {
+        "id": "terminal-macintosh-orange-green-skin",
+        "name": "Orange Macintosh Terminal Skin",
         "kind": "decor",
         "tags": ["furniture-skin", "computer"],
         "targetFurnitureId": "builtin-terminal",
