@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { delimiter, dirname, join, win32 } from "node:path";
 import * as provider from "./aivatar-learning-provider.mjs";
+import { learningCommandInvocation } from "./aivatar-learning-command.mjs";
 
 const raw = {
   summary: "We finished a small UI check",
@@ -104,7 +105,7 @@ const runWorker = async (scenario = {}) => {
     return child;
   };
   const dependencies = {
-    createHash, randomUUID, spawn, ...provider,
+    createHash, randomUUID, spawn, learningCommandInvocation, ...provider,
     ...(scenario.platform === "win32" ? { delimiter: win32.delimiter, dirname: win32.dirname, join: win32.join } : { delimiter, dirname, join }),
     access: async (path) => { accessedPaths.push(path); if (scenario.existingPaths && !scenario.existingPaths.includes(path)) throw new Error("missing synthetic path"); },
     mkdir: async () => {}, writeFile: async (file, text) => { writtenFiles.set(file, text); },

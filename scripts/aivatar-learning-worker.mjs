@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
+import { learningCommandInvocation } from "./aivatar-learning-command.mjs";
 import {
   LearningProviderError,
   classifyProviderFailure,
@@ -557,14 +558,12 @@ Session:
 
 const runCommand = (command, args, stdin, timeoutMs = defaultTimeoutMs, environment = {}, outputLimit = 1024 * 1024) =>
   new Promise((resolve, reject) => {
-    const useCmdShim =
-      process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
-    const spawnCommand = useCmdShim ? "cmd.exe" : command;
-    const spawnArgs = useCmdShim ? ["/d", "/c", command, ...args] : args;
-    const child = spawn(spawnCommand, spawnArgs, {
+    const invocation = learningCommandInvocation(command, args, process.platform, process.env);
+    const child = spawn(invocation.command, invocation.args, {
       cwd: tmpdir(),
       shell: false,
       windowsHide: true,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,

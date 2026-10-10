@@ -188,7 +188,7 @@ jobs:
               "aivatar-desktop-vending-menu-smoke.mjs", "aivatar-macintosh-terminal-smoke.mjs",
               "aivatar-terminal-macintosh-shop-smoke.mjs", "aivatar-macintosh-render-integration-smoke.mjs",
               "aivatar-park-fishing-smoke.mjs", "aivatar-learning-candidates-smoke.mjs",
-              "aivatar-learning-provider-smoke.mjs", "aivatar-learning-cli-smoke.mjs",
+              "aivatar-learning-provider-smoke.mjs", "aivatar-learning-command-smoke.mjs", "aivatar-learning-cli-smoke.mjs",
               "aivatar-learning-job-smoke.mjs", "aivatar-learning-bridge-smoke.mjs",
               "aivatar-desktop-agent-adapters-smoke.mjs", "aivatar-opencode-v2-smoke.mjs",
               "workbuddy-session-discovery-smoke.mjs",
